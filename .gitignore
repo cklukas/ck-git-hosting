@@ -1,0 +1,16 @@
+# Build products belong beneath BUILD_ROOT (see Makefile), never in the tree.
+build/
+build-*/
+*.o
+*.a
+*.dSYM/
+test-tmp/
+dist/
+*.deb
+*.tar.gz
+
+# Staging output of packaging scripts and editor/OS noise.
+staging/
+.DS_Store
+*.swp
+*~

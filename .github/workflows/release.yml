@@ -1,0 +1,167 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Tagging vMAJOR.MINOR.PATCH (matching the VERSION file) builds and tests
+# every artifact, publishes a GitHub release with checksums, and updates the
+# Homebrew formula so this repository can be tapped directly.
+#
+# Artifacts:
+#   ck-git-hosting_V_amd64.deb, ck-git-hosting_V_arm64.deb   Debian 13 server
+#   ckgit_V_amd64.deb, ckgit_V_arm64.deb                     Debian 13 client
+#   ck-git-hosting-V-linux-{amd64,arm64}.tar.gz              other systemd distros
+#   ckgit-V-macos-{arm64,x86_64}.tar.gz                      macOS client
+#   ck-git-hosting-V-source.tar.gz                           Homebrew source
+#   SHA256SUMS
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify-version:
+    name: Verify tag matches VERSION
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match VERSION $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux ${{ matrix.arch }} packages
+    needs: verify-version
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates
+      - name: Build and test
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+      - name: Package
+        run: |
+          sh packaging/build-deb.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist"
+          sh packaging/build-tarball.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist" --platform linux-${{ matrix.arch }}
+          ls -l "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }} client
+    needs: verify-version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+      - name: Package
+        run: |
+          sh packaging/build-tarball.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist" --platform macos-${{ matrix.arch }} --client-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  source:
+    name: Source archive
+    needs: verify-version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive the tagged tree
+        run: |
+          version=${{ needs.verify-version.outputs.version }}
+          mkdir -p "$RUNNER_TEMP/dist"
+          git archive --format=tar.gz --prefix="ck-git-hosting-$version/" \
+            -o "$RUNNER_TEMP/dist/ck-git-hosting-$version-source.tar.gz" "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [verify-version, linux, macos, source]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd "$RUNNER_TEMP/artifacts"
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${{ needs.verify-version.outputs.version }}
+          {
+            echo "ck-git-hosting $version"
+            echo
+            echo "Debian 13 (including Raspberry Pi arm64): install the .deb files with apt."
+            echo "Other systemd Linux distributions: unpack the linux tarball and run packaging/install.sh."
+            echo "macOS client: brew install ckgit from this repository's tap, or unpack the macos tarball."
+            echo "See docs/operations for installation, pairing, and release details."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/artifacts/* \
+            --title "ck-git-hosting $version" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+
+  homebrew:
+    name: Update Homebrew formula
+    needs: [verify-version, publish]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+          path: ${{ runner.temp }}/source
+      - name: Rewrite and commit the formula
+        run: |
+          version=${{ needs.verify-version.outputs.version }}
+          sha256=$(sha256sum "$RUNNER_TEMP/source/ck-git-hosting-$version-source.tar.gz" | cut -d' ' -f1)
+          sh packaging/homebrew/update-formula.sh "$version" "$sha256" "$GITHUB_REPOSITORY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/ckgit.rb
+          git commit -m "Homebrew: point ckgit formula at v$version [skip ci]"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

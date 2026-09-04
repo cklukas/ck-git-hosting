@@ -1,0 +1,58 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Hardened service for the ck-git-hosting control plane.  The daemon needs
+# write access only to its private state root and, for project creation, the
+# repository root.  The dashboard listener is loopback-only; adjust
+# IPAddressAllow together with server.ini if a LAN read-only view is ever
+# enabled deliberately.
+
+[Unit]
+Description=ck-git-hosting control plane daemon
+After=network.target
+ConditionPathExists=/etc/ck-git-hosting/server.ini
+
+[Service]
+Type=simple
+User=ckgit
+Group=ckgit
+ExecStart=/usr/bin/ck-git-hostingd --config /etc/ck-git-hosting/server.ini
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+UMask=0077
+Environment=HOME=/var/lib/ck-git-hosting
+Environment=LANG=C
+Environment=GIT_CONFIG_NOSYSTEM=1
+Environment=GIT_CONFIG_GLOBAL=/dev/null
+RuntimeDirectory=ck-git-hosting
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+ReadWritePaths=/var/lib/ck-git-hosting /srv/ck-git-hosting/repos
+
+[Install]
+WantedBy=multi-user.target

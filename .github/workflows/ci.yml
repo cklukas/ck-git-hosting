@@ -1,0 +1,99 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Strict build and complete test suite on Linux (amd64 and arm64, GCC and
+# Clang) and macOS (Apple silicon and Intel), plus a real Debian package
+# install/remove cycle inside a Debian 13 container.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} ${{ matrix.compiler }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64, compiler: g++ }
+          - { runner: ubuntu-24.04, arch: amd64, compiler: clang++ }
+          - { runner: ubuntu-24.04-arm, arch: arm64, compiler: g++ }
+          - { runner: ubuntu-24.04-arm, arch: arm64, compiler: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang git curl netcat-openbsd
+      - name: Build and test
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" CXX="${{ matrix.compiler }}" all check
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+
+  debian-package:
+    name: Debian 13 package ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates lintian openssh-client
+      - name: Build and test
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+      - name: Build packages
+        run: |
+          sh packaging/build-deb.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist"
+          ls -l "$RUNNER_TEMP/dist"
+          lintian --no-tag-display-limit "$RUNNER_TEMP"/dist/*.deb || true
+      - name: Install, exercise, and purge the packages
+        run: |
+          apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb
+          id ckgit
+          test -x /usr/bin/ck-git-hostingd
+          test -x /usr/lib/ck-git-hosting/hooks/post-receive
+          test -f /usr/lib/systemd/system/ck-git-hosting.service
+          test -f /etc/ck-git-hosting/authorized_keys
+          ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/device"
+          ckgit-admin authorized-key --client-id ci-device --public-key "$RUNNER_TEMP/device.pub"
+          ckgit-admin create smoke --repo-root /srv/ck-git-hosting/repos --hook-directory /usr/lib/ck-git-hosting/hooks
+          test -d /srv/ck-git-hosting/repos/smoke.git
+          ckgit --help
+          apt-get remove -y ck-git-hosting ckgit
+          test -f /etc/ck-git-hosting/server.ini
+          test -d /srv/ck-git-hosting/repos/smoke.git
+          apt-get purge -y ck-git-hosting
+          test ! -e /etc/ck-git-hosting
+          test -d /srv/ck-git-hosting/repos/smoke.git
