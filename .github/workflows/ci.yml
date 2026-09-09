@@ -73,9 +73,14 @@ jobs:
         run: |
           # The suite exercises real permission failures (e.g. an unwritable
           # state file); root ignores permission bits, so it must run as an
-          # ordinary user here just as the installed service does.
+          # ordinary user here just as the installed service does. Grant
+          # access narrowly: a safe.directory exception (not chown) for the
+          # checkout, since later steps still need it as root, and the
+          # sticky/world-writable bit only on $RUNNER_TEMP itself (not
+          # recursive) so the runner's own files there keep their ownership.
           useradd -m ci
-          chown -R ci:ci "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chmod 1777 "$RUNNER_TEMP"
           su ci -c "make BUILD_ROOT=\"$RUNNER_TEMP\" BUILD_DIR=\"$RUNNER_TEMP/build\" all check"
       - name: Build packages
         run: |
