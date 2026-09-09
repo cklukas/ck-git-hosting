@@ -26,6 +26,20 @@ per project on each device and holds a per-configuration lock so scheduled and
 manual uploads never overlap. Legacy checkout reports can be migrated into
 that inventory without exposing full paths to the server.
 
+## Install
+
+macOS, with Homebrew:
+
+```text
+brew tap cklukas/ck-git-hosting https://github.com/cklukas/ck-git-hosting
+brew install --HEAD ckgit
+```
+
+`brew install ckgit` (without `--HEAD`) and the Debian/tarball packages
+become available once a release is tagged; see
+[docs/operations/02-packages-and-releases.md](docs/operations/02-packages-and-releases.md)
+for every install path, including the server.
+
 ## Build and test
 
 The source tree is never used for build products.  Choose a new directory under

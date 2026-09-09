@@ -98,17 +98,16 @@ This repository is also a Homebrew tap: `Formula/ckgit.rb` builds the client
 from the released source archive with a verified checksum.
 
 ```text
-brew tap OWNER/ck-git-hosting https://github.com/OWNER/ck-git-hosting
+brew tap cklukas/ck-git-hosting https://github.com/cklukas/ck-git-hosting
 brew install ckgit
 brew install --HEAD ckgit
 ```
 
-Replace `OWNER` with the GitHub account that hosts the repository. After
-every release the workflow's final job rewrites the formula's `url`,
-`sha256`, `homepage`, and `head` for the real repository and commits the
-change to the default branch, so `brew upgrade ckgit` follows releases. Until
-the first release only `--HEAD` installs succeed, because the placeholder
-checksum cannot match.
+After every release the workflow's final job rewrites the formula's `url`,
+`sha256`, `homepage`, and `head` for that release and commits the change to
+the default branch, so `brew upgrade ckgit` follows releases. Until the first
+release only `--HEAD` installs succeed, because the placeholder checksum
+cannot match.
 
 Without Homebrew, unpack `ckgit-V-macos-arm64.tar.gz` or the `x86_64`
 archive and copy `bin/ckgit` to a directory on `PATH`.

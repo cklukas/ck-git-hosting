@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: MIT
 #
 # Homebrew formula for the ckgit client.  This repository doubles as a tap:
-#   brew tap OWNER/ck-git-hosting https://github.com/OWNER/ck-git-hosting
+#   brew tap cklukas/ck-git-hosting https://github.com/cklukas/ck-git-hosting
 #   brew install ckgit            # released source archive, checksum verified
 #   brew install --HEAD ckgit     # current master branch
 # The release workflow rewrites url, sha256, homepage, and head after every
-# tagged release, so OWNER below is replaced by the real repository.
+# tagged release to keep them pointed at that release's real source archive.
 class Ckgit < Formula
   desc "Client for a private, local-first ck-git-hosting Git server"
-  homepage "https://github.com/OWNER/ck-git-hosting"
-  url "https://github.com/OWNER/ck-git-hosting/releases/download/v0.1.0/ck-git-hosting-0.1.0-source.tar.gz"
+  homepage "https://github.com/cklukas/ck-git-hosting"
+  url "https://github.com/cklukas/ck-git-hosting/releases/download/v0.1.0/ck-git-hosting-0.1.0-source.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
-  head "https://github.com/OWNER/ck-git-hosting.git", branch: "master"
+  head "https://github.com/cklukas/ck-git-hosting.git", branch: "master"
 
   def install
     # Build products never land in the source tree by default; the formula
