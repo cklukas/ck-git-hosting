@@ -71,7 +71,12 @@ jobs:
           apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates lintian openssh-client
       - name: Build and test
         run: |
-          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+          # The suite exercises real permission failures (e.g. an unwritable
+          # state file); root ignores permission bits, so it must run as an
+          # ordinary user here just as the installed service does.
+          useradd -m ci
+          chown -R ci:ci "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          su ci -c "make BUILD_ROOT=\"$RUNNER_TEMP\" BUILD_DIR=\"$RUNNER_TEMP/build\" all check"
       - name: Build packages
         run: |
           sh packaging/build-deb.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist"

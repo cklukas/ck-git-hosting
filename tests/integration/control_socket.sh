@@ -2,7 +2,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 
-set -eux
+set -eu
 
 # The Makefile exports the approved build root; on the development Mac that is
 # /Volumes/PRO-BLADE/tmp, in CI it is the runner's temporary directory.
