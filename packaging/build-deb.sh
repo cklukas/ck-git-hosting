@@ -20,7 +20,8 @@ Usage: build-deb.sh --build-dir DIR --output DIR [--version V] [--arch ARCH] [--
 
   --build-dir DIR  build directory containing bin/ and hooks/ (make all)
   --output DIR     where the .deb files (or staged roots) are written
-  --version V      package version; defaults to the VERSION file
+  --version V      package version; defaults to the VERSION file plus a
+                   +YYYYMMDD.HHMM.<commit> build stamp so every rebuild upgrades
   --arch ARCH      Debian architecture; defaults to dpkg --print-architecture
   --stage-only     write DIR/ck-git-hosting and DIR/ckgit package roots only
 Environment: CKGIT_MAINTAINER overrides the Maintainer field.
@@ -59,10 +60,19 @@ source_root=$(cd "$script_dir/.." && pwd)
 if [ -z "$version" ]; then
   [ -f "$source_root/VERSION" ] || fail "missing VERSION file"
   version=$(tr -d '[:space:]' <"$source_root/VERSION")
+  # A development build must sort above the plain release version and above
+  # any earlier development build, otherwise dpkg treats a rebuilt package
+  # with unchanged sources as already installed.  Releases pass --version.
+  stamp=$(date -u +%Y%m%d.%H%M)
+  commit=$(git -C "$source_root" rev-parse --short HEAD 2>/dev/null || echo nogit)
+  version="$version+$stamp.$commit"
 fi
 case "$version" in
   [0-9]*.[0-9]*.[0-9]*) ;;
   *) fail "version must look like MAJOR.MINOR.PATCH: $version" ;;
+esac
+case "$version" in
+  *[!A-Za-z0-9.+~]*) fail "version may contain only letters, digits, '.', '+', and '~': $version" ;;
 esac
 if [ -z "$arch" ]; then
   command -v dpkg >/dev/null 2>&1 || fail "--arch is required when dpkg is unavailable"

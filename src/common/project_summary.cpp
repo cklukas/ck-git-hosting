@@ -4,6 +4,8 @@
 #include "ckgit/project_summary.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <chrono>
 #include <stdexcept>
 
 #include "ckgit/process.hpp"
@@ -45,7 +47,8 @@ std::vector<ProjectSummary> inspectHostedProjects(
         const std::string name = filename.substr(0, filename.size() - suffix.size());
         if (isValidProjectName(name)) {
           const auto refs = runProcess({"git", "--git-dir", entry.path().string(), "for-each-ref",
-                                        "--format=%(refname)", "refs/heads", "refs/tags"});
+                                        "--format=%(refname)", "refs/heads", "refs/tags"},
+                                       std::chrono::seconds(30), 8 * 1024 * 1024);
           if (refs.exit_code == 0 && !refs.timed_out && !refs.output_truncated) {
             const auto head = runProcess(
                 {"git", "--git-dir", entry.path().string(), "symbolic-ref", "--quiet", "--short", "HEAD"});
@@ -65,6 +68,16 @@ std::vector<ProjectSummary> inspectHostedProjects(
                 break;
               }
               start = newline + 1;
+            }
+            const auto newest = runProcess({"git", "--git-dir", entry.path().string(), "log", "-1", "--all",
+                                            "--format=%ct"}, std::chrono::seconds(30));
+            if (newest.exit_code == 0 && !newest.timed_out && !newest.output_truncated) {
+              const std::string text = trimNewlines(newest.output);
+              std::uint64_t epoch = 0;
+              const auto [end, parse_error] = std::from_chars(text.data(), text.data() + text.size(), epoch);
+              if (!text.empty() && parse_error == std::errc{} && end == text.data() + text.size()) {
+                summary.last_commit_epoch_seconds = epoch;
+              }
             }
             summary.valid_head = false;
             // A symbolic HEAD is valid only when its branch actually exists.

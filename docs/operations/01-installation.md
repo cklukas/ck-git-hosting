@@ -64,7 +64,7 @@ sudo ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
 
 `server.ini` is strict: `schema_version=1`, absolute `repo_root` and
 `control_socket`, optional absolute `state_root` and `hook_directory`, and an
-optional `http_port`. Unknown keys, relative paths, and duplicates are
+optional `http_port` and `ssh_clone_target=user@host`. Unknown keys, relative paths, and duplicates are
 rejected, and the daemon refuses to combine `--config` with individual path
 options.
 
@@ -112,6 +112,57 @@ ssh -i ~/.ssh/ckgit ckgit@server
 The first command prints `ok`; the second must be denied because no shell is
 allowed. Then configure the client with `server=ckgit@server` and the same
 `client_id`.
+
+## Open the dashboard
+
+On a new workstation, `ckgit setup` guides configuration of the paired Git
+account and a separate ordinary SSH login for the dashboard. The client ID
+must match the ID used when authorizing that device's public key. For example:
+
+```text
+ckgit setup --server ckgit@rpi4 --client-id laptop --web-host rpi4 --yes
+ckgit doctor
+ckgit projects
+mkdir -p ~/projects
+ckgit clone --all --into ~/projects
+```
+
+Setup does not create or authorize keys. Doctor checks the restricted SSH
+control connection and a real HTTP request through a temporary dashboard
+tunnel, reporting connection failures separately. `setup --overwrite` is
+required to edit an existing configuration; add `--dry-run` to preview it.
+
+The dashboard listens on the server's loopback address only. From a paired
+workstation with a client configuration in place, one command opens it:
+
+```text
+ckgit web
+```
+
+It tunnels through your own administrator SSH login on the server host
+(`web_host` in `client.ini`, falling back to the host part of `server=`, or an
+explicit `ckgit web admin@host`),
+prints `http://127.0.0.1:8420/`, opens the browser, and closes the tunnel when
+you press Ctrl+C. Pass `--no-open` to only print the URL, `--port` to choose
+the local port, and configure `web_port` or pass `--remote-port` when
+`http_port` in `server.ini` is not 8420. The equivalent manual command is
+`ssh -N -L 8420:127.0.0.1:8420 admin@host`.
+
+The overview shows a brief **Clone this project** section. To display the normal
+Git command beside `ckgit clone PROJECT`, configure the SSH destination that
+visitors use in `/etc/ck-git-hosting/server.ini`, for example:
+
+```ini
+ssh_clone_target=ckgit@rpi4
+```
+
+Restart the service after changing this value. The example produces
+`git clone ckgit@rpi4:PROJECT.git`; visitors need their SSH access and the `rpi4`
+alias configured already. A DNS hostname or IPv4 address also works. Use an SSH
+alias for a custom port or IPv6 address. The daemon's equivalent explicit option
+is `--ssh-clone-target ckgit@rpi4`. The setting is optional: without it, the
+overview shows setup guidance instead of guessing a Git URL from the browser's
+HTTP address or a loopback tunnel.
 
 ## Upgrade
 

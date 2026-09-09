@@ -3,6 +3,8 @@
 
 #include "ckgit/ref_status.hpp"
 
+#include "ckgit/control_rpc.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
@@ -45,7 +47,7 @@ std::map<std::string, std::string> asRefMap(const std::vector<RefTip>& refs,
 }  // namespace
 
 std::vector<RefTip> parseRefsControlResponse(std::string_view response) {
-  if (response.empty() || response.size() > 4096 || response.back() != '\n' ||
+  if (response.empty() || response.size() > kMaximumControlResponseBytes || response.back() != '\n' ||
       response.find('\r') != std::string_view::npos || response.find('\0') != std::string_view::npos) {
     throw std::invalid_argument("invalid refs response framing");
   }
@@ -58,7 +60,8 @@ std::vector<RefTip> parseRefsControlResponse(std::string_view response) {
   std::size_t expected = 0;
   const auto [count_end, count_error] = std::from_chars(
       first_line.data() + prefix.size(), first_line.data() + first_line.size(), expected);
-  if (count_error != std::errc{} || count_end != first_line.data() + first_line.size() || expected > 256) {
+  if (count_error != std::errc{} || count_end != first_line.data() + first_line.size() ||
+      expected > kMaximumControlRefs) {
     throw std::invalid_argument("refs response has an invalid count");
   }
 

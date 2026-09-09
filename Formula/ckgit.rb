@@ -4,7 +4,7 @@
 # Homebrew formula for the ckgit client.  This repository doubles as a tap:
 #   brew tap OWNER/ck-git-hosting https://github.com/OWNER/ck-git-hosting
 #   brew install ckgit            # released source archive, checksum verified
-#   brew install --HEAD ckgit     # current main branch
+#   brew install --HEAD ckgit     # current master branch
 # The release workflow rewrites url, sha256, homepage, and head after every
 # tagged release, so OWNER below is replaced by the real repository.
 class Ckgit < Formula
@@ -13,7 +13,7 @@ class Ckgit < Formula
   url "https://github.com/OWNER/ck-git-hosting/releases/download/v0.1.0/ck-git-hosting-0.1.0-source.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "MIT"
-  head "https://github.com/OWNER/ck-git-hosting.git", branch: "main"
+  head "https://github.com/OWNER/ck-git-hosting.git", branch: "master"
 
   def install
     # Build products never land in the source tree by default; the formula

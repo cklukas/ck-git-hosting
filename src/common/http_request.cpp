@@ -3,6 +3,8 @@
 
 #include "ckgit/http_request.hpp"
 
+#include "ckgit/http_router.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
@@ -11,9 +13,8 @@ namespace ckgit {
 namespace {
 
 constexpr std::size_t kMaximumRequestBytes = 16 * 1024;
-constexpr std::size_t kMaximumRequestLineBytes = 2048;
+constexpr std::size_t kMaximumRequestLineBytes = kMaximumRouteBytes + 32;
 constexpr std::size_t kMaximumHeaderCount = 32;
-constexpr std::size_t kMaximumTargetBytes = 256;
 
 bool isTokenCharacter(unsigned char character) {
   return (character >= '0' && character <= '9') ||
@@ -54,11 +55,12 @@ std::string_view trimOptionalWhitespace(std::string_view value) {
 }
 
 bool isSafeTarget(std::string_view target) {
-  return !target.empty() && target.size() <= kMaximumTargetBytes && target.front() == '/' &&
+  return !target.empty() && target.size() <= kMaximumRouteBytes && target.front() == '/' &&
          std::all_of(target.begin(), target.end(), [](unsigned char character) {
            return character >= 0x21 && character <= 0x7e && character != '\\' &&
-                  character != '#' && character != '?' && character != '%';
-         });
+                  character != '#' && character != '?';
+         }) && (target.find('%') == std::string_view::npos ||
+                 parseHttpRoute(target).kind != RouteKind::kNotFound);
 }
 
 }  // namespace

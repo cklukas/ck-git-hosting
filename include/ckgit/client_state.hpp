@@ -31,10 +31,12 @@ class SyncLock {
   int descriptor_{-1};
 };
 
-// Canonical checkouts are a client-local decision: one absolute working-tree
-// path per project that automatic sync may use when several local checkouts
-// pair with the same hosted project.  The file is a strict, bounded
-// `project=/absolute/path` list beside client.ini.
+// The private managed inventory records one absolute main-checkout path per
+// project, independent of the path information reported to the server. Publish,
+// clone, register, sync, and explicit selection all share this inventory. The
+// canonical.ini filename and API names remain compatible with earlier explicit
+// selections. The file is a strict, bounded `project=/absolute/path` list beside
+// client.ini, written with user-only permissions; status and previews only read it.
 std::map<std::string, std::filesystem::path> loadCanonicalCheckouts(
     const std::filesystem::path& file);
 
@@ -43,6 +45,10 @@ std::map<std::string, std::filesystem::path> loadCanonicalCheckouts(
 void saveCanonicalCheckout(const std::filesystem::path& file,
                            std::string_view project,
                            const std::filesystem::path& checkout);
+
+// Atomically forgets one local selection, preserving all other projects. Does
+// not inspect or delete the checkout. Returns false when already absent.
+bool forgetCanonicalCheckout(const std::filesystem::path& file, std::string_view project);
 
 // Heuristic used only to propose a canonical checkout: a final path component
 // carrying a mktemp-style random suffix such as `ckmux-v013-gate.Jthl4i` is

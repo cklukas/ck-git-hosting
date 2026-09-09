@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace ckgit {
 
@@ -15,6 +16,9 @@ struct ServerConfig {
   std::optional<std::filesystem::path> state_root;
   std::optional<std::filesystem::path> hook_directory;
   std::optional<unsigned short> http_port;
+  // Public SSH destination used in copyable dashboard clone commands. It is
+  // deliberately independent of the loopback HTTP listener or request Host.
+  std::optional<std::string> ssh_clone_target{};
 };
 
 // Loads the strict, bounded version-1 daemon configuration.  Every path must
@@ -22,6 +26,10 @@ struct ServerConfig {
 // values fail closed.  No path is opened here: the daemon validates each one
 // when it starts serving, and `--check` reports the parsed values only.
 ServerConfig loadServerConfig(const std::filesystem::path& path);
+
+// Accepts a shell-safe user@host destination. SSH aliases can supply ports,
+// IPv6 addresses, keys, and other transport settings in the user's SSH config.
+bool isValidSshCloneTarget(std::string_view value);
 
 // Renders the effective configuration in the same key=value form.
 std::string renderServerConfig(const ServerConfig& config);

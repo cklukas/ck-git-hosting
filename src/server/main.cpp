@@ -4,12 +4,18 @@
 #include <algorithm>
 #include <arpa/inet.h>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cctype>
 #include <cstring>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <fcntl.h>
 #include <iostream>
 #include <optional>
 #include <poll.h>
@@ -29,6 +35,10 @@
 #include <sys/ucred.h>
 #endif
 
+#include "ckgit/cli_help.hpp"
+#include "ckgit/control_rpc.hpp"
+#include "ckgit/dashboard.hpp"
+#include "ckgit/project_index.hpp"
 #include "ckgit/repository_store.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/git_repository.hpp"
@@ -42,8 +52,13 @@
 namespace {
 
 constexpr std::size_t kMaximumRequestBytes = 768;
-constexpr std::size_t kMaximumResponseBytes = 4096;
-volatile std::sig_atomic_t stop_requested = 0;
+constexpr std::size_t kMaximumResponseBytes = ckgit::kMaximumControlResponseBytes;
+// A repository with many tags produces far more than the process helper's
+// default capture; refs are listed from a bounded but generous buffer.
+constexpr std::size_t kRefListingBytes = 8 * 1024 * 1024;
+// A lock-free atomic is safe in the signal handler and shared by all workers.
+static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<bool> stop_requested{false};
 
 struct Options {
   std::optional<std::filesystem::path> config_file;
@@ -53,6 +68,7 @@ struct Options {
   std::optional<std::filesystem::path> state_root;
   std::optional<std::filesystem::path> hook_directory;
   std::optional<unsigned short> http_port;
+  std::optional<std::string> ssh_clone_target;
 };
 
 struct ControlRequest {
@@ -63,7 +79,7 @@ struct ControlRequest {
 };
 
 void requestStop(int) {
-  stop_requested = 1;
+  stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void installSignalHandlers() {
@@ -77,11 +93,12 @@ void installSignalHandlers() {
 }
 
 void usage(std::ostream& output) {
-  output << "Usage: ck-git-hostingd --repo-root ROOT --control-socket PATH [--state-root ROOT] [--hook-directory PATH] [--http-port PORT] [--check]\n"
+  output << "Usage: ck-git-hostingd --repo-root ROOT --control-socket PATH [--state-root ROOT] [--hook-directory PATH] [--http-port PORT] [--ssh-clone-target USER@HOST] [--check]\n"
          << "       ck-git-hostingd --config FILE [--check]\n"
          << "\n--config reads the strict server.ini instead of individual path options.\n"
          << "--check prints the effective configuration without opening a socket or path.\n"
-         << "--http-port binds the read-only dashboard to 127.0.0.1.\n";
+         << "--http-port binds the read-only dashboard to 127.0.0.1.\n"
+         << "--ssh-clone-target advertises the SSH destination for dashboard clone commands.\n";
 }
 
 bool parseOptions(int argc, char* argv[], Options* options) {
@@ -91,7 +108,7 @@ bool parseOptions(int argc, char* argv[], Options* options) {
     if (argument == "--check") {
       options->check_only = true;
     } else if ((argument == "--repo-root" || argument == "--control-socket" || argument == "--state-root" ||
-                argument == "--hook-directory" || argument == "--http-port" || argument == "--config") &&
+                argument == "--hook-directory" || argument == "--http-port" || argument == "--ssh-clone-target" || argument == "--config") &&
                index + 1 < argc) {
       const std::string value = argv[++index];
       if (argument == "--config") {
@@ -110,6 +127,9 @@ bool parseOptions(int argc, char* argv[], Options* options) {
         options->state_root.emplace(value);
       } else if (argument == "--hook-directory") {
         options->hook_directory.emplace(value);
+      } else if (argument == "--ssh-clone-target") {
+        if (!ckgit::isValidSshCloneTarget(value)) return false;
+        options->ssh_clone_target = value;
       } else {
         unsigned int port = 0;
         const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), port);
@@ -140,11 +160,12 @@ void applyServerConfig(Options* options) {
   options->state_root = config.state_root;
   options->hook_directory = config.hook_directory;
   options->http_port = config.http_port;
+  options->ssh_clone_target = config.ssh_clone_target;
 }
 
 ckgit::ServerConfig effectiveConfig(const Options& options) {
   return ckgit::ServerConfig{options.repo_root, options.control_socket, options.state_root,
-                             options.hook_directory, options.http_port};
+                             options.hook_directory, options.http_port, options.ssh_clone_target};
 }
 
 void sendAll(int descriptor, std::string_view response) {
@@ -163,13 +184,13 @@ void sendError(int descriptor, std::string_view code, std::string_view message) 
   sendAll(descriptor, "error " + std::string(code) + " " + std::string(message) + "\n");
 }
 
-void recordStateEvent(const std::optional<std::filesystem::path>& state_root,
+void recordStateEvent(const std::filesystem::path& repository_root, const std::optional<std::filesystem::path>& state_root,
                       std::string_view kind, std::string_view project, std::string_view client_id) {
   if (!state_root.has_value()) {
     return;
   }
   try {
-    ckgit::appendStateEvent(*state_root, kind, project, client_id);
+    static_cast<void>(ckgit::appendHostedStateEvent(repository_root, *state_root, kind, project, client_id));
   } catch (const std::exception&) {
     // Events are observability data: a failed append must not undo a successful
     // repository creation or metadata registration.
@@ -229,13 +250,15 @@ std::optional<ControlRequest> parseRequest(std::string_view request) {
   const std::string second_argument = tokens.size() == 4 ? tokens[3] : "";
   const std::string& operation = tokens[1];
   const bool no_arguments = argument.empty() && second_argument.empty();
-  if (!((operation == "ping" || operation == "list-projects") && no_arguments) &&
-      !(operation == "refs" && !argument.empty() && second_argument.empty() &&
+  if (!((operation == "ping" || operation == "list-projects" || operation == "checkouts" ||
+         operation == "version") && no_arguments) &&
+      !((operation == "refs" || operation == "refresh" || operation == "forget-checkout") && !argument.empty() && second_argument.empty() &&
         ckgit::isValidProjectName(argument)) &&
       !(operation == "create" && !argument.empty() && !second_argument.empty() &&
         ckgit::isValidProjectName(argument) && ckgit::isValidBranchName(second_argument)) &&
-      !(operation == "register" && !argument.empty() && !second_argument.empty() &&
-        ckgit::isValidProjectName(argument) && ckgit::isValidCheckoutPathToken(second_argument))) {
+      !((operation == "register" || operation == "replace-checkout") && !argument.empty() &&
+        !second_argument.empty() && ckgit::isValidProjectName(argument) &&
+        ckgit::isValidCheckoutPathToken(second_argument))) {
     return std::nullopt;
   }
   return ControlRequest{tokens[0], operation, argument, second_argument};
@@ -296,7 +319,8 @@ std::string refsResponse(const std::filesystem::path& root, std::string_view pro
   }
   const auto result = ckgit::runProcess(
       {"git", "--git-dir", repository.string(), "for-each-ref",
-       "--format=%(refname)%09%(objectname)", "refs/heads", "refs/tags"});
+       "--format=%(refname)%09%(objectname)", "refs/heads", "refs/tags"},
+      std::chrono::seconds(30), kRefListingBytes);
   if (result.exit_code != 0 || result.timed_out || result.output_truncated) {
     throw std::runtime_error("could not inspect repository refs");
   }
@@ -338,6 +362,20 @@ std::string refsResponse(const std::filesystem::path& root, std::string_view pro
     response += ' ';
     response += ref.object_id;
     response += '\n';
+  }
+  return response;
+}
+
+// The requesting host's own registrations, as `project path-hex` lines.
+std::string checkoutsResponse(const std::filesystem::path& state_root, std::string_view client_id) {
+  const auto checkouts = ckgit::loadClientCheckouts(state_root, client_id);
+  std::string response = "ok " + std::to_string(checkouts.size()) + "\n";
+  for (const auto& checkout : checkouts) {
+    const std::string line = checkout.project_name + " " + ckgit::encodeCheckoutPath(checkout.reported_path) + "\n";
+    if (response.size() + line.size() > kMaximumResponseBytes) {
+      throw std::runtime_error("checkout list exceeds control response limit");
+    }
+    response += line;
   }
   return response;
 }
@@ -439,79 +477,163 @@ int bindHttpSocket(unsigned short port, unsigned short* bound_port) {
     close(descriptor);
     throw std::runtime_error("could not read bound HTTP port");
   }
+  fcntl(descriptor, F_SETFD, FD_CLOEXEC);
   *bound_port = ntohs(bound.sin_port);
   return descriptor;
 }
 
-void sendHttp(int descriptor, int status, std::string_view reason, std::string_view body, bool head_only) {
-  const std::string headers = "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason) + "\r\n"
-      "Content-Type: text/html; charset=utf-8\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\n"
-      "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n"
-      "Cache-Control: no-store\r\nConnection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n";
-  sendAll(descriptor, headers);
-  if (!head_only) {
-    sendAll(descriptor, body);
-  }
-}
+using Deadline = std::chrono::steady_clock::time_point;
 
-void handleHttpClient(int descriptor, const std::filesystem::path& root,
-                      const std::optional<std::filesystem::path>& state_root) {
-  setSocketTimeouts(descriptor);
+bool waitHttp(int descriptor, short events, Deadline deadline) {
+  while (!stop_requested) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    if (remaining.count() <= 0) return false;
+    pollfd ready{descriptor, events, 0};
+    const int result = poll(&ready, 1, static_cast<int>(std::min<std::int64_t>(remaining.count(), 250)));
+    if (result > 0) return (ready.revents & events) != 0;
+    if (result < 0 && errno != EINTR) return false;
+  }
+  return false;
+}
+bool sendHttpBytes(int descriptor, std::string_view bytes, Deadline deadline) {
+  while (!bytes.empty()) {
+    if (!waitHttp(descriptor, POLLOUT, deadline)) return false;
+    const auto sent = send(descriptor, bytes.data(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (sent > 0) bytes.remove_prefix(static_cast<std::size_t>(sent));
+    else if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) continue;
+    else return false;
+  }
+  return true;
+}
+void sendHttp(int descriptor, const ckgit::DashboardResponse& response, bool head_only, Deadline deadline) {
+  const auto reason = response.status == 200 ? "OK" : response.status == 302 ? "Found" : response.status == 400 ? "Bad Request" :
+      response.status == 404 ? "Not Found" : response.status == 413 ? "Content Too Large" : "Service Unavailable";
+  std::string headers = "HTTP/1.1 " + std::to_string(response.status) + " " + reason + "\r\nContent-Type: " +
+      response.content_type + "\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'";
+  if (response.raw) headers += "; sandbox";
+  else if (response.body.find("<img ") != std::string::npos) headers += "; img-src 'self'";
+  headers += "\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n";
+  if (response.raw) {
+    std::string filename;
+    for (const unsigned char c : response.filename) {
+      if (filename.size() == 150) break;
+      filename += (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ? c : '_';
+    }
+    if (filename.empty()) filename = "download";
+    headers += "Content-Disposition: attachment; filename=\"" + filename + "\"\r\nCache-Control: public, max-age=31536000, immutable\r\n";
+  } else headers += "Cache-Control: no-store\r\n";
+  // Redirects are generated by the dashboard from canonical local routes;
+  // validate again at the header boundary to exclude external URLs and CRLF.
+  if (response.status == 302 && !response.raw && !response.location.empty() &&
+      ckgit::parseHttpRoute(response.location).kind != ckgit::RouteKind::kNotFound) {
+    headers += "Location: " + response.location + "\r\n";
+  }
+  headers += "Connection: close\r\nContent-Length: " + std::to_string(response.body.size()) + "\r\n\r\n";
+  if (sendHttpBytes(descriptor, headers, deadline) && !head_only) sendHttpBytes(descriptor, response.body, deadline);
+}
+void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::ProjectIndex& index, Deadline deadline,
+                      const std::string& ssh_clone_target) {
   std::string request;
   std::array<char, 1024> buffer{};
+  const auto header_deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::seconds(5));
   while (request.size() < 16384 && request.find("\r\n\r\n") == std::string::npos) {
-    const ssize_t received = recv(descriptor, buffer.data(), buffer.size(), 0);
-    if (received <= 0) {
-      return;
-    }
+    if (!waitHttp(descriptor, POLLIN, header_deadline)) return;
+    const ssize_t received = recv(descriptor, buffer.data(), buffer.size(), MSG_DONTWAIT);
+    if (received < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    if (received <= 0) return;
     request.append(buffer.data(), static_cast<std::size_t>(received));
   }
   const auto parsed = ckgit::parseReadOnlyHttpRequest(request);
-  if (!parsed.has_value()) {
-    sendHttp(descriptor, 400, "Bad Request", "<!doctype html><title>Bad Request</title>", false);
-    return;
+  ckgit::DashboardResponse response;
+  if (!parsed) {
+    response.status = 400; response.body = ckgit::pageLayout("Bad Request", "<h1>Bad Request</h1>");
+    sendHttp(descriptor, response, false, deadline); return;
   }
   const bool is_head = parsed->method == ckgit::HttpMethod::kHead;
-  const std::string_view target = parsed->target;
+  ckgit::Route route;
+  std::optional<ckgit::ProjectSummary> project;
   try {
-    const auto projects = ckgit::inspectHostedProjects(root, state_root);
-    if (target == "/") {
-      sendHttp(descriptor, 200, "OK", ckgit::renderProjectTable(projects), is_head);
-      return;
-    }
-    constexpr std::string_view project_prefix{"/project/"};
-    if (target.rfind(project_prefix, 0) == 0) {
-      const std::string name(target.substr(project_prefix.size()));
-      if (ckgit::isValidProjectName(name)) {
-        const auto project = std::find_if(projects.begin(), projects.end(), [&](const ckgit::ProjectSummary& item) {
-          return item.name == name;
-        });
-        if (project != projects.end()) {
-          sendHttp(descriptor, 200, "OK", ckgit::renderProjectDetail(*project), is_head);
-          return;
-        }
+    route = ckgit::parseHttpRoute(parsed->target);
+    if (route.kind == ckgit::RouteKind::kTable) {
+      auto projects = index.tableSnapshot();
+      if (route.sort_by_name) std::sort(projects.begin(), projects.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+      response.body = ckgit::renderProjectTable(projects, route.sort_by_name);
+    } else {
+      project = index.find(route.project);
+      if (route.kind == ckgit::RouteKind::kNotFound || !project) throw ckgit::WebError(404, "Page was not found.");
+      project->ssh_clone_target = ssh_clone_target;
+      // A hand-deleted repository is hidden immediately, even before the sweep.
+      const auto repository = ckgit::bareRepositoryPath(root, route.project);
+      const auto status = std::filesystem::symlink_status(repository);
+      if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status)) throw ckgit::WebError(404, "Repository was not found.");
+      response = ckgit::renderDashboard(route, *project, repository, deadline);
+      if (response.status == 302 && (response.raw || response.location.empty() ||
+          ckgit::parseHttpRoute(response.location).kind == ckgit::RouteKind::kNotFound)) {
+        throw ckgit::WebError(503, "The destination could not be prepared. Try again shortly.");
       }
     }
-    sendHttp(descriptor, 404, "Not Found", "<!doctype html><title>Not Found</title>", is_head);
+  } catch (const ckgit::WebError& error) {
+    if (project.has_value()) {
+      response = ckgit::renderDashboardError(route, *project, error.status, error.what());
+    } else {
+      response.status = error.status;
+      response.body = ckgit::pageLayout("Repository view unavailable", "<h1>Repository view unavailable</h1><p>" + ckgit::htmlEscape(error.what()) + "</p>");
+    }
   } catch (const std::exception&) {
-    sendHttp(descriptor, 500, "Internal Server Error", "<!doctype html><title>Server Error</title>", is_head);
+    const std::string message = "Repository data exceeded a limit or could not be read. Try again shortly.";
+    if (project.has_value()) {
+      response = ckgit::renderDashboardError(route, *project, 503, message);
+    } else {
+      response.status = 503;
+      response.body = ckgit::pageLayout("View unavailable", "<h1>View unavailable</h1><p>" + message + "</p>");
+    }
   }
+  sendHttp(descriptor, response, is_head, deadline);
 }
 
-void serveHttp(int listener, const std::filesystem::path& root,
-               const std::optional<std::filesystem::path>& state_root) {
+void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,
+                const std::string& ssh_clone_target) {
+  constexpr std::size_t kHttpWorkerCount = 4;
+  constexpr std::size_t kMaximumQueuedHttpClients = 12;
+  struct Client { int descriptor; Deadline deadline; };
+  std::deque<Client> queue;
+  std::mutex mutex;
+  std::condition_variable ready;
+  bool stopping = false;
+  std::vector<std::thread> workers;
+  for (std::size_t i = 0; i < kHttpWorkerCount; ++i) workers.emplace_back([&] {
+    while (true) {
+      Client client;
+      {
+        std::unique_lock lock(mutex);
+        ready.wait(lock, [&] { return stopping || !queue.empty(); });
+        if (stopping) return;
+        client = queue.front(); queue.pop_front();
+      }
+      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target); } catch (...) {}
+      close(client.descriptor);
+    }
+  });
   while (!stop_requested) {
-    pollfd ready{listener, POLLIN, 0};
-    const int result = poll(&ready, 1, 250);
-    if (result <= 0) {
-      continue;
-    }
+    pollfd pending{listener, POLLIN, 0};
+    if (poll(&pending, 1, 250) <= 0) continue;
     const int client = accept(listener, nullptr, nullptr);
-    if (client >= 0) {
-      handleHttpClient(client, root, state_root);
-      close(client);
+    if (client < 0) continue;
+    fcntl(client, F_SETFD, FD_CLOEXEC);
+    {
+      std::lock_guard lock(mutex);
+      if (queue.size() >= kMaximumQueuedHttpClients) { close(client); continue; }
+      queue.push_back({client, std::chrono::steady_clock::now() + std::chrono::seconds(30)});
     }
+    ready.notify_one();
   }
+  {
+    std::lock_guard lock(mutex); stopping = true;
+    for (const auto& client : queue) close(client.descriptor);
+    queue.clear();
+  }
+  ready.notify_all();
+  for (auto& worker : workers) worker.join();
   close(listener);
 }
 
@@ -520,16 +642,21 @@ int serve(const Options& options) {
   const std::optional<std::filesystem::path> state_root = options.state_root.has_value()
       ? std::optional<std::filesystem::path>(ckgit::validatedMetadataRoot(*options.state_root))
       : std::nullopt;
+  ckgit::ProjectIndex index(repository_root, state_root);
+  index.start();
   const int listener = bindSocket(options.control_socket);
+  fcntl(listener, F_SETFD, FD_CLOEXEC);
   unsigned short bound_http_port = 0;
   const int http_listener = options.http_port.has_value() ? bindHttpSocket(*options.http_port, &bound_http_port) : -1;
   std::cout << "ck-git-hostingd: control socket ready\n" << std::flush;
   std::thread http_thread;
   if (http_listener >= 0) {
     std::cout << "ck-git-hostingd: loopback HTTP ready on " << bound_http_port << "\n" << std::flush;
-    http_thread = std::thread(serveHttp, http_listener, repository_root, state_root);
+    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""));
   }
   while (!stop_requested) {
+    pollfd ready{listener, POLLIN, 0};
+    if (poll(&ready, 1, 250) <= 0) continue;
     const int client = accept(listener, nullptr, nullptr);
     if (client < 0) {
       if (errno == EINTR) {
@@ -538,6 +665,7 @@ int serve(const Options& options) {
       close(listener);
       throw std::runtime_error("could not accept control connection");
     }
+    fcntl(client, F_SETFD, FD_CLOEXEC);
     try {
       setSocketTimeouts(client);
       if (!sameUserPeer(client)) {
@@ -548,22 +676,49 @@ int serve(const Options& options) {
           sendError(client, "request", "invalid control request");
         } else if (request->operation == "ping") {
           sendAll(client, "ok\n");
+        } else if (request->operation == "version") {
+          sendAll(client, "ok " + ckgit::buildVersion() + "\n");
         } else if (request->operation == "list-projects") {
           sendAll(client, listResponse(repository_root));
+        } else if (request->operation == "refresh") {
+          index.refresh(request->argument);
+          sendAll(client, "ok refreshed\n");
         } else if (request->operation == "create") {
           static_cast<void>(ckgit::createBareRepository(repository_root, request->argument,
                                                          request->second_argument, false,
                                                          options.hook_directory));
-          recordStateEvent(state_root, "project-created", request->argument, request->client_id);
+          recordStateEvent(repository_root, state_root, "project-created", request->argument, request->client_id);
+          index.refresh(request->argument);
+          index.refreshMetadata(request->argument);
           sendAll(client, "ok created\n");
-        } else if (request->operation == "register") {
+        } else if (request->operation == "register" || request->operation == "replace-checkout") {
           if (!state_root.has_value()) {
             throw std::runtime_error("checkout metadata is not configured");
           }
-          ckgit::registerCheckout(*state_root, request->argument, request->client_id,
-                                  request->second_argument);
-          recordStateEvent(state_root, "checkout-registered", request->argument, request->client_id);
+          const auto repository_status = std::filesystem::symlink_status(ckgit::bareRepositoryPath(repository_root, request->argument));
+          if (!std::filesystem::is_directory(repository_status) || std::filesystem::is_symlink(repository_status))
+            throw std::runtime_error("cannot register a missing project");
+          try {
+            ckgit::registerHostedCheckout(repository_root, *state_root, request->argument, request->client_id,
+                                    request->second_argument, request->operation == "replace-checkout");
+          } catch (const ckgit::CheckoutConflict&) {
+            sendError(client, "conflict", "this host already registered a different checkout; use replace-checkout");
+            close(client);
+            continue;
+          }
+          index.refreshMetadata(request->argument);
+          index.refresh(request->argument);
           sendAll(client, "ok registered\n");
+        } else if (request->operation == "forget-checkout") {
+          if (!state_root.has_value()) throw std::runtime_error("checkout metadata is not configured");
+          ckgit::forgetHostedCheckout(repository_root, *state_root, request->argument, request->client_id);
+          index.refreshMetadata(request->argument);
+          sendAll(client, "ok forgotten\n");
+        } else if (request->operation == "checkouts") {
+          if (!state_root.has_value()) {
+            throw std::runtime_error("checkout metadata is not configured");
+          }
+          sendAll(client, checkoutsResponse(*state_root, request->client_id));
         } else {
           sendAll(client, refsResponse(repository_root, request->argument));
         }

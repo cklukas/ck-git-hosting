@@ -3,6 +3,7 @@
 
 #include "ckgit/server_config.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <fstream>
@@ -37,6 +38,20 @@ bool isAbsoluteConfiguredPath(std::string_view value) {
 }
 
 }  // namespace
+
+bool isValidSshCloneTarget(std::string_view value) {
+  const auto at = value.find('@');
+  if (value.empty() || value.size() > 255 || at == std::string_view::npos || at == 0 ||
+      at + 1 == value.size() || value.find('@', at + 1) != std::string_view::npos) return false;
+  const auto safe = [](std::string_view component) {
+    return component.front() != '-' && component.front() != '.' && component.back() != '.' &&
+        std::all_of(component.begin(), component.end(), [](unsigned char byte) {
+          return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+                 (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.';
+        });
+  };
+  return safe(value.substr(0, at)) && safe(value.substr(at + 1));
+}
 
 ServerConfig loadServerConfig(const std::filesystem::path& path) {
   std::error_code status_error;
@@ -99,6 +114,11 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       } else {
         config.hook_directory.emplace(value);
       }
+    } else if (key == "ssh_clone_target") {
+      if (!isValidSshCloneTarget(value)) {
+        configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
+      }
+      config.ssh_clone_target = value;
     } else if (key == "http_port") {
       unsigned int port = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), port);
@@ -132,6 +152,9 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.http_port.has_value()) {
     rendered += "http_port=" + std::to_string(*config.http_port) + "\n";
+  }
+  if (config.ssh_clone_target.has_value()) {
+    rendered += "ssh_clone_target=" + *config.ssh_clone_target + "\n";
   }
   return rendered;
 }

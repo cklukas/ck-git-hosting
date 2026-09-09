@@ -165,15 +165,11 @@ std::map<std::string, std::filesystem::path> loadCanonicalCheckouts(const std::f
   return selections;
 }
 
-void saveCanonicalCheckout(const std::filesystem::path& file, std::string_view project,
-                           const std::filesystem::path& checkout) {
-  if (!isValidProjectName(project) || !isAcceptableCheckoutPath(checkout.string()) || file.filename().empty()) {
-    throw std::invalid_argument("canonical checkout selection needs a valid project and an absolute path");
-  }
-  auto selections = loadCanonicalCheckouts(file);
-  selections[std::string(project)] = checkout;
+namespace {
+void writeCanonicalSelections(const std::filesystem::path& file,
+                              const std::map<std::string, std::filesystem::path>& selections) {
   const std::string content = renderSelections(selections);
-  if (content.size() > kMaximumSelectionBytes) {
+  if (selections.size() > kMaximumSelections || content.size() > kMaximumSelectionBytes) {
     throw std::runtime_error("canonical checkout selection would exceed its size limit");
   }
 
@@ -218,6 +214,26 @@ void saveCanonicalCheckout(const std::filesystem::path& file, std::string_view p
     close(directory_descriptor);
     throw;
   }
+}
+
+}  // namespace
+
+void saveCanonicalCheckout(const std::filesystem::path& file, std::string_view project,
+                           const std::filesystem::path& checkout) {
+  if (!isValidProjectName(project) || !isAcceptableCheckoutPath(checkout.string()) || file.filename().empty())
+    throw std::invalid_argument("canonical checkout selection needs a valid project and an absolute path");
+  auto selections = loadCanonicalCheckouts(file);
+  selections[std::string(project)] = checkout;
+  writeCanonicalSelections(file, selections);
+}
+
+bool forgetCanonicalCheckout(const std::filesystem::path& file, std::string_view project) {
+  if (!isValidProjectName(project) || file.filename().empty())
+    throw std::invalid_argument("forget checkout requires a valid project and selection file");
+  auto selections = loadCanonicalCheckouts(file);
+  if (selections.erase(std::string(project)) == 0) return false;
+  writeCanonicalSelections(file, selections);
+  return true;
 }
 
 bool looksEphemeralCheckoutPath(const std::filesystem::path& path) {

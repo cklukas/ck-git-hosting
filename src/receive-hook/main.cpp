@@ -14,12 +14,16 @@
 #include <unistd.h>
 
 #include "ckgit/metadata_store.hpp"
+#include "ckgit/control_rpc.hpp"
+#include "ckgit/repository_store.hpp"
 #include "ckgit/validation.hpp"
 
 namespace {
 
-constexpr std::size_t kMaximumInputBytes = 32 * 1024;
-constexpr std::size_t kMaximumRefUpdates = 128;
+// One push may update every branch and tag of a large history at once; the
+// bounds only need to exclude absurd input, not a real first publish.
+constexpr std::size_t kMaximumInputBytes = 16 * 1024 * 1024;
+constexpr std::size_t kMaximumRefUpdates = 200000;
 
 bool isObjectId(std::string_view value) {
   return (value.size() == 40 || value.size() == 64) &&
@@ -92,17 +96,40 @@ int run() {
   const char* state_root = std::getenv("CKGIT_STATE_ROOT");
   const char* client_id = std::getenv("CKGIT_CLIENT_ID");
   const char* project_name = std::getenv("CKGIT_PROJECT_NAME");
+  const char* control_socket = std::getenv("CKGIT_CONTROL_SOCKET");
+  const char* repository_root = std::getenv("CKGIT_REPOSITORY_ROOT");
   if (state_root == nullptr && client_id == nullptr && project_name == nullptr) {
     return 0;  // A local administrative push has no authenticated SSH identity to record.
   }
-  if (state_root == nullptr || client_id == nullptr || project_name == nullptr ||
+  if (client_id == nullptr || project_name == nullptr ||
       !ckgit::isValidClientId(client_id) || !ckgit::isValidProjectName(project_name)) {
     throw std::runtime_error("post-receive environment is incomplete or unsafe");
   }
   const std::string updates = readUpdates();
   validateUpdates(updates);
   if (!updates.empty()) {
-    ckgit::appendStateEvent(ckgit::validatedMetadataRoot(state_root), "git-push", project_name, client_id);
+    std::exception_ptr event_failure;
+    if (state_root != nullptr) {
+      try {
+        if (repository_root != nullptr) {
+          ckgit::appendHostedStateEvent(repository_root, ckgit::validatedMetadataRoot(state_root),
+                                         "git-push", project_name, client_id);
+        } else {
+          ckgit::appendStateEvent(ckgit::validatedMetadataRoot(state_root), "git-push", project_name, client_id);
+        }
+      } catch (...) {
+        event_failure = std::current_exception();
+      }
+    }
+    if (control_socket != nullptr) {
+      try {
+        ckgit::forwardControlRpc(control_socket, client_id, "refresh", project_name, {}, nullptr,
+                                 std::chrono::seconds(2));
+      } catch (const std::exception&) {
+        // Index availability must never delay or fail an already accepted push.
+      }
+    }
+    if (event_failure) std::rethrow_exception(event_failure);
   }
   return 0;
 }

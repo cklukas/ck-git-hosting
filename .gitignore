@@ -14,3 +14,6 @@ staging/
 .DS_Store
 *.swp
 *~
+
+# Internal planning notes; not part of the published project.
+docs/planning/

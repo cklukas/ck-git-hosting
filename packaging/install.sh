@@ -138,6 +138,8 @@ write_server_ini() {
     else
       printf '%s\n' '# Uncomment to serve the read-only dashboard on 127.0.0.1 only:' '#http_port=8420'
     fi
+    printf '%s\n' '# Advertise the SSH destination used by visitors, not the loopback dashboard address:' \
+      '#ssh_clone_target=ckgit@git-server'
   } >"$server_ini.new"
   mv "$server_ini.new" "$server_ini"
   chmod 0640 "$server_ini"

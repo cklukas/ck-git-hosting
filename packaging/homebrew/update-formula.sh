@@ -36,7 +36,7 @@ sed \
   -e "s|^  homepage \".*\"$|  homepage \"https://github.com/$repository\"|" \
   -e "s|^  url \".*\"$|  url \"https://github.com/$repository/releases/download/v$version/ck-git-hosting-$version-source.tar.gz\"|" \
   -e "s|^  sha256 \".*\"$|  sha256 \"$sha256\"|" \
-  -e "s|^  head \".*\", branch: \"main\"$|  head \"https://github.com/$repository.git\", branch: \"main\"|" \
+  -e "s|^  head \".*\", branch: \"master\"$|  head \"https://github.com/$repository.git\", branch: \"master\"|" \
   "$formula" >"$tmp"
 grep -q "^  sha256 \"$sha256\"$" "$tmp" || { rm -f "$tmp"; echo "update-formula.sh: rewrite failed" >&2; exit 1; }
 mv "$tmp" "$formula"

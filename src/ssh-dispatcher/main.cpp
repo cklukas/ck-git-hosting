@@ -75,7 +75,8 @@ void requireExistingRepository(const std::filesystem::path& repository) {
                                  const std::filesystem::path& repository,
                                  std::string_view client_id,
                                  std::string_view project_name,
-                                 const std::optional<std::filesystem::path>& state_root) {
+                                 const std::optional<std::filesystem::path>& state_root,
+                                 const std::filesystem::path& control_socket) {
   const char* program = command.kind == ckgit::SshCommandKind::kUploadPack
                             ? "/usr/bin/git-upload-pack"
                             : "/usr/bin/git-receive-pack";
@@ -84,6 +85,11 @@ void requireExistingRepository(const std::filesystem::path& repository) {
   std::vector<std::string> environment_values{"PATH=/usr/bin:/bin", "LANG=C",
                                                "CKGIT_CLIENT_ID=" + std::string(client_id),
                                                "CKGIT_PROJECT_NAME=" + std::string(project_name)};
+  environment_values.push_back("CKGIT_CONTROL_SOCKET=" + control_socket.string());
+  environment_values.push_back("CKGIT_REPOSITORY_ROOT=" + repository.parent_path().string());
+  if (const char* temporary_root = std::getenv("TMPDIR")) {
+    environment_values.push_back("TMPDIR=" + std::string(temporary_root));
+  }
   if (state_root.has_value()) {
     environment_values.push_back("CKGIT_STATE_ROOT=" + state_root->string());
   }
@@ -142,7 +148,8 @@ int dispatch(const Options& options) {
               << repository.string() << " for " << options.client_id << "\n";
     return 0;
   }
-  execGitService(*command, repository, options.client_id, command->project_name, state_root);
+  execGitService(*command, repository, options.client_id, command->project_name, state_root,
+                  options.control_socket);
 }
 
 }  // namespace

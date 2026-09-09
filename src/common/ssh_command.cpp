@@ -105,7 +105,8 @@ std::optional<std::string> projectFromRepositoryArgument(const Token& token,
     reject("Git service requires one quoted project.git argument", reason);
     return std::nullopt;
   }
-  const std::string project = token.value.substr(0, token.value.size() - suffix.size());
+  std::string project = token.value.substr(0, token.value.size() - suffix.size());
+  if (project.starts_with("./-")) project.erase(0, 2);
   if (!isValidProjectName(project)) {
     reject("repository argument is not a valid project", reason);
     return std::nullopt;
@@ -136,14 +137,16 @@ std::optional<SshCommand> parseSshOriginalCommand(std::string_view command,
   }
   if (tokens->size() == 3 && (*tokens)[0].value == "ckgit-rpc" &&
       (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      ((*tokens)[2].value == "ping" || (*tokens)[2].value == "list-projects")) {
+      ((*tokens)[2].value == "ping" || (*tokens)[2].value == "list-projects" ||
+       (*tokens)[2].value == "checkouts" || (*tokens)[2].value == "version")) {
     return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, {}, {}};
   }
   if (tokens->size() == 4 && (*tokens)[0].value == "ckgit-rpc" &&
       (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      !(*tokens)[3].quoted && (*tokens)[2].value == "refs" &&
+      !(*tokens)[3].quoted && ((*tokens)[2].value == "refs" || (*tokens)[2].value == "refresh" ||
+       (*tokens)[2].value == "forget-checkout") &&
       isValidProjectName((*tokens)[3].value)) {
-    return SshCommand{SshCommandKind::kRpc, {}, "refs", (*tokens)[3].value, {}};
+    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, (*tokens)[3].value, {}};
   }
   if (tokens->size() == 5 && (*tokens)[0].value == "ckgit-rpc" &&
       (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
@@ -154,9 +157,10 @@ std::optional<SshCommand> parseSshOriginalCommand(std::string_view command,
   }
   if (tokens->size() == 5 && (*tokens)[0].value == "ckgit-rpc" &&
       (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      !(*tokens)[3].quoted && !(*tokens)[4].quoted && (*tokens)[2].value == "register" &&
+      !(*tokens)[3].quoted && !(*tokens)[4].quoted &&
+      ((*tokens)[2].value == "register" || (*tokens)[2].value == "replace-checkout") &&
       isValidProjectName((*tokens)[3].value) && isValidCheckoutPathToken((*tokens)[4].value)) {
-    return SshCommand{SshCommandKind::kRpc, {}, "register", (*tokens)[3].value,
+    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, (*tokens)[3].value,
                       (*tokens)[4].value};
   }
   reject("command is not an allowed Git or ckgit-rpc operation", reason);

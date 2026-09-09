@@ -66,6 +66,13 @@ sh packaging/build-deb.sh --build-dir /tmp/ck/build --output /tmp/ck/dist
 test suite uses on a workstation. `CKGIT_MAINTAINER` overrides the
 `Maintainer` field.
 
+Without `--version`, a local build is stamped `0.1.0+YYYYMMDD.HHMM.<commit>`,
+which sorts above the plain release version and above every earlier local
+build, so `apt install ./ck-git-hosting_*.deb` always upgrades. A rebuilt
+package with an unchanged version is "already installed" to apt and needs
+`dpkg -i` or `apt reinstall`. The release workflow passes the tag version
+explicitly, so published packages carry the clean `0.1.0`.
+
 ## Other Linux distributions
 
 Unpack the Linux tarball and run the installer from inside it; the unpacked
