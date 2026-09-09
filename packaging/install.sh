@@ -92,7 +92,7 @@ unit_source="$script_dir/systemd/ck-git-hosting.service"
 [ -f "$unit_source" ] || fail "missing unit template: $unit_source"
 
 as_root=0
-[ "$(id -u)" -eq 0 ] && as_root=1
+[ -z "$staging" ] && [ "$(id -u)" -eq 0 ] && as_root=1
 mode=plan
 
 # act DESCRIPTION COMMAND...: list in plan mode, list and execute in apply mode.
