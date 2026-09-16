@@ -724,6 +724,7 @@ void testBulkPublishDiscovery();
 void testCliHelp();
 void testClientManagement();
 void testSetupConfig();
+void testCiWorkflow();
 int testRecovery();
 
 int main() {
@@ -736,6 +737,7 @@ int main() {
     testCliHelp();
     testClientManagement();
     testSetupConfig();
+    testCiWorkflow();
     failures += testRecovery();
     testValidation();
     testRemoteUrls();
