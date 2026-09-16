@@ -14,13 +14,21 @@ case "${TMPDIR:-}" in
   *) echo "TMPDIR must be beneath $test_root_parent" >&2; exit 1 ;;
 esac
 test_root=$(mktemp -d "$test_root_parent/ckci.XXXXXX")
-cleanup() { rm -rf "$test_root"; }
+server_pid=''
+cleanup() {
+  if [ -n "$server_pid" ]; then
+    kill -TERM "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  rm -rf "$test_root"
+}
 trap cleanup EXIT HUP INT TERM
 fail() { echo "$1" >&2; exit 1; }
 
 : "${CKGIT_ADMIN:?CKGIT_ADMIN must point at ckgit-admin}"
 : "${CK_CI_RUNNER:?CK_CI_RUNNER must point at ck-ci-runnerd}"
 : "${CKGIT_POST_RECEIVE:?CKGIT_POST_RECEIVE must point at the post-receive hook}"
+: "${CKGIT_HOSTINGD:?CKGIT_HOSTINGD must point at ck-git-hostingd}"
 
 repos="$test_root/repos"
 state="$test_root/state"
@@ -74,5 +82,35 @@ grep -rq "integ-ci-ok" "$state"/ci/runs/demo/*/steps/ || fail "the step output w
 
 # The spool is drained (the claimed job moved to working, none left pending).
 [ -z "$(ls -A "$state/ci/spool" 2>/dev/null || true)" ] || fail "the spool was not drained"
+
+run_id=$(basename "$(dirname "$run_ini")")
+
+# The read-only dashboard shows the run and serves its step log. The daemon
+# started after the run already has it indexed on start-up.
+"$CKGIT_HOSTINGD" --repo-root "$repos" --state-root "$state" \
+  --control-socket "$test_root/control.sock" --http-port 0 \
+  > "$test_root/server.log" 2>&1 &
+server_pid=$!
+attempt=0; port=''
+while [ -z "$port" ]; do
+  kill -0 "$server_pid" 2>/dev/null || { cat "$test_root/server.log" >&2; fail "daemon exited"; }
+  port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail "daemon listener never became ready"
+  [ -n "$port" ] || sleep .1
+done
+base="http://127.0.0.1:$port"
+
+attempt=0
+while :; do
+  curl --path-as-is --max-time 4 --silent -o "$test_root/ci.html" "$base/project/demo/ci" || fail "curl ci page"
+  grep -q "success" "$test_root/ci.html" && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || { cat "$test_root/ci.html"; fail "CI page never showed the run"; }
+  sleep .1
+done
+grep -q "/project/demo/ci/$run_id/0.log" "$test_root/ci.html" || fail "CI page has no step log link"
+
+curl --path-as-is --max-time 4 --silent -o "$test_root/ci-log.html" "$base/project/demo/ci/$run_id/0.log" \
+  || fail "curl ci log"
+grep -q "integ-ci-ok" "$test_root/ci-log.html" || { cat "$test_root/ci-log.html"; fail "log view missing step output"; }
 
 echo "ci_runner integration OK"

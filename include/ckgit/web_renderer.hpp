@@ -25,6 +25,9 @@ struct PageContext {
 std::string htmlEscape(std::string_view value);
 std::string renderProjectTable(const std::vector<ProjectSummary>& projects, bool sort_by_name = false);
 std::string renderProjectDetail(const ProjectSummary& project, const PageContext* context = nullptr);
+// The read-only CI page body: the project's recent runs with per-step status
+// and links to each step's captured log. Wrapped by pageLayout by the caller.
+std::string renderCiRuns(const ProjectSummary& project);
 
 }  // namespace ckgit
 

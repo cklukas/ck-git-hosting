@@ -16,6 +16,7 @@ namespace ckgit {
 inline constexpr std::size_t kProjectIndexCommitLimit = 200000;
 inline constexpr std::size_t kProjectIndexRefLimit = 500;
 inline constexpr std::size_t kProjectIndexReadmeLimit = 512 * 1024;
+inline constexpr std::size_t kProjectIndexCiLogLimit = 1u << 20;
 
 // In-memory snapshots. Construction only inventories the root and creates
 // placeholders: start() performs the Git work on one background thread. All
@@ -47,6 +48,10 @@ class ProjectIndex {
   // collections. Full snapshots and find() retain every indexed field.
   std::vector<ProjectSummary> tableSnapshot() const;
   std::optional<ProjectSummary> find(std::string_view project_name) const;
+  // Reads one CI step log on demand (bounded), for the read-only log view. It
+  // touches only the private state root and never runs Git.
+  std::optional<std::string> readCiLog(std::string_view project_name, std::string_view run_id,
+                                       std::size_t step_index) const;
 
  private:
   class Impl;

@@ -116,6 +116,13 @@ void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
                                     std::string_view project_name, std::size_t maximum = 16);
 
+// Reads one step's captured log for a run, bounded to `cap` bytes. Returns
+// std::nullopt when the run or its step log is absent. Used by the read-only
+// dashboard to serve a log view.
+std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
+                                        std::string_view project_name, std::string_view run_id,
+                                        std::size_t step_index, std::size_t cap);
+
 // --- per-project opt-in -----------------------------------------------------
 
 // Records whether a project runs CI, at ci/projects/<project>.ini. CI is

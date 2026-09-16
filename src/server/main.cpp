@@ -572,10 +572,21 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       const auto repository = ckgit::bareRepositoryPath(root, route.project);
       const auto status = std::filesystem::symlink_status(repository);
       if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status)) throw ckgit::WebError(404, "Repository was not found.");
-      response = ckgit::renderDashboard(route, *project, repository, deadline);
-      if (response.status == 302 && (response.raw || response.location.empty() ||
-          ckgit::parseHttpRoute(response.location).kind == ckgit::RouteKind::kNotFound)) {
-        throw ckgit::WebError(503, "The destination could not be prepared. Try again shortly.");
+      if (route.kind == ckgit::RouteKind::kCiLog) {
+        const auto log = index.readCiLog(route.project, route.run_id,
+                                         static_cast<std::size_t>(std::max(0, route.step)));
+        if (!log) throw ckgit::WebError(404, "CI log was not found.");
+        ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
+        const std::string body =
+            "<p><a href=\"/project/" + ckgit::htmlEscape(route.project) + "/ci\">Back to CI</a></p>"
+            "<pre class=\"ci-log\">" + ckgit::escapePre(*log) + "</pre>";
+        response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI log", body, &*project, &ci_context);
+      } else {
+        response = ckgit::renderDashboard(route, *project, repository, deadline);
+        if (response.status == 302 && (response.raw || response.location.empty() ||
+            ckgit::parseHttpRoute(response.location).kind == ckgit::RouteKind::kNotFound)) {
+          throw ckgit::WebError(503, "The destination could not be prepared. Try again shortly.");
+        }
       }
     }
   } catch (const ckgit::WebError& error) {

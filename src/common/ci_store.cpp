@@ -494,6 +494,33 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
   return runs;
 }
 
+std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
+                                        std::string_view project_name, std::string_view run_id,
+                                        std::size_t step_index, std::size_t cap) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id)) return std::nullopt;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor runs_fd(openDirAt(ci_fd, "runs", &missing));
+    if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(runs_fd, std::string(project_name), &missing));
+    if (missing) return std::nullopt;
+    Descriptor run_fd(openDirAt(project_fd, std::string(run_id), &missing));
+    if (missing) return std::nullopt;
+    Descriptor steps_fd(openDirAt(run_fd, "steps", &missing));
+    if (missing) return std::nullopt;
+    bool log_missing = false;
+    const std::string content = readCappedAt(steps_fd, std::to_string(step_index) + ".log", cap, &log_missing);
+    if (log_missing) return std::nullopt;
+    return content;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
 void setProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name,
                          bool enabled) {
   if (!isValidProjectName(project_name)) fail("invalid project name for CI opt-in");

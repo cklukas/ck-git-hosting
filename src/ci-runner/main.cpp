@@ -14,6 +14,7 @@
 
 #include "ckgit/ci_runner.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/control_rpc.hpp"
 #include "ckgit/server_config.hpp"
 
 namespace {
@@ -99,6 +100,15 @@ int serve(const std::filesystem::path& config_path, bool once) {
       ckgit::releaseCiJob(state_root, job->job_id);
     } catch (const std::exception& error) {
       std::cerr << "ck-ci-runnerd: could not release job " << job->job_id << ": " << error.what() << "\n";
+    }
+    if (!config.control_socket.empty()) {
+      // Nudge the dashboard to pick up the new run record now, rather than at
+      // the next periodic sweep. Best-effort: the sweep is the fallback.
+      try {
+        ckgit::forwardControlRpc(config.control_socket, "ci-runner", "refresh", job->project_name, {},
+                                 nullptr, std::chrono::seconds(2));
+      } catch (const std::exception&) {
+      }
     }
   }
   return 0;

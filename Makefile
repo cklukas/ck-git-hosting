@@ -47,6 +47,7 @@ COMMON_SOURCES := \
 	src/common/web/repository.cpp \
 	src/common/web/dashboard.cpp \
 	src/common/web/history.cpp \
+	src/common/web/ci.cpp \
 	src/common/metadata_store.cpp \
 	src/common/recovery.cpp \
 	src/common/process.cpp \
@@ -69,7 +70,7 @@ DISPATCHER_SOURCES := src/ssh-dispatcher/main.cpp
 RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin
@@ -140,4 +141,4 @@ test: $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE)
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT=$(CKGIT) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_GIT_SHELL=$(CK_GIT_SHELL) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/incoming.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/recovery.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/dashboard.sh
-	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/ci_runner.sh
+	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/ci_runner.sh

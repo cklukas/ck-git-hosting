@@ -18,7 +18,7 @@ inline constexpr std::size_t kMaximumRoutePathDepth = 32;
 
 enum class RouteKind {
   kNotFound, kTable, kOverview, kCommits, kCommit, kTree, kBlob, kSource, kRaw,
-  kCalendar, kDay, kGraph
+  kCalendar, kDay, kGraph, kCiRuns, kCiLog
 };
 
 struct Route {
@@ -31,6 +31,9 @@ struct Route {
   int month = 0;
   int day = 0;
   bool sort_by_name = false;
+  // CI log route: which run and which step's log to serve.
+  std::string run_id;
+  int step = -1;
 };
 
 bool isObjectId(std::string_view value);

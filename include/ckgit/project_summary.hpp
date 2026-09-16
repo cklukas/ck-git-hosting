@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "ckgit/ci_store.hpp"
 #include "ckgit/metadata_store.hpp"
 
 namespace ckgit {
@@ -42,6 +43,9 @@ struct ProjectSummary {
   std::uint64_t last_commit_epoch_seconds{0};
   std::vector<CheckoutMetadata> checkouts;
   std::vector<StateEvent> events;
+  // Newest-first CI run records (status, timing, per-step results). Loaded on
+  // the metadata-revision channel, since CI status changes without a ref move.
+  std::vector<CiRunRecord> ci_runs{};
   std::optional<CommitSummary> last_commit{};
   std::string head_id{};
   std::uint64_t size_bytes{};

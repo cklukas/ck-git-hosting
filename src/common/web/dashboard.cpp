@@ -130,6 +130,7 @@ std::string sectionForRoute(const Route& route) {
     case RouteKind::kGraph: return "graph";
     case RouteKind::kCalendar: return "calendar";
     case RouteKind::kDay: return "day";
+    case RouteKind::kCiRuns: return "ci";
     default: return "commit";
   }
 }
@@ -141,6 +142,11 @@ std::string latestLink(const ProjectSummary& project, const std::string& ref) {
 DashboardResponse renderDashboard(const Route& route, const ProjectSummary& project,
                                    const std::filesystem::path& repository, std::chrono::steady_clock::time_point deadline) {
   DashboardResponse response;
+  if (route.kind == RouteKind::kCiRuns) {
+    PageContext ci_context{{}, {}, "ci", {}, 0, 0};
+    response.body = pageLayout(project.name + " \xc2\xb7 CI", renderCiRuns(project), &project, &ci_context);
+    return response;
+  }
   const bool empty = !project.indexing && project.index_error.empty() && !project.valid_head &&
       !project.branch_count && !project.tag_count;
   if ((route.kind == RouteKind::kOverview && route.ref.empty()) ||

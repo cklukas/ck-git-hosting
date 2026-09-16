@@ -474,6 +474,7 @@ class ProjectIndex::Impl {
       if (error.empty()) {
         found->second.checkouts = std::move(updated.checkouts);
         found->second.events = std::move(updated.events);
+        found->second.ci_runs = std::move(updated.ci_runs);
       } else {
         found->second.index_error = std::move(error);
       }
@@ -532,6 +533,12 @@ class ProjectIndex::Impl {
     std::lock_guard lock(mutex_);
     const auto found = records_.find(std::string(name));
     return found == records_.end() ? std::nullopt : std::optional<ProjectSummary>(found->second);
+  }
+
+  std::optional<std::string> readCiLog(std::string_view project, std::string_view run_id,
+                                       std::size_t step) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return readCiRunLog(*state_root_, project, run_id, step, kProjectIndexCiLogLimit);
   }
 
   void sweep(bool background = false) {
@@ -617,6 +624,7 @@ class ProjectIndex::Impl {
     if (state_root_) {
       summary.checkouts = loadCheckoutMetadata(*state_root_, summary.name);
       summary.events = loadProjectEvents(*state_root_, summary.name);
+      summary.ci_runs = loadCiRuns(*state_root_, summary.name);
     }
   }
 
@@ -761,5 +769,9 @@ void ProjectIndex::erase(std::string_view name) { impl_->erase(name); }
 std::vector<ProjectSummary> ProjectIndex::snapshot() const { return impl_->snapshot(); }
 std::vector<ProjectSummary> ProjectIndex::tableSnapshot() const { return impl_->snapshot(true); }
 std::optional<ProjectSummary> ProjectIndex::find(std::string_view name) const { return impl_->find(name); }
+std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std::string_view run_id,
+                                                   std::size_t step_index) const {
+  return impl_->readCiLog(project, run_id, step_index);
+}
 
 }  // namespace ckgit

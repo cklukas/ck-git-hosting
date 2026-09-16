@@ -140,6 +140,10 @@ Route parseHttpRoute(std::string_view target) {
     return route;
   }
   target.remove_prefix(project_end + 1);
+  if (target == "ci") {
+    route.kind = RouteKind::kCiRuns;
+    return route;
+  }
   const auto operation_end = target.find('/');
   if (operation_end == std::string_view::npos) return {};
   const auto operation = target.substr(0, operation_end);
@@ -148,6 +152,25 @@ Route parseHttpRoute(std::string_view target) {
     if (!isObjectId(target)) return {};
     route.kind = RouteKind::kCommit;
     route.ref = target;
+    return route;
+  }
+  if (operation == "ci") {
+    // /project/<id>/ci/<run-id>/<step>.log — a single step's captured log.
+    const auto slash = target.find('/');
+    if (slash == std::string_view::npos) return {};
+    const auto run = target.substr(0, slash);
+    const auto tail = target.substr(slash + 1);
+    if (run.empty() || run.size() > 64 || !tail.ends_with(".log") ||
+        !std::all_of(run.begin(), run.end(), [](unsigned char byte) {
+          return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+                 (byte >= '0' && byte <= '9') || byte == '-';
+        })) return {};
+    const auto number = tail.substr(0, tail.size() - 4);
+    if (number.empty() || number.size() > 6 || !parseDecimal(number, number.size(), 0, 100000, route.step)) {
+      return {};
+    }
+    route.kind = RouteKind::kCiLog;
+    route.run_id = std::string(run);
     return route;
   }
   if (operation == "tree" || operation == "blob" || operation == "source" || operation == "raw") {
