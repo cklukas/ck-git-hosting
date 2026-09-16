@@ -92,9 +92,13 @@ jobs:
           apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb
           id ckgit
           test -x /usr/bin/ck-git-hostingd
+          test -x /usr/bin/ck-ci-runnerd
           test -x /usr/lib/ck-git-hosting/hooks/post-receive
           test -f /usr/lib/systemd/system/ck-git-hosting.service
+          test -f /usr/lib/systemd/system/ck-ci-runner.service
+          test -d /var/lib/ck-git-hosting/ci-build
           test -f /etc/ck-git-hosting/authorized_keys
+          ck-ci-runnerd --help >/dev/null
           ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/device"
           ckgit-admin authorized-key --client-id ci-device --public-key "$RUNNER_TEMP/device.pub"

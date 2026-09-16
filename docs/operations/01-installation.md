@@ -13,14 +13,16 @@ stops after the list.
 | Path | Owner and mode | Purpose |
 |---|---|---|
 | `ckgit` system account | locked password, shell `/bin/sh` | runs the daemon, Git services, and the hook |
-| `/usr/bin/ck-git-hostingd`, `ck-git-shell`, `ckgit-admin` | `root:root 0755` | server binaries |
+| `/usr/bin/ck-git-hostingd`, `ck-git-shell`, `ckgit-admin`, `ck-ci-runnerd` | `root:root 0755` | server binaries |
 | `/usr/lib/ck-git-hosting/hooks/post-receive` | `root:root 0755` | shared compiled receive hook |
 | `/etc/ck-git-hosting/server.ini` | `root:ckgit 0640` | daemon configuration; kept on reinstall |
 | `/etc/ck-git-hosting/authorized_keys` | `root:root 0644` | paired device keys; kept on reinstall |
 | `/srv/ck-git-hosting/repos` | `ckgit:ckgit 0750` | bare repositories |
 | `/var/lib/ck-git-hosting` | `ckgit:ckgit 0750` | service home |
-| `/var/lib/ck-git-hosting/state` | `ckgit:ckgit 0700` | private checkout metadata and event log |
-| `/etc/systemd/system/ck-git-hosting.service` | `root:root 0644` | hardened unit |
+| `/var/lib/ck-git-hosting/state` | `ckgit:ckgit 0700` | private checkout metadata, event log, and CI run records |
+| `/var/lib/ck-git-hosting/ci-build` | `ckgit:ckgit 0700` | per-run CI scratch build root |
+| `/etc/systemd/system/ck-git-hosting.service` | `root:root 0644` | hardened daemon unit |
+| `/etc/systemd/system/ck-ci-runner.service` | `root:root 0644` | hardened CI runner unit (started only when CI is used) |
 | `/etc/ssh/sshd_config.d/ck-git-hosting.conf` | `root:root 0644` | `Match User ckgit` block |
 | `/run/ck-git-hosting/control.sock` | created by the unit | same-user control socket |
 
@@ -67,6 +69,11 @@ sudo ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
 optional `http_port` and `ssh_clone_target=user@host`. Unknown keys, relative paths, and duplicates are
 rejected, and the daemon refuses to combine `--config` with individual path
 options.
+
+The CI runner reads optional CI keys from the same file (`ci_build_root`,
+`ci_timeout_seconds`, `ci_max_log_bytes`, `ci_poll_seconds`, `ci_allow_network`);
+the daemon ignores them, so `--check` does not echo them. A fresh install sets
+`ci_build_root`. See [04-ci-cd.md](04-ci-cd.md).
 
 Validate the hardening profile on the target before relying on it:
 

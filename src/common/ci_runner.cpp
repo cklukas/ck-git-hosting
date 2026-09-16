@@ -46,6 +46,22 @@ std::string branchOf(const std::string& ref) {
   return ref.rfind(prefix, 0) == 0 ? ref.substr(prefix.size()) : ref;
 }
 
+// The repository's default branch, taken from its HEAD symbolic ref (e.g.
+// "main"). std::nullopt when HEAD does not name a branch (an unborn or detached
+// bare HEAD), in which case the caller runs the workflow rather than guessing.
+std::optional<std::string> defaultBranch(const std::filesystem::path& repository) {
+  ProcessOptions options;
+  options.timeout = std::chrono::seconds(20);
+  options.output_limit = 4096;
+  const ProcessResult result = runProcess(
+      {"git", "--git-dir", repository.string(), "symbolic-ref", "--short", "HEAD"}, options);
+  if (result.timed_out || result.exit_code != 0) return std::nullopt;
+  std::string branch = result.output;
+  while (!branch.empty() && (branch.back() == '\n' || branch.back() == '\r')) branch.pop_back();
+  if (branch.empty()) return std::nullopt;
+  return branch;
+}
+
 // Reads .ckgit/ci.yml from the commit object; std::nullopt means the commit has
 // no workflow (a non-CI push), which the caller records as Skipped.
 std::optional<std::string> readWorkflowBlob(const std::filesystem::path& repository,
@@ -333,10 +349,18 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     return finish(CiRunStatus::Error, std::string("workflow: ") + error.what());
   }
 
-  if (!workflow.branches.empty()) {
+  {
+    // A workflow with an `on: { branches: [...] }` list triggers only on those
+    // branches; a workflow that omits `on:` triggers only on the repository's
+    // default branch (its HEAD). Any other pushed branch is recorded Skipped.
     const std::string branch = branchOf(options.ref);
-    if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) == workflow.branches.end()) {
-      return finish(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
+    if (!workflow.branches.empty()) {
+      if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) == workflow.branches.end()) {
+        return finish(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
+      }
+    } else if (const std::optional<std::string> def = defaultBranch(options.repository);
+               def.has_value() && branch != *def) {
+      return finish(CiRunStatus::Skipped, "branch " + branch + " is not the default branch " + *def);
     }
   }
 

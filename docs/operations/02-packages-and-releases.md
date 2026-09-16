@@ -22,10 +22,11 @@ tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.
   unit and integration suites (`make all check`).
 - macOS Apple silicon and Intel: the same.
 - Debian 13 container on both architectures: builds both packages, runs
-  `lintian` for information, installs the packages with `apt`, creates a
-  device key line and a project, removes the packages while verifying that
-  `server.ini` and the repository survive, then purges and verifies that the
-  repository still survives.
+  `lintian` for information, installs the packages with `apt`, confirms the
+  daemon and CI runner binaries and units are in place, creates a device key
+  line and a project, removes the packages while verifying that `server.ini`
+  and the repository survive, then purges and verifies that the repository
+  still survives.
 
 Every job passes `BUILD_ROOT=$RUNNER_TEMP`; the Makefile keeps its default
 build root for the development Mac and only accepts build directories beneath
@@ -42,7 +43,7 @@ sudo ckgit-admin authorized-key --client-id mac-studio --public-key mac-studio.p
 ```
 
 The package installs the same tree as `packaging/install.sh`, with two
-package-specific choices: the unit lives in `/usr/lib/systemd/system`, and
+package-specific choices: the units live in `/usr/lib/systemd/system`, and
 `authorized_keys` is created by the maintainer script rather than shipped, so
 neither an upgrade nor a purge touches device keys by accident.
 `server.ini` and the sshd drop-in are conffiles. `apt remove` keeps

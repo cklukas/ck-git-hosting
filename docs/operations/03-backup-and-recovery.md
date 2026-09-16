@@ -19,8 +19,9 @@ Git verification can take time on large repositories.
 
 A version-1 backup contains independent Git mirrors, every hosted ref including
 tags and custom namespaces, and HEAD, including unborn or detached HEAD. It also
-contains private checkout registrations, all event archives, and derived project
-metadata. Original repository configuration is saved separately under
+contains private checkout registrations, all event archives, derived project
+metadata, and any CI run records and step logs the runner kept under the same
+state root. Original repository configuration is saved separately under
 `configs/PROJECT.config` for review. Files have SHA-256 checksums in
 `manifest.sha256`; verification checks the complete file inventory, Git object
 integrity, and metadata. Checksums detect corruption; they are not a signature

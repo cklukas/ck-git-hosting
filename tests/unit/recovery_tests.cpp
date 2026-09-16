@@ -235,6 +235,20 @@ int testRecovery() {
   writeFile(source.state_root / "projects" / "alpha" / "summary", "derived metadata fixture\n");
   writeFile(source.state_root / "projects" / "alpha" / "sha256-empty", "");
   writeFile(source.state_root / "projects" / "alpha" / "sha256-abc", "abc");
+  // An opt-in flag, an (empty) spool and working area, and one recorded run —
+  // the CI state the runner keeps under the state root — must survive a backup.
+  privateDirectory(source.state_root / "ci");
+  privateDirectory(source.state_root / "ci" / "spool");
+  privateDirectory(source.state_root / "ci" / "working");
+  privateDirectory(source.state_root / "ci" / "projects");
+  writeFile(source.state_root / "ci" / "projects" / "alpha.ini", "schema_version=1\nci_enabled=true\n");
+  privateDirectory(source.state_root / "ci" / "runs");
+  privateDirectory(source.state_root / "ci" / "runs" / "alpha");
+  const auto ci_run = source.state_root / "ci" / "runs" / "alpha" / "00000000000000000001-abcdabcd";
+  privateDirectory(ci_run);
+  writeFile(ci_run / "run.ini", "schema_version=1\n");
+  privateDirectory(ci_run / "steps");
+  writeFile(ci_run / "steps" / "0.log", "ci log fixture\n");
 
   const std::vector<std::string> projects{"alpha", "empty"};
   const auto original_refs = refs(alpha);
@@ -268,6 +282,10 @@ int testRecovery() {
           "original configuration is preserved byte-for-byte as a separate review artifact");
   require(contents(backup / "state") == original_state,
           "backup preserves private checkouts, every event archive, and derived metadata");
+  require(fs::exists(backup / "state" / "ci" / "runs" / "alpha" /
+                     "00000000000000000001-abcdabcd" / "run.ini") &&
+              fs::exists(backup / "state" / "ci" / "projects" / "alpha.ini"),
+          "backup captures CI run records and per-project opt-in under the state root");
   require(contents(source.state_root) == original_state && refs(alpha) == original_refs &&
               readFile(alpha / "config") == original_config,
           "backup does not rewrite the source repository or metadata");

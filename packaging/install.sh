@@ -53,7 +53,7 @@ fail() {
 }
 
 [ -n "$build_dir" ] || { usage >&2; exit 2; }
-for required in bin/ck-git-hostingd bin/ck-git-shell bin/ckgit-admin hooks/post-receive; do
+for required in bin/ck-git-hostingd bin/ck-git-shell bin/ckgit-admin bin/ck-ci-runnerd hooks/post-receive; do
   [ -f "$build_dir/$required" ] || fail "missing build product: $build_dir/$required (run make all first)"
 done
 if [ -n "$http_port" ]; then
@@ -81,6 +81,7 @@ srv_dir="$staging/srv/ck-git-hosting"
 repo_root="$srv_dir/repos"
 lib_dir="$staging/var/lib/ck-git-hosting"
 state_root="$lib_dir/state"
+ci_build_root="$lib_dir/ci-build"
 unit_dir="$staging/etc/systemd/system"
 unit_path="$unit_dir/ck-git-hosting.service"
 sshd_dir="$staging/etc/ssh/sshd_config.d"
@@ -90,6 +91,9 @@ authorized_keys="$etc_dir/authorized_keys"
 script_dir=$(cd "$(dirname "$0")" && pwd)
 unit_source="$script_dir/systemd/ck-git-hosting.service"
 [ -f "$unit_source" ] || fail "missing unit template: $unit_source"
+runner_unit_path="$unit_dir/ck-ci-runner.service"
+runner_unit_source="$script_dir/systemd/ck-ci-runner.service"
+[ -f "$runner_unit_source" ] || fail "missing unit template: $runner_unit_source"
 
 as_root=0
 [ -z "$staging" ] && [ "$(id -u)" -eq 0 ] && as_root=1
@@ -132,7 +136,8 @@ write_server_ini() {
       'repo_root=/srv/ck-git-hosting/repos' \
       'control_socket=/run/ck-git-hosting/control.sock' \
       'state_root=/var/lib/ck-git-hosting/state' \
-      'hook_directory=/usr/lib/ck-git-hosting/hooks'
+      'hook_directory=/usr/lib/ck-git-hosting/hooks' \
+      'ci_build_root=/var/lib/ck-git-hosting/ci-build'
     if [ -n "$http_port" ]; then
       printf 'http_port=%s\n' "$http_port"
     else
@@ -204,9 +209,10 @@ steps() {
   act "create $repo_root (ckgit:ckgit 0750)" install_dir 0750 ckgit ckgit "$repo_root"
   act "create $lib_dir (ckgit:ckgit 0750)" install_dir 0750 ckgit ckgit "$lib_dir"
   act "create $state_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$state_root"
+  act "create $ci_build_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$ci_build_root"
   act "create $hook_dir (root:root 0755)" install_dir 0755 root root "$hook_dir"
   [ -n "$staging" ] && act "create $bin_dir" install_dir 0755 root root "$bin_dir"
-  for binary in ck-git-hostingd ck-git-shell ckgit-admin; do
+  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd; do
     act "install $bin_dir/$binary (root:root 0755)" install_file 0755 root root "$build_dir/bin/$binary" "$bin_dir/$binary"
   done
   act "install $hook_dir/post-receive (root:root 0755)" install_file 0755 root root "$build_dir/hooks/post-receive" "$hook_dir/post-receive"
@@ -222,9 +228,11 @@ steps() {
   fi
   [ -n "$staging" ] && act "create $unit_dir" install_dir 0755 root root "$unit_dir"
   act "install $unit_path (root:root 0644)" install_file 0644 root root "$unit_source" "$unit_path"
+  act "install $runner_unit_path (root:root 0644)" install_file 0644 root root "$runner_unit_source" "$runner_unit_path"
   if [ -z "$staging" ] && [ "$configure_service" -eq 1 ]; then
     act 'systemctl daemon-reload' systemctl daemon-reload
     act 'systemctl enable --now ck-git-hosting.service' systemctl enable --now ck-git-hosting.service
+    act 'systemctl enable --now ck-ci-runner.service' systemctl enable --now ck-ci-runner.service
   fi
   if [ "$configure_sshd" -eq 1 ]; then
     if [ -n "$staging" ]; then

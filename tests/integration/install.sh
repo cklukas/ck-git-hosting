@@ -60,26 +60,32 @@ sh "$packaging/install.sh" --build-dir "$CKGIT_BUILD_DIR" --staging "$staging" -
   >"$test_root/apply.out"
 grep -q 'Installation complete' "$test_root/apply.out"
 for executable in usr/bin/ck-git-hostingd usr/bin/ck-git-shell usr/bin/ckgit-admin \
-  usr/lib/ck-git-hosting/hooks/post-receive; do
+  usr/bin/ck-ci-runnerd usr/lib/ck-git-hosting/hooks/post-receive; do
   [ -x "$staging/$executable" ] || fail "missing executable $executable"
 done
 server_ini="$staging/etc/ck-git-hosting/server.ini"
 authorized_keys="$staging/etc/ck-git-hosting/authorized_keys"
 unit="$staging/etc/systemd/system/ck-git-hosting.service"
+runner_unit="$staging/etc/systemd/system/ck-ci-runner.service"
 dropin="$staging/etc/ssh/sshd_config.d/ck-git-hosting.conf"
 [ -f "$server_ini" ] || fail "server.ini was not written"
 [ -f "$authorized_keys" ] || fail "authorized_keys was not created"
 [ ! -s "$authorized_keys" ] || fail "authorized_keys must start empty"
 grep -q '^http_port=8420$' "$server_ini"
 grep -q '^hook_directory=/usr/lib/ck-git-hosting/hooks$' "$server_ini"
+grep -q '^ci_build_root=/var/lib/ck-git-hosting/ci-build$' "$server_ini"
 grep -q '^ExecStart=/usr/bin/ck-git-hostingd --config /etc/ck-git-hosting/server.ini$' "$unit"
 grep -q '^User=ckgit$' "$unit"
 grep -q '^ProtectSystem=strict$' "$unit"
 grep -q '^ReadWritePaths=/var/lib/ck-git-hosting /srv/ck-git-hosting/repos$' "$unit"
+grep -q '^ExecStart=/usr/bin/ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini$' "$runner_unit"
+grep -q '^User=ckgit$' "$runner_unit"
+grep -q '^RestrictNamespaces=user mnt net$' "$runner_unit"
 grep -q '^Match User ckgit$' "$dropin"
 grep -q '^    AuthorizedKeysFile /etc/ck-git-hosting/authorized_keys$' "$dropin"
 grep -q '^    PermitTTY no$' "$dropin"
 has_mode "$staging/var/lib/ck-git-hosting/state" 0700 || fail "state root must be mode 0700"
+has_mode "$staging/var/lib/ck-git-hosting/ci-build" 0700 || fail "CI build root must be mode 0700"
 has_mode "$staging/srv/ck-git-hosting/repos" 0750 || fail "repository root must be mode 0750"
 has_mode "$server_ini" 0640 || fail "server.ini must be mode 0640"
 has_mode "$authorized_keys" 0644 || fail "authorized_keys must be mode 0644"
@@ -171,7 +177,9 @@ fi
 # differences, and the release archive is a valid --build-dir.
 sh "$packaging/build-deb.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/deb" --arch arm64 --stage-only >/dev/null
 [ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-git-hostingd" ] || fail "staged server package lacks the daemon"
+[ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-ci-runnerd" ] || fail "staged server package lacks the CI runner"
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting.service" ] || fail "packaged unit is not under /usr/lib/systemd/system"
+[ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-ci-runner.service" ] || fail "packaged CI runner unit is not under /usr/lib/systemd/system"
 [ ! -e "$test_root/deb/ck-git-hosting/etc/systemd" ] || fail "package must not ship the unit under /etc"
 [ ! -e "$test_root/deb/ck-git-hosting/etc/ck-git-hosting/authorized_keys" ] || fail "package must not ship authorized_keys"
 grep -q '^Package: ck-git-hosting$' "$test_root/deb/ck-git-hosting/DEBIAN/control"
@@ -191,9 +199,14 @@ sh "$packaging/build-tarball.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_
 version=$(tr -d '[:space:]' <"$packaging/../VERSION")
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/install.sh$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/hooks/post-receive$"
+tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/bin/ck-ci-runnerd$"
+tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-ci-runner.service$"
 tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q "^ckgit-$version-test-client/bin/ckgit$"
 if tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q 'ck-git-hostingd'; then
   fail "client archive must not contain server binaries"
+fi
+if tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q 'ck-ci-runnerd'; then
+  fail "client archive must not contain the CI runner"
 fi
 mkdir "$test_root/unpacked"
 tar -xzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" -C "$test_root/unpacked"
@@ -205,8 +218,10 @@ sh "$test_root/unpacked/ck-git-hosting-$version-test-server/packaging/install.sh
 sh "$packaging/uninstall.sh" --staging "$staging" --yes >"$test_root/uninstall.out"
 grep -q 'Removal complete' "$test_root/uninstall.out"
 [ ! -e "$staging/usr/bin/ck-git-hostingd" ] || fail "daemon binary was not removed"
+[ ! -e "$staging/usr/bin/ck-ci-runnerd" ] || fail "CI runner binary was not removed"
 [ ! -e "$staging/usr/lib/ck-git-hosting" ] || fail "hook directory was not removed"
 [ ! -e "$unit" ] || fail "unit file was not removed"
+[ ! -e "$runner_unit" ] || fail "CI runner unit was not removed"
 [ ! -e "$dropin" ] || fail "sshd drop-in was not removed"
 [ -f "$server_ini" ] || fail "server.ini was removed without --remove-state"
 [ -f "$authorized_keys" ] || fail "authorized_keys was removed without --remove-state"

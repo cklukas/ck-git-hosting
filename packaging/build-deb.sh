@@ -123,10 +123,11 @@ sh "$script_dir/install.sh" --build-dir "$build_dir" --staging "$server_root" --
 # dpkg owns these differently from a script installation:
 #  - authorized_keys is created by postinst, never shipped, so purge and
 #    upgrade cannot touch device keys by accident;
-#  - the unit belongs to the packaged systemd directory, not /etc.
+#  - the units belong in the packaged systemd directory, not /etc.
 rm -f "$server_root/etc/ck-git-hosting/authorized_keys"
 install -d -m 0755 "$server_root/usr/lib/systemd/system"
 mv "$server_root/etc/systemd/system/ck-git-hosting.service" "$server_root/usr/lib/systemd/system/ck-git-hosting.service"
+mv "$server_root/etc/systemd/system/ck-ci-runner.service" "$server_root/usr/lib/systemd/system/ck-ci-runner.service"
 rmdir "$server_root/etc/systemd/system" "$server_root/etc/systemd"
 write_copyright "$server_root" ck-git-hosting
 install -d -m 0755 "$server_root/DEBIAN"
@@ -144,7 +145,9 @@ Description: private LAN Git control plane over OpenSSH
  dependency-free control plane: a hardened daemon with a same-user control
  socket and loopback dashboard, a restricted SSH dispatcher used as a forced
  command for each device key, a compiled shared receive hook, and an
- administrative tool for project creation and device pairing.
+ administrative tool for project creation and device pairing.  An opt-in,
+ sandboxed CI runner executes each project's .ckgit/ci.yml workflow on push
+ and shows the results read-only in the dashboard.
 CONTROL
 printf '%s\n' /etc/ck-git-hosting/server.ini /etc/ssh/sshd_config.d/ck-git-hosting.conf >"$server_root/DEBIAN/conffiles"
 cat >"$server_root/DEBIAN/postinst" <<'POSTINST'
@@ -156,9 +159,9 @@ case "$1" in
       useradd --system --user-group --home-dir /var/lib/ck-git-hosting --no-create-home \
         --shell /bin/sh --comment 'ck-git-hosting service' ckgit
     fi
-    chown ckgit:ckgit /srv/ck-git-hosting/repos /var/lib/ck-git-hosting /var/lib/ck-git-hosting/state
+    chown ckgit:ckgit /srv/ck-git-hosting/repos /var/lib/ck-git-hosting /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build
     chmod 0750 /srv/ck-git-hosting/repos /var/lib/ck-git-hosting
-    chmod 0700 /var/lib/ck-git-hosting/state
+    chmod 0700 /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build
     chown root:ckgit /etc/ck-git-hosting/server.ini
     chmod 0640 /etc/ck-git-hosting/server.ini
     if [ ! -e /etc/ck-git-hosting/authorized_keys ]; then
@@ -168,12 +171,14 @@ case "$1" in
     fi
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload || true
-      systemctl enable ck-git-hosting.service >/dev/null 2>&1 || true
-      if systemctl is-active --quiet ck-git-hosting.service; then
-        systemctl restart ck-git-hosting.service || true
-      else
-        systemctl start ck-git-hosting.service || true
-      fi
+      for unit in ck-git-hosting.service ck-ci-runner.service; do
+        systemctl enable "$unit" >/dev/null 2>&1 || true
+        if systemctl is-active --quiet "$unit"; then
+          systemctl restart "$unit" || true
+        else
+          systemctl start "$unit" || true
+        fi
+      done
     fi
     if command -v sshd >/dev/null 2>&1 && [ -e /etc/ssh/sshd_config.d/ck-git-hosting.conf ]; then
       if sshd -t; then
@@ -196,6 +201,7 @@ set -e
 case "$1" in
   remove|deconfigure)
     if [ -d /run/systemd/system ]; then
+      systemctl disable --now ck-ci-runner.service >/dev/null 2>&1 || true
       systemctl disable --now ck-git-hosting.service >/dev/null 2>&1 || true
     fi
     ;;

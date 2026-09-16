@@ -184,6 +184,23 @@ void testBranchTrigger() {
   require(ckgit::runCiWorkflow(opts).status == ckgit::CiRunStatus::Success, "a trigger branch runs");
 }
 
+void testDefaultBranchTrigger() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [true]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.ref = "refs/heads/feature";  // not the repository's default branch (main)
+  require(ckgit::runCiWorkflow(opts).status == ckgit::CiRunStatus::Skipped,
+          "without on:, a non-default branch is skipped");
+  opts.ref = "refs/heads/main";
+  require(ckgit::runCiWorkflow(opts).status == ckgit::CiRunStatus::Success,
+          "without on:, the default branch runs");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -193,4 +210,5 @@ void testCiRunner() {
   testOutputCap();
   testSkippedWithoutWorkflow();
   testBranchTrigger();
+  testDefaultBranchTrigger();
 }

@@ -16,7 +16,10 @@ The current implementation includes:
 - an indexed, read-only dashboard with last commits, rendered READMEs, file
   browsing, commit history and diffs, calendar views, and a commit graph;
 - administrative project removal that retains the bare repository in trash
-  and clears its metadata, plus cleanup for repositories deleted by hand.
+  and clears its metadata, plus cleanup for repositories deleted by hand;
+- opt-in per-project continuous integration that runs a repository's own
+  `.ckgit/ci.yml` in a sandboxed runner on push, with read-only status and
+  step logs in the dashboard.
 
 It now also ships as a service installation: a strict `server.ini`, a
 hardened systemd unit, an installer and uninstaller that print every change
