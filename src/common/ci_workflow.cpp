@@ -475,6 +475,21 @@ bool isValidTagPattern(std::string_view pattern) {
   });
 }
 
+// A pinned sister ref: a branch, tag, or commit id. Validated so it cannot be
+// taken for a git option (no leading '-') or escape the object namespace (no
+// '..', no leading '/'), and restricted to the characters those names use.
+bool isValidSisterRef(std::string_view ref) {
+  if (ref.empty() || ref.size() > 255 || ref.front() == '-' || ref.front() == '/' ||
+      ref.find("..") != std::string_view::npos) {
+    return false;
+  }
+  return std::all_of(ref.begin(), ref.end(), [](unsigned char character) {
+    return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+           (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+           character == '-' || character == '/';
+  });
+}
+
 bool isValidCiName(std::string_view name) {
   return !name.empty() && name.size() <= kMaximumCiNameBytes &&
          std::all_of(name.begin(), name.end(), [](unsigned char character) {
@@ -608,7 +623,7 @@ CiJob interpretJob(const Node& node) {
 
 CiWorkflow interpret(const Node& root) {
   requireKind(root, Node::Kind::Mapping, "the workflow to be a mapping");
-  rejectUnknownKeys(root, {"version", "on", "env", "jobs", "pages"});
+  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "cache", "jobs", "pages"});
 
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the workflow is missing 'version'", root.line);
@@ -650,6 +665,67 @@ CiWorkflow interpret(const Node& root) {
   }
 
   if (const Node* env = findEntry(root, "env")) workflow.env = interpretEnv(*env);
+
+  if (const Node* sisters = findEntry(root, "sisters")) {
+    requireKind(*sisters, Node::Kind::Sequence, "sisters to be a list");
+    if (sisters->items.size() > kMaximumCiSisters) tooLarge("too many sisters");
+    std::set<std::string> seen;
+    for (const Node& item : sisters->items) {
+      // A sister is either a bare project name, or a { name, ref } mapping that
+      // pins it to a branch, tag, or commit.
+      CiSister sister;
+      if (item.kind == Node::Kind::Scalar) {
+        sister.name = item.scalar;
+      } else if (item.kind == Node::Kind::Mapping) {
+        rejectUnknownKeys(item, {"name", "ref"});
+        const Node* name = findEntry(item, "name");
+        if (name == nullptr) malformed("a sister needs a 'name'", item.line);
+        sister.name = requireKind(*name, Node::Kind::Scalar, "a sister name to be a scalar").scalar;
+        if (const Node* ref = findEntry(item, "ref")) {
+          sister.ref = requireKind(*ref, Node::Kind::Scalar, "a sister ref to be a scalar").scalar;
+          if (!isValidSisterRef(sister.ref)) malformed("invalid sister ref '" + sister.ref + "'", item.line);
+        }
+      } else {
+        malformed("each sister to be a name or a { name, ref } mapping", item.line);
+      }
+      if (!isValidProjectName(sister.name)) malformed("invalid sister project name '" + sister.name + "'", sisters->line);
+      if (!seen.insert(sister.name).second) malformed("duplicate sister project '" + sister.name + "'", sisters->line);
+      workflow.sisters.push_back(std::move(sister));
+    }
+  }
+
+  if (const Node* caches = findEntry(root, "cache")) {
+    requireKind(*caches, Node::Kind::Sequence, "cache to be a list");
+    if (caches->items.size() > kMaximumCiCaches) tooLarge("too many caches");
+    std::set<std::string> seen;
+    for (const Node& item : caches->items) {
+      // A cache is either a bare name, or a { name, env } mapping that also
+      // binds environment variables (e.g. CCACHE_DIR) to the cache directory.
+      CiCache cache;
+      if (item.kind == Node::Kind::Scalar) {
+        cache.name = item.scalar;
+      } else if (item.kind == Node::Kind::Mapping) {
+        rejectUnknownKeys(item, {"name", "env"});
+        const Node* name = findEntry(item, "name");
+        if (name == nullptr) malformed("a cache needs a 'name'", item.line);
+        cache.name = requireKind(*name, Node::Kind::Scalar, "a cache name to be a scalar").scalar;
+        if (const Node* env = findEntry(item, "env")) {
+          requireKind(*env, Node::Kind::Sequence, "cache env to be a list");
+          if (env->items.size() > kMaximumCiCacheEnv) tooLarge("a cache has too many env bindings");
+          for (const Node& var : env->items) {
+            const std::string& value = requireKind(var, Node::Kind::Scalar, "a cache env name to be a scalar").scalar;
+            if (!isValidEnvName(value)) malformed("invalid cache env name '" + value + "'", item.line);
+            cache.env.push_back(value);
+          }
+        }
+      } else {
+        malformed("each cache to be a name or a { name, env } mapping", item.line);
+      }
+      if (!isValidCiName(cache.name)) malformed("invalid cache name '" + cache.name + "'", caches->line);
+      if (!seen.insert(cache.name).second) malformed("duplicate cache '" + cache.name + "'", caches->line);
+      workflow.caches.push_back(std::move(cache));
+    }
+  }
 
   if (const Node* pages = findEntry(root, "pages")) {
     requireKind(*pages, Node::Kind::Mapping, "pages to be a mapping");

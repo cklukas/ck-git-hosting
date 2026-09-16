@@ -223,6 +223,68 @@ void testPagesWorkflow() {
   require(rejected("version: 1\npages: {}\n" + base.substr(11)), "pages without a path rejected");
 }
 
+void testSisters() {
+  const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  // A flow list of bare project names.
+  const ckgit::CiWorkflow flow = ckgit::parseCiWorkflow("version: 1\nsisters: [ckmath, cgrapher]" + base);
+  require(flow.sisters.size() == 2, "two sisters parse");
+  require(flow.sisters[0].name == "ckmath" && flow.sisters[0].ref.empty(), "a bare sister has no ref");
+  require(flow.sisters[1].name == "cgrapher", "second sister name");
+  // A block list mixing a bare name and a pinned { name, ref } mapping.
+  const ckgit::CiWorkflow pinned = ckgit::parseCiWorkflow(
+      "version: 1\n"
+      "sisters:\n"
+      "  - ckmath\n"
+      "  - name: cgrapher\n"
+      "    ref: v1.2.0\n" +
+      base);
+  require(pinned.sisters.size() == 2, "mixed sisters parse");
+  require(pinned.sisters[0].name == "ckmath" && pinned.sisters[0].ref.empty(), "unpinned sister");
+  require(pinned.sisters[1].name == "cgrapher" && pinned.sisters[1].ref == "v1.2.0", "pinned sister ref");
+  // A commit hash and a branch name are both accepted refs.
+  const ckgit::CiWorkflow refs = ckgit::parseCiWorkflow(
+      "version: 1\n"
+      "sisters:\n"
+      "  - name: ckmath\n"
+      "    ref: 0123abcd\n"
+      "  - name: cgrapher\n"
+      "    ref: feature/x\n" +
+      base);
+  require(refs.sisters[0].ref == "0123abcd" && refs.sisters[1].ref == "feature/x", "hash and branch refs");
+  require(ckgit::parseCiWorkflow("version: 1" + base).sisters.empty(), "no sisters by default");
+  require(rejected("version: 1\nsisters: [ '../evil' ]" + base), "unsafe sister name rejected");
+  require(rejected("version: 1\nsisters: [ ckmath, ckmath ]" + base), "duplicate sister rejected");
+  require(rejected("version: 1\nsisters:\n  - ref: v1\n" + base), "sister without a name rejected");
+  require(rejected("version: 1\nsisters:\n  - name: ckmath\n    bogus: 1\n" + base), "unknown sister key rejected");
+  require(rejected("version: 1\nsisters:\n  - name: ckmath\n    ref: '-x'\n" + base), "option-like ref rejected");
+  require(rejected("version: 1\nsisters:\n  - name: ckmath\n    ref: 'a..b'\n" + base), "range ref rejected");
+}
+
+void testCaches() {
+  const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  // A flow list of bare cache names.
+  const ckgit::CiWorkflow flow = ckgit::parseCiWorkflow("version: 1\ncache: [ccache, pip]" + base);
+  require(flow.caches.size() == 2, "two caches parse");
+  require(flow.caches[0].name == "ccache" && flow.caches[0].env.empty(), "a bare cache binds no env");
+  // A block list mixing a bare name and a { name, env } mapping.
+  const ckgit::CiWorkflow bound = ckgit::parseCiWorkflow(
+      "version: 1\n"
+      "cache:\n"
+      "  - ccache\n"
+      "  - name: pip\n"
+      "    env: [PIP_CACHE_DIR, XDG_CACHE_HOME]\n" +
+      base);
+  require(bound.caches.size() == 2, "mixed caches parse");
+  require(bound.caches[1].name == "pip" && bound.caches[1].env.size() == 2, "cache env bindings parse");
+  require(bound.caches[1].env[0] == "PIP_CACHE_DIR", "first bound variable");
+  require(ckgit::parseCiWorkflow("version: 1" + base).caches.empty(), "no caches by default");
+  require(rejected("version: 1\ncache: [ '../bad' ]" + base), "unsafe cache name rejected");
+  require(rejected("version: 1\ncache: [ ccache, ccache ]" + base), "duplicate cache rejected");
+  require(rejected("version: 1\ncache:\n  - name: x\n    env: [ '1bad' ]\n" + base), "invalid env name rejected");
+  require(rejected("version: 1\ncache:\n  - env: [X]\n" + base), "cache without a name rejected");
+  require(rejected("version: 1\ncache:\n  - name: x\n    bogus: 1\n" + base), "unknown cache key rejected");
+}
+
 }  // namespace
 
 void testCiWorkflow() {
@@ -232,6 +294,8 @@ void testCiWorkflow() {
   testArtifacts();
   testTagTriggers();
   testPagesWorkflow();
+  testSisters();
+  testCaches();
   testRejections();
   testBounds();
 }

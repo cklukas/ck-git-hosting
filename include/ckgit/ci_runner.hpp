@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -42,10 +43,24 @@ struct CiRunnerOptions {
   std::filesystem::path pages_root;
   unsigned pages_keep_versions = 3;
 
+  // Persistent build caches. When cache_root is set, each cache a workflow
+  // declares gets a directory under cache_root/<project>/ that survives across
+  // runs (a warm ccache store, say); empty makes declared caches ephemeral
+  // (created under the scratch), so a workflow runs either way. The directory
+  // is owned by the runner account, the one place besides the scratch a step
+  // can write, and is exported as CKGIT_CACHE_<NAME> plus any bound variables.
+  std::filesystem::path cache_root;
+
   // Extra environment exported to every step, as KEY=VALUE. Used to expose the
   // sibling checkouts (e.g. CWORKS_CKVISION_DIR) a suite build needs. Values
   // are literal; the runner performs no substitution.
   std::vector<std::string> extra_env;
+
+  // Called once, after the initial Running record is written and before the
+  // first step. The serving daemon uses it to refresh its dashboard cache so a
+  // new run appears promptly rather than at the next periodic sweep. Empty by
+  // default (the one-shot `run` command needs no notification).
+  std::function<void()> on_run_started;
 };
 
 // Isolation the runner applied to a run. On Linux the runner confines each step

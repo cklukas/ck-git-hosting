@@ -120,6 +120,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
         config.ci_artifact_max_bytes.value_or(static_cast<unsigned long long>(256) << 20));
     options.pages_root = config.pages_root.value_or(std::filesystem::path{});
     options.pages_keep_versions = config.pages_keep_versions.value_or(3);
+    options.cache_root = config.ci_cache_root.value_or(std::filesystem::path{});
     try {
       ckgit::CiSandboxReport sandbox;
       const ckgit::CiRunRecord record = ckgit::runCiWorkflow(options, &sandbox);
@@ -194,6 +195,7 @@ int main(int argc, char** argv) {
       else if (option == "--ref") options.ref = need(i, argc, argv, option);
       else if (option == "--state-root") options.state_root = need(i, argc, argv, option);
       else if (option == "--build-root") options.build_root = need(i, argc, argv, option);
+      else if (option == "--cache-root") options.cache_root = need(i, argc, argv, option);
       else if (option == "--timeout") options.timeout_seconds = std::stoul(need(i, argc, argv, option));
       else if (option == "--max-log-bytes") options.max_log_bytes = std::stoul(need(i, argc, argv, option));
       else if (option == "--allow-network") options.allow_network = true;

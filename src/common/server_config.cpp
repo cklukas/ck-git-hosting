@@ -101,7 +101,8 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       }
       has_schema = true;
     } else if (key == "repo_root" || key == "control_socket" || key == "state_root" ||
-               key == "hook_directory" || key == "ci_build_root" || key == "pages_root") {
+               key == "hook_directory" || key == "ci_build_root" || key == "ci_cache_root" ||
+               key == "pages_root") {
       if (!isAbsoluteConfiguredPath(value) || value.find('=') != std::string::npos) {
         configError(path, line_number, "expected an absolute path without '='");
       }
@@ -113,6 +114,8 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         config.state_root.emplace(value);
       } else if (key == "ci_build_root") {
         config.ci_build_root.emplace(value);
+      } else if (key == "ci_cache_root") {
+        config.ci_cache_root.emplace(value);
       } else if (key == "pages_root") {
         config.pages_root.emplace(value);
       } else {
@@ -219,6 +222,9 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_build_root.has_value()) {
     rendered += "ci_build_root=" + config.ci_build_root->string() + "\n";
+  }
+  if (config.ci_cache_root.has_value()) {
+    rendered += "ci_cache_root=" + config.ci_cache_root->string() + "\n";
   }
   if (config.ci_timeout_seconds.has_value()) {
     rendered += "ci_timeout_seconds=" + std::to_string(*config.ci_timeout_seconds) + "\n";

@@ -43,6 +43,7 @@ ci_build_root=/var/lib/ck-git-hosting/ci-build
 # ci_max_log_bytes=1048576           # per-step captured-output cap (1024..1073741824)
 # ci_poll_seconds=5                  # spool poll interval (1..3600)
 # ci_allow_network=false             # true gives steps a network namespace with interfaces
+# ci_cache_root=/var/lib/ck-git-hosting/ci-cache   # persist `cache:` dirs (ccache, ...) across runs; unset = per-run
 # --- artifact retention (enforced by the runner's periodic sweep) ---
 # ci_artifact_retention_days=7       # default lifetime of an ephemeral artifact (1..3650)
 # ci_artifact_max_retention_days=90  # cap on a workflow's own retention_days
@@ -124,11 +125,60 @@ jobs:
   the job's steps succeed. `paths` are relative to the checkout and may not be
   absolute or contain `..`; `name` defaults to the job name; `retention_days`
   overrides the server default and is clamped to its maximum.
+- `sisters:` lists other projects hosted on this server whose source the build
+  needs. Each is materialised read-only beside the checkout — reachable as
+  `../<name>` and exported as `CKGIT_SISTER_<NAME>` — from its default branch, or
+  a branch, tag, or commit you pin. No network is used and only same-server
+  projects are allowed. Write `- name` for the default branch, or
+  `- { name: lib, ref: v1.2.0 }` to pin. See below.
+- `cache:` lists persistent build caches (e.g. a ccache store) kept across runs.
+  Each is a directory exported as `CKGIT_CACHE_<NAME>`, plus any variables bound
+  with `env:`. Persistence needs `ci_cache_root` set on the server; without it a
+  declared cache still works, only per-run, so a workflow is portable. See below.
 
 The format is a strict, bounded subset of YAML — not GitHub Actions. Unknown
 keys, tabs for indentation, wrong types, or anything past the documented size
 limits are rejected, and the run is recorded `error` with the reason. Keep a
 workflow well under 64 KiB, 64 jobs, and 128 steps per job.
+
+## Sister projects and build caches
+
+A suite whose parts live in separate repositories can build them together with
+no network access, and keep repeat builds fast, by declaring the dependencies
+as `sisters` and a compiler cache as a `cache`:
+
+```text
+version: 1
+sisters:
+  - ckmath
+  - { name: ckvision, ref: v0.5.0 }
+cache:
+  - name: ccache
+    env: [CCACHE_DIR]
+jobs:
+  - name: build
+    env: { CCACHE_MAXSIZE: "8G" }
+    steps:
+      - script: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCKMATH_DIR="$CKGIT_SISTER_CKMATH" \
+            -DCKVISION_DIR="$CKGIT_SISTER_CKVISION"
+      - script: cmake --build build
+```
+
+Each sister is a read-only snapshot from its own hosted project, placed beside
+the checkout, so a build finds `../ckmath` (or `$CKGIT_SISTER_CKMATH`) with no
+network and no submodules. The cache is a directory private to this project,
+owned by the runner account — the one place besides the scratch a step can
+write — exported here as both `CKGIT_CACHE_CCACHE` and `CCACHE_DIR`. Because
+every run executes at the same fixed path, ccache's stored objects stay valid
+from one run to the next: the first build fills the store and later builds
+recompile only what changed. Install `ccache` on the runner host and set
+`ci_cache_root` for the store to persist; leave `ci_cache_root` unset and the
+same workflow still runs, just without cross-run reuse. The store's size is the
+tool's to manage (`CCACHE_MAXSIZE` above).
 
 ## Build artifacts and retention
 

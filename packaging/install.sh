@@ -82,6 +82,7 @@ repo_root="$srv_dir/repos"
 lib_dir="$staging/var/lib/ck-git-hosting"
 state_root="$lib_dir/state"
 ci_build_root="$lib_dir/ci-build"
+ci_cache_root="$lib_dir/ci-cache"
 pages_root="$lib_dir/pages"
 unit_dir="$staging/etc/systemd/system"
 unit_path="$unit_dir/ck-git-hosting.service"
@@ -142,6 +143,7 @@ write_server_ini() {
       'state_root=/var/lib/ck-git-hosting/state' \
       'hook_directory=/usr/lib/ck-git-hosting/hooks' \
       'ci_build_root=/var/lib/ck-git-hosting/ci-build' \
+      'ci_cache_root=/var/lib/ck-git-hosting/ci-cache' \
       'pages_root=/var/lib/ck-git-hosting/pages'
     if [ -n "$http_port" ]; then
       printf 'http_port=%s\n' "$http_port"
@@ -217,6 +219,7 @@ steps() {
   act "create $lib_dir (ckgit:ckgit 0750)" install_dir 0750 ckgit ckgit "$lib_dir"
   act "create $state_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$state_root"
   act "create $ci_build_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$ci_build_root"
+  act "create $ci_cache_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$ci_cache_root"
   act "create $pages_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$pages_root"
   act "create $hook_dir (root:root 0755)" install_dir 0755 root root "$hook_dir"
   [ -n "$staging" ] && act "create $bin_dir" install_dir 0755 root root "$bin_dir"

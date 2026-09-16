@@ -4,11 +4,13 @@
 #include "ckgit/ci_runner.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <functional>
 #include <optional>
 #include <poll.h>
 #include <signal.h>
@@ -36,6 +38,16 @@ extern char** environ;
 
 namespace ckgit {
 namespace {
+
+// When the Linux sandbox is active, the per-run scratch tree is bind-mounted
+// here, so every step runs under one fixed path no matter where the scratch
+// physically lives (a workstation temp dir, a Pi's build root, a CI prefix).
+// A build and everything it renders — a checkout at /mnt/src, a tool's TMPDIR
+// at /mnt/tmp, a sister at /mnt/<name> — then look identical on every run,
+// which keeps generated output such as documentation screenshots reproducible
+// without pinning the physical scratch location or its length. /mnt is the
+// FHS temporary-mount directory and always exists on the target.
+const std::filesystem::path kSandboxRoot = "/mnt";
 
 std::uint64_t nowEpoch() {
   return static_cast<std::uint64_t>(
@@ -139,10 +151,13 @@ void checkoutCommit(const std::filesystem::path& repository, const std::string& 
 
 // Base + workflow + job + caller env, later definitions winning, as KEY=VALUE.
 std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
-                                  const CiRunnerOptions& options, const std::filesystem::path& home) {
+                                  const CiRunnerOptions& options, const std::filesystem::path& home,
+                                  const std::filesystem::path& tmp,
+                                  const std::vector<std::string>& extra_run_env) {
   std::vector<std::pair<std::string, std::string>> ordered = {
       {"PATH", "/usr/local/bin:/usr/bin:/bin"},
       {"HOME", home.string()},
+      {"TMPDIR", tmp.string()},
       {"LANG", "C"},
       {"LC_ALL", "C"},
       {"CKGIT_CI", "1"},
@@ -157,6 +172,12 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
   for (const auto& [key, value] : workflow.env) put(key, value);
   for (const auto& [key, value] : job.env) put(key, value);
   for (const std::string& assignment : options.extra_env) {
+    const std::size_t equals = assignment.find('=');
+    if (equals != std::string::npos) put(assignment.substr(0, equals), assignment.substr(equals + 1));
+  }
+  // Runner-provided paths (sisters, caches) last: a workflow cannot shadow the
+  // CKGIT_SISTER_<NAME> / CKGIT_CACHE_<NAME> exports or a cache's bound vars.
+  for (const std::string& assignment : extra_run_env) {
     const std::size_t equals = assignment.find('=');
     if (equals != std::string::npos) put(assignment.substr(0, equals), assignment.substr(equals + 1));
   }
@@ -178,7 +199,7 @@ void writeProcFile(const char* path, const std::string& content) {
 // In the freshly forked child: enter unprivileged user, mount, and (unless
 // allowed) network namespaces, so the step has no network and cannot see the
 // host mount table. Returns false if the kernel denies unprivileged namespaces.
-bool enterSandbox(bool allow_network) {
+bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source) {
   const uid_t uid = ::getuid();
   const gid_t gid = ::getgid();
   int flags = CLONE_NEWUSER | CLONE_NEWNS;
@@ -189,6 +210,13 @@ bool enterSandbox(bool allow_network) {
   writeProcFile("/proc/self/gid_map", "0 " + std::to_string(gid) + " 1\n");
   // Keep our mount changes from propagating back to the host namespace.
   ::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
+  // Present the scratch tree at one fixed path (kSandboxRoot). The bind lives
+  // only in this namespace: it never touches the host and is gone when the step
+  // exits. With the same privileges that carried the unshare it does not fail
+  // in practice; the caller runs the step with kSandboxRoot as its cwd.
+  if (!bind_source.empty()) {
+    ::mount(bind_source.c_str(), kSandboxRoot.c_str(), nullptr, MS_BIND | MS_REC, nullptr);
+  }
   return true;
 }
 
@@ -206,7 +234,7 @@ bool probeUserNamespaces(bool allow_network) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #else
-bool enterSandbox(bool) { return false; }
+bool enterSandbox(bool, const std::filesystem::path&) { return false; }
 bool probeUserNamespaces(bool) { return false; }
 #endif
 
@@ -226,11 +254,22 @@ struct StepOutcome {
   bool timed_out = false;
   bool truncated = false;
   bool spawn_failed = false;
+  bool cancelled = false;
+};
+
+// Progress callbacks a running step reports through, polled roughly once a
+// second between output reads. `heartbeat` advances the run's liveness stamp;
+// `cancel_requested` returns true when an operator asked to stop the run, and
+// the runner then kills the step's process group. Either may be empty.
+struct StepHooks {
+  std::function<void()> heartbeat;
+  std::function<bool()> cancel_requested;
 };
 
 StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesystem::path& cwd,
                         const std::vector<std::string>& env, const CiRunnerOptions& options,
-                        const std::filesystem::path& log_path) {
+                        const std::filesystem::path& log_path, const std::filesystem::path& bind_source,
+                        const StepHooks& hooks) {
   StepOutcome outcome;
   int pipe_fd[2];
   if (::pipe(pipe_fd) != 0) {
@@ -256,7 +295,7 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     ::close(pipe_fd[0]);
     ::close(log);
     ::setpgid(0, 0);
-    enterSandbox(options.allow_network);
+    enterSandbox(options.allow_network, bind_source);
     applyRlimits();
     const int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (devnull >= 0) {
@@ -283,6 +322,7 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
   ::close(pipe_fd[1]);
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(options.timeout_seconds);
+  auto last_hook = std::chrono::steady_clock::now();
   std::size_t written = 0;
   bool killed = false;
   char buffer[8192];
@@ -293,6 +333,17 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
         ::kill(-pid, SIGKILL);
         killed = true;
         outcome.timed_out = true;
+      }
+    }
+    // Roughly once a second, report liveness and honour a cancel request. A
+    // cancel kills the whole step process group, exactly as a timeout does.
+    if (!killed && std::chrono::steady_clock::now() - last_hook >= std::chrono::seconds(1)) {
+      last_hook = std::chrono::steady_clock::now();
+      if (hooks.heartbeat) hooks.heartbeat();
+      if (hooks.cancel_requested && hooks.cancel_requested()) {
+        ::kill(-pid, SIGKILL);
+        killed = true;
+        outcome.cancelled = true;
       }
     }
     pollfd descriptor{pipe_fd[0], POLLIN, 0};
@@ -331,8 +382,8 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
   }
-  if (outcome.timed_out) {
-    outcome.exit_code = -1;
+  if (outcome.timed_out || outcome.cancelled) {
+    outcome.exit_code = -1;  // the step was killed, not exited: its code is meaningless
   } else if (WIFEXITED(status)) {
     outcome.exit_code = WEXITSTATUS(status);
   } else if (WIFSIGNALED(status)) {
@@ -485,6 +536,109 @@ std::string firstLine(const std::string& text) {
   return line;
 }
 
+// The suffix of a sister's CKGIT_SISTER_<NAME> variable: the project name
+// uppercased with every non-alphanumeric byte mapped to '_', so it is a valid
+// shell variable name.
+std::string sisterEnvName(const std::string& name) {
+  std::string out = "CKGIT_SISTER_";
+  for (const unsigned char c : name) {
+    out.push_back(std::isalnum(c) ? static_cast<char>(std::toupper(c)) : '_');
+  }
+  return out;
+}
+
+// Materialises each declared sister project's snapshot into the scratch tree at
+// scratch/<name> (reached from the checkout as ../<name>), read-only via `git
+// archive` — no hooks, no submodules, no network, same-server projects only.
+// `ref` pins a sister to a branch, tag, or commit; empty takes the project's
+// current default branch (its bare HEAD). Returns the CKGIT_SISTER_<NAME>=<path>
+// assignments to export, where <path> is where the step will see the sister:
+// under `visible_root` (the canonical kSandboxRoot when sandboxed, else the
+// physical scratch). Throws with a clear message when a named sister is not a
+// hosted repository or a pinned ref does not resolve.
+std::vector<std::string> materializeSisters(const CiWorkflow& workflow,
+                                            const std::filesystem::path& repository,
+                                            const std::string& self,
+                                            const std::filesystem::path& scratch,
+                                            const std::filesystem::path& visible_root) {
+  std::vector<std::string> env;
+  const std::filesystem::path repo_root = repository.parent_path();
+  for (const CiSister& sister : workflow.sisters) {
+    if (sister.name == self) throw std::runtime_error("a project cannot list itself as a sister: " + sister.name);
+    if (sister.name == "src" || sister.name == "home" || sister.name == "tmp") {
+      throw std::runtime_error("reserved sister name: " + sister.name);
+    }
+    const std::filesystem::path sister_repo = repo_root / (sister.name + ".git");
+    if (!std::filesystem::is_directory(sister_repo)) {
+      throw std::runtime_error("sister project '" + sister.name + "' is not hosted here");
+    }
+    // Resolve the requested ref (or the default branch) to a single commit.
+    const std::string spec = sister.ref.empty() ? "HEAD" : sister.ref;
+    ProcessOptions resolve;
+    resolve.timeout = std::chrono::seconds(20);
+    resolve.output_limit = 256;
+    const ProcessResult resolved = runProcess(
+        {"git", "--git-dir", sister_repo.string(), "rev-parse", "--verify", "--end-of-options",
+         spec + "^{commit}"},
+        resolve);
+    if (resolved.timed_out || resolved.exit_code != 0) {
+      throw std::runtime_error("sister project '" + sister.name + "' has no " +
+                               (sister.ref.empty() ? "commits" : "ref '" + sister.ref + "'"));
+    }
+    std::string commit = resolved.output;
+    while (!commit.empty() && (commit.back() == '\n' || commit.back() == '\r')) commit.pop_back();
+    const std::filesystem::path dest = scratch / sister.name;
+    std::error_code error;
+    std::filesystem::create_directories(dest, error);
+    if (error) throw std::runtime_error("could not create the sister workspace for '" + sister.name + "'");
+    checkoutCommit(sister_repo, commit, dest, scratch / (sister.name + ".sister.tar"));
+    env.push_back(sisterEnvName(sister.name) + "=" + (visible_root / sister.name).string());
+  }
+  return env;
+}
+
+// The default variable a cache is exported as: CKGIT_CACHE_<NAME>, the name
+// uppercased with non-alphanumeric bytes mapped to '_'.
+std::string cacheEnvName(const std::string& name) {
+  std::string out = "CKGIT_CACHE_";
+  for (const unsigned char c : name) {
+    out.push_back(std::isalnum(c) ? static_cast<char>(std::toupper(c)) : '_');
+  }
+  return out;
+}
+
+// Provisions each declared build cache and returns the environment pointing
+// steps at it. With a configured cache_root a cache persists across runs at
+// cache_root/<project>/<name>; without one it falls back to a scratch
+// directory (so the workflow still runs, only without persistence). The
+// directory is owned by the runner account — writable inside the sandbox,
+// which maps to that account — and exported as CKGIT_CACHE_<NAME> plus every
+// variable the cache binds (e.g. CCACHE_DIR).
+std::vector<std::string> provisionCaches(const CiWorkflow& workflow, const std::string& project,
+                                         const std::filesystem::path& cache_root,
+                                         const std::filesystem::path& scratch,
+                                         const std::filesystem::path& visible_root) {
+  std::vector<std::string> env;
+  for (const CiCache& cache : workflow.caches) {
+    std::filesystem::path real;     // where it physically lives on the host
+    std::filesystem::path visible;  // where a step sees it
+    if (!cache_root.empty()) {
+      real = cache_root / project / cache.name;
+      visible = real;  // a persistent host path, visible in the sandbox as itself
+    } else {
+      real = scratch / ".cache" / cache.name;        // ephemeral, wiped with the run
+      visible = visible_root / ".cache" / cache.name;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(real, error);
+    if (error) throw std::runtime_error("could not create the cache '" + cache.name + "'");
+    const std::string path = visible.string();
+    env.push_back(cacheEnvName(cache.name) + "=" + path);
+    for (const std::string& var : cache.env) env.push_back(var + "=" + path);
+  }
+  return env;
+}
+
 }  // namespace
 
 bool ciSandboxCompiledIn() {
@@ -572,10 +726,39 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     return finish(CiRunStatus::Error, std::string("setup: ") + error.what());
   }
 
-  const std::filesystem::path work = scratch / "src";
-  const std::filesystem::path home = scratch / "home";
-  std::error_code home_error;
-  std::filesystem::create_directories(home, home_error);
+  const std::filesystem::path work = scratch / "src";  // physical: host-side packing/publishing
+
+  // Where a running step sees the tree. When the Linux sandbox is active its
+  // bind mount presents the scratch at one fixed canonical path (kSandboxRoot),
+  // so cwd, HOME, TMPDIR and every sister look identical on every run; without
+  // the sandbox the step uses the physical scratch directly. Holding this
+  // constant is what keeps a build's rendered paths reproducible.
+  const bool sandbox_active = report.namespaces_available;
+  const std::filesystem::path visible_root = sandbox_active ? kSandboxRoot : scratch;
+  const std::filesystem::path bind_source = sandbox_active ? scratch : std::filesystem::path{};
+  const std::filesystem::path work_visible = visible_root / "src";
+  const std::filesystem::path home_visible = visible_root / "home";
+  const std::filesystem::path tmp_visible = visible_root / "tmp";
+  std::error_code scratch_error;
+  std::filesystem::create_directories(scratch / "home", scratch_error);
+  std::filesystem::create_directories(scratch / "tmp", scratch_error);
+
+  // Materialise the sister projects this workflow declared before any step runs.
+  std::vector<std::string> sister_env;
+  try {
+    sister_env = materializeSisters(workflow, options.repository, options.project_name, scratch, visible_root);
+  } catch (const std::exception& error) {
+    return finish(CiRunStatus::Error, std::string("sisters: ") + error.what());
+  }
+  // Provision persistent build caches (a warm ccache store, say), which survive
+  // across runs when the server configures a cache root.
+  try {
+    std::vector<std::string> cache_env =
+        provisionCaches(workflow, options.project_name, options.cache_root, scratch, visible_root);
+    sister_env.insert(sister_env.end(), cache_env.begin(), cache_env.end());
+  } catch (const std::exception& error) {
+    return finish(CiRunStatus::Error, std::string("cache: ") + error.what());
+  }
 
   CiRunStatus status = CiRunStatus::Success;
   std::string detail;
@@ -583,7 +766,8 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   bool stop = false;
   for (const CiJob& job : workflow.jobs) {
     if (stop) break;
-    const std::vector<std::string> env = buildEnv(workflow, job, options, home);
+    const std::vector<std::string> env =
+        buildEnv(workflow, job, options, home_visible, tmp_visible, sister_env);
     for (const CiStep& step : job.steps) {
       const std::filesystem::path log_path = run_dir / "steps" / (std::to_string(step_index) + ".log");
       std::vector<std::string> argv;
@@ -592,7 +776,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       } else {
         argv = step.argv;
       }
-      const StepOutcome outcome = executeStep(argv, work, env, options, log_path);
+      const StepOutcome outcome = executeStep(argv, work_visible, env, options, log_path, bind_source);
       CiStepResult result;
       result.name = step.name.empty() ? job.name : step.name;
       result.exit_code = outcome.exit_code;

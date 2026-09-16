@@ -25,6 +25,10 @@ struct ServerConfig {
   // the per-step budgets and the spool poll cadence. Network is denied to steps
   // unless ci_allow_network is set.
   std::optional<std::filesystem::path> ci_build_root;
+  // Persistent build caches (ccache stores, etc.) live under this root, one
+  // subtree per project, surviving across runs. Empty makes declared caches
+  // ephemeral.
+  std::optional<std::filesystem::path> ci_cache_root;
   std::optional<unsigned> ci_timeout_seconds;
   std::optional<unsigned long long> ci_max_log_bytes;
   std::optional<unsigned> ci_poll_seconds;

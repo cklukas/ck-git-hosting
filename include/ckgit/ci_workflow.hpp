@@ -57,6 +57,9 @@ inline constexpr std::size_t kMaximumCiScalarBytes = 4096;
 inline constexpr std::size_t kMaximumCiScriptBytes = 16 * 1024;
 inline constexpr std::size_t kMaximumCiArtifactPaths = 64;
 inline constexpr std::size_t kMaximumCiPathBytes = 1024;
+inline constexpr std::size_t kMaximumCiSisters = 16;
+inline constexpr std::size_t kMaximumCiCaches = 8;
+inline constexpr std::size_t kMaximumCiCacheEnv = 8;
 // A parser sanity bound on a workflow's retention_days; the runner clamps the
 // effective value to the server's configured maximum.
 inline constexpr unsigned kMaximumCiRetentionDaysCap = 3650;
@@ -93,6 +96,23 @@ struct CiJob {
   std::optional<CiArtifact> artifact;
 };
 
+// One sister project a workflow depends on: another project hosted on this same
+// server whose source is materialised beside the checkout. `ref` pins it to a
+// branch, tag, or commit; empty means the project's current default branch.
+struct CiSister {
+  std::string name;
+  std::string ref;  // empty = default-branch HEAD
+};
+
+// One build cache a workflow keeps across runs: a persistent, project-scoped
+// directory (e.g. a ccache store). The runner exports its path as
+// CKGIT_CACHE_<NAME>, plus any environment variables named in `env` (e.g.
+// CCACHE_DIR), to every step.
+struct CiCache {
+  std::string name;
+  std::vector<std::string> env;
+};
+
 struct CiWorkflow {
   int version = 1;
   // Trigger sets, resolved from the optional `on:` block:
@@ -106,6 +126,16 @@ struct CiWorkflow {
   std::vector<std::string> tags;
   bool triggers_default_branch = false;
   CiEnv env;
+  // Other projects hosted on this same server whose source this build needs
+  // (e.g. a shared library checked out beside the repository). The runner
+  // materialises each one's snapshot, read-only, next to the checkout so a
+  // build finds it at `../<name>`, and exports its absolute path as
+  // `CKGIT_SISTER_<NAME>`. Nothing leaves the server and no network is used —
+  // see runCiWorkflow. Empty means none.
+  std::vector<CiSister> sisters;
+  // Persistent build caches this workflow keeps across runs. See CiCache and
+  // runCiWorkflow.
+  std::vector<CiCache> caches;
   std::vector<CiJob> jobs;
   // Optional static site to publish from a successful default-branch build: the
   // directory (relative to the checkout) whose contents become the project's
