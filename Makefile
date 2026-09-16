@@ -30,6 +30,7 @@ CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKG
 
 COMMON_SOURCES := \
 	src/common/authorized_keys.cpp \
+	src/common/ci_runner.cpp \
 	src/common/ci_store.cpp \
 	src/common/ci_workflow.cpp \
 	src/common/cli_help.cpp \
@@ -67,18 +68,20 @@ ADMIN_SOURCES := src/admin/main.cpp
 DISPATCHER_SOURCES := src/ssh-dispatcher/main.cpp
 RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp
+CI_RUNNER_SOURCES := src/ci-runner/main.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin
 CK_GIT_SHELL := $(BUILD_DIR_ABS)/bin/ck-git-shell
 CK_GIT_POST_RECEIVE := $(BUILD_DIR_ABS)/hooks/post-receive
 CK_GIT_HOSTINGD := $(BUILD_DIR_ABS)/bin/ck-git-hostingd
+CK_CI_RUNNER := $(BUILD_DIR_ABS)/bin/ck-ci-runnerd
 TEST_BIN := $(BUILD_DIR_ABS)/bin/ckgit-unit-tests
 
 .PHONY: all client check test force-build-version
 
-all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD)
+all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER)
 
 # The macOS/Linux client alone; used by the Homebrew formula.
 client: $(CKGIT)
@@ -106,6 +109,9 @@ $(CK_GIT_POST_RECEIVE): $(COMMON_OBJECTS) $(RECEIVE_HOOK_SOURCES) $(COMMON_HEADE
 
 $(CK_GIT_HOSTINGD): $(COMMON_OBJECTS) $(SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(SERVER_SOURCES) $(LDFLAGS) -o $@
+
+$(CK_CI_RUNNER): $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(LDFLAGS) -o $@
 
 $(TEST_BIN): $(COMMON_OBJECTS) $(TEST_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(TEST_SOURCES) $(LDFLAGS) -o $@
