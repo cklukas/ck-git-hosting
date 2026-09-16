@@ -63,6 +63,45 @@ std::optional<std::string> defaultBranch(const std::filesystem::path& repository
   return branch;
 }
 
+// A tag trigger pattern matches by exact name or a single trailing-'*' prefix.
+bool tagMatches(const std::string& tag, const std::string& pattern) {
+  if (!pattern.empty() && pattern.back() == '*') {
+    const std::string prefix = pattern.substr(0, pattern.size() - 1);
+    return tag.size() >= prefix.size() && tag.compare(0, prefix.size(), prefix) == 0;
+  }
+  return tag == pattern;
+}
+
+bool anyTagMatches(const std::string& tag, const std::vector<std::string>& patterns) {
+  for (const std::string& pattern : patterns) {
+    if (tagMatches(tag, pattern)) return true;
+  }
+  return false;
+}
+
+// The message of an annotated tag object, for release notes. Empty for a
+// lightweight tag (which is a commit, carrying no annotation) or on any error.
+std::string readTagNotes(const std::filesystem::path& repository, const std::string& id) {
+  ProcessOptions options;
+  options.timeout = std::chrono::seconds(10);
+  options.output_limit = 64 * 1024;
+  const ProcessResult type =
+      runProcess({"git", "--git-dir", repository.string(), "cat-file", "-t", id}, options);
+  if (type.exit_code != 0 || type.timed_out) return {};
+  std::string kind = type.output;
+  while (!kind.empty() && (kind.back() == '\n' || kind.back() == '\r')) kind.pop_back();
+  if (kind != "tag") return {};
+  const ProcessResult object =
+      runProcess({"git", "--git-dir", repository.string(), "cat-file", "-p", id}, options);
+  if (object.exit_code != 0 || object.timed_out) return {};
+  const std::size_t blank = object.output.find("\n\n");
+  if (blank == std::string::npos) return {};
+  std::string notes = object.output.substr(blank + 2);
+  while (!notes.empty() && notes.back() == '\n') notes.pop_back();
+  if (notes.size() > kMaximumReleaseNotesBytes) notes.resize(kMaximumReleaseNotesBytes);
+  return notes;
+}
+
 // Reads .ckgit/ci.yml from the commit object; std::nullopt means the commit has
 // no workflow (a non-CI push), which the caller records as Skipped.
 std::optional<std::string> readWorkflowBlob(const std::filesystem::path& repository,
@@ -406,42 +445,36 @@ PackOutcome packToFile(const std::vector<std::string>& argv, const std::filesyst
   return outcome;
 }
 
-// Packs one job's declared artifact from the checkout into the run's artifact
-// store and records it. `expires` of 0 stores it durably (a release asset);
-// otherwise it is an ephemeral CI artifact the retention sweep may remove. A
-// bundle that cannot be packed or is over the cap is recorded with a note.
-void collectArtifact(const CiArtifact& artifact, const std::filesystem::path& work,
-                     const CiRunnerOptions& options, const std::string& run_id, std::uint64_t created,
-                     std::uint64_t expires, CiRunRecord& record) {
+// Packs one job's declared artifact from the checkout into `dir` as <name>.tar
+// and returns its record. `expires` of 0 marks a durable release asset;
+// otherwise it is an ephemeral CI artifact. A bundle that cannot be packed or is
+// over the cap is returned with a note and no stored bytes. The caller writes
+// the sidecar (which commits the artifact) and never lets this fail the build.
+CiArtifactRecord packArtifactInto(const CiArtifact& artifact, const std::filesystem::path& work,
+                                  const std::filesystem::path& dir, std::size_t max_bytes,
+                                  std::uint64_t created, std::uint64_t expires) {
   CiArtifactRecord stored;
   stored.name = artifact.name;
   stored.created_epoch_seconds = created;
   stored.expires_epoch_seconds = expires;
-  try {
-    const std::filesystem::path dir =
-        prepareCiArtifactDirectory(options.state_root, options.project_name, run_id);
-    const std::filesystem::path blob = dir / (artifact.name + ".tar");
-    std::vector<std::string> argv = {"tar", "-cf", "-", "-C", work.string(), "--"};
-    for (const std::string& path : artifact.paths) argv.push_back(path);
-    const PackOutcome outcome = packToFile(argv, blob, options.artifact_max_bytes, 300);
-    std::error_code error;
-    if (outcome.spawn_failed) {
-      stored.note = "could not start packing the artifact";
-    } else if (outcome.truncated) {
-      std::filesystem::remove(blob, error);
-      stored.note = "artifact exceeds the size cap";
-    } else if (outcome.exit_code != 0) {
-      std::filesystem::remove(blob, error);
-      stored.note = "packing failed (a path may be missing)";
-    } else {
-      stored.bytes = outcome.bytes;
-      stored.sha256 = sha256HexOfFile(blob);
-    }
-    writeCiArtifactRecord(options.state_root, options.project_name, run_id, stored);
-    record.artifacts.push_back(stored);
-  } catch (const std::exception&) {
-    // Artifact collection never fails the build; the run already succeeded.
+  const std::filesystem::path blob = dir / (artifact.name + ".tar");
+  std::vector<std::string> argv = {"tar", "-cf", "-", "-C", work.string(), "--"};
+  for (const std::string& path : artifact.paths) argv.push_back(path);
+  const PackOutcome outcome = packToFile(argv, blob, max_bytes, 300);
+  std::error_code error;
+  if (outcome.spawn_failed) {
+    stored.note = "could not start packing the artifact";
+  } else if (outcome.truncated) {
+    std::filesystem::remove(blob, error);
+    stored.note = "artifact exceeds the size cap";
+  } else if (outcome.exit_code != 0) {
+    std::filesystem::remove(blob, error);
+    stored.note = "packing failed (a path may be missing)";
+  } else {
+    stored.bytes = outcome.bytes;
+    stored.sha256 = sha256HexOfFile(blob);
   }
+  return stored;
 }
 
 std::string firstLine(const std::string& text) {
@@ -493,18 +526,33 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     return finish(CiRunStatus::Error, std::string("workflow: ") + error.what());
   }
 
-  {
-    // A workflow with an `on: { branches: [...] }` list triggers only on those
-    // branches; a workflow that omits `on:` triggers only on the repository's
-    // default branch (its HEAD). Any other pushed branch is recorded Skipped.
+  // Decide whether this ref triggers the workflow, and whether it is a release.
+  // Tag pushes match `on.tags`; branch pushes match `on.branches`, or the
+  // repository's default branch when the workflow omits `on:` entirely.
+  const std::string kTagPrefix = "refs/tags/";
+  const bool is_tag = options.ref.rfind(kTagPrefix, 0) == 0;
+  bool is_release = false;
+  std::string release_tag;
+  if (is_tag) {
+    const std::string tag = options.ref.substr(kTagPrefix.size());
+    if (!anyTagMatches(tag, workflow.tags)) {
+      return finish(CiRunStatus::Skipped, "tag " + tag + " is not a trigger");
+    }
+    if (!isValidReleaseTag(tag)) {
+      return finish(CiRunStatus::Skipped, "tag " + tag + " is not a supported release tag");
+    }
+    is_release = true;
+    release_tag = tag;
+  } else {
     const std::string branch = branchOf(options.ref);
-    if (!workflow.branches.empty()) {
-      if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) == workflow.branches.end()) {
-        return finish(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
+    if (workflow.triggers_default_branch) {
+      const std::optional<std::string> def = defaultBranch(options.repository);
+      if (def.has_value() && branch != *def) {
+        return finish(CiRunStatus::Skipped, "branch " + branch + " is not the default branch " + *def);
       }
-    } else if (const std::optional<std::string> def = defaultBranch(options.repository);
-               def.has_value() && branch != *def) {
-      return finish(CiRunStatus::Skipped, "branch " + branch + " is not the default branch " + *def);
+    } else if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) ==
+               workflow.branches.end()) {
+      return finish(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
     }
   }
 
@@ -572,14 +620,53 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       }
     }
     if (!stop && job.artifact.has_value()) {
-      unsigned days = job.artifact->retention_days == 0 ? options.artifact_retention_days
-                                                        : job.artifact->retention_days;
-      if (options.artifact_max_retention_days != 0 && days > options.artifact_max_retention_days) {
-        days = options.artifact_max_retention_days;
-      }
       const std::uint64_t created = nowEpoch();
-      const std::uint64_t expires = created + static_cast<std::uint64_t>(days) * 86400ull;
-      collectArtifact(*job.artifact, work, options, record.run_id, created, expires, record);
+      try {
+        if (is_release) {
+          const std::filesystem::path dir =
+              prepareCiReleaseDirectory(options.state_root, options.project_name, release_tag);
+          const CiArtifactRecord stored =
+              packArtifactInto(*job.artifact, work, dir, options.artifact_max_bytes, created, /*expires=*/0);
+          writeCiReleaseArtifactRecord(options.state_root, options.project_name, release_tag, stored);
+          record.artifacts.push_back(stored);
+        } else {
+          unsigned days = job.artifact->retention_days == 0 ? options.artifact_retention_days
+                                                            : job.artifact->retention_days;
+          if (options.artifact_max_retention_days != 0 && days > options.artifact_max_retention_days) {
+            days = options.artifact_max_retention_days;
+          }
+          const std::uint64_t expires = created + static_cast<std::uint64_t>(days) * 86400ull;
+          const std::filesystem::path dir =
+              prepareCiArtifactDirectory(options.state_root, options.project_name, record.run_id);
+          const CiArtifactRecord stored =
+              packArtifactInto(*job.artifact, work, dir, options.artifact_max_bytes, created, expires);
+          writeCiArtifactRecord(options.state_root, options.project_name, record.run_id, stored);
+          record.artifacts.push_back(stored);
+        }
+      } catch (const std::exception&) {
+        // Artifact collection never fails the build; the run already succeeded.
+      }
+    }
+  }
+
+  // A tag build publishes a release on success, and publishes nothing (cleaning
+  // up any partial assets) when it fails, so a release is always complete.
+  if (is_release) {
+    if (status == CiRunStatus::Success) {
+      try {
+        CiReleaseRecord release;
+        release.tag = release_tag;
+        release.commit_id = options.commit_id;
+        release.created_epoch_seconds = nowEpoch();
+        release.notes = readTagNotes(options.repository, options.commit_id);
+        writeCiReleaseRecord(options.state_root, options.project_name, release);
+      } catch (const std::exception&) {
+      }
+    } else {
+      try {
+        removeCiRelease(options.state_root, options.project_name, release_tag);
+      } catch (const std::exception&) {
+      }
     }
   }
 

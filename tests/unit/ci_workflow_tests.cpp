@@ -187,6 +187,28 @@ void testArtifacts() {
   require(rejected(base + "      retention_days: 3\n"), "artifacts without paths");
 }
 
+void testTagTriggers() {
+  const ckgit::CiWorkflow none =
+      ckgit::parseCiWorkflow("version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  require(none.triggers_default_branch, "no on: triggers the default branch");
+  require(none.branches.empty(), "no on: lists no explicit branches");
+  require(none.tags.size() == 1 && none.tags[0] == "*", "no on: releases on any tag");
+
+  const ckgit::CiWorkflow tags = ckgit::parseCiWorkflow(
+      "version: 1\non: { tags: [v*, release-1] }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  require(!tags.triggers_default_branch, "an explicit on: does not add the default branch");
+  require(tags.branches.empty(), "tags-only lists no branches");
+  require(tags.tags.size() == 2 && tags.tags[0] == "v*" && tags.tags[1] == "release-1", "tag patterns parse");
+
+  const ckgit::CiWorkflow branch = ckgit::parseCiWorkflow(
+      "version: 1\non: { branches: [main] }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  require(branch.branches.size() == 1 && branch.tags.empty() && !branch.triggers_default_branch,
+          "branches-only triggers no tags");
+
+  require(rejected("version: 1\non: { tags: ['bad tag'] }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"),
+          "an invalid tag pattern is rejected");
+}
+
 }  // namespace
 
 void testCiWorkflow() {
@@ -194,6 +216,7 @@ void testCiWorkflow() {
   testBlockStyleAndComments();
   testQuoting();
   testArtifacts();
+  testTagTriggers();
   testRejections();
   testBounds();
 }

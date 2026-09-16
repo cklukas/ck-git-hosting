@@ -579,6 +579,13 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         response.content_type = "application/x-tar";
         response.filename = route.path + ".tar";
         response.body = *blob;
+      } else if (route.kind == ckgit::RouteKind::kReleaseAsset) {
+        const auto blob = index.readReleaseAsset(route.project, route.run_id, route.path);
+        if (!blob) throw ckgit::WebError(404, "Release asset was not found.");
+        response.raw = true;
+        response.content_type = "application/x-tar";
+        response.filename = route.path + ".tar";
+        response.body = *blob;
       } else if (route.kind == ckgit::RouteKind::kCiLog) {
         const auto log = index.readCiLog(route.project, route.run_id,
                                          static_cast<std::size_t>(std::max(0, route.step)));

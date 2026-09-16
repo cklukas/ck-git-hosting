@@ -107,9 +107,11 @@ jobs:
 ```
 
 - `version:` must be `1`.
-- `on: { branches: [...] }` limits which branches trigger the workflow. Omit
-  `on:` to trigger only on the repository's default branch. A push to any other
-  branch is recorded `skipped`, as is a commit with no `.ckgit/ci.yml`.
+- `on: { branches: [...] }` and `on: { tags: [...] }` choose which branches and
+  tags trigger the workflow (a tag pattern is an exact name or a trailing `*`,
+  such as `v*`). Omit `on:` entirely to build the default branch and cut a
+  release on any tag. A non-triggering ref is recorded `skipped`, as is a commit
+  with no `.ckgit/ci.yml`.
 - `env:` is fixed `key: value` pairs; there is no `$VAR` expansion. A job's
   `env:` is merged over the top-level `env:`.
 - A step's `run:` written as a **list** is an exact command with no shell. A
@@ -153,12 +155,12 @@ always downloadable. The runner enforces all of this in a sweep every
 curl -O http://<server>:<http_port>/project/myproject/ci/<run-id>/artifacts/<name>
 ```
 
-Durable release assets, attached to a tag, are a separate feature with no expiry.
+Durable release assets, attached to a tag, never expire; see Releases below.
 
 ## Push and read results
 
-Push to a triggering branch as usual. The receive hook queues one job per
-updated branch head; the runner picks it up within `ci_poll_seconds`.
+Push to a triggering branch or tag as usual. The receive hook queues one job per
+updated branch head or tag; the runner picks it up within `ci_poll_seconds`.
 
 In the dashboard, open a project and follow the **CI** tab:
 
@@ -175,6 +177,34 @@ On the command line, the records are plain files under the state root:
 ```text
 sudo ls /var/lib/ck-git-hosting/state/ci/runs/myproject
 sudo cat /var/lib/ck-git-hosting/state/ci/runs/myproject/<run-id>/run.ini
+```
+
+## Releases
+
+Pushing a **tag** turns a build into a durable release — this is where v1
+installers live. When a tag build's job declares `artifacts:`, those bundles are
+stored under the tag and kept until the tag is deleted; they never expire and the
+retention sweep never touches them. A tag triggers a release when it matches
+`on: { tags: [...] }`, or always when the workflow omits `on:`.
+
+- The **Releases** tab lists each tag newest-first, using the annotated tag's
+  message as the release notes, with every asset's size, checksum, and a
+  download link.
+- A failed tag build publishes nothing.
+- Deleting the tag removes its release and every asset; deleting the project
+  removes them too. There is no expiry and no admin step — pushing and deleting
+  tags is the whole workflow.
+
+```text
+git tag -a v1.0.0 -m 'Release 1.0'      # annotate for release notes
+git push origin v1.0.0                   # build and publish the release
+git push origin :refs/tags/v1.0.0        # delete the tag -> delete the release
+```
+
+Download a release asset the same way as a CI artifact:
+
+```text
+curl -O http://<server>:<http_port>/project/myproject/releases/<tag>/<name>
 ```
 
 ## The sandbox and its requirements

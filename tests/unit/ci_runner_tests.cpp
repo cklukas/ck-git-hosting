@@ -249,6 +249,50 @@ void testArtifactOverCap() {
           "an over-cap artifact has no downloadable bundle");
 }
 
+void testReleaseOnTag() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p dist && printf installer > dist/app.bin'\n"
+      "    artifacts:\n"
+      "      name: app\n"
+      "      paths: [dist]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.ref = "refs/tags/v1.0.0";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success, "the tag build succeeds");
+  const auto runs = ckgit::loadCiRuns(fixture.state, "demo");
+  require(runs.size() == 1 && runs[0].artifacts.empty(),
+          "a tag build's run holds no ephemeral artifacts (they became the release)");
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 1 && releases[0].tag == "v1.0.0", "the release is recorded under its tag");
+  require(releases[0].assets.size() == 1 && releases[0].assets[0].name == "app" &&
+              releases[0].assets[0].expires_epoch_seconds == 0,
+          "the release asset is durable");
+  const auto blob = ckgit::readCiReleaseAsset(fixture.state, "demo", "v1.0.0", "app", 1u << 20);
+  require(blob.has_value() && !blob->empty(), "the release asset is downloadable");
+}
+
+void testReleaseFailedPublishesNothing() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: sh -ec 'exit 1'\n"
+      "    artifacts:\n"
+      "      paths: [dist]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.ref = "refs/tags/v9";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Failure, "the release build fails");
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "a failed release build publishes nothing");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -261,4 +305,6 @@ void testCiRunner() {
   testDefaultBranchTrigger();
   testArtifacts();
   testArtifactOverCap();
+  testReleaseOnTag();
+  testReleaseFailedPublishesNothing();
 }

@@ -144,6 +144,10 @@ Route parseHttpRoute(std::string_view target) {
     route.kind = RouteKind::kCiRuns;
     return route;
   }
+  if (target == "releases") {
+    route.kind = RouteKind::kReleases;
+    return route;
+  }
   const auto operation_end = target.find('/');
   if (operation_end == std::string_view::npos) return {};
   const auto operation = target.substr(0, operation_end);
@@ -184,6 +188,27 @@ Route parseHttpRoute(std::string_view target) {
       return {};
     }
     route.kind = RouteKind::kCiLog;
+    return route;
+  }
+  if (operation == "releases") {
+    // /project/<id>/releases/<tag>/<name> — a durable release asset download.
+    const auto slash = target.find('/');
+    if (slash == std::string_view::npos) return {};
+    const auto tag = target.substr(0, slash);
+    const auto name = target.substr(slash + 1);
+    const auto safe = [](std::string_view value) {
+      return std::all_of(value.begin(), value.end(), [](unsigned char byte) {
+        return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+               (byte >= '0' && byte <= '9') || byte == '.' || byte == '_' || byte == '-';
+      });
+    };
+    if (tag.empty() || tag.size() > 128 || tag == "." || tag == ".." || !safe(tag) ||
+        name.empty() || name.size() > 64 || !safe(name)) {
+      return {};
+    }
+    route.kind = RouteKind::kReleaseAsset;
+    route.run_id = std::string(tag);
+    route.path = std::string(name);
     return route;
   }
   if (operation == "tree" || operation == "blob" || operation == "source" || operation == "raw") {

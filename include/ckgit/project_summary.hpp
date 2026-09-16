@@ -46,6 +46,8 @@ struct ProjectSummary {
   // Newest-first CI run records (status, timing, per-step results). Loaded on
   // the metadata-revision channel, since CI status changes without a ref move.
   std::vector<CiRunRecord> ci_runs{};
+  // Newest-first durable releases (tag + assets), loaded on the same channel.
+  std::vector<CiReleaseRecord> releases{};
   std::optional<CommitSummary> last_commit{};
   std::string head_id{};
   std::uint64_t size_bytes{};

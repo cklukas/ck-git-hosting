@@ -95,9 +95,16 @@ struct CiJob {
 
 struct CiWorkflow {
   int version = 1;
-  // Branches whose push triggers the workflow. Empty means "the repository's
-  // default branch", resolved by the caller — the file never names a default.
+  // Trigger sets, resolved from the optional `on:` block:
+  //   - no `on:` at all  -> triggers_default_branch = true, tags = ["*"]
+  //     (build the repo's default branch, and cut a release on any tag)
+  //   - `on: { branches: [...] }` -> those branches; tags only if listed too
+  //   - `on: { tags: [...] }`     -> those tag patterns; branches only if listed
+  // A tag pattern is an exact name or a trailing-'*' prefix (e.g. "v*"). The
+  // caller resolves the repository's default branch; the file never names one.
   std::vector<std::string> branches;
+  std::vector<std::string> tags;
+  bool triggers_default_branch = false;
   CiEnv env;
   std::vector<CiJob> jobs;
 };

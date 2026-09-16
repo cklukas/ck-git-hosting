@@ -132,4 +132,34 @@ curl --path-as-is --max-time 4 --silent -o "$test_root/build.tar" \
   "$base/project/demo/ci/$run_id/artifacts/build" || fail "curl artifact"
 tar -tf "$test_root/build.tar" | grep -q 'out/artifact.txt' || fail "downloaded artifact is not the expected bundle"
 
+# A tag push turns the same build's artifacts into a durable release.
+git -C "$work" -c user.email=t@example.invalid -c user.name=Test tag -a -m 'Release 1.0' v1.0.0
+git -C "$work" push -q "$repos/demo.git" v1.0.0
+tag_id=$(git -C "$work" rev-parse v1.0.0)
+printf '%s %s refs/tags/v1.0.0\n' "$(printf '0%.0s' $(seq 1 40))" "$tag_id" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
+      CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive failed for the tag"
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once >/dev/null 2>&1 || fail "serve (tag) failed"
+[ -f "$state/releases/demo/v1.0.0/release.ini" ] || fail "the release record was not written"
+[ -f "$state/releases/demo/v1.0.0/build.tar" ] || fail "the release asset was not stored"
+grep -q "status=success" "$(ls "$state"/ci/runs/demo/*/run.ini | sort | tail -n1)" || fail "the tag build did not succeed"
+
+attempt=0
+while :; do
+  curl --path-as-is --max-time 4 --silent -o "$test_root/rel.html" "$base/project/demo/releases" || fail "curl releases"
+  grep -q "v1.0.0" "$test_root/rel.html" && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || { cat "$test_root/rel.html"; fail "releases page never showed the tag"; }
+  sleep .1
+done
+grep -q "/project/demo/releases/v1.0.0/build" "$test_root/rel.html" || fail "releases page has no asset link"
+curl --path-as-is --max-time 4 --silent -o "$test_root/rel.tar" \
+  "$base/project/demo/releases/v1.0.0/build" || fail "curl release asset"
+tar -tf "$test_root/rel.tar" | grep -q 'out/artifact.txt' || fail "release asset is not the expected bundle"
+
+# Deleting the tag drops its release and every asset.
+printf '%s %s refs/tags/v1.0.0\n' "$tag_id" "$(printf '0%.0s' $(seq 1 40))" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
+      CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive failed for the tag deletion"
+[ ! -e "$state/releases/demo/v1.0.0" ] || fail "the release survived its tag being deleted"
+
 echo "ci_runner integration OK"

@@ -92,9 +92,50 @@ void testRender() {
           "run detail and step names are HTML-escaped");
 }
 
+void testReleaseRoutes() {
+  require(ckgit::parseHttpRoute("/project/demo/releases").kind == ckgit::RouteKind::kReleases,
+          "the releases list route parses");
+  const auto asset = ckgit::parseHttpRoute("/project/demo/releases/v1.0.0/app");
+  require(asset.kind == ckgit::RouteKind::kReleaseAsset && asset.project == "demo" &&
+              asset.run_id == "v1.0.0" && asset.path == "app",
+          "the release asset route parses the tag and name");
+  require(ckgit::parseHttpRoute("/project/demo/releases/../secret/app").kind == ckgit::RouteKind::kNotFound,
+          "a traversal tag is rejected");
+  require(ckgit::parseHttpRoute("/project/demo/releases/v1/a/b").kind == ckgit::RouteKind::kNotFound,
+          "a slashed asset name is rejected");
+}
+
+void testReleaseRender() {
+  ckgit::ProjectSummary empty;
+  empty.name = "demo";
+  require(ckgit::renderReleases(empty).find("No releases") != std::string::npos, "empty state renders");
+
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  ckgit::CiReleaseRecord release;
+  release.tag = "v1.0.0";
+  release.commit_id = std::string(40, 'a');
+  release.created_epoch_seconds = 1700000000;
+  release.notes = "<b>notes</b>";
+  ckgit::CiArtifactRecord asset;
+  asset.name = "app";
+  asset.bytes = 2048;
+  asset.sha256 = std::string(64, 'a');
+  release.assets.push_back(asset);
+  project.releases.push_back(release);
+  const std::string html = ckgit::renderReleases(project);
+  require(html.find("v1.0.0") != std::string::npos, "shows the tag");
+  require(html.find("/project/demo/releases/v1.0.0/app") != std::string::npos, "links the asset download");
+  require(html.find("app.tar") != std::string::npos, "shows the asset filename");
+  require(html.find("<b>notes</b>") == std::string::npos && html.find("&lt;b&gt;notes&lt;/b&gt;") != std::string::npos,
+          "release notes are HTML-escaped");
+}
+
 }  // namespace
 
 void testCiWeb() {
   testRoutes();
   testRender();
+  testReleaseRoutes();
+  testReleaseRender();
 }

@@ -320,7 +320,8 @@ void validateState(const fs::path& state, const std::vector<std::string>& names)
   requirePrivateTree(state);
   for (const auto& entry : fs::directory_iterator(state)) {
     const auto name = entry.path().filename().string();
-    if ((name != "checkouts" && name != "projects" && name != "events" && name != "ci") ||
+    if ((name != "checkouts" && name != "projects" && name != "events" && name != "ci" &&
+         name != "releases") ||
         !fs::is_directory(entry.symlink_status())) {
       throw std::runtime_error("unsupported metadata entry in recovery: " + name);
     }
@@ -358,6 +359,20 @@ void validateState(const fs::path& state, const std::vector<std::string>& names)
     if (!fs::is_directory(entry.symlink_status()) ||
         (name != "spool" && name != "working" && name != "runs" && name != "projects")) {
       throw std::runtime_error("unsupported CI metadata entry: " + name);
+    }
+  }
+  const auto releases = state / "releases";
+  if (entryExists(releases)) for (const auto& project : fs::directory_iterator(releases)) {
+    if (!fs::is_directory(project.symlink_status()) || !isValidProjectName(project.path().filename().string())) {
+      throw std::runtime_error("unsupported release project directory");
+    }
+    for (const auto& tag : fs::directory_iterator(project.path())) {
+      if (!fs::is_directory(tag.symlink_status())) throw std::runtime_error("unsupported release tag entry");
+      for (const auto& asset : fs::directory_iterator(tag.path())) {
+        if (!fs::is_regular_file(asset.symlink_status())) {
+          throw std::runtime_error("unsupported release asset entry");
+        }
+      }
     }
   }
 }

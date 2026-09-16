@@ -89,4 +89,47 @@ std::string renderCiRuns(const ProjectSummary& project) {
   return out;
 }
 
+std::string renderReleases(const ProjectSummary& project) {
+  std::string out = "<h1>Releases</h1>";
+  if (project.releases.empty()) {
+    return out +
+           "<p class=\"empty\">No releases yet. Push a tag whose build declares an "
+           "<code>artifacts:</code> bundle to publish one; it is kept until the tag is deleted.</p>";
+  }
+  for (const CiReleaseRecord& release : project.releases) {
+    out += "<section class=\"release\"><h2>" + htmlEscape(release.tag) + "</h2>";
+    out += "<p class=\"muted\"><code>" + htmlEscape(shortId(release.commit_id)) + "</code>";
+    if (release.created_epoch_seconds != 0) {
+      out += " · <span title=\"" + htmlEscape(formatUtcTimestamp(release.created_epoch_seconds)) + "\">" +
+             htmlEscape(relativeTime(release.created_epoch_seconds)) + "</span>";
+    }
+    out += "</p>";
+    if (!release.notes.empty()) {
+      out += "<pre class=\"release-notes\">" + escapePre(release.notes) + "</pre>";
+    }
+    if (release.assets.empty()) {
+      out += "<p class=\"empty\">No assets.</p>";
+    } else {
+      out += "<ul class=\"release-assets\">";
+      for (const CiArtifactRecord& asset : release.assets) {
+        if (!asset.note.empty()) {
+          out += "<li>" + htmlEscape(asset.name) + " (" + htmlEscape(asset.note) + ")</li>";
+          continue;
+        }
+        const std::string url =
+            "/project/" + project.name + "/releases/" + release.tag + "/" + asset.name;
+        out += "<li><a href=\"" + htmlEscape(url) + "\">" + htmlEscape(asset.name) + ".tar</a> (" +
+               htmlEscape(formatBytes(asset.bytes)) + ")";
+        if (!asset.sha256.empty()) {
+          out += " <code class=\"muted\">" + htmlEscape(asset.sha256.substr(0, 12)) + "</code>";
+        }
+        out += "</li>";
+      }
+      out += "</ul>";
+    }
+    out += "</section>";
+  }
+  return out;
+}
+
 }  // namespace ckgit

@@ -131,6 +131,7 @@ std::string sectionForRoute(const Route& route) {
     case RouteKind::kCalendar: return "calendar";
     case RouteKind::kDay: return "day";
     case RouteKind::kCiRuns: return "ci";
+    case RouteKind::kReleases: return "releases";
     default: return "commit";
   }
 }
@@ -145,6 +146,12 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
   if (route.kind == RouteKind::kCiRuns) {
     PageContext ci_context{{}, {}, "ci", {}, 0, 0};
     response.body = pageLayout(project.name + " \xc2\xb7 CI", renderCiRuns(project), &project, &ci_context);
+    return response;
+  }
+  if (route.kind == RouteKind::kReleases) {
+    PageContext releases_context{{}, {}, "releases", {}, 0, 0};
+    response.body = pageLayout(project.name + " \xc2\xb7 Releases", renderReleases(project), &project,
+                               &releases_context);
     return response;
   }
   const bool empty = !project.indexing && project.index_error.empty() && !project.valid_head &&

@@ -462,6 +462,19 @@ bool isValidEnvName(std::string_view name) {
   });
 }
 
+// A tag trigger pattern: an exact name or a single trailing '*' wildcard, over
+// the same safe characters release tags are stored under (no '/').
+bool isValidTagPattern(std::string_view pattern) {
+  if (pattern.empty() || pattern.size() > 128) return false;
+  std::string_view body = pattern;
+  if (body.back() == '*') body.remove_suffix(1);  // one trailing wildcard is allowed
+  return std::all_of(body.begin(), body.end(), [](unsigned char character) {
+    return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+           (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+           character == '-';
+  });
+}
+
 bool isValidCiName(std::string_view name) {
   return !name.empty() && name.size() <= kMaximumCiNameBytes &&
          std::all_of(name.begin(), name.end(), [](unsigned char character) {
@@ -611,7 +624,7 @@ CiWorkflow interpret(const Node& root) {
 
   if (const Node* on = findEntry(root, "on")) {
     requireKind(*on, Node::Kind::Mapping, "'on' to be a mapping");
-    rejectUnknownKeys(*on, {"branches"});
+    rejectUnknownKeys(*on, {"branches", "tags"});
     if (const Node* branches = findEntry(*on, "branches")) {
       requireKind(*branches, Node::Kind::Sequence, "branches to be a list");
       if (branches->items.size() > kMaximumCiBranches) tooLarge("too many branches");
@@ -621,6 +634,19 @@ CiWorkflow interpret(const Node& root) {
         workflow.branches.push_back(value);
       }
     }
+    if (const Node* tags = findEntry(*on, "tags")) {
+      requireKind(*tags, Node::Kind::Sequence, "tags to be a list");
+      if (tags->items.size() > kMaximumCiBranches) tooLarge("too many tags");
+      for (const Node& tag : tags->items) {
+        const std::string& value = requireKind(tag, Node::Kind::Scalar, "each tag to be a scalar").scalar;
+        if (!isValidTagPattern(value)) malformed("invalid tag pattern '" + value + "'", on->line);
+        workflow.tags.push_back(value);
+      }
+    }
+  } else {
+    // No `on:` — build the default branch and cut a release on any tag.
+    workflow.triggers_default_branch = true;
+    workflow.tags.push_back("*");
   }
 
   if (const Node* env = findEntry(root, "env")) workflow.env = interpretEnv(*env);

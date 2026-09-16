@@ -370,6 +370,28 @@ CiArtifactRecord parseArtifact(std::string_view content) {
   return artifact;
 }
 
+std::string serializeRelease(const CiReleaseRecord& release) {
+  return "schema_version=1\n"
+         "tag=" + release.tag + "\n"
+         "commit=" + release.commit_id + "\n"
+         "created_epoch=" + std::to_string(release.created_epoch_seconds) + "\n"
+         "notes_hex=" + toHex(release.notes) + "\n";
+}
+
+CiReleaseRecord parseRelease(std::string_view content) {
+  const std::vector<std::string_view> lines = frame(content);
+  if (lines.size() != 5 || lines[0] != "schema_version=1") fail("a release record has the wrong shape");
+  CiReleaseRecord release;
+  release.tag = std::string(expectField(lines[1], "tag="));
+  release.commit_id = std::string(expectField(lines[2], "commit="));
+  release.created_epoch_seconds = parseEpoch(expectField(lines[3], "created_epoch="));
+  release.notes = fromHex(expectField(lines[4], "notes_hex="), kMaximumReleaseNotesBytes);
+  if (!isValidReleaseTag(release.tag) || !isHexObjectId(release.commit_id)) {
+    fail("a release record contains invalid data");
+  }
+  return release;
+}
+
 }  // namespace
 
 std::string_view ciRunStatusName(CiRunStatus status) {
@@ -839,12 +861,147 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
   return removed;
 }
 
+bool isValidReleaseTag(std::string_view tag) {
+  return !tag.empty() && tag.size() <= kMaximumReleaseTagBytes && tag != "." && tag != ".." &&
+         std::all_of(tag.begin(), tag.end(), [](unsigned char character) {
+           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+                  character == '-';
+         });
+}
+
+std::filesystem::path prepareCiReleaseDirectory(const std::filesystem::path& state_root,
+                                                std::string_view project_name, std::string_view tag) {
+  if (!isValidProjectName(project_name)) fail("invalid project name for a release");
+  if (!isValidReleaseTag(tag)) fail("invalid release tag");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor releases_fd(ensureDirAt(root_fd, "releases"));
+  Descriptor project_fd(ensureDirAt(releases_fd, std::string(project_name)));
+  Descriptor tag_fd(ensureDirAt(project_fd, std::string(tag)));
+  return root / "releases" / std::string(project_name) / std::string(tag);
+}
+
+void writeCiReleaseArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                                  std::string_view tag, const CiArtifactRecord& record) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidArtifactName(record.name)) {
+    fail("refusing to write an invalid release asset record");
+  }
+  const std::string content = serializeArtifact(record);
+  if (content.size() > kMaximumCiArtifactRecordBytes) fail("a release asset record exceeds its size limit");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor releases_fd(ensureDirAt(root_fd, "releases"));
+  Descriptor project_fd(ensureDirAt(releases_fd, std::string(project_name)));
+  Descriptor tag_fd(ensureDirAt(project_fd, std::string(tag)));
+  atomicWriteAt(tag_fd, record.name + ".ini", content);
+}
+
+void writeCiReleaseRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                          const CiReleaseRecord& record) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(record.tag) ||
+      !isHexObjectId(record.commit_id)) {
+    fail("refusing to write an invalid release record");
+  }
+  if (record.notes.size() > kMaximumReleaseNotesBytes) fail("release notes exceed the size limit");
+  const std::string content = serializeRelease(record);
+  if (content.size() > kMaximumReleaseRecordBytes) fail("a release record exceeds its size limit");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor releases_fd(ensureDirAt(root_fd, "releases"));
+  Descriptor project_fd(ensureDirAt(releases_fd, std::string(project_name)));
+  Descriptor tag_fd(ensureDirAt(project_fd, record.tag));
+  atomicWriteAt(tag_fd, "release.ini", content);
+}
+
+std::vector<CiReleaseRecord> loadReleases(const std::filesystem::path& state_root,
+                                          std::string_view project_name, std::size_t maximum) {
+  std::vector<CiReleaseRecord> releases;
+  if (maximum == 0 || !isValidProjectName(project_name)) return releases;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor releases_fd(openDirAt(root_fd, "releases", &missing));
+  if (missing) return releases;
+  Descriptor project_fd(openDirAt(releases_fd, std::string(project_name), &missing));
+  if (missing) return releases;
+
+  for (const std::string& tag : listNames(project_fd)) {
+    if (!isValidReleaseTag(tag)) continue;
+    bool tag_missing = false;
+    Descriptor tag_fd(openDirAt(project_fd, tag, &tag_missing));
+    if (tag_missing) continue;
+    bool record_missing = false;
+    try {
+      const std::string content = readCappedAt(tag_fd, "release.ini", kMaximumReleaseRecordBytes, &record_missing);
+      if (record_missing) continue;
+      CiReleaseRecord release = parseRelease(content);
+      for (const std::string& name : listNames(tag_fd)) {
+        if (!endsWith(name, ".ini") || name == "release.ini") continue;
+        try {
+          bool asset_missing = false;
+          const std::string asset = readCappedAt(tag_fd, name, kMaximumCiArtifactRecordBytes, &asset_missing);
+          if (!asset_missing) release.assets.push_back(parseArtifact(asset));
+        } catch (const std::exception&) {
+        }
+      }
+      std::sort(release.assets.begin(), release.assets.end(),
+                [](const CiArtifactRecord& a, const CiArtifactRecord& b) { return a.name < b.name; });
+      releases.push_back(std::move(release));
+    } catch (const std::exception&) {
+      // A malformed release is skipped rather than failing the dashboard.
+    }
+  }
+  std::sort(releases.begin(), releases.end(), [](const CiReleaseRecord& a, const CiReleaseRecord& b) {
+    if (a.created_epoch_seconds != b.created_epoch_seconds) {
+      return a.created_epoch_seconds > b.created_epoch_seconds;
+    }
+    return a.tag > b.tag;
+  });
+  if (releases.size() > maximum) releases.resize(maximum);
+  return releases;
+}
+
+std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,
+                                              std::string_view project_name, std::string_view tag,
+                                              std::string_view asset_name, std::size_t cap) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidArtifactName(asset_name)) {
+    return std::nullopt;
+  }
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor releases_fd(openDirAt(root_fd, "releases", &missing));
+    if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(releases_fd, std::string(project_name), &missing));
+    if (missing) return std::nullopt;
+    Descriptor tag_fd(openDirAt(project_fd, std::string(tag), &missing));
+    if (missing) return std::nullopt;
+    bool blob_missing = false;
+    const std::string content = readCappedAt(tag_fd, std::string(asset_name) + ".tar", cap, &blob_missing);
+    if (blob_missing) return std::nullopt;
+    return content;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+void removeCiRelease(const std::filesystem::path& state_root, std::string_view project_name,
+                     std::string_view tag) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag)) fail("invalid release for removal");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  std::error_code error;
+  std::filesystem::remove_all(root / "releases" / std::string(project_name) / std::string(tag), error);
+}
+
 void removeProjectCi(const std::filesystem::path& state_root, std::string_view project_name) {
   if (!isValidProjectName(project_name)) fail("invalid project name for CI removal");
   const std::filesystem::path root = validatedMetadataRoot(state_root);
   std::error_code error;
   std::filesystem::remove_all(root / "ci" / "runs" / std::string(project_name), error);
   std::filesystem::remove(root / "ci" / "projects" / (std::string(project_name) + ".ini"), error);
+  std::filesystem::remove_all(root / "releases" / std::string(project_name), error);
 }
 
 }  // namespace ckgit

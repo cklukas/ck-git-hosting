@@ -272,6 +272,67 @@ void testArtifactSweep() {
   }
 }
 
+void writeReleaseWithAsset(const std::filesystem::path& state, const std::string& tag,
+                           const std::string& notes, const std::string& asset, std::uint64_t bytes,
+                           std::uint64_t created) {
+  const std::filesystem::path dir = ckgit::prepareCiReleaseDirectory(state, "demo", tag);
+  const std::filesystem::path blob = dir / (asset + ".tar");
+  {
+    std::ofstream out(blob, std::ios::binary);
+    out << std::string(static_cast<std::size_t>(bytes), 'x');
+  }
+  require(chmod(blob.c_str(), 0600) == 0, "could not secure the fixture release asset");
+  ckgit::CiArtifactRecord record;
+  record.name = asset;
+  record.bytes = bytes;
+  record.expires_epoch_seconds = 0;  // durable
+  ckgit::writeCiReleaseArtifactRecord(state, "demo", tag, record);
+  ckgit::CiReleaseRecord release;
+  release.tag = tag;
+  release.commit_id = std::string(40, 'a');
+  release.created_epoch_seconds = created;
+  release.notes = notes;
+  ckgit::writeCiReleaseRecord(state, "demo", release);
+}
+
+void testReleaseRoundTrip() {
+  StoreFixture fixture;
+  writeReleaseWithAsset(fixture.state, "v1.0.0", "First release", "app", 20, 2000);
+  writeReleaseWithAsset(fixture.state, "v0.9.0", "", "app", 10, 1000);
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 2, "two releases load");
+  require(releases[0].tag == "v1.0.0" && releases[1].tag == "v0.9.0", "releases are newest-first by creation");
+  require(releases[0].notes == "First release", "release notes round trip");
+  require(releases[0].assets.size() == 1 && releases[0].assets[0].name == "app" &&
+              releases[0].assets[0].expires_epoch_seconds == 0,
+          "the release asset is durable");
+  const auto blob = ckgit::readCiReleaseAsset(fixture.state, "demo", "v1.0.0", "app", 1u << 20);
+  require(blob.has_value() && blob->size() == 20, "the release asset downloads with its bytes");
+  require(!ckgit::readCiReleaseAsset(fixture.state, "demo", "v1.0.0", "../escape", 1u << 20).has_value(),
+          "a traversal asset name is rejected");
+}
+
+void testReleaseRemovalCascades() {
+  StoreFixture fixture;
+  writeReleaseWithAsset(fixture.state, "v1", "", "app", 10, 1000);
+  writeReleaseWithAsset(fixture.state, "v2", "", "app", 10, 2000);
+  ckgit::removeCiRelease(fixture.state, "demo", "v1");
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 1 && releases[0].tag == "v2", "removeCiRelease drops one release");
+  require(!ckgit::readCiReleaseAsset(fixture.state, "demo", "v1", "app", 1u << 20).has_value(),
+          "the removed release's asset is gone");
+  ckgit::removeProjectCi(fixture.state, "demo");
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "removeProjectCi cascades to releases");
+}
+
+void testReleaseTagValidation() {
+  require(ckgit::isValidReleaseTag("v1.0.0"), "a version tag is valid");
+  require(ckgit::isValidReleaseTag("release-1_2"), "letters, digits, -._ are valid");
+  require(!ckgit::isValidReleaseTag(""), "empty tag rejected");
+  require(!ckgit::isValidReleaseTag(".."), "'..' rejected");
+  require(!ckgit::isValidReleaseTag("a/b"), "slashed tag rejected");
+}
+
 }  // namespace
 
 void testCiStore() {
@@ -283,4 +344,7 @@ void testCiStore() {
   testProjectOptIn();
   testArtifactRoundTrip();
   testArtifactSweep();
+  testReleaseRoundTrip();
+  testReleaseRemovalCascades();
+  testReleaseTagValidation();
 }

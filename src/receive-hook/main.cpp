@@ -94,9 +94,10 @@ void validateUpdates(std::string_view input) {
   }
 }
 
-// A CI-enabled push queues one job per updated branch head (never deletions or
-// tags) for the separate runner. Like a dashboard event, a failure here must
-// never fail an already-accepted push.
+// A CI-enabled push queues one job per updated branch head or tag for the
+// separate runner (the runner decides whether a tag build is a release). A
+// deleted tag instead drops that tag's release and its assets. Like a dashboard
+// event, a failure here must never fail an already-accepted push.
 void enqueueCiJobs(const char* state_root, const std::string& project, const std::string& client_id,
                    std::string_view updates) {
   if (state_root == nullptr || !ckgit::isProjectCiEnabled(state_root, project)) return;
@@ -113,8 +114,21 @@ void enqueueCiJobs(const char* state_root, const std::string& project, const std
     const std::size_t second = line.find(' ', first + 1);
     const std::string_view new_id = line.substr(first + 1, second - first - 1);
     const std::string_view ref = line.substr(second + 1);
-    if (ref.rfind("refs/heads/", 0) != 0) continue;                        // branch heads only
-    if (new_id.find_first_not_of('0') == std::string_view::npos) continue;  // a deletion
+    const bool is_head = ref.rfind("refs/heads/", 0) == 0;
+    const bool is_tag = ref.rfind("refs/tags/", 0) == 0;
+    if (!is_head && !is_tag) continue;                                      // branches and tags only
+    const bool deletion = new_id.find_first_not_of('0') == std::string_view::npos;
+    if (is_tag && deletion) {
+      const std::string_view tag = ref.substr(std::string_view("refs/tags/").size());
+      if (ckgit::isValidReleaseTag(tag)) {
+        try {
+          ckgit::removeCiRelease(state_root, project, std::string(tag));
+        } catch (const std::exception&) {
+        }
+      }
+      continue;
+    }
+    if (deletion) continue;                                                 // a branch deletion queues nothing
     ckgit::CiJobRequest job;
     job.job_id = ckgit::generateCiId();
     job.project_name = project;

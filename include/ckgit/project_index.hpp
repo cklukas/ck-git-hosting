@@ -56,6 +56,9 @@ class ProjectIndex {
   // Reads one CI artifact bundle on demand (bounded), for the download route.
   std::optional<std::string> readCiArtifact(std::string_view project_name, std::string_view run_id,
                                             std::string_view artifact_name) const;
+  // Reads one durable release asset bundle on demand (bounded), for download.
+  std::optional<std::string> readReleaseAsset(std::string_view project_name, std::string_view tag,
+                                              std::string_view asset_name) const;
 
  private:
   class Impl;

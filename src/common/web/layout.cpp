@@ -117,6 +117,8 @@ std::string pageLayout(std::string_view title, std::string_view body, const Proj
         "\"" + (context == nullptr || context->section == "overview" ? " aria-current=\"page\"" : "") + ">Overview</a>";
     out += "<a href=\"/project/" + htmlEscape(p->name) + "/ci\"" +
         (context && context->section == "ci" ? " aria-current=\"page\"" : "") + ">CI</a>";
+    out += "<a href=\"/project/" + htmlEscape(p->name) + "/releases\"" +
+        (context && context->section == "releases" ? " aria-current=\"page\"" : "") + ">Releases</a>";
     if (!ref.empty() && (p->branch_count || p->tag_count || p->valid_head || (context && !context->commit_id.empty()))) {
       for (const auto& item : {std::pair<const char*, const char*>{"commits", "Commits"}, {"tree", "Files"}, {"calendar", "Calendar"}}) {
         std::string path;

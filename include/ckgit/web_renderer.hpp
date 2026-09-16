@@ -28,6 +28,7 @@ std::string renderProjectDetail(const ProjectSummary& project, const PageContext
 // The read-only CI page body: the project's recent runs with per-step status
 // and links to each step's captured log. Wrapped by pageLayout by the caller.
 std::string renderCiRuns(const ProjectSummary& project);
+std::string renderReleases(const ProjectSummary& project);
 
 }  // namespace ckgit
 

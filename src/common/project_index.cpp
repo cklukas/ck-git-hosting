@@ -475,6 +475,7 @@ class ProjectIndex::Impl {
         found->second.checkouts = std::move(updated.checkouts);
         found->second.events = std::move(updated.events);
         found->second.ci_runs = std::move(updated.ci_runs);
+        found->second.releases = std::move(updated.releases);
       } else {
         found->second.index_error = std::move(error);
       }
@@ -545,6 +546,12 @@ class ProjectIndex::Impl {
                                             std::string_view artifact_name) const {
     if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
     return ckgit::readCiArtifact(*state_root_, project, run_id, artifact_name, kProjectIndexCiArtifactLimit);
+  }
+
+  std::optional<std::string> readReleaseAsset(std::string_view project, std::string_view tag,
+                                              std::string_view asset_name) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return ckgit::readCiReleaseAsset(*state_root_, project, tag, asset_name, kProjectIndexCiArtifactLimit);
   }
 
   void sweep(bool background = false) {
@@ -631,6 +638,7 @@ class ProjectIndex::Impl {
       summary.checkouts = loadCheckoutMetadata(*state_root_, summary.name);
       summary.events = loadProjectEvents(*state_root_, summary.name);
       summary.ci_runs = loadCiRuns(*state_root_, summary.name);
+      summary.releases = loadReleases(*state_root_, summary.name);
     }
   }
 
@@ -782,6 +790,10 @@ std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std
 std::optional<std::string> ProjectIndex::readCiArtifact(std::string_view project, std::string_view run_id,
                                                         std::string_view artifact_name) const {
   return impl_->readCiArtifact(project, run_id, artifact_name);
+}
+std::optional<std::string> ProjectIndex::readReleaseAsset(std::string_view project, std::string_view tag,
+                                                          std::string_view asset_name) const {
+  return impl_->readReleaseAsset(project, tag, asset_name);
 }
 
 }  // namespace ckgit

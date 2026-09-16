@@ -87,8 +87,22 @@ struct CiRunRecord {
   std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars
 };
 
+// A released version: a tag with durable assets, produced by a tag build.
+// Assets reuse CiArtifactRecord with expires 0 (never swept). Stored under
+// <state_root>/releases/<project>/<tag>/ — release.ini plus the asset bundles.
+struct CiReleaseRecord {
+  std::string tag;
+  std::string commit_id;
+  std::uint64_t created_epoch_seconds = 0;
+  std::string notes;                        // from the annotated tag message, if any
+  std::vector<CiArtifactRecord> assets;     // populated by loadReleases from sidecars
+};
+
 // Bounds, public for tests and callers.
 inline constexpr std::size_t kMaximumCiIdBytes = 64;
+inline constexpr std::size_t kMaximumReleaseTagBytes = 128;
+inline constexpr std::size_t kMaximumReleaseNotesBytes = 8192;
+inline constexpr std::size_t kMaximumReleaseRecordBytes = 16 * 1024;
 inline constexpr std::size_t kMaximumCiDetailBytes = 512;
 inline constexpr std::size_t kMaximumCiRunRecordBytes = 64 * 1024;
 inline constexpr std::size_t kMaximumCiSpoolJobs = 4096;
@@ -175,6 +189,43 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
 std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::string_view run_id,
                                           std::string_view artifact_name, std::size_t cap);
+
+// --- releases (durable, tag-scoped) -----------------------------------------
+
+// True for a tag name safe to use as a release directory: non-empty, bounded,
+// [A-Za-z0-9._-], and not "." or "..". Hierarchical (slashed) tags are not
+// eligible for releases in this version.
+bool isValidReleaseTag(std::string_view tag);
+
+// Runner: ensure releases/<project>/<tag> exists (private) and return it, so the
+// runner can stream durable release asset bundles into it.
+std::filesystem::path prepareCiReleaseDirectory(const std::filesystem::path& state_root,
+                                                std::string_view project_name, std::string_view tag);
+
+// Runner: write a release asset's sidecar (<name>.ini) beside its bundle. The
+// asset's expires_epoch_seconds must be 0 (durable); the sweep never touches it.
+void writeCiReleaseArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                                  std::string_view tag, const CiArtifactRecord& record);
+
+// Runner: write the release record (release.ini). This is the release's commit
+// point; loaders ignore a tag directory without one.
+void writeCiReleaseRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                          const CiReleaseRecord& record);
+
+// Dashboard: load a project's releases, newest first (by creation time), each
+// with its assets. A malformed release is skipped.
+std::vector<CiReleaseRecord> loadReleases(const std::filesystem::path& state_root,
+                                          std::string_view project_name, std::size_t maximum = 64);
+
+// Dashboard: read one release asset bundle (releases/<project>/<tag>/<name>.tar),
+// bounded to `cap`. std::nullopt when absent or a name/tag is invalid.
+std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,
+                                              std::string_view project_name, std::string_view tag,
+                                              std::string_view asset_name, std::size_t cap);
+
+// Deletes a single release and all its assets. Used when a tag is deleted.
+void removeCiRelease(const std::filesystem::path& state_root, std::string_view project_name,
+                     std::string_view tag);
 
 // --- per-project opt-in -----------------------------------------------------
 
