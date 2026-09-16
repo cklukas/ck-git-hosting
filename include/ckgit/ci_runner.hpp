@@ -36,6 +36,12 @@ struct CiRunnerOptions {
   unsigned artifact_max_retention_days = 90;
   std::size_t artifact_max_bytes = static_cast<std::size_t>(256) << 20;
 
+  // Pages hosting. When pages_root is set and a workflow declares `pages:`, a
+  // successful default-branch build publishes that directory as the project's
+  // site, keeping pages_keep_versions versions for rollback. Empty disables it.
+  std::filesystem::path pages_root;
+  unsigned pages_keep_versions = 3;
+
   // Extra environment exported to every step, as KEY=VALUE. Used to expose the
   // sibling checkouts (e.g. CWORKS_CKVISION_DIR) a suite build needs. Values
   // are literal; the runner performs no substitution.

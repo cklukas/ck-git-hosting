@@ -209,6 +209,20 @@ void testTagTriggers() {
           "an invalid tag pattern is rejected");
 }
 
+void testPagesWorkflow() {
+  const ckgit::CiWorkflow with = ckgit::parseCiWorkflow(
+      "version: 1\npages: { path: public }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  require(with.pages_path.has_value() && *with.pages_path == "public", "pages path parses");
+  const ckgit::CiWorkflow without =
+      ckgit::parseCiWorkflow("version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  require(!without.pages_path.has_value(), "no pages by default");
+  const std::string base = "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  require(rejected("version: 1\npages: { path: '../x' }\n" + base.substr(11)), "unsafe pages path rejected");
+  require(rejected("version: 1\npages: { path: /abs }\n" + base.substr(11)), "absolute pages path rejected");
+  require(rejected("version: 1\npages: { path: public, extra: 1 }\n" + base.substr(11)), "unknown pages key rejected");
+  require(rejected("version: 1\npages: {}\n" + base.substr(11)), "pages without a path rejected");
+}
+
 }  // namespace
 
 void testCiWorkflow() {
@@ -217,6 +231,7 @@ void testCiWorkflow() {
   testQuoting();
   testArtifacts();
   testTagTriggers();
+  testPagesWorkflow();
   testRejections();
   testBounds();
 }

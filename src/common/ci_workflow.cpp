@@ -608,7 +608,7 @@ CiJob interpretJob(const Node& node) {
 
 CiWorkflow interpret(const Node& root) {
   requireKind(root, Node::Kind::Mapping, "the workflow to be a mapping");
-  rejectUnknownKeys(root, {"version", "on", "env", "jobs"});
+  rejectUnknownKeys(root, {"version", "on", "env", "jobs", "pages"});
 
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the workflow is missing 'version'", root.line);
@@ -650,6 +650,16 @@ CiWorkflow interpret(const Node& root) {
   }
 
   if (const Node* env = findEntry(root, "env")) workflow.env = interpretEnv(*env);
+
+  if (const Node* pages = findEntry(root, "pages")) {
+    requireKind(*pages, Node::Kind::Mapping, "pages to be a mapping");
+    rejectUnknownKeys(*pages, {"path"});
+    const Node* path = findEntry(*pages, "path");
+    if (path == nullptr) malformed("pages needs a 'path'", pages->line);
+    const std::string& value = requireKind(*path, Node::Kind::Scalar, "pages path to be a scalar").scalar;
+    if (!isSafeRelativePath(value)) malformed("unsafe or absolute pages path '" + value + "'", pages->line);
+    workflow.pages_path = value;
+  }
 
   const Node* jobs = findEntry(root, "jobs");
   if (jobs == nullptr) malformed("the workflow is missing 'jobs'", root.line);

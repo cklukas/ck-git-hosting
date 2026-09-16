@@ -52,6 +52,10 @@ ci_build_root=/var/lib/ck-git-hosting/ci-build
 # ci_artifact_keep_latest=true       # keep each project's newest run's artifacts
 # ci_runs_keep=200                   # keep this many run directories per project (0 = all)
 # ci_cleanup_interval_seconds=3600   # how often the sweep runs (60..86400)
+# --- pages hosting (served by ck-pagesd, a separate origin; see Pages below) ---
+# pages_root=/var/lib/ck-git-hosting/pages   # where published sites are stored (set by a fresh install)
+# pages_http_port=8421               # ck-pagesd's port (LAN-exposable); then enable ck-pages.service
+# pages_keep_versions=3              # site versions kept for rollback (1..1000)
 ```
 
 A fresh install written with `packaging/install.sh` already sets
@@ -206,6 +210,55 @@ Download a release asset the same way as a CI artifact:
 ```text
 curl -O http://<server>:<http_port>/project/myproject/releases/<tag>/<name>
 ```
+
+## Pages
+
+A build can publish a static site that anyone on the LAN can browse. Add a
+top-level `pages:` block naming the directory to publish:
+
+```text
+version: 1
+pages: { path: public }
+jobs:
+  - name: site
+    steps:
+      - run: make site        # writes ./public
+```
+
+The site is published from a **successful build of the repository's default
+branch** — feature-branch and tag builds never replace it. Each publish is a new
+versioned copy, and the newest `pages_keep_versions` are kept, so a bad deploy
+can be rolled back by re-running an earlier commit's build. Deleting the project
+removes its sites.
+
+### Serving it on the intranet
+
+Sites are served by a **separate process, `ck-pagesd`, on its own port** — a
+different origin from the dashboard on purpose, because a site's own JavaScript
+must never run on the dashboard's origin (that is exactly why GitHub uses
+`github.io` and GitLab `*.gitlab.io`). Turn serving on:
+
+1. Set `pages_root` and `pages_http_port` in `server.ini` (a fresh install
+   already sets `pages_root`; just uncomment `pages_http_port`).
+2. `sudo systemctl enable --now ck-pages.service`.
+
+Then browse `http://<server>:<pages_http_port>/<project>/`. For a friendly name
+with no DNS server, enable mDNS on the host (`sudo apt install avahi-daemon`)
+and use `http://<host>.local:<pages_http_port>/<project>/` — that works on
+macOS, Linux, and Windows 10+ (Android browsers are unreliable over mDNS; use
+the IP there). True per-project subdomains (`http://<project>.pages.<host>/`)
+need a LAN resolver with a wildcard entry, such as `dnsmasq`, and are a later
+option — the port form needs no DNS at all.
+
+`ck-pagesd` serves read-only static files only, resolves each path without
+following symlinks, and runs under a tight sandbox with no write access and no
+access to the control socket, the repositories, or the metadata store. Firewall
+`pages_http_port` to the intended subnet.
+
+**Trust note:** a site's JavaScript is as trusted as whoever can push to the
+project — it runs in the visitor's browser, the same property GitHub Pages has.
+Serving it on its own origin protects the dashboard; it does not vet the site's
+content. On a trusted-committer LAN this is the accepted trade.
 
 ## The sandbox and its requirements
 

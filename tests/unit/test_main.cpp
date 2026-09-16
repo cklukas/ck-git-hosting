@@ -728,6 +728,7 @@ void testCiWorkflow();
 void testCiStore();
 void testCiRunner();
 void testCiWeb();
+void testPagesStore();
 int testRecovery();
 
 int main() {
@@ -744,6 +745,7 @@ int main() {
     testCiStore();
     testCiRunner();
     testCiWeb();
+    testPagesStore();
     failures += testRecovery();
     testValidation();
     testRemoteUrls();

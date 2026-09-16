@@ -13,6 +13,7 @@
 
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/pages_store.hpp"
 #include "ckgit/install_layout.hpp"
 #include "ckgit/repository_store.hpp"
 #include "ckgit/control_rpc.hpp"
@@ -234,6 +235,7 @@ int removeProject(int argc, char* argv[]) {
   std::optional<std::filesystem::path> config;
   std::filesystem::path repo_root;
   std::filesystem::path state_root;
+  std::filesystem::path pages_root;
   std::optional<std::filesystem::path> control_socket;
   bool dry_run = false, yes = false;
   for (int index = 3; index < argc; ++index) {
@@ -263,6 +265,7 @@ int removeProject(int argc, char* argv[]) {
     repo_root = server.repo_root;
     state_root = server.state_root.value_or(std::filesystem::path{});
     if (!control_socket.has_value() && !server.control_socket.empty()) control_socket = server.control_socket;
+    pages_root = server.pages_root.value_or(std::filesystem::path{});
   }
   if (repo_root.empty() || state_root.empty()) {
     std::cerr << "ckgit-admin: remove-project requires --config with state_root, or both --repo-root and --state-root\n";
@@ -292,6 +295,12 @@ int removeProject(int argc, char* argv[]) {
     ckgit::removeProjectCi(state_root, name);
   } catch (const std::exception&) {
     // CI state is best-effort cleanup; the repository move already succeeded.
+  }
+  if (!pages_root.empty()) {
+    try {
+      ckgit::removeProjectPages(pages_root, name);
+    } catch (const std::exception&) {
+    }
   }
   if (control_socket.has_value()) {
     try {

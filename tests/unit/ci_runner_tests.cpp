@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "ckgit/ci_store.hpp"
+#include "ckgit/pages_store.hpp"
 #include "ckgit/process.hpp"
 
 namespace {
@@ -293,6 +294,43 @@ void testReleaseFailedPublishesNothing() {
   require(ckgit::loadReleases(fixture.state, "demo").empty(), "a failed release build publishes nothing");
 }
 
+void testPagesPublish() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "pages: { path: public }\n"
+      "jobs:\n"
+      "  - name: site\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p public && printf site-home > public/index.html'\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.pages_root = fixture.root / "pages";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success, "the site build succeeds");
+  require(ckgit::currentPagesVersion(opts.pages_root, "demo").has_value(), "a site version is published");
+  const auto page = ckgit::readCurrentPage(opts.pages_root, "demo", "", 1u << 20);
+  require(page.has_value() && page->content == "site-home", "the published site serves index.html");
+}
+
+void testPagesNotPublishedOnFeatureBranch() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "on: { branches: [main, feature] }\n"
+      "pages: { path: public }\n"
+      "jobs:\n"
+      "  - name: site\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p public && printf x > public/index.html'\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.pages_root = fixture.root / "pages";
+  opts.ref = "refs/heads/feature";  // a trigger, but not the default branch
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success, "the feature build succeeds");
+  require(!ckgit::currentPagesVersion(opts.pages_root, "demo").has_value(),
+          "only the default branch publishes the site");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -307,4 +345,6 @@ void testCiRunner() {
   testArtifactOverCap();
   testReleaseOnTag();
   testReleaseFailedPublishesNothing();
+  testPagesPublish();
+  testPagesNotPublishedOnFeatureBranch();
 }

@@ -23,7 +23,7 @@ tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.
 - macOS Apple silicon and Intel: the same.
 - Debian 13 container on both architectures: builds both packages, runs
   `lintian` for information, installs the packages with `apt`, confirms the
-  daemon and CI runner binaries and units are in place, creates a device key
+  daemon, CI runner, and Pages binaries and units are in place, creates a device key
   line and a project, removes the packages while verifying that `server.ini`
   and the repository survive, then purges and verifies that the repository
   still survives.

@@ -42,6 +42,13 @@ struct ServerConfig {
   std::optional<unsigned> ci_runs_keep;
   std::optional<unsigned> ci_cleanup_interval_seconds;
   std::optional<bool> ci_artifact_keep_latest;
+
+  // Pages hosting. The runner publishes sites under pages_root; the separate
+  // ck-pagesd serves them on pages_http_port (LAN-exposable, a distinct origin
+  // from the dashboard). pages_keep_versions bounds the rollback history.
+  std::optional<std::filesystem::path> pages_root;
+  std::optional<unsigned short> pages_http_port;
+  std::optional<unsigned> pages_keep_versions;
 };
 
 // Loads the strict, bounded version-1 daemon configuration.  Every path must

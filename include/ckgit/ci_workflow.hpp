@@ -107,6 +107,10 @@ struct CiWorkflow {
   bool triggers_default_branch = false;
   CiEnv env;
   std::vector<CiJob> jobs;
+  // Optional static site to publish from a successful default-branch build: the
+  // directory (relative to the checkout) whose contents become the project's
+  // Pages site. Empty means the workflow publishes no site.
+  std::optional<std::string> pages_path;
 };
 
 // Parses the whole `.ckgit/ci.yml` content. Throws std::length_error when a

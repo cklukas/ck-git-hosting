@@ -63,6 +63,7 @@ srv_dir="$staging/srv/ck-git-hosting"
 lib_dir="$staging/var/lib/ck-git-hosting"
 unit_path="$staging/etc/systemd/system/ck-git-hosting.service"
 runner_unit_path="$staging/etc/systemd/system/ck-ci-runner.service"
+pages_unit_path="$staging/etc/systemd/system/ck-pages.service"
 sshd_dropin="$staging/etc/ssh/sshd_config.d/ck-git-hosting.conf"
 mode=plan
 
@@ -94,16 +95,20 @@ steps() {
   [ -e "$unit_path" ] && had_unit=1
   had_runner_unit=0
   [ -e "$runner_unit_path" ] && had_runner_unit=1
+  had_pages_unit=0
+  [ -e "$pages_unit_path" ] && had_pages_unit=1
   if [ -z "$staging" ]; then
+    [ "$had_pages_unit" -eq 1 ] && act 'systemctl disable --now ck-pages.service' systemctl disable --now ck-pages.service
     [ "$had_runner_unit" -eq 1 ] && act 'systemctl disable --now ck-ci-runner.service' systemctl disable --now ck-ci-runner.service
     [ "$had_unit" -eq 1 ] && act 'systemctl disable --now ck-git-hosting.service' systemctl disable --now ck-git-hosting.service
   fi
+  [ "$had_pages_unit" -eq 1 ] && act "remove $pages_unit_path" remove_path "$pages_unit_path"
   [ "$had_runner_unit" -eq 1 ] && act "remove $runner_unit_path" remove_path "$runner_unit_path"
   [ "$had_unit" -eq 1 ] && act "remove $unit_path" remove_path "$unit_path"
-  if [ -z "$staging" ] && { [ "$had_unit" -eq 1 ] || [ "$had_runner_unit" -eq 1 ]; }; then
+  if [ -z "$staging" ] && { [ "$had_unit" -eq 1 ] || [ "$had_runner_unit" -eq 1 ] || [ "$had_pages_unit" -eq 1 ]; }; then
     act 'systemctl daemon-reload' systemctl daemon-reload
   fi
-  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd; do
+  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
     [ -e "$bin_dir/$binary" ] && act "remove $bin_dir/$binary" remove_path "$bin_dir/$binary"
   done
   [ -e "$hook_parent" ] && act "remove $hook_parent" remove_path "$hook_parent"

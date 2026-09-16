@@ -114,6 +114,12 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.timeout_seconds = config.ci_timeout_seconds.value_or(1800);
     options.max_log_bytes = config.ci_max_log_bytes.value_or(1u << 20);
     options.allow_network = config.ci_allow_network;
+    options.artifact_retention_days = config.ci_artifact_retention_days.value_or(7);
+    options.artifact_max_retention_days = config.ci_artifact_max_retention_days.value_or(90);
+    options.artifact_max_bytes = static_cast<std::size_t>(
+        config.ci_artifact_max_bytes.value_or(static_cast<unsigned long long>(256) << 20));
+    options.pages_root = config.pages_root.value_or(std::filesystem::path{});
+    options.pages_keep_versions = config.pages_keep_versions.value_or(3);
     try {
       ckgit::CiSandboxReport sandbox;
       const ckgit::CiRunRecord record = ckgit::runCiWorkflow(options, &sandbox);

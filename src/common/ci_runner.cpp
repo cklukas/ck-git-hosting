@@ -28,6 +28,7 @@
 #include "ckgit/ci_store.hpp"
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/hash.hpp"
+#include "ckgit/pages_store.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/validation.hpp"
 
@@ -666,6 +667,25 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       try {
         removeCiRelease(options.state_root, options.project_name, release_tag);
       } catch (const std::exception&) {
+      }
+    }
+  }
+
+  // A successful default-branch build publishes its declared Pages directory as
+  // the project's site. Only the default branch may replace the live site.
+  if (status == CiRunStatus::Success && !is_release && workflow.pages_path.has_value() &&
+      !options.pages_root.empty()) {
+    const std::optional<std::string> def = defaultBranch(options.repository);
+    if (def.has_value() && branchOf(options.ref) == *def) {
+      try {
+        const std::filesystem::path site = work / *workflow.pages_path;
+        std::error_code error;
+        if (std::filesystem::is_directory(site, error)) {
+          publishPagesSite(options.pages_root, options.project_name, record.run_id, site,
+                           options.pages_keep_versions);
+        }
+      } catch (const std::exception&) {
+        // Publishing a site never fails the build.
       }
     }
   }

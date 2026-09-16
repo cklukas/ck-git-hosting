@@ -67,7 +67,7 @@ install -d -m 0755 "$stage/bin" "$stage/docs/operations"
 [ -f "$build_dir/bin/ckgit" ] || fail "missing $build_dir/bin/ckgit"
 install -m 0755 "$build_dir/bin/ckgit" "$stage/bin/ckgit"
 if [ "$client_only" -eq 0 ]; then
-  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd; do
+  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
     [ -f "$build_dir/bin/$binary" ] || fail "missing $build_dir/bin/$binary"
     install -m 0755 "$build_dir/bin/$binary" "$stage/bin/$binary"
   done
@@ -78,6 +78,7 @@ if [ "$client_only" -eq 0 ]; then
   install -m 0755 "$script_dir/uninstall.sh" "$stage/packaging/uninstall.sh"
   install -m 0644 "$script_dir/systemd/ck-git-hosting.service" "$stage/packaging/systemd/ck-git-hosting.service"
   install -m 0644 "$script_dir/systemd/ck-ci-runner.service" "$stage/packaging/systemd/ck-ci-runner.service"
+  install -m 0644 "$script_dir/systemd/ck-pages.service" "$stage/packaging/systemd/ck-pages.service"
 fi
 install -m 0644 "$source_root/README.md" "$stage/README.md"
 install -m 0644 "$source_root/VERSION" "$stage/VERSION"

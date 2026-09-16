@@ -1,0 +1,55 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Hardened service for the ck-git-hosting Pages server. It serves published
+# static sites from pages_root on pages_http_port — a distinct origin from the
+# dashboard, deliberately LAN-exposable so the sites are browsable on the
+# intranet. Because it serves arbitrary project-generated content it is a
+# separate process from the control-plane daemon, with no control socket, no
+# repository access, and no write access at all: it only reads pages_root.
+# Firewall pages_http_port to the intended subnet.
+
+[Unit]
+Description=ck-git-hosting Pages server
+After=network.target
+ConditionPathExists=/etc/ck-git-hosting/server.ini
+
+[Service]
+Type=simple
+User=ckgit
+Group=ckgit
+ExecStart=/usr/bin/ck-pagesd serve --config /etc/ck-git-hosting/server.ini
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+UMask=0077
+Environment=LANG=C
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# No ReadWritePaths: the server only reads pages_root, so the whole filesystem
+# stays read-only under ProtectSystem=strict.
+
+[Install]
+WantedBy=multi-user.target

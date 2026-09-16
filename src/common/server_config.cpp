@@ -101,7 +101,7 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       }
       has_schema = true;
     } else if (key == "repo_root" || key == "control_socket" || key == "state_root" ||
-               key == "hook_directory" || key == "ci_build_root") {
+               key == "hook_directory" || key == "ci_build_root" || key == "pages_root") {
       if (!isAbsoluteConfiguredPath(value) || value.find('=') != std::string::npos) {
         configError(path, line_number, "expected an absolute path without '='");
       }
@@ -113,6 +113,8 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         config.state_root.emplace(value);
       } else if (key == "ci_build_root") {
         config.ci_build_root.emplace(value);
+      } else if (key == "pages_root") {
+        config.pages_root.emplace(value);
       } else {
         config.hook_directory.emplace(value);
       }
@@ -137,7 +139,7 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
     } else if (key == "ci_artifact_retention_days" || key == "ci_artifact_max_retention_days" ||
                key == "ci_artifact_max_bytes" || key == "ci_artifact_max_project_bytes" ||
                key == "ci_artifact_max_total_bytes" || key == "ci_runs_keep" ||
-               key == "ci_cleanup_interval_seconds") {
+               key == "ci_cleanup_interval_seconds" || key == "pages_keep_versions") {
       unsigned long long number = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), number);
       if (value.empty() || parse_error != std::errc{} || end != value.data() + value.size()) {
@@ -157,6 +159,9 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       } else if (key == "ci_runs_keep") {
         if (number > 1000000) configError(path, line_number, "ci_runs_keep must be 0 to 1000000");
         config.ci_runs_keep = static_cast<unsigned>(number);
+      } else if (key == "pages_keep_versions") {
+        if (number < 1 || number > 1000) configError(path, line_number, "pages_keep_versions must be 1 to 1000");
+        config.pages_keep_versions = static_cast<unsigned>(number);
       } else {
         if (number < 60 || number > 86400) {
           configError(path, line_number, "ci_cleanup_interval_seconds must be 60 to 86400");
@@ -174,14 +179,15 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
       }
       config.ssh_clone_target = value;
-    } else if (key == "http_port") {
+    } else if (key == "http_port" || key == "pages_http_port") {
       unsigned int port = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), port);
       if (value.empty() || value.size() > 5 || parse_error != std::errc{} ||
           end != value.data() + value.size() || port > 65535) {
-        configError(path, line_number, "http_port must be 0 to 65535");
+        configError(path, line_number, std::string(key) + " must be 0 to 65535");
       }
-      config.http_port = static_cast<unsigned short>(port);
+      if (key == "http_port") config.http_port = static_cast<unsigned short>(port);
+      else config.pages_http_port = static_cast<unsigned short>(port);
     } else {
       configError(path, line_number, "unknown field");
     }
@@ -249,6 +255,15 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_artifact_keep_latest.has_value()) {
     rendered += std::string("ci_artifact_keep_latest=") + (*config.ci_artifact_keep_latest ? "true" : "false") + "\n";
+  }
+  if (config.pages_root.has_value()) {
+    rendered += "pages_root=" + config.pages_root->string() + "\n";
+  }
+  if (config.pages_http_port.has_value()) {
+    rendered += "pages_http_port=" + std::to_string(*config.pages_http_port) + "\n";
+  }
+  if (config.pages_keep_versions.has_value()) {
+    rendered += "pages_keep_versions=" + std::to_string(*config.pages_keep_versions) + "\n";
   }
   return rendered;
 }

@@ -128,6 +128,7 @@ rm -f "$server_root/etc/ck-git-hosting/authorized_keys"
 install -d -m 0755 "$server_root/usr/lib/systemd/system"
 mv "$server_root/etc/systemd/system/ck-git-hosting.service" "$server_root/usr/lib/systemd/system/ck-git-hosting.service"
 mv "$server_root/etc/systemd/system/ck-ci-runner.service" "$server_root/usr/lib/systemd/system/ck-ci-runner.service"
+mv "$server_root/etc/systemd/system/ck-pages.service" "$server_root/usr/lib/systemd/system/ck-pages.service"
 rmdir "$server_root/etc/systemd/system" "$server_root/etc/systemd"
 write_copyright "$server_root" ck-git-hosting
 install -d -m 0755 "$server_root/DEBIAN"
@@ -159,9 +160,9 @@ case "$1" in
       useradd --system --user-group --home-dir /var/lib/ck-git-hosting --no-create-home \
         --shell /bin/sh --comment 'ck-git-hosting service' ckgit
     fi
-    chown ckgit:ckgit /srv/ck-git-hosting/repos /var/lib/ck-git-hosting /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build
+    chown ckgit:ckgit /srv/ck-git-hosting/repos /var/lib/ck-git-hosting /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build /var/lib/ck-git-hosting/pages
     chmod 0750 /srv/ck-git-hosting/repos /var/lib/ck-git-hosting
-    chmod 0700 /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build
+    chmod 0700 /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build /var/lib/ck-git-hosting/pages
     chown root:ckgit /etc/ck-git-hosting/server.ini
     chmod 0640 /etc/ck-git-hosting/server.ini
     if [ ! -e /etc/ck-git-hosting/authorized_keys ]; then
@@ -201,6 +202,7 @@ set -e
 case "$1" in
   remove|deconfigure)
     if [ -d /run/systemd/system ]; then
+      systemctl disable --now ck-pages.service >/dev/null 2>&1 || true
       systemctl disable --now ck-ci-runner.service >/dev/null 2>&1 || true
       systemctl disable --now ck-git-hosting.service >/dev/null 2>&1 || true
     fi
