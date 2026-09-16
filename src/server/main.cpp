@@ -164,8 +164,14 @@ void applyServerConfig(Options* options) {
 }
 
 ckgit::ServerConfig effectiveConfig(const Options& options) {
-  return ckgit::ServerConfig{options.repo_root, options.control_socket, options.state_root,
-                             options.hook_directory, options.http_port, options.ssh_clone_target};
+  ckgit::ServerConfig config;
+  config.repo_root = options.repo_root;
+  config.control_socket = options.control_socket;
+  config.state_root = options.state_root;
+  config.hook_directory = options.hook_directory;
+  config.http_port = options.http_port;
+  config.ssh_clone_target = options.ssh_clone_target;
+  return config;
 }
 
 void sendAll(int descriptor, std::string_view response) {

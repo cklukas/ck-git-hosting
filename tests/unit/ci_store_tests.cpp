@@ -144,6 +144,29 @@ void testRunsNewestFirstAndCap() {
   require(ckgit::loadCiRuns(fixture.state, "absent").empty(), "unknown project yields nothing");
 }
 
+void testProjectOptIn() {
+  StoreFixture fixture;
+  require(!ckgit::isProjectCiEnabled(fixture.state, "demo"), "CI is off until opted in");
+  ckgit::setProjectCiEnabled(fixture.state, "demo", true);
+  require(ckgit::isProjectCiEnabled(fixture.state, "demo"), "enabling opts the project in");
+  require(!ckgit::isProjectCiEnabled(fixture.state, "other"), "opt-in is per project");
+  ckgit::setProjectCiEnabled(fixture.state, "demo", false);
+  require(!ckgit::isProjectCiEnabled(fixture.state, "demo"), "disabling opts back out");
+
+  ckgit::setProjectCiEnabled(fixture.state, "demo", true);
+  ckgit::enqueueCiJob(fixture.state, sampleJob("00000000000000000042-abcdabcd"));
+  ckgit::CiRunRecord record;
+  record.run_id = "00000000000000000043-abcdabcd";
+  record.project_name = "demo";
+  record.commit_id = std::string(40, 'a');
+  record.status = ckgit::CiRunStatus::Success;
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", record.run_id);
+  ckgit::writeCiRunRecord(fixture.state, record);
+  ckgit::removeProjectCi(fixture.state, "demo");
+  require(!ckgit::isProjectCiEnabled(fixture.state, "demo"), "removeProjectCi clears the opt-in");
+  require(ckgit::loadCiRuns(fixture.state, "demo").empty(), "removeProjectCi clears the run history");
+}
+
 }  // namespace
 
 void testCiStore() {
@@ -152,4 +175,5 @@ void testCiStore() {
   testMalformedSpoolSkipped();
   testRunRecordRoundTrip();
   testRunsNewestFirstAndCap();
+  testProjectOptIn();
 }

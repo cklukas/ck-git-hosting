@@ -5,6 +5,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include <string_view>
 #include <unistd.h>
 
+#include "ckgit/ci_store.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/repository_store.hpp"
@@ -92,6 +94,38 @@ void validateUpdates(std::string_view input) {
   }
 }
 
+// A CI-enabled push queues one job per updated branch head (never deletions or
+// tags) for the separate runner. Like a dashboard event, a failure here must
+// never fail an already-accepted push.
+void enqueueCiJobs(const char* state_root, const std::string& project, const std::string& client_id,
+                   std::string_view updates) {
+  if (state_root == nullptr || !ckgit::isProjectCiEnabled(state_root, project)) return;
+  const auto now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  std::size_t start = 0;
+  while (start < updates.size()) {
+    const std::size_t newline = updates.find('\n', start);
+    const std::string_view line = updates.substr(start, newline - start);
+    start = newline + 1;
+    const std::size_t first = line.find(' ');
+    const std::size_t second = line.find(' ', first + 1);
+    const std::string_view new_id = line.substr(first + 1, second - first - 1);
+    const std::string_view ref = line.substr(second + 1);
+    if (ref.rfind("refs/heads/", 0) != 0) continue;                        // branch heads only
+    if (new_id.find_first_not_of('0') == std::string_view::npos) continue;  // a deletion
+    ckgit::CiJobRequest job;
+    job.job_id = ckgit::generateCiId();
+    job.project_name = project;
+    job.ref = std::string(ref);
+    job.commit_id = std::string(new_id);
+    job.client_id = client_id;
+    job.queued_epoch_seconds = now;
+    ckgit::enqueueCiJob(state_root, job);
+  }
+}
+
 int run() {
   const char* state_root = std::getenv("CKGIT_STATE_ROOT");
   const char* client_id = std::getenv("CKGIT_CLIENT_ID");
@@ -128,6 +162,11 @@ int run() {
       } catch (const std::exception&) {
         // Index availability must never delay or fail an already accepted push.
       }
+    }
+    try {
+      enqueueCiJobs(state_root, project_name, client_id, updates);
+    } catch (const std::exception& error) {
+      std::cerr << "ckgit post-receive: CI enqueue failed: " << error.what() << "\n";
     }
     if (event_failure) std::rethrow_exception(event_failure);
   }

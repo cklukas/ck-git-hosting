@@ -396,7 +396,8 @@ void validateState(const fs::path& state, const std::vector<std::string>& names)
   requirePrivateTree(state);
   for (const auto& entry : fs::directory_iterator(state)) {
     const auto name = entry.path().filename().string();
-    if ((name != "checkouts" && name != "projects" && name != "events") || !fs::is_directory(entry.symlink_status())) {
+    if ((name != "checkouts" && name != "projects" && name != "events" && name != "ci") ||
+        !fs::is_directory(entry.symlink_status())) {
       throw std::runtime_error("unsupported metadata entry in recovery: " + name);
     }
   }
@@ -425,6 +426,14 @@ void validateState(const fs::path& state, const std::vector<std::string>& names)
     if (!fs::is_regular_file(entry.symlink_status()) ||
         (name != "events.log" && !(name.starts_with("events.") && name.ends_with(".log")))) {
       throw std::runtime_error("unsupported server event metadata record");
+    }
+  }
+  const auto ci = state / "ci";
+  if (entryExists(ci)) for (const auto& entry : fs::directory_iterator(ci)) {
+    const auto name = entry.path().filename().string();
+    if (!fs::is_directory(entry.symlink_status()) ||
+        (name != "spool" && name != "working" && name != "runs" && name != "projects")) {
+      throw std::runtime_error("unsupported CI metadata entry: " + name);
     }
   }
 }

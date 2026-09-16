@@ -19,6 +19,16 @@ struct ServerConfig {
   // Public SSH destination used in copyable dashboard clone commands. It is
   // deliberately independent of the loopback HTTP listener or request Host.
   std::optional<std::string> ssh_clone_target{};
+
+  // CI runner settings, read by ck-ci-runnerd (the daemon ignores them). The
+  // build root is where each run's throwaway checkout is created; the rest tune
+  // the per-step budgets and the spool poll cadence. Network is denied to steps
+  // unless ci_allow_network is set.
+  std::optional<std::filesystem::path> ci_build_root;
+  std::optional<unsigned> ci_timeout_seconds;
+  std::optional<unsigned long long> ci_max_log_bytes;
+  std::optional<unsigned> ci_poll_seconds;
+  bool ci_allow_network = false;
 };
 
 // Loads the strict, bounded version-1 daemon configuration.  Every path must

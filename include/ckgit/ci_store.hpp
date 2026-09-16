@@ -116,4 +116,20 @@ void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
                                     std::string_view project_name, std::size_t maximum = 16);
 
+// --- per-project opt-in -----------------------------------------------------
+
+// Records whether a project runs CI, at ci/projects/<project>.ini. CI is
+// off until an administrator turns it on, so a push to a project that never
+// opted in is never executed.
+void setProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name,
+                         bool enabled);
+
+// True only when the project has an explicit, well-formed opt-in record with
+// ci_enabled=true. Absent or malformed configuration reads as disabled.
+bool isProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name);
+
+// Removes a project's CI opt-in and its whole run history. Used when a project
+// is deleted so no orphaned CI state is left behind.
+void removeProjectCi(const std::filesystem::path& state_root, std::string_view project_name);
+
 }  // namespace ckgit

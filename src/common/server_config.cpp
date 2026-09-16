@@ -101,7 +101,7 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       }
       has_schema = true;
     } else if (key == "repo_root" || key == "control_socket" || key == "state_root" ||
-               key == "hook_directory") {
+               key == "hook_directory" || key == "ci_build_root") {
       if (!isAbsoluteConfiguredPath(value) || value.find('=') != std::string::npos) {
         configError(path, line_number, "expected an absolute path without '='");
       }
@@ -111,9 +111,34 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         config.control_socket = value;
       } else if (key == "state_root") {
         config.state_root.emplace(value);
+      } else if (key == "ci_build_root") {
+        config.ci_build_root.emplace(value);
       } else {
         config.hook_directory.emplace(value);
       }
+    } else if (key == "ci_timeout_seconds" || key == "ci_poll_seconds" || key == "ci_max_log_bytes") {
+      unsigned long long number = 0;
+      const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), number);
+      if (value.empty() || parse_error != std::errc{} || end != value.data() + value.size()) {
+        configError(path, line_number, "expected a non-negative integer");
+      }
+      if (key == "ci_timeout_seconds") {
+        if (number < 1 || number > 86400) configError(path, line_number, "ci_timeout_seconds must be 1 to 86400");
+        config.ci_timeout_seconds = static_cast<unsigned>(number);
+      } else if (key == "ci_poll_seconds") {
+        if (number < 1 || number > 3600) configError(path, line_number, "ci_poll_seconds must be 1 to 3600");
+        config.ci_poll_seconds = static_cast<unsigned>(number);
+      } else {
+        if (number < 1024 || number > (1ull << 30)) {
+          configError(path, line_number, "ci_max_log_bytes must be 1024 to 1073741824");
+        }
+        config.ci_max_log_bytes = number;
+      }
+    } else if (key == "ci_allow_network") {
+      if (value != "true" && value != "false") {
+        configError(path, line_number, "ci_allow_network must be true or false");
+      }
+      config.ci_allow_network = value == "true";
     } else if (key == "ssh_clone_target") {
       if (!isValidSshCloneTarget(value)) {
         configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
@@ -155,6 +180,21 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ssh_clone_target.has_value()) {
     rendered += "ssh_clone_target=" + *config.ssh_clone_target + "\n";
+  }
+  if (config.ci_build_root.has_value()) {
+    rendered += "ci_build_root=" + config.ci_build_root->string() + "\n";
+  }
+  if (config.ci_timeout_seconds.has_value()) {
+    rendered += "ci_timeout_seconds=" + std::to_string(*config.ci_timeout_seconds) + "\n";
+  }
+  if (config.ci_max_log_bytes.has_value()) {
+    rendered += "ci_max_log_bytes=" + std::to_string(*config.ci_max_log_bytes) + "\n";
+  }
+  if (config.ci_poll_seconds.has_value()) {
+    rendered += "ci_poll_seconds=" + std::to_string(*config.ci_poll_seconds) + "\n";
+  }
+  if (config.ci_allow_network) {
+    rendered += "ci_allow_network=true\n";
   }
   return rendered;
 }

@@ -1,0 +1,64 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Hardened service for the ck-git-hosting CI runner. It runs as the same ckgit
+# user as the daemon so it can read the job spool the post-receive hook writes,
+# and it needs write access only to the private state root (which holds the spool,
+# the per-run scratch build root, and the run records). It reads the bare
+# repositories read-only.
+#
+# Unlike the daemon, the runner must be allowed to create the unprivileged user,
+# mount, and network namespaces that confine each build step — hence the explicit
+# RestrictNamespaces allow-list and @namespace syscall set. Network policy is
+# per job: a step has no network unless the run sets ci_allow_network, enforced by
+# the per-step network namespace rather than a service-wide address filter.
+
+[Unit]
+Description=ck-git-hosting CI runner
+After=network.target ck-git-hosting.service
+ConditionPathExists=/etc/ck-git-hosting/server.ini
+
+[Service]
+Type=simple
+User=ckgit
+Group=ckgit
+ExecStart=/usr/bin/ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+Environment=HOME=/var/lib/ck-git-hosting
+Environment=LANG=C
+Environment=GIT_CONFIG_NOSYSTEM=1
+Environment=GIT_CONFIG_GLOBAL=/dev/null
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=user mnt net
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+# No SystemCallFilter allow-list: the runner executes arbitrary build tools,
+# whose syscall surface is open-ended, so a tight filter would break real
+# builds unpredictably. RestrictNamespaces already gates unshare/clone/setns to
+# the three namespace types the per-step sandbox needs; isolation otherwise
+# comes from those namespaces, the read-only filesystem, and the rlimits and
+# wall-clock timeout the runner applies to each step.
+ReadWritePaths=/var/lib/ck-git-hosting
+
+[Install]
+WantedBy=multi-user.target

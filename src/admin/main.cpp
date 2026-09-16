@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "ckgit/authorized_keys.hpp"
+#include "ckgit/ci_store.hpp"
 #include "ckgit/install_layout.hpp"
 #include "ckgit/repository_store.hpp"
 #include "ckgit/control_rpc.hpp"
@@ -35,6 +36,7 @@ void usage(std::ostream& output) {
          << "  ckgit-admin restore-backup BACKUP [ROOT OPTIONS] [--dry-run] [--yes]\n"
          << "  ckgit-admin trash list [ROOT OPTIONS]\n"
          << "  ckgit-admin restore-project ENTRY [--name NAME] [ROOT OPTIONS] [--dry-run] [--yes]\n"
+         << "  ckgit-admin ci (enable|disable|status) NAME (--config FILE | --state-root ROOT)\n"
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
          << "              optionally --hook-directory PATH to select destination post-receive hooks.\n"
@@ -286,6 +288,11 @@ int removeProject(int argc, char* argv[]) {
     if (answer != "yes") { std::cout << "Cancelled; nothing changed.\n"; return 0; }
   }
   const auto destination = ckgit::removeProject(repo_root, state_root, name, false);
+  try {
+    ckgit::removeProjectCi(state_root, name);
+  } catch (const std::exception&) {
+    // CI state is best-effort cleanup; the repository move already succeeded.
+  }
   if (control_socket.has_value()) {
     try {
       ckgit::forwardControlRpc(*control_socket, "admin", "refresh", name, {}, nullptr,
@@ -315,6 +322,48 @@ std::string readPublicKeyFile(const std::filesystem::path& path) {
   std::ostringstream content;
   content << file.rdbuf();
   return content.str();
+}
+
+int ciCommand(int argc, char* argv[]) {
+  if (argc < 3) { usage(std::cerr); return kUsage; }
+  const std::string action = argv[2];
+  if (action != "enable" && action != "disable" && action != "status") {
+    std::cerr << "ckgit-admin: ci action must be enable, disable, or status\n";
+    return kUsage;
+  }
+  std::string name;
+  std::optional<std::filesystem::path> config;
+  std::filesystem::path state_root;
+  for (int index = 3; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if ((argument == "--config" || argument == "--state-root") && index + 1 < argc) {
+      const std::string value = argv[++index];
+      if (argument == "--config") config = value;
+      else state_root = value;
+    } else if (!argument.empty() && argument.front() != '-' && name.empty()) {
+      name = argument;
+    } else {
+      std::cerr << "ckgit-admin: invalid ci option: " << argument << "\n";
+      return kUsage;
+    }
+  }
+  if (name.empty()) { std::cerr << "ckgit-admin: ci " << action << " requires a project name\n"; return kUsage; }
+  if (config.has_value() && !state_root.empty()) {
+    std::cerr << "ckgit-admin: --config cannot be combined with --state-root\n";
+    return kUsage;
+  }
+  if (config.has_value()) state_root = ckgit::loadServerConfig(*config).state_root.value_or(std::filesystem::path{});
+  if (state_root.empty()) {
+    std::cerr << "ckgit-admin: ci requires --config with state_root, or --state-root\n";
+    return kUsage;
+  }
+  if (action == "status") {
+    std::cout << name << ": CI " << (ckgit::isProjectCiEnabled(state_root, name) ? "enabled" : "disabled") << "\n";
+    return 0;
+  }
+  ckgit::setProjectCiEnabled(state_root, name, action == "enable");
+  std::cout << "CI " << (action == "enable" ? "enabled" : "disabled") << " for project " << name << "\n";
+  return 0;
 }
 
 int authorizedKey(int argc, char* argv[]) {
@@ -384,6 +433,9 @@ int main(int argc, char* argv[]) {
     }
     if (argc >= 2 && std::string(argv[1]) == "remove-project") {
       return removeProject(argc, argv);
+    }
+    if (argc >= 2 && std::string(argv[1]) == "ci") {
+      return ciCommand(argc, argv);
     }
     usage(std::cerr);
     return kUsage;

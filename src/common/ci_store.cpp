@@ -494,4 +494,46 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
   return runs;
 }
 
+void setProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name,
+                         bool enabled) {
+  if (!isValidProjectName(project_name)) fail("invalid project name for CI opt-in");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor projects_fd(ensureDirAt(ci_fd, "projects"));
+  const std::string content =
+      std::string("schema_version=1\nci_enabled=") + (enabled ? "true" : "false") + "\n";
+  atomicWriteAt(projects_fd, std::string(project_name) + ".ini", content);
+}
+
+bool isProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name) {
+  if (!isValidProjectName(project_name)) return false;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return false;
+    Descriptor projects_fd(openDirAt(ci_fd, "projects", &missing));
+    if (missing) return false;
+    bool record_missing = false;
+    const std::string content =
+        readCappedAt(projects_fd, std::string(project_name) + ".ini", 4096, &record_missing);
+    if (record_missing) return false;
+    const std::vector<std::string_view> lines = frame(content);
+    if (lines.size() != 2 || lines[0] != "schema_version=1") return false;
+    return expectField(lines[1], "ci_enabled=") == "true";
+  } catch (const std::exception&) {
+    return false;  // absent or malformed configuration reads as disabled
+  }
+}
+
+void removeProjectCi(const std::filesystem::path& state_root, std::string_view project_name) {
+  if (!isValidProjectName(project_name)) fail("invalid project name for CI removal");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  std::error_code error;
+  std::filesystem::remove_all(root / "ci" / "runs" / std::string(project_name), error);
+  std::filesystem::remove(root / "ci" / "projects" / (std::string(project_name) + ".ini"), error);
+}
+
 }  // namespace ckgit
