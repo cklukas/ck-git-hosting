@@ -64,6 +64,26 @@ std::string renderCiRuns(const ProjectSummary& project) {
     if (!run.detail.empty()) {
       out += "<tr class=\"ci-detail\"><td colspan=\"5\">" + htmlEscape(run.detail) + "</td></tr>";
     }
+    if (!run.artifacts.empty()) {
+      out += "<tr class=\"ci-artifacts\"><td colspan=\"5\"><span class=\"muted\">Artifacts:</span> ";
+      for (const CiArtifactRecord& artifact : run.artifacts) {
+        if (!artifact.note.empty()) {
+          out += htmlEscape(artifact.name) + " (" + htmlEscape(artifact.note) + ") ";
+          continue;
+        }
+        const std::string url =
+            "/project/" + project.name + "/ci/" + run.run_id + "/artifacts/" + artifact.name;
+        out += "<a href=\"" + htmlEscape(url) + "\">" + htmlEscape(artifact.name) + ".tar</a> (" +
+               htmlEscape(formatBytes(artifact.bytes));
+        if (artifact.expires_epoch_seconds == 0) {
+          out += ", kept";
+        } else {
+          out += ", expires " + htmlEscape(formatUtcTimestamp(artifact.expires_epoch_seconds));
+        }
+        out += ") ";
+      }
+      out += "</td></tr>";
+    }
   }
   out += "</tbody></table>";
   return out;

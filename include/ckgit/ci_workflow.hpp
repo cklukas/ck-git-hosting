@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -54,6 +55,11 @@ inline constexpr std::size_t kMaximumCiNameBytes = 64;
 inline constexpr std::size_t kMaximumCiKeyBytes = 128;
 inline constexpr std::size_t kMaximumCiScalarBytes = 4096;
 inline constexpr std::size_t kMaximumCiScriptBytes = 16 * 1024;
+inline constexpr std::size_t kMaximumCiArtifactPaths = 64;
+inline constexpr std::size_t kMaximumCiPathBytes = 1024;
+// A parser sanity bound on a workflow's retention_days; the runner clamps the
+// effective value to the server's configured maximum.
+inline constexpr unsigned kMaximumCiRetentionDaysCap = 3650;
 
 // One environment binding, kept in file order. Values are literal: the runner
 // never expands `$VAR` or any other reference when applying them.
@@ -70,10 +76,21 @@ struct CiStep {
   bool usesShell() const { return argv.empty(); }
 };
 
+// An optional bundle of build outputs a job publishes when all its steps
+// succeed. `paths` are relative to the checkout, validated to stay within it;
+// `retention_days` of 0 means "use the server default", and the runner clamps
+// any value to the server's maximum. `name` defaults to the job's name.
+struct CiArtifact {
+  std::string name;
+  std::vector<std::string> paths;
+  unsigned retention_days = 0;
+};
+
 struct CiJob {
   std::string name;
   CiEnv env;
   std::vector<CiStep> steps;
+  std::optional<CiArtifact> artifact;
 };
 
 struct CiWorkflow {

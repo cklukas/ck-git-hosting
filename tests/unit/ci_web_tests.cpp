@@ -31,6 +31,17 @@ void testRoutes() {
           "a traversal run id is rejected");
   require(ckgit::parseHttpRoute("/project/demo/ci/run/x.log").kind == ckgit::RouteKind::kNotFound,
           "a non-numeric step is rejected");
+
+  const auto artifact = ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/artifacts/bundle");
+  require(artifact.kind == ckgit::RouteKind::kCiArtifact && artifact.project == "demo" &&
+              artifact.run_id == "00000000000000000001-abcdabcd" && artifact.path == "bundle",
+          "the CI artifact route parses the run id and name");
+  require(ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/artifacts/../x").kind ==
+              ckgit::RouteKind::kNotFound,
+          "a slashed traversal artifact name is rejected");
+  require(ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/artifacts/").kind ==
+              ckgit::RouteKind::kNotFound,
+          "an empty artifact name is rejected");
 }
 
 void testRender() {
@@ -49,6 +60,11 @@ void testRender() {
   run.detail = "step 'tests' failed";
   run.steps.push_back({"build", 0, false, false});
   run.steps.push_back({"tests", 2, false, true});
+  ckgit::CiArtifactRecord artifact;
+  artifact.name = "bundle";
+  artifact.bytes = 2048;
+  artifact.expires_epoch_seconds = 2000;
+  run.artifacts.push_back(artifact);
   project.ci_runs.push_back(run);
   const std::string html = ckgit::renderCiRuns(project);
   require(html.find("failure") != std::string::npos, "shows the run status");
@@ -57,6 +73,9 @@ void testRender() {
           "links each step to its log");
   require(html.find("step &#39;tests&#39; failed") != std::string::npos,
           "shows the failure detail, HTML-escaped");
+  require(html.find("/project/demo/ci/00000000000000000001-abcdabcd/artifacts/bundle") != std::string::npos,
+          "links the artifact bundle for download");
+  require(html.find("bundle.tar") != std::string::npos, "shows the artifact filename");
 
   ckgit::ProjectSummary hostile;
   hostile.name = "demo";

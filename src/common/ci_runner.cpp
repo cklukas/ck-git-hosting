@@ -27,6 +27,7 @@
 
 #include "ckgit/ci_store.hpp"
 #include "ckgit/ci_workflow.hpp"
+#include "ckgit/hash.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/validation.hpp"
 
@@ -300,6 +301,149 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
   return outcome;
 }
 
+struct PackOutcome {
+  int exit_code = 0;
+  bool truncated = false;
+  bool spawn_failed = false;
+  std::uint64_t bytes = 0;
+};
+
+// Runs `argv` (a tar creating to stdout), streaming its output into out_path up
+// to `cap` bytes. Over the cap the child is killed and `truncated` is set. No
+// sandbox: this packs the runner's own scratch tree, not untrusted execution.
+PackOutcome packToFile(const std::vector<std::string>& argv, const std::filesystem::path& out_path,
+                       std::size_t cap, unsigned timeout_seconds) {
+  PackOutcome outcome;
+  int pipe_fd[2];
+  if (::pipe(pipe_fd) != 0) {
+    outcome.spawn_failed = true;
+    return outcome;
+  }
+  const int out = ::open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (out < 0) {
+    ::close(pipe_fd[0]);
+    ::close(pipe_fd[1]);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
+  const pid_t pid = ::fork();
+  if (pid < 0) {
+    ::close(pipe_fd[0]);
+    ::close(pipe_fd[1]);
+    ::close(out);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
+  if (pid == 0) {
+    ::close(pipe_fd[0]);
+    ::close(out);
+    ::setpgid(0, 0);
+    ::dup2(pipe_fd[1], STDOUT_FILENO);
+    const int devnull = ::open("/dev/null", O_WRONLY | O_CLOEXEC);
+    if (devnull >= 0) {
+      ::dup2(devnull, STDERR_FILENO);
+      ::close(devnull);
+    }
+    ::close(pipe_fd[1]);
+    std::vector<char*> raw;
+    for (const std::string& argument : argv) raw.push_back(const_cast<char*>(argument.c_str()));
+    raw.push_back(nullptr);
+    ::execvp(raw[0], raw.data());
+    _exit(127);
+  }
+  ::setpgid(pid, pid);
+  ::close(pipe_fd[1]);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+  bool killed = false;
+  char buffer[65536];
+  for (;;) {
+    if (!killed && std::chrono::steady_clock::now() >= deadline) {
+      ::kill(-pid, SIGKILL);
+      killed = true;
+      outcome.truncated = true;
+    }
+    pollfd descriptor{pipe_fd[0], POLLIN, 0};
+    const int ready = ::poll(&descriptor, 1, 200);
+    if (ready < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (ready == 0) continue;
+    const ssize_t received = ::read(pipe_fd[0], buffer, sizeof(buffer));
+    if (received < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (received == 0) break;
+    if (killed) continue;
+    if (outcome.bytes + static_cast<std::size_t>(received) > cap) {
+      outcome.truncated = true;
+      ::kill(-pid, SIGKILL);
+      killed = true;
+      continue;
+    }
+    std::size_t offset = 0;
+    while (offset < static_cast<std::size_t>(received)) {
+      const ssize_t written = ::write(out, buffer + offset, static_cast<std::size_t>(received) - offset);
+      if (written < 0 && errno == EINTR) continue;
+      if (written <= 0) {
+        outcome.truncated = true;  // could not persist the bundle in full
+        ::kill(-pid, SIGKILL);
+        killed = true;
+        break;
+      }
+      offset += static_cast<std::size_t>(written);
+    }
+    outcome.bytes += static_cast<std::size_t>(received);
+  }
+  ::close(pipe_fd[0]);
+  ::close(out);
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  if (WIFEXITED(status)) outcome.exit_code = WEXITSTATUS(status);
+  else if (WIFSIGNALED(status)) outcome.exit_code = 128 + WTERMSIG(status);
+  return outcome;
+}
+
+// Packs one job's declared artifact from the checkout into the run's artifact
+// store and records it. `expires` of 0 stores it durably (a release asset);
+// otherwise it is an ephemeral CI artifact the retention sweep may remove. A
+// bundle that cannot be packed or is over the cap is recorded with a note.
+void collectArtifact(const CiArtifact& artifact, const std::filesystem::path& work,
+                     const CiRunnerOptions& options, const std::string& run_id, std::uint64_t created,
+                     std::uint64_t expires, CiRunRecord& record) {
+  CiArtifactRecord stored;
+  stored.name = artifact.name;
+  stored.created_epoch_seconds = created;
+  stored.expires_epoch_seconds = expires;
+  try {
+    const std::filesystem::path dir =
+        prepareCiArtifactDirectory(options.state_root, options.project_name, run_id);
+    const std::filesystem::path blob = dir / (artifact.name + ".tar");
+    std::vector<std::string> argv = {"tar", "-cf", "-", "-C", work.string(), "--"};
+    for (const std::string& path : artifact.paths) argv.push_back(path);
+    const PackOutcome outcome = packToFile(argv, blob, options.artifact_max_bytes, 300);
+    std::error_code error;
+    if (outcome.spawn_failed) {
+      stored.note = "could not start packing the artifact";
+    } else if (outcome.truncated) {
+      std::filesystem::remove(blob, error);
+      stored.note = "artifact exceeds the size cap";
+    } else if (outcome.exit_code != 0) {
+      std::filesystem::remove(blob, error);
+      stored.note = "packing failed (a path may be missing)";
+    } else {
+      stored.bytes = outcome.bytes;
+      stored.sha256 = sha256HexOfFile(blob);
+    }
+    writeCiArtifactRecord(options.state_root, options.project_name, run_id, stored);
+    record.artifacts.push_back(stored);
+  } catch (const std::exception&) {
+    // Artifact collection never fails the build; the run already succeeded.
+  }
+}
+
 std::string firstLine(const std::string& text) {
   const std::size_t newline = text.find('\n');
   std::string line = newline == std::string::npos ? text : text.substr(0, newline);
@@ -426,6 +570,16 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
         stop = true;
         break;
       }
+    }
+    if (!stop && job.artifact.has_value()) {
+      unsigned days = job.artifact->retention_days == 0 ? options.artifact_retention_days
+                                                        : job.artifact->retention_days;
+      if (options.artifact_max_retention_days != 0 && days > options.artifact_max_retention_days) {
+        days = options.artifact_max_retention_days;
+      }
+      const std::uint64_t created = nowEpoch();
+      const std::uint64_t expires = created + static_cast<std::uint64_t>(days) * 86400ull;
+      collectArtifact(*job.artifact, work, options, record.run_id, created, expires, record);
     }
   }
 

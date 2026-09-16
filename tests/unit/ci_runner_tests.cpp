@@ -201,6 +201,54 @@ void testDefaultBranchTrigger() {
           "without on:, the default branch runs");
 }
 
+void testArtifacts() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p out && printf hello-artifact > out/file.txt'\n"
+      "    artifacts:\n"
+      "      name: bundle\n"
+      "      paths: [out]\n");
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id));
+  require(record.status == ckgit::CiRunStatus::Success, "the run succeeds");
+  require(record.artifacts.size() == 1, "one artifact is recorded");
+  require(record.artifacts[0].name == "bundle" && record.artifacts[0].note.empty(),
+          "the artifact is stored without a note");
+  require(record.artifacts[0].bytes > 0 && record.artifacts[0].sha256.size() == 64,
+          "the artifact has a size and a checksum");
+  require(record.artifacts[0].expires_epoch_seconds > record.artifacts[0].created_epoch_seconds,
+          "an ephemeral artifact expires in the future");
+  const auto blob = ckgit::readCiArtifact(fixture.state, "demo", record.run_id, "bundle", 1u << 20);
+  require(blob.has_value() && !blob->empty(), "the artifact bundle is downloadable");
+  const auto runs = ckgit::loadCiRuns(fixture.state, "demo");
+  require(runs.size() == 1 && runs[0].artifacts.size() == 1 && runs[0].artifacts[0].name == "bundle",
+          "the run loads with its artifact for the dashboard");
+}
+
+void testArtifactOverCap() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: big\n"
+      "    steps:\n"
+      "      - run: sh -ec 'head -c 100000 /dev/zero > big.bin'\n"
+      "    artifacts:\n"
+      "      paths: [big.bin]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.artifact_max_bytes = 4096;
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success, "the build still succeeds");
+  require(record.artifacts.size() == 1 && !record.artifacts[0].note.empty(),
+          "an over-cap artifact is recorded with a note");
+  require(record.artifacts[0].bytes == 0, "an over-cap artifact stores no bytes");
+  require(!ckgit::readCiArtifact(fixture.state, "demo", record.run_id, "big", 1u << 20).has_value(),
+          "an over-cap artifact has no downloadable bundle");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -211,4 +259,6 @@ void testCiRunner() {
   testSkippedWithoutWorkflow();
   testBranchTrigger();
   testDefaultBranchTrigger();
+  testArtifacts();
+  testArtifactOverCap();
 }

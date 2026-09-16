@@ -59,6 +59,21 @@ struct CiStepResult {
   bool output_truncated = false;
 };
 
+// A build output a job published, stored as a tar bundle beside the run record
+// (<run>/artifacts/<name>.tar) with this metadata in a sidecar (<name>.ini).
+// `expires_epoch_seconds` of 0 means durable (a release asset); any other value
+// is when the retention sweep may delete an ephemeral CI artifact. `note` is
+// empty on success, or a short reason the bundle was not stored (e.g. over the
+// size cap), in which case `bytes`/`sha256` are absent.
+struct CiArtifactRecord {
+  std::string name;
+  std::uint64_t bytes = 0;
+  std::string sha256;                       // 64 lowercase hex, or empty
+  std::uint64_t created_epoch_seconds = 0;
+  std::uint64_t expires_epoch_seconds = 0;  // 0 = durable
+  std::string note;                         // empty on success
+};
+
 struct CiRunRecord {
   std::string run_id;
   std::string project_name;
@@ -69,6 +84,7 @@ struct CiRunRecord {
   std::uint64_t finished_epoch_seconds = 0;
   std::string detail;  // one short human-readable line (e.g. the failing step)
   std::vector<CiStepResult> steps;
+  std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars
 };
 
 // Bounds, public for tests and callers.
@@ -76,6 +92,7 @@ inline constexpr std::size_t kMaximumCiIdBytes = 64;
 inline constexpr std::size_t kMaximumCiDetailBytes = 512;
 inline constexpr std::size_t kMaximumCiRunRecordBytes = 64 * 1024;
 inline constexpr std::size_t kMaximumCiSpoolJobs = 4096;
+inline constexpr std::size_t kMaximumCiArtifactRecordBytes = 4096;
 
 // True for a syntactically valid job/run id: a sortable, filesystem-safe token
 // this module generates. Ids are never taken from client input.
@@ -109,6 +126,35 @@ std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_r
 // Atomically writes the run record (run.ini) into its run directory.
 void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord& record);
 
+// Ensures <run>/artifacts exists (private) and returns it, so the runner can
+// stream a packed artifact bundle (<name>.tar) into it.
+std::filesystem::path prepareCiArtifactDirectory(const std::filesystem::path& state_root,
+                                                 std::string_view project_name, std::string_view run_id);
+
+// Atomically writes an artifact's metadata sidecar (<name>.ini). The bundle
+// blob (<name>.tar) must already be present for a stored artifact; a record with
+// a non-empty note and no blob marks one that could not be stored. This sidecar
+// is the artifact's commit point: loaders ignore a bundle without one.
+void writeCiArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                           std::string_view run_id, const CiArtifactRecord& record);
+
+// The retention sweep the runner runs periodically. It prunes run directories
+// beyond `runs_keep` per project (oldest first), deletes ephemeral artifacts
+// past their expiry, evicts the oldest artifacts while over a byte budget, and
+// removes crash-orphaned bundles. Durable artifacts (expires 0) and, when
+// `keep_latest` is set, each project's newest run's artifacts are never removed
+// by the timer or the budget. A zero budget disables that budget. Returns the
+// number of artifacts removed.
+struct CiArtifactSweepOptions {
+  std::uint64_t now_epoch_seconds = 0;
+  std::uint64_t max_total_bytes = 0;    // 0 = no global budget
+  std::uint64_t max_project_bytes = 0;  // 0 = no per-project budget
+  std::size_t runs_keep = 0;            // 0 = keep every run directory
+  bool keep_latest = true;
+};
+std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
+                             const CiArtifactSweepOptions& options);
+
 // --- dashboard side ---------------------------------------------------------
 
 // Loads up to `maximum` newest run records for a project, newest first. A
@@ -122,6 +168,13 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
 std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
                                         std::string_view project_name, std::string_view run_id,
                                         std::size_t step_index, std::size_t cap);
+
+// Reads one artifact bundle (<run>/artifacts/<name>.tar) for a run, bounded to
+// `cap` bytes. Returns std::nullopt when it is absent or `name` is invalid. Used
+// by the read-only dashboard to serve an artifact download.
+std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
+                                          std::string_view project_name, std::string_view run_id,
+                                          std::string_view artifact_name, std::size_t cap);
 
 // --- per-project opt-in -----------------------------------------------------
 

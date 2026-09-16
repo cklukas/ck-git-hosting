@@ -146,12 +146,54 @@ void testBounds() {
   require(rejected(many), "too many jobs");
 }
 
+void testArtifacts() {
+  const std::string text =
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [make, all]\n"
+      "    artifacts:\n"
+      "      name: linux\n"
+      "      paths: [dist/, build/app.bin]\n"
+      "      retention_days: 14\n"
+      "  - name: nokeep\n"
+      "    steps:\n"
+      "      - run: [true]\n";
+  const ckgit::CiWorkflow workflow = ckgit::parseCiWorkflow(text);
+  require(workflow.jobs.size() == 2, "two jobs");
+  require(workflow.jobs[0].artifact.has_value(), "first job declares an artifact");
+  const ckgit::CiArtifact& artifact = *workflow.jobs[0].artifact;
+  require(artifact.name == "linux", "artifact name parsed");
+  require(artifact.paths.size() == 2 && artifact.paths[0] == "dist/" && artifact.paths[1] == "build/app.bin",
+          "artifact paths parsed in order");
+  require(artifact.retention_days == 14, "retention_days parsed");
+  require(!workflow.jobs[1].artifact.has_value(), "a job without artifacts has none");
+
+  // The artifact name defaults to the job name when omitted.
+  const ckgit::CiWorkflow defaulted = ckgit::parseCiWorkflow(
+      "version: 1\njobs:\n  - name: pack\n    steps:\n      - run: [true]\n    artifacts:\n      paths: [out]\n");
+  require(defaulted.jobs[0].artifact.has_value() && defaulted.jobs[0].artifact->name == "pack",
+          "artifact name defaults to the job name");
+
+  // Unsafe paths and bad shapes are rejected.
+  const std::string base = "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n    artifacts:\n";
+  require(rejected(base + "      paths: ['../escape']\n"), "parent traversal path");
+  require(rejected(base + "      paths: ['/etc/passwd']\n"), "absolute path");
+  require(rejected(base + "      paths: []\n"), "empty paths list");
+  require(rejected(base + "      name: bad name\n      paths: [out]\n"), "invalid artifact name");
+  require(rejected(base + "      paths: [out]\n      retention_days: 0\n"), "zero retention");
+  require(rejected(base + "      paths: [out]\n      surprise: 1\n"), "unknown artifact key");
+  require(rejected(base + "      retention_days: 3\n"), "artifacts without paths");
+}
+
 }  // namespace
 
 void testCiWorkflow() {
   testValidWorkflow();
   testBlockStyleAndComments();
   testQuoting();
+  testArtifacts();
   testRejections();
   testBounds();
 }

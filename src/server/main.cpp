@@ -572,7 +572,14 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       const auto repository = ckgit::bareRepositoryPath(root, route.project);
       const auto status = std::filesystem::symlink_status(repository);
       if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status)) throw ckgit::WebError(404, "Repository was not found.");
-      if (route.kind == ckgit::RouteKind::kCiLog) {
+      if (route.kind == ckgit::RouteKind::kCiArtifact) {
+        const auto blob = index.readCiArtifact(route.project, route.run_id, route.path);
+        if (!blob) throw ckgit::WebError(404, "Artifact was not found.");
+        response.raw = true;
+        response.content_type = "application/x-tar";
+        response.filename = route.path + ".tar";
+        response.body = *blob;
+      } else if (route.kind == ckgit::RouteKind::kCiLog) {
         const auto log = index.readCiLog(route.project, route.run_id,
                                          static_cast<std::size_t>(std::max(0, route.step)));
         if (!log) throw ckgit::WebError(404, "CI log was not found.");

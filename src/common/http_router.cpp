@@ -155,22 +155,35 @@ Route parseHttpRoute(std::string_view target) {
     return route;
   }
   if (operation == "ci") {
-    // /project/<id>/ci/<run-id>/<step>.log — a single step's captured log.
+    // /project/<id>/ci/<run-id>/<step>.log         — a single step's captured log
+    // /project/<id>/ci/<run-id>/artifacts/<name>   — an artifact bundle download
     const auto slash = target.find('/');
     if (slash == std::string_view::npos) return {};
     const auto run = target.substr(0, slash);
     const auto tail = target.substr(slash + 1);
-    if (run.empty() || run.size() > 64 || !tail.ends_with(".log") ||
+    if (run.empty() || run.size() > 64 ||
         !std::all_of(run.begin(), run.end(), [](unsigned char byte) {
           return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
                  (byte >= '0' && byte <= '9') || byte == '-';
         })) return {};
+    route.run_id = std::string(run);
+    if (tail.starts_with("artifacts/")) {
+      const auto name = tail.substr(10);
+      if (name.empty() || name.size() > 64 ||
+          !std::all_of(name.begin(), name.end(), [](unsigned char byte) {
+            return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+                   (byte >= '0' && byte <= '9') || byte == '.' || byte == '_' || byte == '-';
+          })) return {};
+      route.kind = RouteKind::kCiArtifact;
+      route.path = std::string(name);
+      return route;
+    }
+    if (!tail.ends_with(".log")) return {};
     const auto number = tail.substr(0, tail.size() - 4);
     if (number.empty() || number.size() > 6 || !parseDecimal(number, number.size(), 0, 100000, route.step)) {
       return {};
     }
     route.kind = RouteKind::kCiLog;
-    route.run_id = std::string(run);
     return route;
   }
   if (operation == "tree" || operation == "blob" || operation == "source" || operation == "raw") {

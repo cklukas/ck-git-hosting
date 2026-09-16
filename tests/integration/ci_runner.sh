@@ -40,8 +40,16 @@ mkdir -p "$state"; chmod 700 "$state"
 # A commit that carries a workflow, pushed into the bare hosted repository.
 git -c init.defaultBranch=main init -q "$work"
 mkdir -p "$work/.ckgit"
-printf 'version: 1\njobs:\n  - name: build\n    steps:\n      - run: echo integ-ci-ok\n' \
-  > "$work/.ckgit/ci.yml"
+cat > "$work/.ckgit/ci.yml" <<'YML'
+version: 1
+jobs:
+  - name: build
+    steps:
+      - run: sh -ec 'echo integ-ci-ok; mkdir -p out; printf payload > out/artifact.txt'
+    artifacts:
+      name: build
+      paths: [out]
+YML
 git -C "$work" add -A
 git -C "$work" -c user.email=t@example.invalid -c user.name=Test commit -q -m workflow
 commit=$(git -C "$work" rev-parse HEAD)
@@ -85,6 +93,11 @@ grep -rq "integ-ci-ok" "$state"/ci/runs/demo/*/steps/ || fail "the step output w
 
 run_id=$(basename "$(dirname "$run_ini")")
 
+# The job's declared artifact was packed into the run's artifact store.
+run_dir=$(dirname "$run_ini")
+[ -f "$run_dir/artifacts/build.tar" ] || fail "the artifact bundle was not stored"
+tar -tf "$run_dir/artifacts/build.tar" | grep -q 'out/artifact.txt' || fail "the artifact bundle lacks the built file"
+
 # The read-only dashboard shows the run and serves its step log. The daemon
 # started after the run already has it indexed on start-up.
 "$CKGIT_HOSTINGD" --repo-root "$repos" --state-root "$state" \
@@ -112,5 +125,11 @@ grep -q "/project/demo/ci/$run_id/0.log" "$test_root/ci.html" || fail "CI page h
 curl --path-as-is --max-time 4 --silent -o "$test_root/ci-log.html" "$base/project/demo/ci/$run_id/0.log" \
   || fail "curl ci log"
 grep -q "integ-ci-ok" "$test_root/ci-log.html" || { cat "$test_root/ci-log.html"; fail "log view missing step output"; }
+
+# The dashboard links the artifact and serves the bundle as a downloadable tar.
+grep -q "/project/demo/ci/$run_id/artifacts/build" "$test_root/ci.html" || fail "CI page has no artifact link"
+curl --path-as-is --max-time 4 --silent -o "$test_root/build.tar" \
+  "$base/project/demo/ci/$run_id/artifacts/build" || fail "curl artifact"
+tar -tf "$test_root/build.tar" | grep -q 'out/artifact.txt' || fail "downloaded artifact is not the expected bundle"
 
 echo "ci_runner integration OK"

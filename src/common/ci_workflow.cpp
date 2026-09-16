@@ -483,6 +483,60 @@ CiEnv interpretEnv(const Node& node) {
   return env;
 }
 
+// A path that is safe to collect from the checkout: relative, within the tree,
+// no control bytes or backslashes. A single trailing '/' (a directory) is
+// accepted; empty, absolute, '.'/'..' or empty components are not.
+bool isSafeRelativePath(std::string_view path) {
+  while (path.size() > 1 && path.back() == '/') path.remove_suffix(1);
+  if (path.empty() || path.size() > kMaximumCiPathBytes || path.front() == '/') return false;
+  std::size_t start = 0;
+  while (start <= path.size()) {
+    const std::size_t slash = path.find('/', start);
+    const std::string_view component =
+        path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+    if (component.empty() || component == "." || component == "..") return false;
+    for (const unsigned char character : component) {
+      if (character < 0x20 || character == 0x7f || character == '\\') return false;
+    }
+    if (slash == std::string_view::npos) break;
+    start = slash + 1;
+  }
+  return true;
+}
+
+CiArtifact interpretArtifact(const Node& node, const std::string& job_name) {
+  requireKind(node, Node::Kind::Mapping, "artifacts to be a mapping");
+  rejectUnknownKeys(node, {"paths", "name", "retention_days"});
+  CiArtifact artifact;
+  artifact.name = job_name;
+  if (const Node* name = findEntry(node, "name")) {
+    artifact.name = requireKind(*name, Node::Kind::Scalar, "an artifact name to be a scalar").scalar;
+    if (!isValidCiName(artifact.name)) malformed("invalid artifact name '" + artifact.name + "'", node.line);
+  }
+  const Node* paths = findEntry(node, "paths");
+  if (paths == nullptr) malformed("artifacts needs a 'paths' list", node.line);
+  requireKind(*paths, Node::Kind::Sequence, "artifact paths to be a list");
+  if (paths->items.empty()) malformed("artifact paths is empty", node.line);
+  if (paths->items.size() > kMaximumCiArtifactPaths) tooLarge("too many artifact paths");
+  for (const Node& item : paths->items) {
+    const std::string& value = requireKind(item, Node::Kind::Scalar, "each artifact path to be a scalar").scalar;
+    if (!isSafeRelativePath(value)) malformed("unsafe or absolute artifact path '" + value + "'", node.line);
+    artifact.paths.push_back(value);
+  }
+  if (const Node* retention = findEntry(node, "retention_days")) {
+    const std::string& text =
+        requireKind(*retention, Node::Kind::Scalar, "retention_days to be a number").scalar;
+    unsigned value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size() || value == 0 ||
+        value > kMaximumCiRetentionDaysCap) {
+      malformed("retention_days must be a positive number of days", node.line);
+    }
+    artifact.retention_days = value;
+  }
+  return artifact;
+}
+
 CiStep interpretStep(const Node& node) {
   requireKind(node, Node::Kind::Mapping, "a step to be a mapping");
   rejectUnknownKeys(node, {"name", "run", "script"});
@@ -522,7 +576,7 @@ CiStep interpretStep(const Node& node) {
 
 CiJob interpretJob(const Node& node) {
   requireKind(node, Node::Kind::Mapping, "each job to be a mapping");
-  rejectUnknownKeys(node, {"name", "env", "steps"});
+  rejectUnknownKeys(node, {"name", "env", "steps", "artifacts"});
   CiJob job;
   const Node* name = findEntry(node, "name");
   if (name == nullptr) malformed("a job is missing 'name'", node.line);
@@ -535,6 +589,7 @@ CiJob interpretJob(const Node& node) {
   if (steps->items.empty()) malformed("job '" + job.name + "' has no steps", node.line);
   if (steps->items.size() > kMaximumCiStepsPerJob) tooLarge("a job has too many steps");
   for (const Node& step : steps->items) job.steps.push_back(interpretStep(step));
+  if (const Node* artifacts = findEntry(node, "artifacts")) job.artifact = interpretArtifact(*artifacts, job.name);
   return job;
 }
 

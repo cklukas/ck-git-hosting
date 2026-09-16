@@ -39,10 +39,19 @@ required for the service; the rest are optional with the defaults shown.
 
 ```text
 ci_build_root=/var/lib/ck-git-hosting/ci-build
-# ci_timeout_seconds=1800     # per-step wall-clock budget (1..86400)
-# ci_max_log_bytes=1048576    # per-step captured-output cap (1024..1073741824)
-# ci_poll_seconds=5           # spool poll interval (1..3600)
-# ci_allow_network=false      # true gives steps a network namespace with interfaces
+# ci_timeout_seconds=1800            # per-step wall-clock budget (1..86400)
+# ci_max_log_bytes=1048576           # per-step captured-output cap (1024..1073741824)
+# ci_poll_seconds=5                  # spool poll interval (1..3600)
+# ci_allow_network=false             # true gives steps a network namespace with interfaces
+# --- artifact retention (enforced by the runner's periodic sweep) ---
+# ci_artifact_retention_days=7       # default lifetime of an ephemeral artifact (1..3650)
+# ci_artifact_max_retention_days=90  # cap on a workflow's own retention_days
+# ci_artifact_max_bytes=268435456    # per-artifact bundle cap (>=1024); larger is dropped
+# ci_artifact_max_project_bytes=2147483648   # per-project budget; 0 disables (evict oldest)
+# ci_artifact_max_total_bytes=10737418240     # global budget; 0 disables (evict oldest)
+# ci_artifact_keep_latest=true       # keep each project's newest run's artifacts
+# ci_runs_keep=200                   # keep this many run directories per project (0 = all)
+# ci_cleanup_interval_seconds=3600   # how often the sweep runs (60..86400)
 ```
 
 A fresh install written with `packaging/install.sh` already sets
@@ -91,6 +100,10 @@ jobs:
         run: make check
       - script: |
           make docs
+    artifacts:
+      name: build
+      paths: [dist/, build/app.bin]
+      retention_days: 14
 ```
 
 - `version:` must be `1`.
@@ -101,11 +114,46 @@ jobs:
   `env:` is merged over the top-level `env:`.
 - A step's `run:` written as a **list** is an exact command with no shell. A
   `run:` **scalar** or a `script:` block runs with `sh -ec` inside the sandbox.
+- `artifacts:` (optional, per job) packs the named `paths` into one bundle after
+  the job's steps succeed. `paths` are relative to the checkout and may not be
+  absolute or contain `..`; `name` defaults to the job name; `retention_days`
+  overrides the server default and is clamped to its maximum.
 
 The format is a strict, bounded subset of YAML — not GitHub Actions. Unknown
 keys, tabs for indentation, wrong types, or anything past the documented size
 limits are rejected, and the run is recorded `error` with the reason. Keep a
 workflow well under 64 KiB, 64 jobs, and 128 steps per job.
+
+## Build artifacts and retention
+
+A job's `artifacts:` block collects build outputs when the job succeeds. The
+runner packs the declared paths into a single `<name>.tar` bundle stored beside
+the run, checksums it, and shows it on the CI run page with a download link. A
+bundle over `ci_artifact_max_bytes` is dropped and the run notes why; the build
+still counts as successful.
+
+Artifacts are **ephemeral** and bounded three ways so a busy project cannot fill
+the disk:
+
+- **Time** — each artifact expires after `ci_artifact_retention_days` (default
+  7), or the workflow's own `retention_days`, capped by
+  `ci_artifact_max_retention_days`.
+- **Budget** — when a project exceeds `ci_artifact_max_project_bytes` or the
+  server exceeds `ci_artifact_max_total_bytes`, the oldest artifacts are evicted
+  until under budget.
+- **Run history** — only the newest `ci_runs_keep` run directories per project
+  are kept; older ones (and their artifacts and logs) are pruned.
+
+With `ci_artifact_keep_latest` (default on), each project's newest run's
+artifacts are never removed by the timer or the budget, so the current build is
+always downloadable. The runner enforces all of this in a sweep every
+`ci_cleanup_interval_seconds`. Download a bundle from the run page or directly:
+
+```text
+curl -O http://<server>:<http_port>/project/myproject/ci/<run-id>/artifacts/<name>
+```
+
+Durable release assets, attached to a tag, are a separate feature with no expiry.
 
 ## Push and read results
 

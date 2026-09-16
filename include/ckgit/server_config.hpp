@@ -29,6 +29,19 @@ struct ServerConfig {
   std::optional<unsigned long long> ci_max_log_bytes;
   std::optional<unsigned> ci_poll_seconds;
   bool ci_allow_network = false;
+
+  // Artifact retention, enforced by the runner's periodic sweep. Days default
+  // and cap bound how long an ephemeral CI artifact is kept; the byte budgets
+  // trigger oldest-first eviction; runs_keep bounds how many run directories a
+  // project retains; keep_latest protects each project's newest run's artifacts.
+  std::optional<unsigned> ci_artifact_retention_days;
+  std::optional<unsigned> ci_artifact_max_retention_days;
+  std::optional<unsigned long long> ci_artifact_max_bytes;
+  std::optional<unsigned long long> ci_artifact_max_project_bytes;
+  std::optional<unsigned long long> ci_artifact_max_total_bytes;
+  std::optional<unsigned> ci_runs_keep;
+  std::optional<unsigned> ci_cleanup_interval_seconds;
+  std::optional<bool> ci_artifact_keep_latest;
 };
 
 // Loads the strict, bounded version-1 daemon configuration.  Every path must

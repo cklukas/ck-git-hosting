@@ -134,11 +134,41 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         }
         config.ci_max_log_bytes = number;
       }
-    } else if (key == "ci_allow_network") {
-      if (value != "true" && value != "false") {
-        configError(path, line_number, "ci_allow_network must be true or false");
+    } else if (key == "ci_artifact_retention_days" || key == "ci_artifact_max_retention_days" ||
+               key == "ci_artifact_max_bytes" || key == "ci_artifact_max_project_bytes" ||
+               key == "ci_artifact_max_total_bytes" || key == "ci_runs_keep" ||
+               key == "ci_cleanup_interval_seconds") {
+      unsigned long long number = 0;
+      const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), number);
+      if (value.empty() || parse_error != std::errc{} || end != value.data() + value.size()) {
+        configError(path, line_number, "expected a non-negative integer");
       }
-      config.ci_allow_network = value == "true";
+      if (key == "ci_artifact_retention_days" || key == "ci_artifact_max_retention_days") {
+        if (number < 1 || number > 3650) configError(path, line_number, "retention days must be 1 to 3650");
+        if (key == "ci_artifact_retention_days") config.ci_artifact_retention_days = static_cast<unsigned>(number);
+        else config.ci_artifact_max_retention_days = static_cast<unsigned>(number);
+      } else if (key == "ci_artifact_max_bytes") {
+        if (number < 1024) configError(path, line_number, "ci_artifact_max_bytes must be at least 1024");
+        config.ci_artifact_max_bytes = number;
+      } else if (key == "ci_artifact_max_project_bytes") {
+        config.ci_artifact_max_project_bytes = number;  // 0 disables the per-project budget
+      } else if (key == "ci_artifact_max_total_bytes") {
+        config.ci_artifact_max_total_bytes = number;  // 0 disables the global budget
+      } else if (key == "ci_runs_keep") {
+        if (number > 1000000) configError(path, line_number, "ci_runs_keep must be 0 to 1000000");
+        config.ci_runs_keep = static_cast<unsigned>(number);
+      } else {
+        if (number < 60 || number > 86400) {
+          configError(path, line_number, "ci_cleanup_interval_seconds must be 60 to 86400");
+        }
+        config.ci_cleanup_interval_seconds = static_cast<unsigned>(number);
+      }
+    } else if (key == "ci_allow_network" || key == "ci_artifact_keep_latest") {
+      if (value != "true" && value != "false") {
+        configError(path, line_number, std::string(key) + " must be true or false");
+      }
+      if (key == "ci_allow_network") config.ci_allow_network = value == "true";
+      else config.ci_artifact_keep_latest = value == "true";
     } else if (key == "ssh_clone_target") {
       if (!isValidSshCloneTarget(value)) {
         configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
@@ -195,6 +225,30 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_allow_network) {
     rendered += "ci_allow_network=true\n";
+  }
+  if (config.ci_artifact_retention_days.has_value()) {
+    rendered += "ci_artifact_retention_days=" + std::to_string(*config.ci_artifact_retention_days) + "\n";
+  }
+  if (config.ci_artifact_max_retention_days.has_value()) {
+    rendered += "ci_artifact_max_retention_days=" + std::to_string(*config.ci_artifact_max_retention_days) + "\n";
+  }
+  if (config.ci_artifact_max_bytes.has_value()) {
+    rendered += "ci_artifact_max_bytes=" + std::to_string(*config.ci_artifact_max_bytes) + "\n";
+  }
+  if (config.ci_artifact_max_project_bytes.has_value()) {
+    rendered += "ci_artifact_max_project_bytes=" + std::to_string(*config.ci_artifact_max_project_bytes) + "\n";
+  }
+  if (config.ci_artifact_max_total_bytes.has_value()) {
+    rendered += "ci_artifact_max_total_bytes=" + std::to_string(*config.ci_artifact_max_total_bytes) + "\n";
+  }
+  if (config.ci_runs_keep.has_value()) {
+    rendered += "ci_runs_keep=" + std::to_string(*config.ci_runs_keep) + "\n";
+  }
+  if (config.ci_cleanup_interval_seconds.has_value()) {
+    rendered += "ci_cleanup_interval_seconds=" + std::to_string(*config.ci_cleanup_interval_seconds) + "\n";
+  }
+  if (config.ci_artifact_keep_latest.has_value()) {
+    rendered += std::string("ci_artifact_keep_latest=") + (*config.ci_artifact_keep_latest ? "true" : "false") + "\n";
   }
   return rendered;
 }

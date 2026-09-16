@@ -541,6 +541,12 @@ class ProjectIndex::Impl {
     return readCiRunLog(*state_root_, project, run_id, step, kProjectIndexCiLogLimit);
   }
 
+  std::optional<std::string> readCiArtifact(std::string_view project, std::string_view run_id,
+                                            std::string_view artifact_name) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return ckgit::readCiArtifact(*state_root_, project, run_id, artifact_name, kProjectIndexCiArtifactLimit);
+  }
+
   void sweep(bool background = false) {
     std::lock_guard work_lock(work_mutex_);
     const auto names = inventory(root_);
@@ -772,6 +778,10 @@ std::optional<ProjectSummary> ProjectIndex::find(std::string_view name) const { 
 std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std::string_view run_id,
                                                    std::size_t step_index) const {
   return impl_->readCiLog(project, run_id, step_index);
+}
+std::optional<std::string> ProjectIndex::readCiArtifact(std::string_view project, std::string_view run_id,
+                                                        std::string_view artifact_name) const {
+  return impl_->readCiArtifact(project, run_id, artifact_name);
 }
 
 }  // namespace ckgit

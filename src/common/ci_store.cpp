@@ -12,9 +12,13 @@
 #include <cstdio>
 #include <dirent.h>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <map>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -321,6 +325,51 @@ CiRunRecord parseRun(std::string_view content) {
   return run;
 }
 
+constexpr std::size_t kArtifactNameBytes = 64;
+
+bool isValidArtifactName(std::string_view name) {
+  return !name.empty() && name.size() <= kArtifactNameBytes &&
+         std::all_of(name.begin(), name.end(), [](unsigned char character) {
+           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+                  character == '-';
+         });
+}
+
+bool endsWith(std::string_view text, std::string_view suffix) {
+  return text.size() >= suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string serializeArtifact(const CiArtifactRecord& artifact) {
+  return "schema_version=1\n"
+         "name=" + artifact.name + "\n"
+         "bytes=" + std::to_string(artifact.bytes) + "\n"
+         "sha256=" + artifact.sha256 + "\n"
+         "created_epoch=" + std::to_string(artifact.created_epoch_seconds) + "\n"
+         "expires_epoch=" + std::to_string(artifact.expires_epoch_seconds) + "\n"
+         "note_hex=" + toHex(artifact.note) + "\n";
+}
+
+CiArtifactRecord parseArtifact(std::string_view content) {
+  const std::vector<std::string_view> lines = frame(content);
+  if (lines.size() != 7 || lines[0] != "schema_version=1") fail("a CI artifact record has the wrong shape");
+  CiArtifactRecord artifact;
+  artifact.name = std::string(expectField(lines[1], "name="));
+  artifact.bytes = parseEpoch(expectField(lines[2], "bytes="));
+  const std::string_view sha = expectField(lines[3], "sha256=");
+  if (!sha.empty() && (sha.size() != 64 || !std::all_of(sha.begin(), sha.end(), [](unsigned char c) {
+        return hexNibble(c) >= 0;
+      }))) {
+    fail("a CI artifact sha256 is malformed");
+  }
+  artifact.sha256 = std::string(sha);
+  artifact.created_epoch_seconds = parseEpoch(expectField(lines[4], "created_epoch="));
+  artifact.expires_epoch_seconds = parseEpoch(expectField(lines[5], "expires_epoch="));
+  artifact.note = fromHex(expectField(lines[6], "note_hex="), 256);
+  if (!isValidArtifactName(artifact.name)) fail("a CI artifact record has an invalid name");
+  return artifact;
+}
+
 }  // namespace
 
 std::string_view ciRunStatusName(CiRunStatus status) {
@@ -458,6 +507,64 @@ void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord
   atomicWriteAt(run_fd, "run.ini", content);
 }
 
+std::filesystem::path prepareCiArtifactDirectory(const std::filesystem::path& state_root,
+                                                 std::string_view project_name, std::string_view run_id) {
+  if (!isValidProjectName(project_name)) fail("invalid project name for a CI artifact");
+  if (!isValidCiId(run_id)) fail("invalid CI run id");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor runs_fd(ensureDirAt(ci_fd, "runs"));
+  Descriptor project_fd(ensureDirAt(runs_fd, std::string(project_name)));
+  Descriptor run_fd(ensureDirAt(project_fd, std::string(run_id)));
+  Descriptor artifacts_fd(ensureDirAt(run_fd, "artifacts"));
+  return root / "ci" / "runs" / std::string(project_name) / std::string(run_id) / "artifacts";
+}
+
+void writeCiArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
+                           std::string_view run_id, const CiArtifactRecord& record) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidArtifactName(record.name)) {
+    fail("refusing to write an invalid CI artifact record");
+  }
+  const std::string content = serializeArtifact(record);
+  if (content.size() > kMaximumCiArtifactRecordBytes) fail("a CI artifact record exceeds its size limit");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor runs_fd(ensureDirAt(ci_fd, "runs"));
+  Descriptor project_fd(ensureDirAt(runs_fd, std::string(project_name)));
+  Descriptor run_fd(ensureDirAt(project_fd, std::string(run_id)));
+  Descriptor artifacts_fd(ensureDirAt(run_fd, "artifacts"));
+  atomicWriteAt(artifacts_fd, record.name + ".ini", content);
+}
+
+// Loads a run's artifact sidecars from an already-open run directory descriptor.
+// Never throws: a malformed sidecar is skipped so the dashboard still renders.
+static std::vector<CiArtifactRecord> loadArtifactsFor(int run_fd) {
+  std::vector<CiArtifactRecord> artifacts;
+  try {
+    bool missing = false;
+    Descriptor artifacts_fd(openDirAt(run_fd, "artifacts", &missing));
+    if (missing) return artifacts;
+    std::vector<std::string> names;
+    for (std::string& name : listNames(artifacts_fd)) {
+      if (endsWith(name, ".ini")) names.push_back(std::move(name));
+    }
+    std::sort(names.begin(), names.end());
+    for (const std::string& name : names) {
+      try {
+        bool record_missing = false;
+        const std::string content = readCappedAt(artifacts_fd, name, kMaximumCiArtifactRecordBytes, &record_missing);
+        if (record_missing) continue;
+        artifacts.push_back(parseArtifact(content));
+      } catch (const std::exception&) {
+      }
+    }
+  } catch (const std::exception&) {
+  }
+  return artifacts;
+}
+
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
                                     std::string_view project_name, std::size_t maximum) {
   std::vector<CiRunRecord> runs;
@@ -486,7 +593,9 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
     const std::string content = readCappedAt(run_fd, "run.ini", kMaximumCiRunRecordBytes, &record_missing);
     if (record_missing) continue;
     try {
-      runs.push_back(parseRun(content));
+      CiRunRecord run = parseRun(content);
+      run.artifacts = loadArtifactsFor(run_fd);
+      runs.push_back(std::move(run));
     } catch (const std::exception&) {
       // A malformed run record is skipped rather than failing the dashboard.
     }
@@ -515,6 +624,36 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
     bool log_missing = false;
     const std::string content = readCappedAt(steps_fd, std::to_string(step_index) + ".log", cap, &log_missing);
     if (log_missing) return std::nullopt;
+    return content;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
+                                          std::string_view project_name, std::string_view run_id,
+                                          std::string_view artifact_name, std::size_t cap) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidArtifactName(artifact_name)) {
+    return std::nullopt;
+  }
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor runs_fd(openDirAt(ci_fd, "runs", &missing));
+    if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(runs_fd, std::string(project_name), &missing));
+    if (missing) return std::nullopt;
+    Descriptor run_fd(openDirAt(project_fd, std::string(run_id), &missing));
+    if (missing) return std::nullopt;
+    Descriptor artifacts_fd(openDirAt(run_fd, "artifacts", &missing));
+    if (missing) return std::nullopt;
+    bool blob_missing = false;
+    const std::string content =
+        readCappedAt(artifacts_fd, std::string(artifact_name) + ".tar", cap, &blob_missing);
+    if (blob_missing) return std::nullopt;
     return content;
   } catch (const std::exception&) {
     return std::nullopt;
@@ -553,6 +692,151 @@ bool isProjectCiEnabled(const std::filesystem::path& state_root, std::string_vie
   } catch (const std::exception&) {
     return false;  // absent or malformed configuration reads as disabled
   }
+}
+
+std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
+                             const CiArtifactSweepOptions& options) {
+  std::size_t removed = 0;
+  std::filesystem::path root;
+  try {
+    root = validatedMetadataRoot(state_root);
+  } catch (const std::exception&) {
+    return 0;
+  }
+  const std::filesystem::path runs_root = root / "ci" / "runs";
+  std::error_code ec;
+  if (!std::filesystem::is_directory(runs_root, ec)) return 0;
+
+  struct Entry {
+    std::filesystem::path dir;  // the run's artifacts directory
+    std::string project;
+    std::string run_id;
+    std::string name;
+    std::uint64_t bytes = 0;
+    std::uint64_t created = 0;
+    std::uint64_t expires = 0;
+    bool kept = false;      // protected by keep-latest
+    bool evicted = false;   // already removed this sweep
+  };
+  std::vector<Entry> entries;
+  std::map<std::string, std::string> newest_run;  // project -> newest run id holding artifacts
+
+  for (const auto& project_entry : std::filesystem::directory_iterator(runs_root, ec)) {
+    if (!project_entry.is_directory(ec)) continue;
+    const std::string project = project_entry.path().filename().string();
+    if (!isValidProjectName(project)) continue;
+
+    std::vector<std::string> ids;
+    std::error_code list_ec;
+    for (const auto& run_entry : std::filesystem::directory_iterator(project_entry.path(), list_ec)) {
+      const std::string id = run_entry.path().filename().string();
+      if (run_entry.is_directory(list_ec) && isValidCiId(id)) ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end(), std::greater<>());  // newest first
+
+    // Prune run directories beyond runs_keep (oldest first), artifacts and all.
+    if (options.runs_keep > 0 && ids.size() > options.runs_keep) {
+      for (std::size_t index = options.runs_keep; index < ids.size(); ++index) {
+        std::error_code remove_ec;
+        std::filesystem::remove_all(project_entry.path() / ids[index], remove_ec);
+      }
+      ids.resize(options.runs_keep);
+    }
+
+    for (const std::string& id : ids) {
+      const std::filesystem::path art_dir = project_entry.path() / id / "artifacts";
+      std::error_code art_ec;
+      if (!std::filesystem::is_directory(art_dir, art_ec)) continue;
+      std::set<std::string> tars;
+      std::set<std::string> inis;
+      for (const auto& file : std::filesystem::directory_iterator(art_dir, art_ec)) {
+        const std::string name = file.path().filename().string();
+        if (endsWith(name, ".tar")) tars.insert(name.substr(0, name.size() - 4));
+        else if (endsWith(name, ".ini")) inis.insert(name.substr(0, name.size() - 4));
+      }
+      for (const std::string& base : inis) {
+        const std::filesystem::path ini_path = art_dir / (base + ".ini");
+        std::error_code size_ec;
+        const auto size = std::filesystem::file_size(ini_path, size_ec);
+        if (size_ec || size > kMaximumCiArtifactRecordBytes) continue;
+        std::ifstream in(ini_path, std::ios::binary);
+        if (!in) continue;
+        const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        try {
+          const CiArtifactRecord record = parseArtifact(content);
+          // Durable artifacts (a release asset, expires 0) are not this sweep's
+          // concern; only ephemeral CI artifacts expire or are evicted.
+          if (record.expires_epoch_seconds == 0) continue;
+          entries.push_back(Entry{art_dir, project, id, record.name, record.bytes,
+                                  record.created_epoch_seconds, record.expires_epoch_seconds, false, false});
+          const auto existing = newest_run.find(project);
+          if (existing == newest_run.end() || id > existing->second) newest_run[project] = id;
+        } catch (const std::exception&) {
+        }
+      }
+      // A bundle with no sidecar is a crash leftover; drop it.
+      for (const std::string& base : tars) {
+        if (inis.find(base) == inis.end()) {
+          std::error_code remove_ec;
+          if (std::filesystem::remove(art_dir / (base + ".tar"), remove_ec)) ++removed;
+        }
+      }
+    }
+  }
+
+  if (options.keep_latest) {
+    for (Entry& entry : entries) {
+      const auto newest = newest_run.find(entry.project);
+      if (newest != newest_run.end() && entry.run_id == newest->second) entry.kept = true;
+    }
+  }
+
+  const auto deleteEntry = [&removed](Entry& entry) {
+    std::error_code tar_ec, ini_ec;
+    std::filesystem::remove(entry.dir / (entry.name + ".tar"), tar_ec);
+    std::filesystem::remove(entry.dir / (entry.name + ".ini"), ini_ec);
+    entry.evicted = true;
+    ++removed;
+  };
+
+  // Timer expiry for ephemeral artifacts (durable ones have expires 0).
+  for (Entry& entry : entries) {
+    const bool expired = entry.expires != 0 && options.now_epoch_seconds != 0 &&
+                         entry.expires <= options.now_epoch_seconds;
+    if (expired && !entry.kept) deleteEntry(entry);
+  }
+
+  // Budget eviction, oldest first, protected artifacts never evicted.
+  std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+    if (a.created != b.created) return a.created < b.created;
+    return a.run_id < b.run_id;
+  });
+  const auto liveTotal = [&entries](const std::string* project) {
+    std::uint64_t total = 0;
+    for (const Entry& entry : entries) {
+      if (entry.evicted) continue;
+      if (project != nullptr && entry.project != *project) continue;
+      total += entry.bytes;
+    }
+    return total;
+  };
+  if (options.max_total_bytes != 0) {
+    for (Entry& entry : entries) {
+      if (liveTotal(nullptr) <= options.max_total_bytes) break;
+      if (!entry.evicted && !entry.kept) deleteEntry(entry);
+    }
+  }
+  if (options.max_project_bytes != 0) {
+    std::set<std::string> projects;
+    for (const Entry& entry : entries) projects.insert(entry.project);
+    for (const std::string& project : projects) {
+      for (Entry& entry : entries) {
+        if (liveTotal(&project) <= options.max_project_bytes) break;
+        if (!entry.evicted && !entry.kept && entry.project == project) deleteEntry(entry);
+      }
+    }
+  }
+  return removed;
 }
 
 void removeProjectCi(const std::filesystem::path& state_root, std::string_view project_name) {

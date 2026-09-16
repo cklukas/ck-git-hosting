@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <ctime>
 #include <exception>
 #include <filesystem>
@@ -54,6 +55,32 @@ int serve(const std::filesystem::path& config_path, bool once) {
   const std::filesystem::path repo_root = config.repo_root;
   const std::filesystem::path build_root = *config.ci_build_root;
   const unsigned poll = config.ci_poll_seconds.value_or(5);
+  const unsigned cleanup_interval = config.ci_cleanup_interval_seconds.value_or(3600);
+
+  const auto nowEpoch = []() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+  };
+  std::uint64_t last_sweep = 0;
+  const auto maybeSweep = [&](bool force) {
+    const std::uint64_t now = nowEpoch();
+    if (!force && last_sweep != 0 && now - last_sweep < cleanup_interval) return;
+    last_sweep = now;
+    ckgit::CiArtifactSweepOptions sweep;
+    sweep.now_epoch_seconds = now;
+    sweep.max_total_bytes =
+        config.ci_artifact_max_total_bytes.value_or(static_cast<unsigned long long>(10) << 30);
+    sweep.max_project_bytes =
+        config.ci_artifact_max_project_bytes.value_or(static_cast<unsigned long long>(2) << 30);
+    sweep.runs_keep = config.ci_runs_keep.value_or(200);
+    sweep.keep_latest = config.ci_artifact_keep_latest.value_or(true);
+    try {
+      ckgit::sweepCiArtifacts(state_root, sweep);
+    } catch (const std::exception& error) {
+      std::cerr << "ck-ci-runnerd: artifact sweep failed: " << error.what() << "\n";
+    }
+  };
 
   std::signal(SIGTERM, onStop);
   std::signal(SIGINT, onStop);
@@ -67,7 +94,11 @@ int serve(const std::filesystem::path& config_path, bool once) {
       std::cerr << "ck-ci-runnerd: could not read the spool: " << error.what() << "\n";
     }
     if (!job.has_value()) {
-      if (once) break;  // the spool is drained
+      if (once) {
+        maybeSweep(true);  // a final maintenance pass before draining out
+        break;
+      }
+      maybeSweep(false);
       for (unsigned tick = 0; tick < poll * 10 && g_stop == 0; ++tick) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }
@@ -110,6 +141,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
       } catch (const std::exception&) {
       }
     }
+    maybeSweep(false);
   }
   return 0;
 }

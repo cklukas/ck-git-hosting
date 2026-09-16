@@ -17,6 +17,7 @@ inline constexpr std::size_t kProjectIndexCommitLimit = 200000;
 inline constexpr std::size_t kProjectIndexRefLimit = 500;
 inline constexpr std::size_t kProjectIndexReadmeLimit = 512 * 1024;
 inline constexpr std::size_t kProjectIndexCiLogLimit = 1u << 20;
+inline constexpr std::size_t kProjectIndexCiArtifactLimit = static_cast<std::size_t>(512) << 20;
 
 // In-memory snapshots. Construction only inventories the root and creates
 // placeholders: start() performs the Git work on one background thread. All
@@ -52,6 +53,9 @@ class ProjectIndex {
   // touches only the private state root and never runs Git.
   std::optional<std::string> readCiLog(std::string_view project_name, std::string_view run_id,
                                        std::size_t step_index) const;
+  // Reads one CI artifact bundle on demand (bounded), for the download route.
+  std::optional<std::string> readCiArtifact(std::string_view project_name, std::string_view run_id,
+                                            std::string_view artifact_name) const;
 
  private:
   class Impl;

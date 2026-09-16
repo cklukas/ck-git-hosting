@@ -38,6 +38,7 @@ COMMON_SOURCES := \
 	src/common/client_state.cpp \
 	src/common/control_rpc.cpp \
 	src/common/git_repository.cpp \
+	src/common/hash.cpp \
 	src/common/http_request.cpp \
 	src/common/http_router.cpp \
 	src/common/markdown.cpp \

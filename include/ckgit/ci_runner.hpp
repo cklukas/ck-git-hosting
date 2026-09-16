@@ -28,6 +28,14 @@ struct CiRunnerOptions {
   bool allow_network = false;            // Linux: keep a network namespace? default: deny
   bool keep_scratch = false;             // leave the checkout in place for debugging
 
+  // A job's declared artifacts are packed after its steps succeed. Retention
+  // defaults to artifact_retention_days when the workflow does not set one, and
+  // any value is clamped to artifact_max_retention_days. A bundle over
+  // artifact_max_bytes is dropped and recorded with a note.
+  unsigned artifact_retention_days = 7;
+  unsigned artifact_max_retention_days = 90;
+  std::size_t artifact_max_bytes = static_cast<std::size_t>(256) << 20;
+
   // Extra environment exported to every step, as KEY=VALUE. Used to expose the
   // sibling checkouts (e.g. CWORKS_CKVISION_DIR) a suite build needs. Values
   // are literal; the runner performs no substitution.
