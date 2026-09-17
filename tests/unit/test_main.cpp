@@ -1,13 +1,16 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+#include <arpa/inet.h>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <netinet/in.h>
 #include <stdexcept>
 #include <string>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -795,6 +798,59 @@ void testRuntimeStatus() {
   std::filesystem::remove_all(directory, error);
 }
 
+// WP2 (D2): a self-contained TCP loopback round trip, used as a `ckgit
+// ci.yml` step inside the CI sandbox (see testLoopbackInsideSandbox in
+// ci_runner_tests.cpp) to prove a step can reach 127.0.0.1 there, without
+// pulling in nc or any other external tool the runner's scrubbed PATH may not
+// have. Listens on an ephemeral loopback port, connects to itself, and
+// exchanges one byte. Returns 0 on success, 1 on any failure, printing
+// nothing on success so a passing step's log stays quiet.
+int runLoopbackProbe() {
+  const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (listener < 0) return 1;
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;  // ask the kernel for any free port
+  if (::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    ::close(listener);
+    return 1;
+  }
+  if (::listen(listener, 1) != 0) {
+    ::close(listener);
+    return 1;
+  }
+  socklen_t address_len = sizeof(address);
+  if (::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &address_len) != 0) {
+    ::close(listener);
+    return 1;
+  }
+  const int client = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (client < 0) {
+    ::close(listener);
+    return 1;
+  }
+  if (::connect(client, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    ::close(client);
+    ::close(listener);
+    return 1;
+  }
+  const int accepted = ::accept(listener, nullptr, nullptr);
+  if (accepted < 0) {
+    ::close(client);
+    ::close(listener);
+    return 1;
+  }
+  const char sent = 'x';
+  bool ok = ::send(client, &sent, 1, 0) == 1;
+  char received = 0;
+  ok = ok && ::recv(accepted, &received, 1, 0) == 1 && received == sent;
+  ::close(accepted);
+  ::close(client);
+  ::close(listener);
+  return ok ? 0 : 1;
+}
+
 }  // namespace
 
 void testProjectIndex();
@@ -812,7 +868,13 @@ void testCiWeb();
 void testPagesStore();
 int testRecovery();
 
-int main() {
+int main(int argc, char** argv) {
+  // A hidden mode, not one of the assertion suites below: run as a CI step's
+  // argv (see WP2/D2) rather than as the whole test binary, so exercising it
+  // inside the sandbox costs one TCP round trip, not the full suite.
+  if (argc > 1 && std::string(argv[1]) == "--loopback-probe") {
+    return runLoopbackProbe();
+  }
   try {
     testProjectIndex();
     testRouterMarkdown();

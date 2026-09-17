@@ -1,14 +1,15 @@
 # ck-git-hosting builds and self-deploys through its own CI runner.
 #
-# Every push to master builds the whole suite and runs the unit tests (the
-# loopback integration suite needs real networking, which the sandbox denies,
-# so it stays the developer's pre-push gate). Pushing a deploy-* tag does the
-# same and, because a tag build publishes a durable release, attaches the built
-# Debian packages as release assets. A small root-owned deploy watcher on the
-# server (packaging/deploy.sh, run by ck-git-hosting-deploy.timer) installs the
-# newest release's server package and restarts the services, with a health
-# check and automatic rollback. The CI step itself stays unprivileged: it only
-# builds, tests, and packages.
+# Every push to master runs the full build and test suite: `make check`, the
+# unit binary plus every tests/integration/*.sh script, including the ones
+# that need loopback networking (the runner brings the sandbox's isolated
+# network namespace's loopback interface up for exactly this; the LAN stays
+# denied). Pushing a deploy-* tag does the same and, because a tag build
+# publishes a durable release, attaches the built Debian packages as release
+# assets. An administrator runs packaging/deploy.sh by hand on the server to
+# install a release's server package and restart the services, with a health
+# check and automatic rollback; see docs/operations/04-ci-cd.md. The CI step
+# itself stays unprivileged: it only builds, tests, and packages.
 version: 1
 on:
   branches: [master]
@@ -34,12 +35,14 @@ jobs:
           printf '%s\n' "$ver" >"$TMPDIR/build-version"
           printf '%s\n' "$short" >"$TMPDIR/build-commit-short"
           make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" all
-      - name: unit-tests
+      - name: check
         script: |
+          # The full suite, not just the unit binary: `check` also runs every
+          # tests/integration/*.sh script, including the ones that bind and
+          # connect over loopback. `make` sets CKGIT_TEST_ROOT and each
+          # script's own TMPDIR internally; nothing extra is needed here.
           ver=$(cat "$TMPDIR/build-version")
-          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" "$TMPDIR/build/bin/ckgit-unit-tests"
-          mkdir -p "$TMPDIR/build/test-tmp"
-          CKGIT_TEST_ROOT="$TMPDIR" TMPDIR="$TMPDIR/build/test-tmp" "$TMPDIR/build/bin/ckgit-unit-tests"
+          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" check
       - name: package
         script: |
           # The .deb version stays timestamp-led so dpkg orders rebuilds

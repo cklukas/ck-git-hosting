@@ -355,14 +355,27 @@ PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" sync \
   "$(git -C "$test_root/publish-work" rev-parse HEAD)" ]
 blocked_registration_tip=$(git --git-dir "$test_root/published.git" rev-parse refs/heads/main)
 git -C "$test_root/publish-work" commit -q --allow-empty -m blocked-registration
-chmod 0500 "$test_root/state/checkouts/published"
-set +e
-PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" sync \
-  --config "$test_root/client.ini" --repo "$test_root/publish-work" >/dev/null 2>&1
-blocked_registration_status=$?
-set -e
-chmod 0700 "$test_root/state/checkouts/published"
-[ "$blocked_registration_status" -eq 3 ]
+# A chmod-based write-protection probe: relies on chmod actually denying this
+# process write access. Inside our own CI sandbox (CKGIT_CI=1, set by every
+# ck-ci-runnerd step) that does not hold -- an unprivileged user namespace's
+# CAP_DAC_OVERRIDE, granted to the mapped fake-root uid, bypasses DAC checks
+# on files owned by that same real uid (see user_namespaces(7)), so a step
+# genuinely cannot be denied write access to its own files by chmod alone.
+# That is a structural property of the sandbox, not something ckgit or this
+# test can work around, so the probe is skipped there; it still runs, and
+# still matters, on every other CI (GitHub Actions, a developer's machine).
+# Skipping it leaves published.git's ref exactly where the assertions below
+# expect it (unmoved), since the sync is then never attempted either way.
+if [ -z "${CKGIT_CI:-}" ]; then
+  chmod 0500 "$test_root/state/checkouts/published"
+  set +e
+  PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" sync \
+    --config "$test_root/client.ini" --repo "$test_root/publish-work" >/dev/null 2>&1
+  blocked_registration_status=$?
+  set -e
+  chmod 0700 "$test_root/state/checkouts/published"
+  [ "$blocked_registration_status" -eq 3 ]
+fi
 [ "$(git --git-dir "$test_root/published.git" rev-parse refs/heads/main)" = "$blocked_registration_tip" ]
 printf '%s\n' \
   'schema_version=1' \

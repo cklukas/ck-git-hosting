@@ -23,8 +23,11 @@
 #include <vector>
 
 #if defined(__linux__)
+#include <net/if.h>
 #include <sched.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
 #endif
 
 #include "ckgit/ci_store.hpp"
@@ -200,6 +203,28 @@ void writeProcFile(const char* path, const std::string& content) {
   (void)written;
 }
 
+// Brings the "lo" interface up in the calling process's current network
+// namespace. A freshly unshared (CLONE_NEWNET) namespace starts with loopback
+// down, which otherwise makes 127.0.0.1/::1 unreachable even though the LAN is
+// correctly denied — this is what let a step reach the network at all. Needs no
+// host privilege: CLONE_NEWUSER made this process uid 0 inside the user
+// namespace that owns the new network namespace, and that is what
+// CAP_NET_ADMIN over "lo" is evaluated against.
+bool bringUpLoopback() {
+  const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) return false;
+  ifreq request{};
+  std::strncpy(request.ifr_name, "lo", IFNAMSIZ - 1);
+  if (::ioctl(fd, SIOCGIFFLAGS, &request) != 0) {
+    ::close(fd);
+    return false;
+  }
+  request.ifr_flags |= IFF_UP | IFF_RUNNING;
+  const bool up = ::ioctl(fd, SIOCSIFFLAGS, &request) == 0;
+  ::close(fd);
+  return up;
+}
+
 // In the freshly forked child: enter unprivileged user, mount, and (unless
 // allowed) network namespaces, so the step has no network and cannot see the
 // host mount table. Returns false if the kernel denies unprivileged namespaces.
@@ -212,6 +237,12 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source) 
   writeProcFile("/proc/self/setgroups", "deny");
   writeProcFile("/proc/self/uid_map", "0 " + std::to_string(uid) + " 1\n");
   writeProcFile("/proc/self/gid_map", "0 " + std::to_string(gid) + " 1\n");
+  // A fresh network namespace has no interfaces up at all; bring loopback up so
+  // a step can still reach its own local server, database, or test fixture on
+  // 127.0.0.1/::1. Best-effort like the mounts below: a systemic failure here
+  // is caught early by probeLoopback() into CiSandboxReport, not discovered
+  // silently the first time a step's own loopback traffic fails.
+  if (!allow_network) bringUpLoopback();
   // Keep our mount changes from propagating back to the host namespace.
   ::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
   // Present the scratch tree at one fixed path (kSandboxRoot). The bind lives
@@ -237,9 +268,33 @@ bool probeUserNamespaces(bool allow_network) {
   }
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+
+// Whether the isolated per-step network namespace's loopback interface can be
+// brought up on this host, probed directly (its own unshare + bring-up, not a
+// whole run) so a systemic failure shows up once in CiSandboxReport rather
+// than being discovered only when a step's own loopback traffic silently
+// fails. Only meaningful when that namespace is actually created; the caller
+// short-circuits this when it is not (allow_network, or namespaces_available
+// is already false).
+bool probeLoopback() {
+  const pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    if (::unshare(CLONE_NEWUSER | CLONE_NEWNET) != 0) _exit(1);
+    writeProcFile("/proc/self/setgroups", "deny");
+    writeProcFile("/proc/self/uid_map", "0 " + std::to_string(::getuid()) + " 1\n");
+    writeProcFile("/proc/self/gid_map", "0 " + std::to_string(::getgid()) + " 1\n");
+    _exit(bringUpLoopback() ? 0 : 1);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 #else
 bool enterSandbox(bool, const std::filesystem::path&) { return false; }
 bool probeUserNamespaces(bool) { return false; }
+bool probeLoopback() { return false; }
 #endif
 
 void applyRlimits() {
@@ -666,6 +721,11 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   CiSandboxReport report;
   report.namespaces_available = probeUserNamespaces(options.allow_network);
   report.network_isolated = report.namespaces_available && !options.allow_network;
+  // Loopback only needs its own probe when the isolated network namespace is
+  // actually created (network_isolated): otherwise a step shares the host's
+  // namespace (allow_network, or namespaces unavailable at all in degraded
+  // mode) and its loopback trivially works, same as the host's.
+  report.loopback_available = !report.network_isolated || probeLoopback();
   if (sandbox != nullptr) *sandbox = report;
 
   const auto finish = [&](CiRunStatus status, const std::string& detail) -> CiRunRecord {

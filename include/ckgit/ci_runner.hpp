@@ -69,10 +69,16 @@ struct CiRunnerOptions {
 // the wall-clock timeout apply on every platform. Where namespaces are
 // unavailable (macOS development hosts, or a kernel without unprivileged user
 // namespaces) the runner still applies rlimits and the timeout, and reports that
-// the network was not isolated.
+// the network was not isolated. When an isolated network namespace is created,
+// the runner also brings its loopback interface up so 127.0.0.1/::1 stays
+// reachable (a step's own local server or test fixture) while the LAN remains
+// denied; loopback_available reports whether that succeeded, and is true
+// unconditionally when no isolated namespace was created (loopback then simply
+// is the host's).
 struct CiSandboxReport {
   bool namespaces_available = false;
   bool network_isolated = false;
+  bool loopback_available = false;
 };
 
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result

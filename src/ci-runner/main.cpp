@@ -89,6 +89,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
   std::signal(SIGINT, onStop);
 
   bool warned_degraded = false;
+  bool warned_loopback = false;
   while (g_stop == 0) {
     std::optional<ckgit::CiJobRequest> job;
     try {
@@ -144,6 +145,11 @@ int serve(const std::filesystem::path& config_path, bool once) {
         std::cerr << "ck-ci-runnerd: warning: unprivileged namespaces unavailable — steps run "
                      "without network/mount isolation\n";
         warned_degraded = true;
+      }
+      if (sandbox.namespaces_available && !sandbox.loopback_available && !warned_loopback) {
+        std::cerr << "ck-ci-runnerd: warning: could not bring up loopback inside the isolated network "
+                     "namespace — steps cannot reach 127.0.0.1/::1\n";
+        warned_loopback = true;
       }
       std::cout << "ck-ci-runnerd: " << job->project_name << " " << record.run_id << " "
                 << ckgit::ciRunStatusName(record.status) << "\n";
@@ -235,6 +241,9 @@ int main(int argc, char** argv) {
                 << (ckgit::ciSandboxCompiledIn() ? " (kernel setting?)" : " (not a Linux host)") << "\n";
     } else if (!sandbox.network_isolated) {
       std::cerr << "ck-ci-runnerd: note: network access was enabled for this run\n";
+    } else if (!sandbox.loopback_available) {
+      std::cerr << "ck-ci-runnerd: warning: could not bring up loopback inside the isolated network "
+                   "namespace — steps could not reach 127.0.0.1/::1\n";
     }
 
     std::cout << "run " << record.run_id << ": " << ckgit::ciRunStatusName(record.status);

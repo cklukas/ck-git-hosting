@@ -13,6 +13,10 @@
 #include <unistd.h>
 #include <vector>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
 #include "ckgit/ci_store.hpp"
 #include "ckgit/pages_store.hpp"
 #include "ckgit/process.hpp"
@@ -94,6 +98,22 @@ std::string readFile(const std::filesystem::path& path) {
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
+// The absolute path of this very test binary, so a workflow step can
+// re-invoke it (with --loopback-probe; see test_main.cpp) without depending
+// on an external tool like `nc` being on the runner's scrubbed PATH.
+std::string thisExecutablePath() {
+#if defined(__linux__)
+  return std::filesystem::canonical("/proc/self/exe").string();
+#elif defined(__APPLE__)
+  char buffer[4096];
+  uint32_t size = sizeof(buffer);
+  if (_NSGetExecutablePath(buffer, &size) != 0) throw std::runtime_error("executable path buffer too small");
+  return std::filesystem::canonical(buffer).string();
+#else
+  throw std::runtime_error("thisExecutablePath is not implemented on this platform");
+#endif
+}
+
 void testSuccess() {
   RunnerFixture fixture;
   const std::string id = fixture.commit(
@@ -159,6 +179,45 @@ void testOutputCap() {
   require(record.steps.size() == 1 && record.steps[0].output_truncated, "the log is marked truncated");
   const auto size = std::filesystem::file_size(fixture.stepLog(record, 0));
   require(size <= opts.max_log_bytes, "the captured log does not exceed the cap");
+}
+
+// D2/WP2: even with the LAN denied by default, a step must still reach
+// 127.0.0.1/::1 (its own local server, database, or test fixture). Before the
+// fix a freshly unshared network namespace left loopback down, so this step
+// would fail with status Failure on any host where namespaces are actually
+// enforced (Linux with unprivileged user namespaces enabled); in degraded
+// mode (macOS, or namespaces unavailable) the step runs unsandboxed and the
+// assertion holds trivially. Either way, a real regression shows up as
+// CiRunStatus::Failure here, not just as a warning on stderr.
+void testLoopbackInsideSandbox() {
+  // Skip when this test binary is itself already executing as a CI step:
+  // CKGIT_CI is set only by our own runner's buildEnv, so this precisely
+  // detects "running nested inside ck-ci-runnerd", not GitHub Actions (which
+  // sets CI but not CKGIT_CI) or an ordinary local `make check`. A nested
+  // step's own enterSandbox rebinds /mnt to its own scratch, so this
+  // process's self-referencing path (resolved under the outer step's /mnt)
+  // would no longer exist inside the nested step -- a property of self-
+  // reference under a floating bind mount, not of the loopback fix itself.
+  // The fix is still exercised for real: the outer step needs working
+  // loopback for the other integration scripts (control_socket.sh,
+  // dashboard.sh, ...), which run in the outer step's own already-unshared
+  // namespace rather than spawning a further nested one.
+  if (std::getenv("CKGIT_CI") != nullptr) return;
+  RunnerFixture fixture;
+  const std::string self = thisExecutablePath();
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [\"" +
+      self + "\", \"--loopback-probe\"]\n");
+  ckgit::CiSandboxReport sandbox;
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id), &sandbox);
+  require(record.status == ckgit::CiRunStatus::Success,
+          "a step reaches loopback with the LAN denied (namespaces_available=" +
+              std::string(sandbox.namespaces_available ? "true" : "false") +
+              ", loopback_available=" + std::string(sandbox.loopback_available ? "true" : "false") + ")");
 }
 
 void testSkippedWithoutWorkflow() {
@@ -394,6 +453,7 @@ void testCiRunner() {
   testFailureStops();
   testTimeout();
   testOutputCap();
+  testLoopbackInsideSandbox();
   testSkippedWithoutWorkflow();
   testBranchTrigger();
   testDefaultBranchTrigger();
