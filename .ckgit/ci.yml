@@ -44,6 +44,9 @@ jobs:
           # A source tarball too, so the macOS client (which cannot run the Pi's
           # Linux binary) can build ckgit from the same release.
           tar -czf "$PWD/dist/ck-git-hosting-src.tar.gz" Makefile VERSION src include packaging
+          # The exact baked version, so a client built from the source tarball
+          # (which carries no .git) reports the same version as this release.
+          cp "$TMPDIR/build-version" "$PWD/dist/build-version"
     artifacts:
       name: release
       paths: [dist]

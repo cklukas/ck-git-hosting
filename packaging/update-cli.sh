@@ -56,10 +56,14 @@ src_tar=$(find "$work" -name 'ck-git-hosting-src.tar.gz' | head -1)
 mkdir -p "$work/src"
 tar -xzf "$src_tar" -C "$work/src"
 
-# 3. Build just the client.
+# 3. Build just the client, stamped with the release's exact baked version so
+#    the updated client reports the same version as the deployed server (the
+#    source tarball carries no .git for the Makefile to derive it from).
 [ -n "$build_root" ] || build_root="$work/b"
 mkdir -p "$build_root"
-( cd "$work/src" && make BUILD_ROOT="$build_root" BUILD_DIR="$build_root/build" client ) \
+build_version=$(cat "$(find "$work" -name build-version | head -1)" 2>/dev/null || true)
+( cd "$work/src" && make BUILD_ROOT="$build_root" BUILD_DIR="$build_root/build" \
+    ${build_version:+CKGIT_BUILD_VERSION="$build_version"} client ) \
   || fail "building ckgit from the release source failed"
 bin="$build_root/build/bin/ckgit"
 [ -x "$bin" ] || fail "client build produced no ckgit binary"
