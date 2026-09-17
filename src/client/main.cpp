@@ -2230,6 +2230,64 @@ int webCommand(const std::vector<std::string>& arguments) {
 #include "setup_doctor.inc"
 #include "incoming.inc"
 
+// `ckgit version`: the local build plus the versions running on the server, so
+// the operator sees all four suite versions at once and can spot a service left
+// on an older build. Degrades to the local build alone when no server is
+// configured or reachable; `ckgit --version` prints only the local build.
+int versionCommand(const std::vector<std::string>& arguments) {
+  std::optional<std::filesystem::path> requested;
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto& option = arguments[index];
+    if (option == "--config") {
+      if (index + 1 == arguments.size()) { std::cerr << "ckgit: --config requires a value\n"; return kUsage; }
+      requested = arguments[++index];
+    } else {
+      std::cerr << "ckgit: unknown version option: " << option << "\nTry 'ckgit help version'.\n";
+      return kUsage;
+    }
+  }
+  std::cout << "ckgit " << ckgit::buildVersion() << "  (local CLI)\n";
+  std::optional<ckgit::ClientConfig> config;
+  try {
+    config = ckgit::loadClientConfig(resolveConfigPath(requested));
+  } catch (const std::exception&) {
+    std::cout << "server: not configured; run ckgit setup to query the host and service versions\n";
+    return 0;
+  }
+  const auto result = controlRpc(*config, "versions");
+  static constexpr std::string_view kHeader = "ok versions\n";
+  if (result.exit_code != 0 || result.timed_out || result.output_truncated ||
+      result.output.rfind(kHeader.data(), 0, kHeader.size()) != 0) {
+    std::cout << "server " << config->server << ": could not read versions ("
+              << describeProcessFailure(result, kControlTimeout) << ")\n";
+    return 0;
+  }
+  std::cout << "server " << config->server << ":\n";
+  const std::string& body = result.output;
+  for (std::size_t pos = kHeader.size(); pos < body.size();) {
+    const std::size_t eol = body.find('\n', pos);
+    const std::string line = body.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+    pos = eol == std::string::npos ? body.size() : eol + 1;
+    if (line.empty()) continue;
+    std::vector<std::string> fields;  // name, version, status (started is ignored)
+    for (std::size_t start = 0; fields.size() < 3 && start <= line.size();) {
+      const std::size_t space = line.find(' ', start);
+      if (space == std::string::npos) { fields.push_back(line.substr(start)); break; }
+      fields.push_back(line.substr(start, space - start));
+      start = space + 1;
+    }
+    const std::string name = fields.size() > 0 ? fields[0] : "";
+    const std::string version = fields.size() > 1 ? fields[1] : "";
+    const std::string status = fields.size() > 2 ? fields[2] : "";
+    if (name.empty()) continue;
+    std::string label = name;
+    if (label.size() < 18) label.append(18 - label.size(), ' ');
+    std::cout << "  " << label << (version.empty() ? "unknown" : version)
+              << (status.empty() || status == "running" ? "" : "  (" + status + ")") << "\n";
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -2284,6 +2342,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "web") {
       return webCommand(arguments);
+    }
+    if (command == "version") {
+      return versionCommand(arguments);
     }
     printUsage(std::cerr);
     return kUsage;

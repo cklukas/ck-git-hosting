@@ -98,7 +98,7 @@ bool forwardControlRpc(const std::filesystem::path& socket_path,
   }
   const bool no_arguments = argument.empty() && second_argument.empty();
   if (!((operation == "ping" || operation == "list-projects" || operation == "checkouts" ||
-         operation == "version") && no_arguments) &&
+         operation == "version" || operation == "versions") && no_arguments) &&
       !((operation == "refs" || operation == "refresh" || operation == "forget-checkout") && !argument.empty() && second_argument.empty()) &&
       !(operation == "create" && !argument.empty() && !second_argument.empty() &&
         isValidBranchName(second_argument)) &&

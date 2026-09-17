@@ -564,6 +564,35 @@ ping=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 ping' "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
 [ "$ping" = 'ok' ]
 
+# versions: the host reports its own running build (recorded under the state
+# root at startup) plus every service that has recorded a runtime version. A
+# live pid reads as running; a dead one as stopped, catching a service left on
+# an older build by an install that did not restart it.
+mkdir -p "$test_root/state/runtime"
+printf 'version=9.9.9-runner\npid=%s\nstarted=1700000000\n' "$$" \
+  >"$test_root/state/runtime/ck-ci-runnerd.txt"
+printf 'version=9.9.9-pages\npid=2147483646\nstarted=1700000000\n' \
+  >"$test_root/state/runtime/ck-pagesd.txt"
+versions=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 versions' "$CK_GIT_SHELL" \
+  --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
+printf '%s\n' "$versions" | head -1 | grep -q '^ok versions$' ||
+  { echo "versions header missing: $versions" >&2; exit 1; }
+printf '%s\n' "$versions" | grep -q '^ck-git-hostingd .* running [0-9]' ||
+  { echo "host running version missing: $versions" >&2; exit 1; }
+printf '%s\n' "$versions" | grep -q '^ck-ci-runnerd 9.9.9-runner running ' ||
+  { echo "runner running version missing: $versions" >&2; exit 1; }
+printf '%s\n' "$versions" | grep -q '^ck-pagesd 9.9.9-pages stopped ' ||
+  { echo "pages stopped version missing: $versions" >&2; exit 1; }
+# The client `version` command prints its own build and, over the transport, the
+# server's four running components.
+client_versions=$(PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" version \
+  --config "$test_root/client.ini")
+case "$client_versions" in
+  *"(local CLI)"*"ck-git-hostingd"*"ck-ci-runnerd"*"9.9.9-runner"*"ck-pagesd"*"9.9.9-pages"*"(stopped)"*) ;;
+  *) echo "client version did not report all components: $client_versions" >&2; exit 1 ;;
+esac
+rm -f "$test_root/state/runtime/ck-ci-runnerd.txt" "$test_root/state/runtime/ck-pagesd.txt"
+
 projects=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 list-projects' "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
 [ "$projects" = "ok 6

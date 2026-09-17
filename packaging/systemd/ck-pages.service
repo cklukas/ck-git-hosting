@@ -48,8 +48,12 @@ RestrictAddressFamilies=AF_INET AF_INET6
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-# No ReadWritePaths: the server only reads pages_root, so the whole filesystem
-# stays read-only under ProtectSystem=strict.
+# The server only reads pages_root, so the filesystem stays read-only under
+# ProtectSystem=strict, with one exception: a single runtime directory where it
+# records its own version at startup (for the dashboard and `ckgit version`).
+# The leading '-' tolerates the directory not existing yet; the package
+# pre-creates it, and ck-pagesd's write there is best-effort regardless.
+ReadWritePaths=-/var/lib/ck-git-hosting/state/runtime
 
 [Install]
 WantedBy=multi-user.target

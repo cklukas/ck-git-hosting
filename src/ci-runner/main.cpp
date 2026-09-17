@@ -17,6 +17,7 @@
 #include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
+#include "ckgit/runtime_status.hpp"
 #include "ckgit/server_config.hpp"
 
 namespace {
@@ -53,6 +54,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
     return 2;
   }
   const std::filesystem::path state_root = *config.state_root;
+  ckgit::recordRuntimeComponent(state_root, "ck-ci-runnerd", ckgit::buildVersion());
   const std::filesystem::path repo_root = config.repo_root;
   const std::filesystem::path build_root = *config.ci_build_root;
   const unsigned poll = config.ci_poll_seconds.value_or(5);

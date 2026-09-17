@@ -218,6 +218,7 @@ steps() {
   act "create $repo_root (ckgit:ckgit 0750)" install_dir 0750 ckgit ckgit "$repo_root"
   act "create $lib_dir (ckgit:ckgit 0750)" install_dir 0750 ckgit ckgit "$lib_dir"
   act "create $state_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$state_root"
+  act "create $state_root/runtime (ckgit:ckgit 0755)" install_dir 0755 ckgit ckgit "$state_root/runtime"
   act "create $ci_build_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$ci_build_root"
   act "create $ci_cache_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$ci_cache_root"
   act "create $pages_root (ckgit:ckgit 0700)" install_dir 0700 ckgit ckgit "$pages_root"

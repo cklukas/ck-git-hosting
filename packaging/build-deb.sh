@@ -163,6 +163,9 @@ case "$1" in
     chown ckgit:ckgit /srv/ck-git-hosting/repos /var/lib/ck-git-hosting /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build /var/lib/ck-git-hosting/pages
     chmod 0750 /srv/ck-git-hosting/repos /var/lib/ck-git-hosting
     chmod 0700 /var/lib/ck-git-hosting/state /var/lib/ck-git-hosting/ci-build /var/lib/ck-git-hosting/pages
+    # Each daemon records its running version here at startup. Pre-create it so
+    # ck-pagesd, whose sandbox grants write to only this one directory, can too.
+    install -d -m 0755 -o ckgit -g ckgit /var/lib/ck-git-hosting/state/runtime
     chown root:ckgit /etc/ck-git-hosting/server.ini
     chmod 0640 /etc/ck-git-hosting/server.ini
     if [ ! -e /etc/ck-git-hosting/authorized_keys ]; then
@@ -172,7 +175,7 @@ case "$1" in
     fi
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload || true
-      for unit in ck-git-hosting.service ck-ci-runner.service; do
+      for unit in ck-git-hosting.service ck-ci-runner.service ck-pages.service; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
         if systemctl is-active --quiet "$unit"; then
           systemctl restart "$unit" || true

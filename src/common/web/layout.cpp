@@ -7,6 +7,7 @@
 #include "ckgit/cli_help.hpp"
 #include "ckgit/http_router.hpp"
 #include "ckgit/markdown.hpp"
+#include "ckgit/runtime_status.hpp"
 #include "ckgit/web_repository.hpp"
 #include "style.hpp"
 namespace ckgit {
@@ -15,16 +16,37 @@ constexpr const char* kTextBrand =
     "<span class=\"brand-monogram\">ck</span>"
     "<span class=\"brand-wordmark\">git<span class=\"brand-caption\">hosting</span></span>";
 
+// The versions running on this server, refreshed per request by the daemon
+// serving the page (the About dialog is on every page). Empty on a page not
+// rendered by the hosting daemon, in which case the dialog shows only this
+// process's own build. Per-thread because each request is handled start to
+// finish on one worker thread, so no lock is needed.
+thread_local std::vector<RuntimeComponent> t_about_components;
+
 std::string aboutDialog() {
+  std::string components;
+  if (!t_about_components.empty()) {
+    components = "<ul class=\"about-components\">";
+    for (const auto& component : t_about_components) {
+      components += "<li>" + htmlEscape(component.name) + " <code>" +
+          htmlEscape(component.version.empty() ? "unknown" : component.version) + "</code>" +
+          (component.running ? "" : " <span class=\"muted\">(not running)</span>") + "</li>";
+    }
+    components += "</ul>";
+  }
   return "<div id=\"about-dialog\" class=\"about-dialog\" popover=\"auto\" role=\"dialog\" aria-labelledby=\"about-title\">"
       "<div class=\"about-heading\"><div class=\"brand about-brand\" aria-hidden=\"true\">" + std::string(kTextBrand) +
       "</div><button type=\"button\" class=\"about-close\" popovertarget=\"about-dialog\" popovertargetaction=\"hide\" autofocus>Close</button></div>"
       "<h2 id=\"about-title\">About ck-git-hosting</h2>"
-      "<p class=\"about-version\">Version <code>" + htmlEscape(buildVersion()) + "</code></p>"
+      "<p class=\"about-version\">Version <code>" + htmlEscape(buildVersion()) + "</code></p>" + components +
       "<p>Publish Git projects and browse their files and history.</p>"
       "<p>© 2026 C. Klukas</p><p class=\"muted\">Licensed under the MIT License.</p></div>";
 }
 }  // namespace
+
+void setAboutServerComponents(std::vector<RuntimeComponent> components) {
+  t_about_components = std::move(components);
+}
 
 std::string formatUtcTimestamp(std::uint64_t epoch) {
   const auto timestamp = static_cast<std::time_t>(epoch); std::tm utc{}; char buffer[32]{};

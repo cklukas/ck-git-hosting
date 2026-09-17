@@ -41,6 +41,7 @@
 #include "ckgit/dashboard.hpp"
 #include "ckgit/project_index.hpp"
 #include "ckgit/repository_store.hpp"
+#include "ckgit/runtime_status.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/git_repository.hpp"
 #include "ckgit/http_request.hpp"
@@ -258,7 +259,7 @@ std::optional<ControlRequest> parseRequest(std::string_view request) {
   const std::string& operation = tokens[1];
   const bool no_arguments = argument.empty() && second_argument.empty();
   if (!((operation == "ping" || operation == "list-projects" || operation == "checkouts" ||
-         operation == "version") && no_arguments) &&
+         operation == "version" || operation == "versions") && no_arguments) &&
       !((operation == "refs" || operation == "refresh" || operation == "forget-checkout" ||
          operation == "ci-status") && !argument.empty() && second_argument.empty() &&
         ckgit::isValidProjectName(argument)) &&
@@ -404,6 +405,37 @@ std::string ciStatusResponse(const std::filesystem::path& state_root, std::strin
       throw std::runtime_error("CI status exceeds control response limit");
     }
     response += line;
+  }
+  return response;
+}
+
+// The suite's four versions come from one build, but a running process can lag
+// an install that did not restart it, so this reports the recorded version and
+// liveness of every daemon that has registered under the state root. The
+// hosting daemon knows its own running version in-process, authoritatively.
+std::string versionsResponse(const std::optional<std::filesystem::path>& state_root) {
+  std::vector<ckgit::RuntimeComponent> components =
+      state_root.has_value() ? ckgit::readRuntimeComponents(*state_root) : std::vector<ckgit::RuntimeComponent>{};
+  bool have_host = false;
+  for (auto& component : components) {
+    if (component.name == "ck-git-hostingd") {
+      component.version = ckgit::buildVersion();
+      component.running = true;
+      have_host = true;
+    }
+  }
+  if (!have_host) {
+    ckgit::RuntimeComponent host;
+    host.name = "ck-git-hostingd";
+    host.version = ckgit::buildVersion();
+    host.running = true;
+    components.insert(components.begin(), std::move(host));
+  }
+  std::string response = "ok versions\n";
+  for (const auto& component : components) {
+    response += component.name + " " + (component.version.empty() ? "unknown" : component.version) + " " +
+                (component.running ? "running" : "stopped") + " " +
+                std::to_string(component.started_epoch_seconds) + "\n";
   }
   return response;
 }
@@ -713,7 +745,12 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
 }
 
 void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::ProjectIndex& index, Deadline deadline,
-                      const std::string& ssh_clone_target) {
+                      const std::string& ssh_clone_target, const std::optional<std::filesystem::path>& state_root) {
+  // Refresh the versions the About dialog lists, so every page shows the running
+  // host and service builds. Best-effort and per request (the dashboard is
+  // loopback-only and low-traffic), reflecting a service restart immediately.
+  ckgit::setAboutServerComponents(state_root.has_value() ? ckgit::readRuntimeComponents(*state_root)
+                                                         : std::vector<ckgit::RuntimeComponent>{});
   std::string request;
   std::array<char, 1024> buffer{};
   const auto header_deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::seconds(5));
@@ -860,7 +897,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
 }
 
 void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,
-                const std::string& ssh_clone_target) {
+                const std::string& ssh_clone_target, std::optional<std::filesystem::path> state_root) {
   // Live log streams (SSE) hold a worker for their duration, bounded by
   // kMaxLogStreams; the extra workers keep ordinary requests responsive.
   constexpr std::size_t kHttpWorkerCount = 8;
@@ -880,7 +917,7 @@ void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIn
         if (stopping) return;
         client = queue.front(); queue.pop_front();
       }
-      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target); } catch (...) {}
+      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target, state_root); } catch (...) {}
       close(client.descriptor);
     }
   });
@@ -912,6 +949,7 @@ int serve(const Options& options) {
   const std::optional<std::filesystem::path> state_root = options.state_root.has_value()
       ? std::optional<std::filesystem::path>(ckgit::validatedMetadataRoot(*options.state_root))
       : std::nullopt;
+  if (state_root.has_value()) ckgit::recordRuntimeComponent(*state_root, "ck-git-hostingd", ckgit::buildVersion());
   ckgit::ProjectIndex index(repository_root, state_root);
   index.start();
   const int listener = bindSocket(options.control_socket);
@@ -922,7 +960,7 @@ int serve(const Options& options) {
   std::thread http_thread;
   if (http_listener >= 0) {
     std::cout << "ck-git-hostingd: loopback HTTP ready on " << bound_http_port << "\n" << std::flush;
-    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""));
+    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""), state_root);
   }
   while (!stop_requested) {
     pollfd ready{listener, POLLIN, 0};
@@ -948,6 +986,8 @@ int serve(const Options& options) {
           sendAll(client, "ok\n");
         } else if (request->operation == "version") {
           sendAll(client, "ok " + ckgit::buildVersion() + "\n");
+        } else if (request->operation == "versions") {
+          sendAll(client, versionsResponse(state_root));
         } else if (request->operation == "list-projects") {
           sendAll(client, listResponse(repository_root));
         } else if (request->operation == "refresh") {

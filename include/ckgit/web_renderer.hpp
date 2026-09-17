@@ -64,6 +64,12 @@ std::string ciRunTiming(const CiRunDisplay& display);
 }  // namespace ckgit
 
 namespace ckgit {
+struct RuntimeComponent;  // ckgit/runtime_status.hpp
+// Sets the running server-component versions the About dialog lists on the
+// current thread's next rendered page. The hosting daemon calls this per
+// request; other callers of pageLayout leave it empty and the dialog shows only
+// this process's own build.
+void setAboutServerComponents(std::vector<RuntimeComponent> components);
 std::string pageLayout(std::string_view title, std::string_view body, const ProjectSummary* project = nullptr,
                        const PageContext* context = nullptr, unsigned refresh_seconds = 0);
 std::string formatUtcTimestamp(std::uint64_t epoch);

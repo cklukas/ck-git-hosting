@@ -27,6 +27,7 @@
 #include "ckgit/cli_help.hpp"
 #include "ckgit/http_request.hpp"
 #include "ckgit/pages_store.hpp"
+#include "ckgit/runtime_status.hpp"
 #include "ckgit/server_config.hpp"
 #include "ckgit/validation.hpp"
 
@@ -164,6 +165,11 @@ int serve(const std::filesystem::path& config_path) {
   }
   const std::filesystem::path pages_root = *config.pages_root;
   const unsigned short port = *config.pages_http_port;
+  // Record the running version so the dashboard and `ckgit version` can report
+  // it; best-effort, and only when a state root is configured and writable.
+  if (config.state_root.has_value() && !config.state_root->empty()) {
+    ckgit::recordRuntimeComponent(*config.state_root, "ck-pagesd", ckgit::buildVersion());
+  }
 
   const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
   if (listener < 0) {

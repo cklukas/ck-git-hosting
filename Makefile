@@ -57,6 +57,7 @@ COMMON_SOURCES := \
 	src/common/repository_store.cpp \
 	src/common/remote_url.cpp \
 	src/common/ref_status.cpp \
+	src/common/runtime_status.cpp \
 	src/common/server_config.cpp \
 	src/common/server_identity.cpp \
 	src/common/ssh_command.cpp \

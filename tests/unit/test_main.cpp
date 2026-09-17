@@ -23,6 +23,7 @@
 #include "ckgit/ref_status.hpp"
 #include "ckgit/repository_store.hpp"
 #include "ckgit/remote_url.hpp"
+#include "ckgit/runtime_status.hpp"
 #include "ckgit/server_identity.hpp"
 #include "ckgit/ssh_command.hpp"
 #include "ckgit/validation.hpp"
@@ -592,6 +593,11 @@ void testSshCommandGrammar() {
          "version RPC is accepted without arguments");
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 version cworks", &reason).has_value(),
          "version RPC rejects an argument");
+  const auto versions = ckgit::parseSshOriginalCommand("ckgit-rpc 1 versions", &reason);
+  expect(versions.has_value() && versions->rpc_operation == "versions" && versions->rpc_argument.empty(),
+         "versions RPC is accepted without arguments");
+  expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 versions cworks", &reason).has_value(),
+         "versions RPC rejects an argument");
   const auto replacement = ckgit::parseSshOriginalCommand("ckgit-rpc 1 replace-checkout cworks 776f726b", &reason);
   expect(replacement.has_value() && replacement->rpc_operation == "replace-checkout" &&
              replacement->rpc_argument == "cworks" && replacement->rpc_second_argument == "776f726b",
@@ -724,6 +730,50 @@ void testDiscoveryAndAudit() {
   std::filesystem::remove_all(directory, error);
 }
 
+void testRuntimeStatus() {
+  const auto directory = testDirectory();
+  const auto state = directory / "state";
+  // A missing runtime directory never throws and yields nothing.
+  expect(ckgit::readRuntimeComponents(state).empty(), "missing runtime dir yields no components");
+
+  ckgit::recordRuntimeComponent(state, "ck-pagesd", "1.2.3+gabc");
+  ckgit::recordRuntimeComponent(state, "ck-git-hostingd", "1.2.3+gabc");
+  auto components = ckgit::readRuntimeComponents(state);
+  expect(components.size() == 2, "both recorded components are read back");
+  // Suite order: hosting is listed before pages whatever the write order.
+  expect(components[0].name == "ck-git-hostingd" && components[1].name == "ck-pagesd",
+         "components are returned in suite order");
+  expect(components[0].version == "1.2.3+gabc", "the recorded version round-trips");
+  expect(components[0].pid == static_cast<long>(::getpid()) && components[0].running,
+         "the recording process reads back as running");
+  expect(components[0].started_epoch_seconds > 0, "a start time is recorded");
+
+  // A value carrying a newline, space, or markup cannot reach the line protocol
+  // or the page: only safe token characters survive.
+  ckgit::recordRuntimeComponent(state, "ck-ci-runnerd", "1.0\n<b> drop");
+  for (const auto& component : ckgit::readRuntimeComponents(state)) {
+    if (component.name == "ck-ci-runnerd") {
+      expect(!component.version.empty() && component.version.find_first_of("\n <>") == std::string::npos,
+             "an unsafe recorded version is stripped to safe characters");
+    }
+  }
+
+  // A stale file whose pid is dead reads as not running, flagging a service
+  // left on an older build by an install that did not restart it.
+  std::ofstream(state / "runtime" / "ck-old.txt") << "version=0.0.1\npid=2147483646\nstarted=1700000000\n";
+  bool saw_stale = false;
+  for (const auto& component : ckgit::readRuntimeComponents(state)) {
+    if (component.name == "ck-old") {
+      saw_stale = true;
+      expect(!component.running, "a dead recorded pid reads as not running");
+    }
+  }
+  expect(saw_stale, "a hand-written component file is read");
+
+  std::error_code error;
+  std::filesystem::remove_all(directory, error);
+}
+
 }  // namespace
 
 void testProjectIndex();
@@ -768,6 +818,7 @@ int main() {
     testServerConfig();
     testAuthorizedKeys();
     testProcessTimeoutKillsTree();
+    testRuntimeStatus();
     testSshCommandGrammar();
     testBareRepositoryCreation();
     testDiscoveryAndAudit();
