@@ -1,14 +1,21 @@
 # Continuous integration
 
 This guide turns on per-project CI, writes a first `.ckgit/ci.yml`, and shows
-where results appear and how the runner is operated. The design and security
-rationale are in [../planning/09-ci-cd.md](../planning/09-ci-cd.md).
+where results appear and how the runner is operated.
 
 CI is off for every project until an administrator enables it. When it is on, a
 push to a triggering branch runs that commit's `.ckgit/ci.yml` on the server in
 an isolated sandbox, and the result appears read-only in the dashboard. It is
 built for a trusted LAN whose project members already have push access; it is
 not a shared, multi-tenant build farm.
+
+Running project-committed code on the server is the one deliberate exception
+to the rule that the hosting daemon never executes anything from project data.
+The exception is contained: execution is opt-in per project; it happens in a
+separate service (`ck-ci-runnerd`), never the daemon; each step runs in a
+network- and mount-isolated, resource-limited, time-bounded sandbox on a
+throwaway checkout; and the daemon only ever reads the results. Network access
+is denied by default.
 
 ## What the package installs
 
@@ -57,7 +64,16 @@ ci_build_root=/var/lib/ck-git-hosting/ci-build
 # pages_root=/var/lib/ck-git-hosting/pages   # where published sites are stored (set by a fresh install)
 # pages_http_port=8421               # ck-pagesd's port (LAN-exposable); then enable ck-pages.service
 # pages_keep_versions=3              # site versions kept for rollback (1..1000)
+# pages_public_url=https://pages.example.lan   # exact base URL for site links; overrides the derived one
 ```
+
+The dashboard normally derives a project's Pages site link from the
+advertised SSH clone host plus `pages_http_port`, but a dashboard request
+often arrives through a loopback tunnel that cannot reach that port itself.
+Set `pages_public_url` to an `http(s)://` URL (no path) when the derived link
+would be wrong -- a reverse proxy, a different public hostname, or a
+different port than `pages_http_port` -- and every project's site link uses
+it verbatim instead.
 
 A fresh install written with `packaging/install.sh` already sets
 `ci_build_root`. Confirm the daemon still parses the file after any edit
@@ -73,6 +89,27 @@ Restart the runner after changing any CI key:
 ```text
 sudo systemctl restart ck-ci-runner.service
 ```
+
+### Sizing on a Raspberry Pi
+
+A Raspberry Pi 4 is a realistic target for this daemon, but its four Cortex-A72
+cores are slow for C++ compilation. Measured on real Pi 4 hardware, `make
+all` for this project's own C++20 sources -- six binaries, `-O2 -Wall -Wextra
+-Wpedantic -Werror`, no parallel `-j` -- takes just under 7 minutes wall
+clock. A `check` step that also builds and runs the unit binary plus every
+`tests/integration/*.sh` script (several of which wait on real multi-second
+timeouts, independent of CPU speed) adds meaningfully more on top of that. The
+default `ci_timeout_seconds=1800` (30 minutes) has headroom above the plain
+build alone, but a `.ckgit/ci.yml` whose `check` step mirrors this project's
+own -- `make ... all check` in one step -- should raise `ci_timeout_seconds`
+well past the default rather than risk a slow but otherwise successful build
+being killed at the wall-clock limit; there is no way to distinguish "still
+building" from "hung" from outside the step. This project's own Pi 4 server
+runs with `ci_timeout_seconds=14400` (4 hours) for exactly this reason -- a
+generous, rarely-hit ceiling rather than a tight one tuned to the common case.
+Raise `ci_max_log_bytes` too (the default 1 MiB) if the full test suite's
+combined output would otherwise be truncated; this server runs with
+`ci_max_log_bytes=16777216` (16 MiB).
 
 ## Enable CI for a project
 

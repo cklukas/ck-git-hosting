@@ -73,11 +73,10 @@ optional `http_port` and `ssh_clone_target=user@host`. Unknown keys, relative pa
 rejected, and the daemon refuses to combine `--config` with individual path
 options.
 
-The CI runner and Pages server read optional keys from the same file
-(`ci_build_root`, `ci_timeout_seconds`, `ci_max_log_bytes`, `ci_poll_seconds`,
-`ci_allow_network`, `pages_root`, `pages_http_port`); the daemon ignores them,
-so `--check` does not echo them. A fresh install sets
-`ci_build_root`. See [04-ci-cd.md](04-ci-cd.md).
+The CI runner and Pages server read further optional keys from the same file;
+the daemon ignores them, so `--check` does not echo them. A fresh install sets
+`ci_build_root`. See the full key table, including `pages_public_url`, in
+[04-ci-cd.md](04-ci-cd.md#configure-the-runner).
 
 Validate the hardening profile on the target before relying on it:
 

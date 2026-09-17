@@ -10,9 +10,14 @@
 | `ckgit-V-macos-{arm64,x86_64}.tar.gz` | same, `--client-only` | macOS clients |
 | `ck-git-hosting-V-source.tar.gz` | `git archive` | Homebrew formula source |
 | `SHA256SUMS` | release job | verification |
+| `packages` (a `.tar` bundling the arm64/amd64 `.deb`s, a source tarball, and `build-version`) | this project's own self-hosted CI (`.ckgit/ci.yml`), stored as a release asset on the server | `ck-git-hosting-deploy` (the server package) and `ckgit release download` / `packaging/update-cli.sh` (the source tarball) |
 
 The version comes from the `VERSION` file. A release is created by pushing a
 tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.
+Pushing the same tag to both the GitHub `origin` remote and this project's
+own hosted `ckgit` remote produces the two channels side by side -- see
+[Releases](04-ci-cd.md#releases) and the
+[self-hosted release and deploy guide](05-releases-and-deploy.md).
 
 ## Continuous integration
 
