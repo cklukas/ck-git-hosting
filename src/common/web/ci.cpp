@@ -104,18 +104,19 @@ std::string renderCiRuns(const ProjectSummary& project) {
         : std::string("&mdash;");
     out += "<td>" + when + "</td><td>";
     for (std::size_t index = 0; index < run.steps.size(); ++index) {
+      if (index > 0) out += " \xe2\x86\x92 ";  // → between steps
       const CiStepResult& step = run.steps[index];
       const std::string label = step.name.empty() ? ("step " + std::to_string(index)) : step.name;
       const std::string url = "/project/" + project.name + "/ci/" + run.run_id + "/" +
                               std::to_string(index) + ".log";
       const std::string state = step.timed_out ? "timeout" : ("exit " + std::to_string(step.exit_code));
       out += "<a href=\"" + htmlEscape(url) + "\">" + htmlEscape(label) + "</a> (" + htmlEscape(state) +
-             (step.output_truncated ? ", log truncated" : "") + ") ";
+             (step.output_truncated ? ", log truncated" : "") + ")";
     }
     out += "</td></tr>";
-    if (!run.detail.empty()) {
-      out += "<tr class=\"ci-detail\"><td colspan=\"5\">" + htmlEscape(run.detail) + "</td></tr>";
-    }
+    // The per-run detail line is intentionally omitted here: the status and
+    // step columns already convey it for runs that ran steps, and the reason a
+    // step-less run was skipped or errored is shown on the run's own page.
     if (!run.artifacts.empty()) {
       out += "<tr class=\"ci-artifacts\"><td colspan=\"5\"><span class=\"muted\">Artifacts:</span> ";
       for (const CiArtifactRecord& artifact : run.artifacts) {

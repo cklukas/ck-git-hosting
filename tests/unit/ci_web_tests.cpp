@@ -85,8 +85,9 @@ void testRender() {
   require(html.find("main") != std::string::npos, "shows the branch");
   require(html.find("/project/demo/ci/00000000000000000001-abcdabcd/1.log") != std::string::npos,
           "links each step to its log");
-  require(html.find("step &#39;tests&#39; failed") != std::string::npos,
-          "shows the failure detail, HTML-escaped");
+  require(html.find("\xe2\x86\x92") != std::string::npos, "separates steps with an arrow");
+  require(html.find("step &#39;tests&#39; failed") == std::string::npos,
+          "the redundant per-run detail line is omitted from the list (it is on the run's own page)");
   require(html.find("/project/demo/ci/00000000000000000001-abcdabcd/artifacts/bundle") != std::string::npos,
           "links the artifact bundle for download");
   require(html.find("bundle.tar") != std::string::npos, "shows the artifact filename");
