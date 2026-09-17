@@ -49,7 +49,7 @@ ci_build_root=/var/lib/ck-git-hosting/ci-build
 # ci_timeout_seconds=1800            # per-step wall-clock budget (1..86400)
 # ci_max_log_bytes=1048576           # per-step captured-output cap (1024..1073741824)
 # ci_poll_seconds=5                  # spool poll interval (1..3600)
-# ci_allow_network=false             # true gives steps a network namespace with interfaces
+# ci_allow_network=false             # true skips network isolation: the step shares the host's real network
 # ci_cache_root=/var/lib/ck-git-hosting/ci-cache   # persist `cache:` dirs (ccache, ...) across runs; unset = per-run
 # --- artifact retention (enforced by the runner's periodic sweep) ---
 # ci_artifact_retention_days=7       # default lifetime of an ephemeral artifact (1..3650)
@@ -128,7 +128,11 @@ run history. Removing the project also clears its CI opt-in and records.
 ## Write `.ckgit/ci.yml`
 
 Commit the workflow at `.ckgit/ci.yml` in the repository. It is read from the
-pushed commit, so a build always matches the commit that triggered it.
+pushed commit, so a build always matches the commit that triggered it. This
+section gets a first workflow running; the
+[`.ckgit/ci.yml` reference](06-ci-yml-reference.md) has every accepted and
+rejected syntax construct, the complete schema and bounds, the trigger
+matrix, and the exact sandbox and environment a step runs in.
 
 ```text
 version: 1
@@ -168,8 +172,8 @@ jobs:
   needs. Each is materialised read-only beside the checkout — reachable as
   `../<name>` and exported as `CKGIT_SISTER_<NAME>` — from its default branch, or
   a branch, tag, or commit you pin. No network is used and only same-server
-  projects are allowed. Write `- name` for the default branch, or
-  `- { name: lib, ref: v1.2.0 }` to pin. See below.
+  projects are allowed. Write `- name` for the default branch, or the two-line
+  form below it to pin. See below.
 - `cache:` lists persistent build caches (e.g. a ccache store) kept across runs.
   Each is a directory exported as `CKGIT_CACHE_<NAME>`, plus any variables bound
   with `env:`. Persistence needs `ci_cache_root` set on the server; without it a
@@ -190,7 +194,8 @@ as `sisters` and a compiler cache as a `cache`:
 version: 1
 sisters:
   - ckmath
-  - { name: ckvision, ref: v0.5.0 }
+  - name: ckvision
+    ref: v0.5.0
 cache:
   - name: ccache
     env: [CCACHE_DIR]
@@ -452,8 +457,11 @@ Each step runs with a wall-clock timeout, an output-size cap, a scrubbed
 environment, and no core dumps or single file over 4 GiB (`RLIMIT_CORE` and
 `RLIMIT_FSIZE`; the timeout and output cap are the operative bounds on CPU and
 memory use, not a `setrlimit` on either). On Linux it is additionally placed in
-its own user, mount, and network namespace: it has no network beyond loopback
-unless `ci_allow_network=true`, and cannot see the host's mount table.
+its own user and mount namespace, and, unless `ci_allow_network=true`, its own
+network namespace too: it has no network beyond loopback, and cannot see the
+host's mount table. `ci_allow_network=true` skips the network namespace
+entirely rather than granting the step an isolated one of its own, so a step
+run that way sees the host's real interfaces and the LAN, not a sandboxed copy.
 
 On Linux the mount namespace also **masks the service tree**: the private
 state root, the CI build root (other runs' scratch), the cache root (other
@@ -503,11 +511,6 @@ sudo -u ckgit ck-ci-runnerd run \
 
 ## Troubleshooting
 
-| Symptom | Likely cause and fix |
-|---|---|
-| No run appears after a push | CI not enabled for the project (`ckgit-admin ci status`), or the runner is not running (`systemctl status ck-ci-runner.service`). |
-| Every run is `skipped` | The branch is not a trigger; add it to `on: { branches: [...] }`, or push the default branch. A commit with no `.ckgit/ci.yml` is also skipped. |
-| Run is `error` before any step | The workflow is malformed or over a size limit; the `run.ini` detail names the reason. |
-| A step cannot reach the network | Expected: the sandbox denies the network by default. Set `ci_allow_network=true` and restart the runner if a build genuinely needs it. |
-| Log warns about missing isolation | Unprivileged user namespaces are disabled or unavailable (see above). |
-| `ci` admin command errors about state | Pass `--config /etc/ck-git-hosting/server.ini` (or `--state-root`) so it can find the state root, and run it as root or `ckgit`. |
+See [Troubleshooting](06-ci-yml-reference.md#12-troubleshooting) in the
+`.ckgit/ci.yml` reference for the full table, including the workflow-syntax
+symptoms that belong there rather than here.
