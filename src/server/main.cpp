@@ -796,21 +796,30 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       if (route.kind == ckgit::RouteKind::kNotFound || !project) throw ckgit::WebError(404, "Page was not found.");
       project->ssh_clone_target = ssh_clone_target;
       // Link the project's published Pages site when one exists. It lives on the
-      // separate ck-pagesd origin (a distinct port), so the link reuses the host
-      // the visitor reached the dashboard on and swaps in the Pages port.
-      if (pages_root.has_value() && pages_http_port.has_value() && !parsed->host.empty()) {
+      // separate ck-pagesd origin (a distinct port). Prefer the advertised clone
+      // host (a LAN name that also serves Pages) over the request Host, which is
+      // often a loopback tunnel to the dashboard that cannot reach the Pages
+      // port; fall back to the request Host when no clone host is configured.
+      if (pages_root.has_value() && pages_http_port.has_value()) {
         std::error_code pages_ec;
         if (std::filesystem::exists(*pages_root / route.project / "current", pages_ec)) {
-          std::string host = parsed->host;
-          std::size_t port_colon;
-          if (!host.empty() && host.front() == '[') {  // [IPv6]:port
-            const auto bracket = host.find(']');
-            port_colon = bracket == std::string::npos ? std::string::npos : host.find(':', bracket);
-          } else {
-            port_colon = host.rfind(':');
+          std::string host;
+          if (!ssh_clone_target.empty()) {
+            const auto at = ssh_clone_target.rfind('@');
+            host = at == std::string::npos ? ssh_clone_target : ssh_clone_target.substr(at + 1);
           }
-          if (port_colon != std::string::npos) host.erase(port_colon);
-          project->pages_site_url = "http://" + host + ":" + std::to_string(*pages_http_port) + "/" + route.project + "/";
+          if (host.empty()) host = parsed->host;
+          if (!host.empty()) {
+            std::size_t port_colon;
+            if (host.front() == '[') {  // [IPv6]:port
+              const auto bracket = host.find(']');
+              port_colon = bracket == std::string::npos ? std::string::npos : host.find(':', bracket);
+            } else {
+              port_colon = host.rfind(':');
+            }
+            if (port_colon != std::string::npos) host.erase(port_colon);
+            project->pages_site_url = "http://" + host + ":" + std::to_string(*pages_http_port) + "/" + route.project + "/";
+          }
         }
       }
       // A hand-deleted repository is hidden immediately, even before the sweep.
