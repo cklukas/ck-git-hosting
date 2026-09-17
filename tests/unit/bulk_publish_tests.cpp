@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -155,6 +156,13 @@ void testBulkPublishDiscovery() {
   // diagnostics only when the permission change has an observable effect.
   const auto unreadable = fixture.root / "unreadable";
   std::filesystem::create_directory(unreadable);
+  // Held open before the lockdown so the restore below goes through this
+  // already-resolved descriptor rather than a fresh path lookup: some
+  // FUSE-backed mounts (observed with virtiofs) deny a *fresh* chmod()/rmdir()
+  // by path against a mode-000 directory even to its owner, which would
+  // otherwise make the restore below fail every time on such a mount.
+  const int unreadable_descriptor = open(unreadable.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  require(unreadable_descriptor >= 0, "could not open fixture directory handle");
   require(chmod(unreadable.c_str(), 0000) == 0, "could not restrict fixture directory");
   const bool permissions_apply = access(unreadable.c_str(), R_OK | X_OK) != 0;
   try {
@@ -165,8 +173,11 @@ void testBulkPublishDiscovery() {
       requireFailure([&] { ckgit::hasRepositoryContext(unreadable); }, "unreadable folder context was accepted");
     }
   } catch (...) {
-    chmod(unreadable.c_str(), 0700);
+    fchmod(unreadable_descriptor, 0700);
+    close(unreadable_descriptor);
     throw;
   }
-  require(chmod(unreadable.c_str(), 0700) == 0, "could not restore fixture permissions");
+  const bool restored = fchmod(unreadable_descriptor, 0700) == 0;
+  close(unreadable_descriptor);
+  require(restored, "could not restore fixture permissions");
 }
