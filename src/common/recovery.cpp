@@ -202,7 +202,20 @@ void copyTree(const fs::path& source, const fs::path& destination) {
       fs::create_directory(to);
       chmod(to.c_str(), 0700);
     } else {
-      fs::copy_file(from, to, fs::copy_options::none);
+      // Not fs::copy_file: its libstdc++ implementation always creates the
+      // destination at a deliberately restrictive intermediate mode (no
+      // owner-read bit) before widening it once the data is written. Some
+      // FUSE-backed mounts (observed with virtiofs) deny creating a file
+      // with no read bit at all, even to its owner, which makes that
+      // implementation detail fail unconditionally on such a mount. A plain
+      // ofstream creates the file at an ordinary, readable mode instead;
+      // the chmod below locks it down to private regardless.
+      std::error_code size_error;
+      const bool empty = fs::is_empty(from, size_error);
+      std::ifstream in(from, std::ios::binary);
+      std::ofstream out(to, std::ios::binary | std::ios::trunc);
+      if (size_error || !empty) out << in.rdbuf();
+      if (!in || !out) throw std::runtime_error("could not copy recovery file: " + to.string());
       chmod(to.c_str(), 0600);
     }
   }

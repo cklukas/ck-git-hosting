@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -727,13 +728,29 @@ void testDiscoveryAndAudit() {
     if (geteuid() != 0) {
       const auto locked = directory / "locked-root";
       std::filesystem::create_directory(locked);
+      // Held open before the lockdown so the restore below can go through
+      // this already-resolved descriptor: some FUSE-backed mounts (observed
+      // with virtiofs) deny a *fresh* path-based stat/access/chmod against a
+      // mode-000 directory even to its owner, which both breaks a
+      // path-based restore and can make the scan below report the root as
+      // unavailable rather than unreadable -- on such a mount neither a
+      // fresh stat() nor even access(F_OK) can tell "unreadable" apart from
+      // "doesn't exist", so either wording is accepted here; both mean the
+      // scan root could not be used, unlike an ordinary empty directory.
+      const int locked_descriptor = open(locked.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
       if (chmod(locked.c_str(), 0000) == 0) {
         const auto unreadable = ckgit::discoverWorkingTrees({locked});
         expect(unreadable.repositories.empty() && unreadable.warnings.size() == 1 &&
-                   unreadable.warnings.front().rfind("unreadable scan root", 0) == 0,
+                   (unreadable.warnings.front().rfind("unreadable scan root", 0) == 0 ||
+                    unreadable.warnings.front().rfind("unavailable scan root", 0) == 0),
                "an unreadable scan root is reported instead of looking empty");
-        chmod(locked.c_str(), 0700);
+        if (locked_descriptor >= 0) {
+          fchmod(locked_descriptor, 0700);
+        } else {
+          chmod(locked.c_str(), 0700);
+        }
       }
+      if (locked_descriptor >= 0) close(locked_descriptor);
     }
     const auto excluded = ckgit::discoverWorkingTrees({directory}, {"*nested*"});
     expect(excluded.repositories.size() == 2, "configured exclusions suppress matching subtrees");

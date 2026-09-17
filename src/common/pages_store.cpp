@@ -113,8 +113,17 @@ void publishPagesSite(const fs::path& pages_root, std::string_view project, std:
         fail("the site exceeds the size limit");
       }
       fs::create_directories(target.parent_path(), error);
-      fs::copy_file(entry.path(), target, fs::copy_options::overwrite_existing, error);
-      if (error) {
+      // Not fs::copy_file: its libstdc++ implementation always creates the
+      // destination at a deliberately restrictive intermediate mode (no
+      // owner-read bit) before widening it once the data is written. Some
+      // FUSE-backed mounts (observed with virtiofs) deny creating a file
+      // with no read bit at all, even to its owner, which makes that
+      // implementation detail fail unconditionally on such a mount. A plain
+      // ofstream creates the file at an ordinary, readable mode instead.
+      std::ifstream in(entry.path(), std::ios::binary);
+      std::ofstream out(target, std::ios::binary | std::ios::trunc);
+      if (size > 0) out << in.rdbuf();
+      if (!in || !out) {
         fs::remove_all(dest, error);
         fail("could not copy a site file");
       }
