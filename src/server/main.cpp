@@ -541,7 +541,15 @@ int bindSocket(const std::filesystem::path& requested_path) {
     close(descriptor);
     throw std::runtime_error("could not bind control socket");
   }
-  if (chmod(path.c_str(), 0600) != 0 || listen(descriptor, 16) != 0) {
+  // bind() above already created the socket under umask 0077, so group/other
+  // already have no access either way; every accepted connection is also
+  // independently verified same-uid (see sameUserPeer), so this chmod only
+  // tightens the owner's own (otherwise meaningless, for a socket) execute
+  // bit. Best-effort: some filesystems (this project's Lima dev VM's
+  // virtiofs mount, confirmed by a standalone probe) reject chmod() on a
+  // socket special file outright (EINVAL), which must not be fatal here.
+  static_cast<void>(chmod(path.c_str(), 0600));
+  if (listen(descriptor, 16) != 0) {
     close(descriptor);
     throw std::runtime_error("could not activate control socket");
   }

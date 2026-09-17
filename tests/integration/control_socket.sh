@@ -89,8 +89,21 @@ while [ ! -S "$test_root/control.sock" ]; do
   sleep 1
 done
 
-http_port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
-[ -n "$http_port" ]
+attempt=0
+while :; do
+  http_port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
+  if [ -n "$http_port" ]; then break; fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    sed -n '1,80p' "$test_root/server.log" >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 20 ]; then
+    echo "loopback HTTP port did not become ready" >&2
+    exit 1
+  fi
+  sleep 1
+done
 curl --max-time 3 --silent --show-error -D "$test_root/http.headers" -o "$test_root/http.body" \
   "http://127.0.0.1:$http_port/"
 grep -q '^HTTP/1.1 200 OK' "$test_root/http.headers"
