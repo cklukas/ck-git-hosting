@@ -1,0 +1,7 @@
+# `git archive` substitutes the archived commit's full hash into this file (the
+# CI build step reads it). The runner materialises each build with `git archive`
+# from a bare repo, so this stamps a reliable version even though the build tree
+# has no .git directory and even when the runner does not export the commit —
+# which is exactly the case when an older runner builds the very change that
+# teaches it to export one.
+/.ckgit/build-commit export-subst

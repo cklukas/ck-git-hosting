@@ -20,13 +20,19 @@ jobs:
         script: |
           # Stamp a reliable version into the binaries. The sandbox checkout has
           # no .git, so the Makefile's `git describe` yields nothing and would
-          # fall back to "+source"; use the commit/ref the runner exports so the
-          # daemons and `ckgit --version` report the exact commit under build,
-          # tagged with the deploy tag on a tag build.
+          # fall back to "+source". Prefer the commit the runner exports; when it
+          # does not (an older runner), fall back to the hash git archive
+          # substituted into .ckgit/build-commit via export-subst. The ref, when
+          # the runner exports it, tags a deploy build with its deploy tag.
           short=$(printf %s "${CKGIT_COMMIT:-}" | cut -c1-12)
+          if [ -z "$short" ] && [ -f .ckgit/build-commit ]; then
+            embedded=$(tr -cd '0-9a-f' < .ckgit/build-commit)
+            case "$embedded" in ????????????????????????????????????????*) short=$(printf %s "$embedded" | cut -c1-12) ;; esac
+          fi
           if [ -n "$short" ]; then ver="$(tr -d '[:space:]' <VERSION)+g$short"; else ver="$(tr -d '[:space:]' <VERSION)+source"; fi
           case "${CKGIT_REF:-}" in refs/tags/*) ver="$ver.${CKGIT_REF#refs/tags/}" ;; esac
           printf '%s\n' "$ver" >"$TMPDIR/build-version"
+          printf '%s\n' "$short" >"$TMPDIR/build-commit-short"
           make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" all
       - name: unit-tests
         script: |
@@ -37,8 +43,9 @@ jobs:
       - name: package
         script: |
           # The .deb version stays timestamp-led so dpkg orders rebuilds
-          # correctly, but carries the commit for traceability back to a build.
-          short=$(printf %s "${CKGIT_COMMIT:-}" | cut -c1-12)
+          # correctly, but carries the commit (from the build step) for
+          # traceability back to a build.
+          short=$(cat "$TMPDIR/build-commit-short" 2>/dev/null || true)
           pkgver="$(tr -d '[:space:]' <VERSION)+$(date -u +%Y%m%d.%H%M)${short:+.g$short}"
           sh packaging/build-deb.sh --build-dir "$TMPDIR/build" --output "$PWD/dist" --version "$pkgver"
           # A source tarball too, so the macOS client (which cannot run the Pi's
