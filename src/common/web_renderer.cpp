@@ -122,6 +122,19 @@ std::string renderCloneInfo(const ckgit::ProjectSummary& project) {
   return out + "</section>";
 }
 
+std::string renderLastCi(const ckgit::ProjectSummary& project) {
+  if (!project.last_ci_run.has_value()) return "<span class=\"muted\">none</span>";
+  const auto& run = *project.last_ci_run;
+  const ckgit::CiRunDisplay display = ckgit::ciRunDisplay(run);
+  const std::string timing = ckgit::ciRunTiming(display);
+  std::string cell = "<a class=\"ci-status ci-" + std::string(display.name) + "\" href=\"/project/" +
+      ckgit::htmlEscape(project.name) + "/ci/" + ckgit::htmlEscape(run.run_id) +
+      "\"><span class=\"ci-icon\" aria-hidden=\"true\">" + std::string(display.icon) + "</span> " +
+      std::string(display.name) + "</a>";
+  if (!timing.empty()) cell += " <span class=\"muted\">(" + ckgit::htmlEscape(timing) + ")</span>";
+  return cell;
+}
+
 }  // namespace
 
 namespace ckgit {
@@ -152,9 +165,13 @@ std::string renderProjectTable(const std::vector<ProjectSummary>& projects, bool
       std::string(sort_by_name ? "" : " aria-current=\"true\"") + ">by last commit</a> · <a href=\"/by-name\"" +
       std::string(sort_by_name ? " aria-current=\"true\"" : "") + ">by name</a></p>"
       "<div class=\"project-table\"><table><thead><tr><th>Project</th><th>Default branch</th><th>Branches</th><th>Tags</th>"
-      "<th title=\"Latest commit across every published branch and tag\">Last commit</th><th>Last reported checkout</th></tr></thead><tbody>";
-  if (projects.empty()) html += "<tr><td colspan=\"6\">No projects</td></tr>";
+      "<th title=\"Latest commit across every published branch and tag\">Last commit</th>"
+      "<th title=\"Newest CI run: status and how long it took, or has been running\">Last CI</th>"
+      "<th>Last reported checkout</th></tr></thead><tbody>";
+  if (projects.empty()) html += "<tr><td colspan=\"7\">No projects</td></tr>";
+  bool any_live = false;
   for (const auto& project : projects) {
+    if (project.last_ci_run.has_value() && ciRunDisplay(*project.last_ci_run).active) any_live = true;
     html += "<tr><td class=\"project-name\"><a href=\"/project/" + htmlEscape(project.name) + "\">" +
             htmlEscape(project.name) + "</a></td><td class=\"project-default " +
             (project.valid_head ? "ok\">" : "warn\">") +
@@ -162,10 +179,12 @@ std::string renderProjectTable(const std::vector<ProjectSummary>& projects, bool
             "<a href=\"/project/" + htmlEscape(project.name) + "#branches\">" + std::to_string(project.branch_count) + "</a>" +
             "</td><td class=\"project-tags\"><a href=\"/project/" + htmlEscape(project.name) + "#tags\">" + std::to_string(project.tag_count) + "</a>" +
             "</td><td class=\"project-last-commit\">" +
-            renderLastCommit(project) + "</td><td class=\"project-checkout\">" + renderCheckoutSummary(project) + "</td></tr>";
+            renderLastCommit(project) + "</td><td class=\"project-ci\">" + renderLastCi(project) +
+            "</td><td class=\"project-checkout\">" + renderCheckoutSummary(project) + "</td></tr>";
     if (html.size() > kMaximumPageBytes) throw WebError(503, "Project table exceeds the output limit.");
   }
-  return pageLayout("Projects", html + "</tbody></table></div>");
+  // Keep the index page live while any project has a run in progress.
+  return pageLayout("Projects", html + "</tbody></table></div>", nullptr, nullptr, any_live ? 5u : 0u);
 }
 
 std::string renderProjectDetail(const ProjectSummary& project, const PageContext* requested_context) {

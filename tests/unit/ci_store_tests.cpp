@@ -333,6 +333,88 @@ void testReleaseTagValidation() {
   require(!ckgit::isValidReleaseTag("a/b"), "slashed tag rejected");
 }
 
+void testStatusHelpers() {
+  require(ckgit::ciRunStatusName(ckgit::CiRunStatus::Cancelled) == "cancelled", "cancelled has a name");
+  const auto parsed = ckgit::ciRunStatusFromName("cancelled");
+  require(parsed.has_value() && *parsed == ckgit::CiRunStatus::Cancelled, "cancelled parses back");
+  require(ckgit::ciRunStatusIsActive(ckgit::CiRunStatus::Running) &&
+              ckgit::ciRunStatusIsActive(ckgit::CiRunStatus::Pending),
+          "running and pending are active");
+  require(!ckgit::ciRunStatusIsActive(ckgit::CiRunStatus::Cancelled) &&
+              !ckgit::ciRunStatusIsActive(ckgit::CiRunStatus::Success),
+          "terminal statuses are not active");
+  require(!ckgit::ciRunStatusIcon(ckgit::CiRunStatus::Cancelled).empty() &&
+              !ckgit::ciRunStatusIcon(ckgit::CiRunStatus::Running).empty(),
+          "every status has an icon glyph");
+}
+
+void testLiveRecordHeartbeatAndSingleLoad() {
+  StoreFixture fixture;
+  ckgit::CiRunRecord record;
+  record.run_id = "00000000000000000200-aabbccdd";
+  record.project_name = "demo";
+  record.ref = "refs/heads/main";
+  record.commit_id = std::string(40, 'a');
+  record.status = ckgit::CiRunStatus::Running;
+  record.started_epoch_seconds = 1700000000;
+  record.heartbeat_epoch_seconds = 1700000050;
+  record.steps.push_back({"build", 0, false, false});
+
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", record.run_id);
+  ckgit::writeCiRunRecord(fixture.state, record);
+
+  const auto single = ckgit::loadCiRun(fixture.state, "demo", record.run_id);
+  require(single.has_value(), "loadCiRun reads one run fresh");
+  require(single->status == ckgit::CiRunStatus::Running, "running status round trips");
+  require(single->heartbeat_epoch_seconds == 1700000050, "heartbeat round trips (schema v2)");
+  require(single->steps.size() == 1, "in-progress steps round trip");
+  require(!ckgit::loadCiRun(fixture.state, "demo", "00000000000000009999-deadbeef").has_value(),
+          "loadCiRun is empty for an unknown run");
+}
+
+void testSchemaVersionOneBackCompat() {
+  StoreFixture fixture;
+  const std::string run_id = "00000000000000000300-1a2b3c4d";
+  const auto dir = ckgit::prepareCiRunDirectory(fixture.state, "demo", run_id);
+  const auto hex = [](const std::string& value) {
+    static const char digits[] = "0123456789abcdef";
+    std::string out;
+    for (const unsigned char byte : value) {
+      out += digits[byte >> 4];
+      out += digits[byte & 0x0f];
+    }
+    return out;
+  };
+  // A record with no heartbeat line, exactly as an earlier build wrote it.
+  const std::string content = "schema_version=1\nrun_id=" + run_id +
+      "\nproject=demo\nref_hex=" + hex("refs/heads/main") + "\ncommit=" + std::string(40, 'a') +
+      "\nstatus=success\nstarted_epoch=1700000000\nfinished_epoch=1700000100\ndetail_hex=" +
+      hex("all steps passed") + "\nstep_count=1\nstep=0,0,0," + hex("build") + "\n";
+  {
+    std::ofstream file(dir / "run.ini");
+    file << content;
+  }
+  require(chmod((dir / "run.ini").c_str(), 0600) == 0, "fixture record made private");
+  const auto loaded = ckgit::loadCiRun(fixture.state, "demo", run_id);
+  require(loaded.has_value(), "a version-1 record still parses after upgrade");
+  require(loaded->status == ckgit::CiRunStatus::Success, "version-1 status preserved");
+  require(loaded->heartbeat_epoch_seconds == 0, "a version-1 record has no heartbeat");
+  require(loaded->detail == "all steps passed" && loaded->steps.size() == 1, "version-1 body preserved");
+}
+
+void testCancelMarkerLifecycle() {
+  StoreFixture fixture;
+  const std::string run_id = "00000000000000000400-55667788";
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", run_id);
+  require(!ckgit::isCiCancelRequested(fixture.state, "demo", run_id), "no cancel marker initially");
+  require(ckgit::requestCiCancel(fixture.state, "demo", run_id), "cancel accepted for an existing run");
+  require(ckgit::isCiCancelRequested(fixture.state, "demo", run_id), "the cancel marker is observed");
+  ckgit::clearCiCancel(fixture.state, "demo", run_id);
+  require(!ckgit::isCiCancelRequested(fixture.state, "demo", run_id), "clearCiCancel removes the marker");
+  require(!ckgit::requestCiCancel(fixture.state, "demo", "00000000000000009999-deadbeef"),
+          "cancel is refused for an unknown run");
+}
+
 }  // namespace
 
 void testCiStore() {
@@ -347,4 +429,8 @@ void testCiStore() {
   testReleaseRoundTrip();
   testReleaseRemovalCascades();
   testReleaseTagValidation();
+  testStatusHelpers();
+  testLiveRecordHeartbeatAndSingleLoad();
+  testSchemaVersionOneBackCompat();
+  testCancelMarkerLifecycle();
 }

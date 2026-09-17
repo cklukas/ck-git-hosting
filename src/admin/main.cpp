@@ -1,13 +1,17 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+#include <chrono>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unistd.h>
 
@@ -20,6 +24,7 @@
 #include "ckgit/recovery.hpp"
 #include "ckgit/server_config.hpp"
 #include "ckgit/process.hpp"
+#include "ckgit/text.hpp"
 
 namespace {
 
@@ -38,6 +43,9 @@ void usage(std::ostream& output) {
          << "  ckgit-admin trash list [ROOT OPTIONS]\n"
          << "  ckgit-admin restore-project ENTRY [--name NAME] [ROOT OPTIONS] [--dry-run] [--yes]\n"
          << "  ckgit-admin ci (enable|disable|status) NAME (--config FILE | --state-root ROOT)\n"
+         << "  ckgit-admin ci runs NAME (--config FILE | --state-root ROOT)\n"
+         << "  ckgit-admin ci log NAME RUN [STEP] [--follow] (--config FILE | --state-root ROOT)\n"
+         << "  ckgit-admin ci cancel NAME RUN (--config FILE | --state-root ROOT)\n"
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
          << "              optionally --hook-directory PATH to select destination post-receive hooks.\n"
@@ -333,35 +341,137 @@ std::string readPublicKeyFile(const std::filesystem::path& path) {
   return content.str();
 }
 
+std::uint64_t ciNowEpoch() { return static_cast<std::uint64_t>(std::time(nullptr)); }
+
+std::string ciRefLabel(const std::string& ref) {
+  if (ref.rfind("refs/heads/", 0) == 0) return ref.substr(11);
+  if (ref.rfind("refs/tags/", 0) == 0) return ref.substr(10);
+  return ref;
+}
+
+// Elapsed time for a running run, total for a finished one, rendered as M:SS.
+std::string ciTiming(const ckgit::CiRunRecord& run) {
+  std::uint64_t seconds = 0;
+  if (run.status == ckgit::CiRunStatus::Running) {
+    const std::uint64_t now = ciNowEpoch();
+    seconds = run.started_epoch_seconds && now >= run.started_epoch_seconds ? now - run.started_epoch_seconds : 0;
+  } else if (run.finished_epoch_seconds >= run.started_epoch_seconds && run.started_epoch_seconds != 0) {
+    seconds = run.finished_epoch_seconds - run.started_epoch_seconds;
+  }
+  return seconds != 0 ? ckgit::formatDuration(seconds) : "-";
+}
+
+int ciRunsList(const std::filesystem::path& state_root, const std::string& name) {
+  const auto runs = ckgit::loadCiRuns(state_root, name, 20);
+  if (runs.empty()) {
+    std::cout << "No CI runs recorded for " << name << ".\n";
+    return 0;
+  }
+  std::cout << std::left << std::setw(12) << "STATUS" << std::setw(10) << "TIME" << std::setw(18) << "REF"
+            << std::setw(11) << "COMMIT" << "RUN\n";
+  for (const auto& run : runs) {
+    std::cout << std::string(ckgit::ciRunStatusIcon(run.status)) << " " << std::left << std::setw(10)
+              << std::string(ckgit::ciRunStatusName(run.status)) << std::setw(10) << ciTiming(run)
+              << std::setw(18) << ciRefLabel(run.ref) << std::setw(11) << run.commit_id.substr(0, 8) << run.run_id
+              << "\n";
+  }
+  return 0;
+}
+
+int ciCancelRun(const std::filesystem::path& state_root, const std::string& name, const std::string& run,
+                const std::optional<std::filesystem::path>& control_socket) {
+  if (!ckgit::requestCiCancel(state_root, name, run)) {
+    std::cerr << "ckgit-admin: no such CI run " << run << " for project " << name << "\n";
+    return 1;
+  }
+  if (control_socket.has_value()) {
+    try {
+      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", name, {}, nullptr, std::chrono::seconds(2));
+    } catch (const std::exception&) {
+      // The runner acts on the marker regardless; the nudge only speeds the dashboard.
+    }
+  }
+  std::cout << "Requested cancellation of run " << run << " for project " << name
+            << ". The runner stops it at its next check.\n";
+  return 0;
+}
+
+int ciLog(const std::filesystem::path& state_root, const std::string& name, const std::string& run,
+          std::optional<std::size_t> step, bool follow) {
+  constexpr std::size_t kCap = 1u << 20;
+  if (!follow) {
+    auto record = ckgit::loadCiRun(state_root, name, run);
+    if (!record.has_value()) { std::cerr << "ckgit-admin: no such CI run " << run << "\n"; return 1; }
+    const std::size_t which = step.value_or(record->steps.empty() ? 0 : record->steps.size() - 1);
+    const auto log = ckgit::readCiRunLog(state_root, name, run, which, kCap);
+    if (!log.has_value()) { std::cerr << "ckgit-admin: no log for step " << which << " of run " << run << "\n"; return 1; }
+    std::cout << *log;
+    if (!log->empty() && log->back() != '\n') std::cout << "\n";
+    return 0;
+  }
+  // Follow: stream the run's current step, advancing as steps complete, until the
+  // run reaches a terminal status.
+  std::size_t current = step.value_or(0);
+  std::size_t shown = 0;
+  for (;;) {
+    const auto record = ckgit::loadCiRun(state_root, name, run);
+    if (!record.has_value()) { std::cerr << "ckgit-admin: no such CI run " << run << "\n"; return 1; }
+    const bool active = ckgit::ciRunStatusIsActive(record->status);
+    const std::size_t target = step.has_value() ? *step
+                             : active ? record->steps.size()
+                             : (record->steps.empty() ? 0 : record->steps.size() - 1);
+    if (target != current) { std::cout << "\n--- step " << target << " ---\n"; current = target; shown = 0; }
+    const auto log = ckgit::readCiRunLog(state_root, name, run, current, kCap);
+    if (log.has_value() && log->size() > shown) {
+      std::cout << log->substr(shown) << std::flush;
+      shown = log->size();
+    }
+    if (!active) break;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+  std::cout << "\n";
+  return 0;
+}
+
 int ciCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
-  if (action != "enable" && action != "disable" && action != "status") {
-    std::cerr << "ckgit-admin: ci action must be enable, disable, or status\n";
+  if (action != "enable" && action != "disable" && action != "status" && action != "runs" &&
+      action != "log" && action != "cancel") {
+    std::cerr << "ckgit-admin: ci action must be enable, disable, status, runs, log, or cancel\n";
     return kUsage;
   }
-  std::string name;
   std::optional<std::filesystem::path> config;
   std::filesystem::path state_root;
+  std::vector<std::string> positional;
+  bool follow = false;
   for (int index = 3; index < argc; ++index) {
     const std::string argument = argv[index];
     if ((argument == "--config" || argument == "--state-root") && index + 1 < argc) {
       const std::string value = argv[++index];
       if (argument == "--config") config = value;
       else state_root = value;
-    } else if (!argument.empty() && argument.front() != '-' && name.empty()) {
-      name = argument;
+    } else if (argument == "--follow" && action == "log") {
+      follow = true;
+    } else if (!argument.empty() && argument.front() != '-') {
+      positional.push_back(argument);
     } else {
       std::cerr << "ckgit-admin: invalid ci option: " << argument << "\n";
       return kUsage;
     }
   }
-  if (name.empty()) { std::cerr << "ckgit-admin: ci " << action << " requires a project name\n"; return kUsage; }
+  if (positional.empty()) { std::cerr << "ckgit-admin: ci " << action << " requires a project name\n"; return kUsage; }
+  const std::string& name = positional[0];
   if (config.has_value() && !state_root.empty()) {
     std::cerr << "ckgit-admin: --config cannot be combined with --state-root\n";
     return kUsage;
   }
-  if (config.has_value()) state_root = ckgit::loadServerConfig(*config).state_root.value_or(std::filesystem::path{});
+  std::optional<std::filesystem::path> control_socket;
+  if (config.has_value()) {
+    const auto server = ckgit::loadServerConfig(*config);
+    state_root = server.state_root.value_or(std::filesystem::path{});
+    if (!server.control_socket.empty()) control_socket = server.control_socket;
+  }
   if (state_root.empty()) {
     std::cerr << "ckgit-admin: ci requires --config with state_root, or --state-root\n";
     return kUsage;
@@ -369,6 +479,24 @@ int ciCommand(int argc, char* argv[]) {
   if (action == "status") {
     std::cout << name << ": CI " << (ckgit::isProjectCiEnabled(state_root, name) ? "enabled" : "disabled") << "\n";
     return 0;
+  }
+  if (action == "runs") return ciRunsList(state_root, name);
+  if (action == "cancel") {
+    if (positional.size() < 2) { std::cerr << "ckgit-admin: ci cancel requires a project name and a run id\n"; return kUsage; }
+    return ciCancelRun(state_root, name, positional[1], control_socket);
+  }
+  if (action == "log") {
+    if (positional.size() < 2) { std::cerr << "ckgit-admin: ci log requires a project name and a run id\n"; return kUsage; }
+    std::optional<std::size_t> step;
+    if (positional.size() >= 3) {
+      try {
+        step = static_cast<std::size_t>(std::stoul(positional[2]));
+      } catch (const std::exception&) {
+        std::cerr << "ckgit-admin: ci log step must be a number\n";
+        return kUsage;
+      }
+    }
+    return ciLog(state_root, name, positional[1], step, follow);
   }
   ckgit::setProjectCiEnabled(state_root, name, action == "enable");
   std::cout << "CI " << (action == "enable" ? "enabled" : "disabled") << " for project " << name << "\n";

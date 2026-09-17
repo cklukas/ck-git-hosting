@@ -218,15 +218,53 @@ updated branch head or tag; the runner picks it up within `ci_poll_seconds`.
 
 In the dashboard, open a project and follow the **CI** tab:
 
-- `/<...>/project/<id>/ci` lists runs with status, branch, commit, and timing,
-  and links each step to its log.
-- `/<...>/project/<id>/ci/<run-id>/<step>.log` shows one step's captured output.
+- `/<...>/project/<id>/ci` lists runs with an at-a-glance status icon, branch,
+  commit, and timing — how long a finished run took, or how long a running one
+  has been going. The list refreshes itself while a run is in progress.
+- `/<...>/project/<id>/ci/<run-id>` is one run's live status page: overall
+  status with elapsed time, each step's result, the running step's output tail,
+  and artifacts. While the run is active the page auto-refreshes (no JavaScript —
+  a plain `<meta refresh>` that fits the dashboard's strict content policy) and
+  stops once the run is terminal.
+- `/<...>/project/<id>/ci/<run-id>/<step>.log` shows one step's full output.
+
+The projects index also carries a **Last CI** column with each project's newest
+run status and timing, so a running or failed build is visible without opening
+the project.
 
 Run status is one of `success`, `failure` (a step exited non-zero), `timeout` (a
 step exceeded its budget), `error` (the run could not be set up — for example a
-malformed workflow), or `skipped` (no workflow, or a non-triggering branch).
+malformed workflow), `cancelled` (stopped on request — see below), or `skipped`
+(no workflow, or a non-triggering branch). A `running` build whose runner stops
+reporting is shown as **interrupted** until the next runner sweep settles it.
 
-On the command line, the records are plain files under the state root:
+### Watch and cancel a run
+
+Progress and cancellation are available three ways, all reading the same run
+records and, for a stop, dropping one cooperative cancel marker that the runner
+honours between and within steps — it kills the current step's process group and
+records the run `cancelled`, well before a long step would finish on its own:
+
+- **Dashboard** — the live run page has a **Cancel run** button. It is the read-
+  only dashboard's one mutating action: a loopback-only, same-origin `POST` to
+  `/project/<id>/ci/<run-id>/cancel`.
+- **CLI** — `ckgit-admin`, on the server, reads and cancels directly:
+
+  ```text
+  sudo ckgit-admin ci runs   myproject --config /etc/ck-git-hosting/server.ini
+  sudo ckgit-admin ci log    myproject <run-id> --follow --config /etc/ck-git-hosting/server.ini
+  sudo ckgit-admin ci cancel myproject <run-id> --config /etc/ck-git-hosting/server.ini
+  ```
+
+  `ci runs` lists recent runs with status and timing; `ci log` prints a step's
+  output and, with `--follow`, streams the running step live; `ci cancel`
+  requests cancellation.
+- **Control socket** — the daemon's same-user socket answers `ci-status
+  <project>` (the newest runs as `run_id status started heartbeat finished steps`
+  lines) and `cancel <project> <run-id>`. The dashboard's button drives this
+  path; it is also scriptable locally.
+
+On the command line, the records are also plain files under the state root:
 
 ```text
 sudo ls /var/lib/ck-git-hosting/state/ci/runs/myproject

@@ -4,8 +4,24 @@
 #include "ckgit/text.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace ckgit {
+
+std::string formatDuration(std::uint64_t seconds) {
+  const std::uint64_t hours = seconds / 3600;
+  const std::uint64_t minutes = (seconds % 3600) / 60;
+  const std::uint64_t secs = seconds % 60;
+  char buffer[32];
+  if (hours > 0) {
+    std::snprintf(buffer, sizeof(buffer), "%llu:%02llu:%02llu", static_cast<unsigned long long>(hours),
+                  static_cast<unsigned long long>(minutes), static_cast<unsigned long long>(secs));
+  } else {
+    std::snprintf(buffer, sizeof(buffer), "%llu:%02llu", static_cast<unsigned long long>(minutes),
+                  static_cast<unsigned long long>(secs));
+  }
+  return buffer;
+}
 
 bool isValidUtf8(std::string_view value) {
   std::size_t index = 0;

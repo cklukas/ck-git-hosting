@@ -18,7 +18,7 @@ inline constexpr std::size_t kMaximumRoutePathDepth = 32;
 
 enum class RouteKind {
   kNotFound, kTable, kOverview, kCommits, kCommit, kTree, kBlob, kSource, kRaw,
-  kCalendar, kDay, kGraph, kCiRuns, kCiLog, kCiArtifact, kReleases, kReleaseAsset
+  kCalendar, kDay, kGraph, kCiRuns, kCiRun, kCiCancel, kCiLog, kCiArtifact, kReleases, kReleaseAsset
 };
 
 struct Route {

@@ -15,11 +15,14 @@ case "${TMPDIR:-}" in
 esac
 test_root=$(mktemp -d "$test_root_parent/ckci.XXXXXX")
 server_pid=''
+runner_pid=''
 cleanup() {
-  if [ -n "$server_pid" ]; then
-    kill -TERM "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  for pid in "$runner_pid" "$server_pid"; do
+    if [ -n "$pid" ]; then
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
@@ -116,15 +119,31 @@ base="http://127.0.0.1:$port"
 attempt=0
 while :; do
   curl --path-as-is --max-time 4 --silent -o "$test_root/ci.html" "$base/project/demo/ci" || fail "curl ci page"
-  grep -q "success" "$test_root/ci.html" && break
+  # Wait until the run is indexed (its step-log link is present) rather than for
+  # the bare word "success", which now also appears in the page's inlined CI
+  # status styles and would match before the async index has loaded the run.
+  grep -q "/project/demo/ci/$run_id/0.log" "$test_root/ci.html" && break
   attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || { cat "$test_root/ci.html"; fail "CI page never showed the run"; }
   sleep .1
 done
-grep -q "/project/demo/ci/$run_id/0.log" "$test_root/ci.html" || fail "CI page has no step log link"
+grep -q "ci-status ci-success" "$test_root/ci.html" || { cat "$test_root/ci.html"; fail "CI page did not show the run as successful"; }
 
 curl --path-as-is --max-time 4 --silent -o "$test_root/ci-log.html" "$base/project/demo/ci/$run_id/0.log" \
   || fail "curl ci log"
 grep -q "integ-ci-ok" "$test_root/ci-log.html" || { cat "$test_root/ci-log.html"; fail "log view missing step output"; }
+
+# The one mutating endpoint (cancel): POST-only, and it refuses a foreign
+# Origin while allowing a same-origin or opaque one. A finished run is a fine
+# target — the endpoint answers on method and origin before the run matters.
+code=$(curl --path-as-is --max-time 4 --silent -o /dev/null -w '%{http_code}' \
+  "$base/project/demo/ci/$run_id/cancel")
+[ "$code" = 405 ] || fail "a GET to the cancel endpoint should be 405 (got $code)"
+code=$(curl --path-as-is --max-time 4 --silent -o /dev/null -w '%{http_code}' \
+  -X POST -H 'Origin: http://evil.example' "$base/project/demo/ci/$run_id/cancel")
+[ "$code" = 403 ] || fail "a cross-origin cancel POST should be refused (got $code)"
+code=$(curl --path-as-is --max-time 4 --silent -o /dev/null -w '%{http_code}' \
+  -X POST "$base/project/demo/ci/$run_id/cancel")
+[ "$code" = 303 ] || fail "a same-origin cancel POST should redirect (got $code)"
 
 # The dashboard links the artifact and serves the bundle as a downloadable tar.
 grep -q "/project/demo/ci/$run_id/artifacts/build" "$test_root/ci.html" || fail "CI page has no artifact link"
@@ -161,5 +180,62 @@ printf '%s %s refs/tags/v1.0.0\n' "$tag_id" "$(printf '0%.0s' $(seq 1 40))" | \
   env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
       CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive failed for the tag deletion"
 [ ! -e "$state/releases/demo/v1.0.0" ] || fail "the release survived its tag being deleted"
+
+# --- Live cancellation -----------------------------------------------------
+# A long-running build is stopped on request: ckgit-admin drops the cancel
+# marker, the runner kills the step's process group and records the run as
+# cancelled, well before the step's own sleep would finish.
+cancel_work="$test_root/cancel-work"
+git -c init.defaultBranch=main init -q "$cancel_work"
+mkdir -p "$cancel_work/.ckgit"
+cat > "$cancel_work/.ckgit/ci.yml" <<'YML'
+version: 1
+jobs:
+  - name: build
+    steps:
+      - run: sh -ec 'echo integ-cancel-start; sleep 45; echo integ-cancel-END'
+YML
+git -C "$cancel_work" add -A
+git -C "$cancel_work" -c user.email=t@example.invalid -c user.name=Test commit -q -m slow
+slow_commit=$(git -C "$cancel_work" rev-parse HEAD)
+git -C "$repos" -c init.defaultBranch=main init --bare -q slow.git
+git -C "$cancel_work" push -q "$repos/slow.git" main
+"$CKGIT_ADMIN" ci enable slow --config "$test_root/server.ini" >/dev/null || fail "ci enable (slow) failed"
+printf '%s %s refs/heads/main\n' "$(printf '0%.0s' $(seq 1 40))" "$slow_commit" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=slow \
+      CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive (slow) failed"
+
+# Run the spool in the background (not --once) so the build stays in progress.
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" > "$test_root/runner.log" 2>&1 &
+runner_pid=$!
+
+attempt=0; slow_ini=''
+while :; do
+  slow_ini=$(ls "$state"/ci/runs/slow/*/run.ini 2>/dev/null | head -n1 || true)
+  { [ -n "$slow_ini" ] && grep -q "status=running" "$slow_ini"; } && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 200 ] || { cat "$test_root/runner.log" >&2; fail "the slow run never started"; }
+  sleep .1
+done
+slow_run=$(basename "$(dirname "$slow_ini")")
+grep -q "^heartbeat_epoch=" "$slow_ini" || fail "the running record carries no heartbeat"
+
+# Cancelling an unknown run is refused; the CLI lists the in-progress run.
+"$CKGIT_ADMIN" ci cancel slow 00000000000000000000-deadbeef --state-root "$state" 2>/dev/null \
+  && fail "cancelling an unknown run should fail" || true
+"$CKGIT_ADMIN" ci runs slow --state-root "$state" | grep -q "$slow_run" || fail "ci runs did not list the run"
+
+# Request cancellation via the CLI; the runner stops the build promptly.
+"$CKGIT_ADMIN" ci cancel slow "$slow_run" --state-root "$state" >/dev/null || fail "ci cancel failed"
+attempt=0
+while :; do
+  grep -q "status=cancelled" "$slow_ini" && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 200 ] || { cat "$slow_ini"; fail "the run was not cancelled in time"; }
+  sleep .1
+done
+grep -rq "integ-cancel-END" "$state"/ci/runs/slow/*/steps/ && fail "the cancelled step ran to completion" || true
+
+kill -TERM "$runner_pid" 2>/dev/null || true
+wait "$runner_pid" 2>/dev/null || true
+runner_pid=''
 
 echo "ci_runner integration OK"

@@ -46,6 +46,10 @@ struct ProjectSummary {
   // Newest-first CI run records (status, timing, per-step results). Loaded on
   // the metadata-revision channel, since CI status changes without a ref move.
   std::vector<CiRunRecord> ci_runs{};
+  // The newest CI run only, carried on the lightweight project-table snapshot
+  // (which omits the full ci_runs vector) so the index page can show a compact
+  // last-CI status without copying every run's steps into every row.
+  std::optional<CiRunRecord> last_ci_run{};
   // Newest-first durable releases (tag + assets), loaded on the same channel.
   std::vector<CiReleaseRecord> releases{};
   std::optional<CommitSummary> last_commit{};
@@ -67,6 +71,9 @@ struct ProjectSummary {
   // Presentation-only: the HTTP server attaches its configured public SSH
   // destination to the copied snapshot. The project index does not persist it.
   std::string ssh_clone_target{};
+  // Presentation-only: absolute URL of this project's published Pages site on
+  // the separate ck-pagesd origin, attached by the daemon when a site exists.
+  std::string pages_site_url{};
 };
 
 // Inspects immediate standard bare repositories beneath a validated root. It

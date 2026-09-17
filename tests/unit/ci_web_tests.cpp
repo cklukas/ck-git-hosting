@@ -6,6 +6,9 @@
 #include "ckgit/project_summary.hpp"
 #include "ckgit/web_renderer.hpp"
 
+#include <cstdint>
+#include <ctime>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -18,6 +21,17 @@ void require(bool condition, const std::string& message) {
 void testRoutes() {
   const auto list = ckgit::parseHttpRoute("/project/demo/ci");
   require(list.kind == ckgit::RouteKind::kCiRuns && list.project == "demo", "the CI list route parses");
+  const auto run = ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd");
+  require(run.kind == ckgit::RouteKind::kCiRun && run.project == "demo" &&
+              run.run_id == "00000000000000000001-abcdabcd",
+          "the live run status route parses");
+  const auto cancel = ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/cancel");
+  require(cancel.kind == ckgit::RouteKind::kCiCancel && cancel.project == "demo" &&
+              cancel.run_id == "00000000000000000001-abcdabcd",
+          "the cancel route parses");
+  require(ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/cancel/x").kind ==
+              ckgit::RouteKind::kNotFound,
+          "a route past cancel is rejected");
 
   const auto log = ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/2.log");
   require(log.kind == ckgit::RouteKind::kCiLog && log.project == "demo" &&
@@ -133,9 +147,63 @@ void testReleaseRender() {
 
 }  // namespace
 
+void testRunDetailAndDisplay() {
+  const std::uint64_t now = static_cast<std::uint64_t>(std::time(nullptr));
+
+  ckgit::CiRunRecord done;
+  done.run_id = "00000000000000000001-abcdabcd";
+  done.project_name = "demo";
+  done.ref = "refs/heads/main";
+  done.commit_id = std::string(40, 'a');
+  done.status = ckgit::CiRunStatus::Success;
+  done.started_epoch_seconds = 1700000000;
+  done.finished_epoch_seconds = 1700000000 + 200;  // 3:20
+  const auto done_display = ckgit::ciRunDisplay(done);
+  require(!done_display.active, "a finished run is not active");
+  require(ckgit::ciRunTiming(done_display) == "3:20 min", "finished timing renders as M:SS min");
+
+  ckgit::CiRunRecord live;
+  live.run_id = "00000000000000000002-abcdabcd";
+  live.project_name = "demo";
+  live.ref = "refs/heads/main";
+  live.commit_id = std::string(40, 'b');
+  live.status = ckgit::CiRunStatus::Running;
+  live.started_epoch_seconds = now - 5;
+  live.heartbeat_epoch_seconds = now;
+  const auto live_display = ckgit::ciRunDisplay(live);
+  require(live_display.active && live_display.name == "running", "a fresh running run is active");
+
+  ckgit::CiRunRecord stale = live;
+  stale.started_epoch_seconds = now - (ckgit::kCiRunStaleSeconds + 60);
+  stale.heartbeat_epoch_seconds = now - (ckgit::kCiRunStaleSeconds + 30);
+  const auto stale_display = ckgit::ciRunDisplay(stale);
+  require(!stale_display.active && stale_display.name == "interrupted",
+          "a running run with a dead heartbeat is interrupted, not live");
+
+  require(ckgit::ciAnyActiveRun({done, live}), "ciAnyActiveRun sees a live run");
+  require(!ckgit::ciAnyActiveRun({done, stale}), "ciAnyActiveRun ignores interrupted runs");
+
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  const std::string detail =
+      ckgit::renderCiRunDetail(project, live, std::optional<std::string>("integ-live-output"), 0);
+  require(detail.find("/project/demo/ci/00000000000000000002-abcdabcd/cancel") != std::string::npos,
+          "the live run page posts to the cancel endpoint");
+  require(detail.find("method=\"post\"") != std::string::npos, "cancel is a POST form");
+  require(detail.find("ckgit-admin ci cancel demo 00000000000000000002-abcdabcd") != std::string::npos,
+          "the live run page shows the CLI cancel command");
+  require(detail.find("integ-live-output") != std::string::npos,
+          "the live run page shows the running step's output");
+
+  const std::string done_detail = ckgit::renderCiRunDetail(project, done, std::nullopt, 0);
+  require(done_detail.find("/cancel") == std::string::npos, "a finished run offers no cancel");
+  require(done_detail.find("3:20 min") != std::string::npos, "a finished run shows its total duration");
+}
+
 void testCiWeb() {
   testRoutes();
   testRender();
+  testRunDetailAndDisplay();
   testReleaseRoutes();
   testReleaseRender();
 }

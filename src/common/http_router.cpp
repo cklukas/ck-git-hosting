@@ -159,18 +159,27 @@ Route parseHttpRoute(std::string_view target) {
     return route;
   }
   if (operation == "ci") {
-    // /project/<id>/ci/<run-id>/<step>.log         — a single step's captured log
-    // /project/<id>/ci/<run-id>/artifacts/<name>   — an artifact bundle download
+    // /project/<id>/ci/<run-id>                     — the live run status page
+    // /project/<id>/ci/<run-id>/cancel              — POST: request cancellation
+    // /project/<id>/ci/<run-id>/<step>.log          — a single step's captured log
+    // /project/<id>/ci/<run-id>/artifacts/<name>    — an artifact bundle download
     const auto slash = target.find('/');
-    if (slash == std::string_view::npos) return {};
-    const auto run = target.substr(0, slash);
-    const auto tail = target.substr(slash + 1);
+    const auto run = slash == std::string_view::npos ? target : target.substr(0, slash);
+    const auto tail = slash == std::string_view::npos ? std::string_view{} : target.substr(slash + 1);
     if (run.empty() || run.size() > 64 ||
         !std::all_of(run.begin(), run.end(), [](unsigned char byte) {
           return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
                  (byte >= '0' && byte <= '9') || byte == '-';
         })) return {};
     route.run_id = std::string(run);
+    if (tail.empty()) {
+      route.kind = RouteKind::kCiRun;
+      return route;
+    }
+    if (tail == "cancel") {
+      route.kind = RouteKind::kCiCancel;
+      return route;
+    }
     if (tail.starts_with("artifacts/")) {
       const auto name = tail.substr(10);
       if (name.empty() || name.size() > 64 ||

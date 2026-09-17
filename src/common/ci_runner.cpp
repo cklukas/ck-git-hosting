@@ -668,7 +668,13 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     record.status = status;
     record.detail = firstLine(detail);
     record.finished_epoch_seconds = nowEpoch();
+    record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
     writeCiRunRecord(options.state_root, record);
+    // A cancel marker never outlives the run it targeted.
+    try {
+      clearCiCancel(options.state_root, options.project_name, record.run_id);
+    } catch (const std::exception&) {
+    }
     return record;
   };
 
@@ -715,6 +721,12 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   std::filesystem::path scratch;
   try {
     run_dir = prepareCiRunDirectory(options.state_root, options.project_name, record.run_id);
+    // Publish the run as Running before any slow setup (checkout, sisters,
+    // caches) so the dashboard shows it immediately, then let the daemon refresh
+    // its cache rather than wait for the next periodic sweep.
+    record.heartbeat_epoch_seconds = record.started_epoch_seconds;
+    writeCiRunRecord(options.state_root, record);
+    if (options.on_run_started) options.on_run_started();
     std::error_code error;
     std::filesystem::create_directories(options.build_root, error);
     scratch = options.build_root / record.run_id;
@@ -760,15 +772,50 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     return finish(CiRunStatus::Error, std::string("cache: ") + error.what());
   }
 
+  // Liveness and cancellation share one small surface. writeProgress republishes
+  // the run.ini (Running plus the steps finished so far) with a fresh heartbeat,
+  // throttled unless forced; cancelRequested polls the cancel marker.
+  std::uint64_t last_progress = record.started_epoch_seconds;
+  const auto writeProgress = [&](bool force) {
+    const std::uint64_t now = nowEpoch();
+    if (!force && now - last_progress < 3) return;  // bound fsync churn on chatty steps
+    last_progress = now;
+    record.heartbeat_epoch_seconds = now;
+    try {
+      writeCiRunRecord(options.state_root, record);
+    } catch (const std::exception&) {
+      // A dropped heartbeat only delays liveness; the terminal write is authoritative.
+    }
+  };
+  const auto cancelRequested = [&]() -> bool {
+    try {
+      return isCiCancelRequested(options.state_root, options.project_name, record.run_id);
+    } catch (const std::exception&) {
+      return false;
+    }
+  };
+  const StepHooks hooks{[&]() { writeProgress(false); }, cancelRequested};
+
   CiRunStatus status = CiRunStatus::Success;
   std::string detail;
   std::size_t step_index = 0;
   bool stop = false;
   for (const CiJob& job : workflow.jobs) {
     if (stop) break;
+    if (cancelRequested()) {
+      status = CiRunStatus::Cancelled;
+      detail = "run cancelled before job '" + job.name + "'";
+      break;
+    }
     const std::vector<std::string> env =
         buildEnv(workflow, job, options, home_visible, tmp_visible, sister_env);
     for (const CiStep& step : job.steps) {
+      if (cancelRequested()) {
+        status = CiRunStatus::Cancelled;
+        detail = "run cancelled before step '" + (step.name.empty() ? job.name : step.name) + "'";
+        stop = true;
+        break;
+      }
       const std::filesystem::path log_path = run_dir / "steps" / (std::to_string(step_index) + ".log");
       std::vector<std::string> argv;
       if (step.usesShell()) {
@@ -776,7 +823,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       } else {
         argv = step.argv;
       }
-      const StepOutcome outcome = executeStep(argv, work_visible, env, options, log_path, bind_source);
+      const StepOutcome outcome = executeStep(argv, work_visible, env, options, log_path, bind_source, hooks);
       CiStepResult result;
       result.name = step.name.empty() ? job.name : step.name;
       result.exit_code = outcome.exit_code;
@@ -784,6 +831,13 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       result.output_truncated = outcome.truncated;
       record.steps.push_back(result);
       ++step_index;
+      writeProgress(true);  // publish the just-finished step promptly
+      if (outcome.cancelled) {
+        status = CiRunStatus::Cancelled;
+        detail = "run cancelled during step '" + result.name + "'";
+        stop = true;
+        break;
+      }
       if (outcome.spawn_failed) {
         status = CiRunStatus::Error;
         detail = "could not start step '" + result.name + "'";

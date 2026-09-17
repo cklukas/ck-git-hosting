@@ -145,7 +145,8 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
   DashboardResponse response;
   if (route.kind == RouteKind::kCiRuns) {
     PageContext ci_context{{}, {}, "ci", {}, 0, 0};
-    response.body = pageLayout(project.name + " \xc2\xb7 CI", renderCiRuns(project), &project, &ci_context);
+    const unsigned refresh = ciAnyActiveRun(project.ci_runs) ? 3u : 0u;
+    response.body = pageLayout(project.name + " \xc2\xb7 CI", renderCiRuns(project), &project, &ci_context, refresh);
     return response;
   }
   if (route.kind == RouteKind::kReleases) {

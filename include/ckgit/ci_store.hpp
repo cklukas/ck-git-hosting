@@ -31,14 +31,27 @@ enum class CiRunStatus {
   Pending,
   Running,
   Success,
-  Failure,   // a step exited non-zero
-  Timeout,   // a step exceeded its wall-clock budget
-  Error,     // the runner could not set the job up (bad workflow, checkout failed, …)
-  Skipped,   // the pushed commit declared no workflow for this branch
+  Failure,    // a step exited non-zero
+  Timeout,    // a step exceeded its wall-clock budget
+  Error,      // the runner could not set the job up (bad workflow, checkout failed, …)
+  Skipped,    // the pushed commit declared no workflow for this branch
+  Cancelled,  // an operator cancelled the run while it was in progress
 };
 
 std::string_view ciRunStatusName(CiRunStatus status);
 std::optional<CiRunStatus> ciRunStatusFromName(std::string_view name);
+// True for a status a run can still leave: Pending or Running. Terminal
+// statuses (the rest) never change once recorded.
+bool ciRunStatusIsActive(CiRunStatus status);
+// A short unicode glyph for at-a-glance status, shared by the web dashboard and
+// the CLI. Presentation only; the on-disk record always uses the name above.
+std::string_view ciRunStatusIcon(CiRunStatus status);
+
+// A Running record whose heartbeat has not advanced within this many seconds is
+// treated as interrupted (its runner is gone): front-ends stop counting it as
+// live and show it as such rather than as an ever-growing clock. The bound is
+// generous enough to survive the dashboard's periodic (60 s) metadata reload.
+inline constexpr std::uint64_t kCiRunStaleSeconds = 90;
 
 // A job the hook queued for the runner: enough to check out the exact commit
 // and attribute the run, and nothing the runner should instead read from the
@@ -82,6 +95,10 @@ struct CiRunRecord {
   CiRunStatus status = CiRunStatus::Pending;
   std::uint64_t started_epoch_seconds = 0;
   std::uint64_t finished_epoch_seconds = 0;
+  // Advanced by the runner while a run is in progress (at each step boundary and
+  // periodically within a long step). Zero in a terminal record written by older
+  // code; a live record with a stale heartbeat marks an interrupted run.
+  std::uint64_t heartbeat_epoch_seconds = 0;
   std::string detail;  // one short human-readable line (e.g. the failing step)
   std::vector<CiStepResult> steps;
   std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars
@@ -176,6 +193,13 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
                                     std::string_view project_name, std::size_t maximum = 16);
 
+// Loads one run record fresh from disk (with its artifacts). Unlike the cached
+// dashboard snapshot this always reflects the record's current bytes, so a live
+// status view sees the newest heartbeat, step count, and status. std::nullopt
+// when the run is absent or its record is malformed.
+std::optional<CiRunRecord> loadCiRun(const std::filesystem::path& state_root,
+                                     std::string_view project_name, std::string_view run_id);
+
 // Reads one step's captured log for a run, bounded to `cap` bytes. Returns
 // std::nullopt when the run or its step log is absent. Used by the read-only
 // dashboard to serve a log view.
@@ -189,6 +213,30 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
 std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::string_view run_id,
                                           std::string_view artifact_name, std::size_t cap);
+
+// --- cooperative cancellation -----------------------------------------------
+
+// A run is cancelled by dropping a marker file in its run directory, which the
+// runner polls between and within steps: on seeing it, the runner kills the
+// current step's process group and records the run as Cancelled. This keeps the
+// mutation off the read-only dashboard's Git and ref state — a front-end (the
+// daemon on behalf of a loopback POST, or ckgit-admin) only writes a marker,
+// and only the runner acts on it. Requesting a cancel for a finished or unknown
+// run is harmless.
+
+// Writes the cancel marker for a run. Returns false when the run directory does
+// not exist (nothing to cancel); true once the marker is committed.
+bool requestCiCancel(const std::filesystem::path& state_root, std::string_view project_name,
+                     std::string_view run_id);
+
+// True when a run has a pending cancel marker. Used by the runner's poll loop.
+bool isCiCancelRequested(const std::filesystem::path& state_root, std::string_view project_name,
+                         std::string_view run_id);
+
+// Removes a run's cancel marker if present. The runner clears it when the run
+// ends so a marker never outlives the run it targeted.
+void clearCiCancel(const std::filesystem::path& state_root, std::string_view project_name,
+                   std::string_view run_id);
 
 // --- releases (durable, tag-scoped) -----------------------------------------
 

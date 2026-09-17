@@ -103,9 +103,14 @@ std::string renderReadme(const ProjectSummary& p, const std::string& id,
   else out += "<pre>" + escapePre(content) + "</pre>";
   return out + "</section>";
 }
-std::string pageLayout(std::string_view title, std::string_view body, const ProjectSummary* p, const PageContext* context) {
+std::string pageLayout(std::string_view title, std::string_view body, const ProjectSummary* p, const PageContext* context, unsigned refresh_seconds) {
   if (body.size() > kMaximumPageBytes) throw WebError(503, "Page exceeds the 8 MiB rendered output limit.");
-  std::string out = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>" + htmlEscape(title) + " · ck-git-hosting</title><style>";
+  std::string out = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+  // A no-JS live refresh for pages that show an in-progress CI run. It fits the
+  // strict Content-Security-Policy (no scripts) and simply re-fetches the same
+  // canonical GET URL; the page stops emitting it once the run is terminal.
+  if (refresh_seconds > 0) out += "<meta http-equiv=\"refresh\" content=\"" + std::to_string(refresh_seconds) + "\">";
+  out += "<title>" + htmlEscape(title) + " · ck-git-hosting</title><style>";
   out += kWebStyles;
   out += "</style></head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a><header>"
       "<a class=\"brand\" href=\"/\" aria-label=\"ck-git-hosting\">" + std::string(kTextBrand) + "</a><a href=\"/\">Projects</a>";

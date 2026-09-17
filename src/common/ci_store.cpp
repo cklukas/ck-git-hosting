@@ -264,8 +264,11 @@ CiJobRequest parseJob(std::string_view content) {
 }
 
 std::string serializeRun(const CiRunRecord& run) {
+  // schema_version 2 adds heartbeat_epoch after finished_epoch; parseRun still
+  // reads the version-1 layout (which has no heartbeat line) written by earlier
+  // builds so an upgrade never discards a project's run history.
   std::string out =
-      "schema_version=1\n"
+      "schema_version=2\n"
       "run_id=" + run.run_id + "\n"
       "project=" + run.project_name + "\n"
       "ref_hex=" + toHex(run.ref) + "\n"
@@ -273,6 +276,7 @@ std::string serializeRun(const CiRunRecord& run) {
       "status=" + std::string(ciRunStatusName(run.status)) + "\n"
       "started_epoch=" + std::to_string(run.started_epoch_seconds) + "\n"
       "finished_epoch=" + std::to_string(run.finished_epoch_seconds) + "\n"
+      "heartbeat_epoch=" + std::to_string(run.heartbeat_epoch_seconds) + "\n"
       "detail_hex=" + toHex(run.detail) + "\n"
       "step_count=" + std::to_string(run.steps.size()) + "\n";
   for (const CiStepResult& step : run.steps) {
@@ -284,7 +288,13 @@ std::string serializeRun(const CiRunRecord& run) {
 
 CiRunRecord parseRun(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  if (lines.size() < 10 || lines[0] != "schema_version=1") fail("a CI run record has the wrong shape");
+  if (lines.empty()) fail("a CI run record has the wrong shape");
+  // Version 1 has no heartbeat line, so its header is one line shorter and the
+  // fields after finished_epoch sit one position earlier.
+  const bool v2 = lines[0] == "schema_version=2";
+  if (!v2 && lines[0] != "schema_version=1") fail("a CI run record has the wrong shape");
+  const std::size_t header = v2 ? 11 : 10;
+  if (lines.size() < header) fail("a CI run record has the wrong shape");
   CiRunRecord run;
   run.run_id = std::string(expectField(lines[1], "run_id="));
   run.project_name = std::string(expectField(lines[2], "project="));
@@ -295,14 +305,16 @@ CiRunRecord parseRun(std::string_view content) {
   run.status = *status;
   run.started_epoch_seconds = parseEpoch(expectField(lines[6], "started_epoch="));
   run.finished_epoch_seconds = parseEpoch(expectField(lines[7], "finished_epoch="));
-  run.detail = fromHex(expectField(lines[8], "detail_hex="), kMaximumCiDetailBytes);
-  const std::string_view count_text = expectField(lines[9], "step_count=");
+  std::size_t next = 8;
+  if (v2) run.heartbeat_epoch_seconds = parseEpoch(expectField(lines[next++], "heartbeat_epoch="));
+  run.detail = fromHex(expectField(lines[next++], "detail_hex="), kMaximumCiDetailBytes);
+  const std::string_view count_text = expectField(lines[next], "step_count=");
   std::size_t count = 0;
   const auto [end, error] = std::from_chars(count_text.data(), count_text.data() + count_text.size(), count);
   if (error != std::errc{} || end != count_text.data() + count_text.size()) fail("a CI step count is malformed");
-  if (count > 4096 || lines.size() != 10 + count) fail("a CI run record has a mismatched step count");
+  if (count > 4096 || lines.size() != header + count) fail("a CI run record has a mismatched step count");
   for (std::size_t index = 0; index < count; ++index) {
-    const std::string_view step_line = expectField(lines[10 + index], "step=");
+    const std::string_view step_line = expectField(lines[header + index], "step=");
     CiStepResult step;
     const std::size_t c1 = step_line.find(',');
     const std::size_t c2 = c1 == std::string_view::npos ? c1 : step_line.find(',', c1 + 1);
@@ -403,6 +415,7 @@ std::string_view ciRunStatusName(CiRunStatus status) {
     case CiRunStatus::Timeout: return "timeout";
     case CiRunStatus::Error: return "error";
     case CiRunStatus::Skipped: return "skipped";
+    case CiRunStatus::Cancelled: return "cancelled";
   }
   return "error";
 }
@@ -415,7 +428,26 @@ std::optional<CiRunStatus> ciRunStatusFromName(std::string_view name) {
   if (name == "timeout") return CiRunStatus::Timeout;
   if (name == "error") return CiRunStatus::Error;
   if (name == "skipped") return CiRunStatus::Skipped;
+  if (name == "cancelled") return CiRunStatus::Cancelled;
   return std::nullopt;
+}
+
+bool ciRunStatusIsActive(CiRunStatus status) {
+  return status == CiRunStatus::Pending || status == CiRunStatus::Running;
+}
+
+std::string_view ciRunStatusIcon(CiRunStatus status) {
+  switch (status) {
+    case CiRunStatus::Pending: return "\xe2\x8f\xb3";              // ⏳ hourglass
+    case CiRunStatus::Running: return "\xf0\x9f\x94\x84";          // 🔄 arrows
+    case CiRunStatus::Success: return "\xe2\x9c\x85";              // ✅ check
+    case CiRunStatus::Failure: return "\xe2\x9d\x8c";              // ❌ cross
+    case CiRunStatus::Timeout: return "\xe2\x8f\xb1\xef\xb8\x8f";  // ⏱️ stopwatch
+    case CiRunStatus::Error: return "\xe2\x9a\xa0\xef\xb8\x8f";    // ⚠️ warning
+    case CiRunStatus::Skipped: return "\xe2\x8f\xad\xef\xb8\x8f";  // ⏭️ skip
+    case CiRunStatus::Cancelled: return "\xe2\x9b\x94";            // ⛔ no entry
+  }
+  return "\xe2\x9a\xa0\xef\xb8\x8f";
 }
 
 bool isValidCiId(std::string_view id) {
@@ -625,6 +657,32 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
   return runs;
 }
 
+std::optional<CiRunRecord> loadCiRun(const std::filesystem::path& state_root,
+                                     std::string_view project_name, std::string_view run_id) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id)) return std::nullopt;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor runs_fd(openDirAt(ci_fd, "runs", &missing));
+    if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(runs_fd, std::string(project_name), &missing));
+    if (missing) return std::nullopt;
+    Descriptor run_fd(openDirAt(project_fd, std::string(run_id), &missing));
+    if (missing) return std::nullopt;
+    bool record_missing = false;
+    const std::string content = readCappedAt(run_fd, "run.ini", kMaximumCiRunRecordBytes, &record_missing);
+    if (record_missing) return std::nullopt;
+    CiRunRecord run = parseRun(content);
+    run.artifacts = loadArtifactsFor(run_fd);
+    return run;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
 std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
                                         std::string_view project_name, std::string_view run_id,
                                         std::size_t step_index, std::size_t cap) {
@@ -679,6 +737,76 @@ std::optional<std::string> readCiArtifact(const std::filesystem::path& state_roo
     return content;
   } catch (const std::exception&) {
     return std::nullopt;
+  }
+}
+
+namespace {
+
+// Opens an existing ci/runs/<project>/<run> directory, reporting absence via
+// `missing` rather than throwing. Returns -1 (and sets missing) when any parent
+// or the run directory itself is absent; the caller owns the returned fd.
+int openRunDir(const std::filesystem::path& state_root, std::string_view project_name,
+               std::string_view run_id, bool* missing) {
+  *missing = true;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool absent = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &absent));
+  if (absent) return -1;
+  Descriptor runs_fd(openDirAt(ci_fd, "runs", &absent));
+  if (absent) return -1;
+  Descriptor project_fd(openDirAt(runs_fd, std::string(project_name), &absent));
+  if (absent) return -1;
+  const int run_fd = openDirAt(project_fd, std::string(run_id), &absent);
+  if (absent) return -1;
+  *missing = false;
+  return run_fd;
+}
+
+constexpr char kCancelMarkerName[] = "cancel";
+
+}  // namespace
+
+bool requestCiCancel(const std::filesystem::path& state_root, std::string_view project_name,
+                     std::string_view run_id) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id)) {
+    fail("refusing to cancel an invalid CI run");
+  }
+  bool missing = false;
+  Descriptor run_fd(openRunDir(state_root, project_name, run_id, &missing));
+  if (missing) return false;
+  atomicWriteAt(run_fd, kCancelMarkerName, "cancel\n");
+  return true;
+}
+
+bool isCiCancelRequested(const std::filesystem::path& state_root, std::string_view project_name,
+                         std::string_view run_id) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id)) return false;
+  try {
+    bool missing = false;
+    Descriptor run_fd(openRunDir(state_root, project_name, run_id, &missing));
+    if (missing) return false;
+    bool marker_missing = false;
+    static_cast<void>(readCappedAt(run_fd, kCancelMarkerName, 64, &marker_missing));
+    return !marker_missing;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+void clearCiCancel(const std::filesystem::path& state_root, std::string_view project_name,
+                   std::string_view run_id) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id)) return;
+  try {
+    bool missing = false;
+    Descriptor run_fd(openRunDir(state_root, project_name, run_id, &missing));
+    if (missing) return;
+    if (::unlinkat(run_fd, kCancelMarkerName, 0) != 0 && errno != ENOENT) {
+      fail("could not clear a CI cancel marker");
+    }
+  } catch (const std::exception&) {
+    // Best effort: a leftover marker only affects the run that requested it,
+    // and run ids are never reused.
   }
 }
 

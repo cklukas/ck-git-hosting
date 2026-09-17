@@ -121,6 +121,19 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.pages_root = config.pages_root.value_or(std::filesystem::path{});
     options.pages_keep_versions = config.pages_keep_versions.value_or(3);
     options.cache_root = config.ci_cache_root.value_or(std::filesystem::path{});
+    if (!config.control_socket.empty()) {
+      // Refresh the dashboard as soon as the run publishes itself as Running, so
+      // a new run appears within seconds rather than at the next periodic sweep.
+      const std::filesystem::path socket = config.control_socket;
+      const std::string project = job->project_name;
+      options.on_run_started = [socket, project]() {
+        try {
+          ckgit::forwardControlRpc(socket, "ci-runner", "refresh", project, {}, nullptr,
+                                   std::chrono::seconds(2));
+        } catch (const std::exception&) {
+        }
+      };
+    }
     try {
       ckgit::CiSandboxReport sandbox;
       const ckgit::CiRunRecord record = ckgit::runCiWorkflow(options, &sandbox);

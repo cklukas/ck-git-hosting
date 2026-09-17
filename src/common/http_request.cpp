@@ -100,12 +100,20 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
     return std::nullopt;
   }
   const std::string_view method_text = request_line.substr(0, first_space);
-  const std::string_view target = request_line.substr(first_space + 1, second_space - first_space - 1);
+  std::string_view target = request_line.substr(first_space + 1, second_space - first_space - 1);
+  // A read-only server routes and serves by path alone; drop any ?query or
+  // #fragment. Static sites request assets with a cache-busting query
+  // (theme.css?digest=..., pygments.css?v=...), so rejecting those would leave
+  // every generated site unstyled. Stripping here keeps both the dashboard
+  // router and the pages server working on the path.
+  const std::size_t query_or_fragment = target.find_first_of("?#");
+  if (query_or_fragment != std::string_view::npos) target = target.substr(0, query_or_fragment);
   if (!isSafeTarget(target)) {
     return std::nullopt;
   }
   const std::optional<HttpMethod> method = method_text == "GET" ? std::optional<HttpMethod>(HttpMethod::kGet)
                                        : method_text == "HEAD" ? std::optional<HttpMethod>(HttpMethod::kHead)
+                                       : method_text == "POST" ? std::optional<HttpMethod>(HttpMethod::kPost)
                                                                : std::nullopt;
   if (!method.has_value()) {
     return std::nullopt;
@@ -113,6 +121,7 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
 
   bool host_seen = false;
   bool content_length_seen = false;
+  std::string origin;
   std::size_t header_count = 0;
   for (std::size_t position = request_line_end + 2; position < request.size() - 2;) {
     const std::size_t line_end = request.find("\r\n", position);
@@ -150,13 +159,15 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
         return std::nullopt;
       }
       content_length_seen = true;
+    } else if (equalsIgnoreCase(name, "origin")) {
+      origin = std::string(value);
     }
     position = line_end + 2;
   }
   if (!host_seen) {
     return std::nullopt;
   }
-  return HttpRequest{*method, std::string(target)};
+  return HttpRequest{*method, std::string(target), origin};
 }
 
 }  // namespace ckgit

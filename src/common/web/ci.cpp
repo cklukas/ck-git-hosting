@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <ctime>
+#include <optional>
 #include <string>
 
 #include "ckgit/ci_store.hpp"
+#include "ckgit/text.hpp"
 #include "ckgit/web_renderer.hpp"
 
 namespace ckgit {
@@ -20,18 +23,64 @@ std::string shortId(const std::string& id) {
   return id.substr(0, std::min<std::size_t>(id.size(), 12));
 }
 
-std::string statusBadge(CiRunStatus status) {
-  const std::string name(ciRunStatusName(status));
-  return "<span class=\"ci-status ci-" + name + "\">" + name + "</span>";
+// Icon + name badge, linking to the run's live status page so it is an obvious
+// place to open progress and (while active) cancel.
+std::string statusBadge(const std::string& project, const CiRunRecord& run, const CiRunDisplay& display) {
+  return "<a class=\"ci-status ci-" + std::string(display.name) + "\" href=\"/project/" + htmlEscape(project) +
+         "/ci/" + htmlEscape(run.run_id) + "\"><span class=\"ci-icon\" aria-hidden=\"true\">" +
+         std::string(display.icon) + "</span> " + std::string(display.name) + "</a>";
 }
 
-std::string duration(const CiRunRecord& run) {
-  if (run.finished_epoch_seconds < run.started_epoch_seconds || run.started_epoch_seconds == 0) return {};
-  const std::uint64_t seconds = run.finished_epoch_seconds - run.started_epoch_seconds;
-  return " · " + std::to_string(seconds) + "s";
+// The completed step's own glyph, from its exit disposition.
+std::string_view stepIcon(const CiStepResult& step) {
+  if (step.timed_out) return ciRunStatusIcon(CiRunStatus::Timeout);
+  return step.exit_code == 0 ? ciRunStatusIcon(CiRunStatus::Success) : ciRunStatusIcon(CiRunStatus::Failure);
 }
 
 }  // namespace
+
+CiRunDisplay ciRunDisplay(const CiRunRecord& run) {
+  const std::uint64_t now = static_cast<std::uint64_t>(std::time(nullptr));
+  CiRunDisplay display;
+  display.icon = ciRunStatusIcon(run.status);
+  display.name = ciRunStatusName(run.status);
+  display.seconds = 0;
+  display.active = false;
+  if (run.status == CiRunStatus::Running) {
+    const std::uint64_t beat =
+        run.heartbeat_epoch_seconds ? run.heartbeat_epoch_seconds : run.started_epoch_seconds;
+    if (beat != 0 && now > beat + kCiRunStaleSeconds) {
+      // The runner stopped reporting: show it as interrupted, not a live clock.
+      display.icon = "\xf0\x9f\x92\xa4";  // 💤
+      display.name = "interrupted";
+      display.seconds = beat > run.started_epoch_seconds ? beat - run.started_epoch_seconds : 0;
+    } else {
+      display.name = "running";
+      display.seconds =
+          run.started_epoch_seconds && now >= run.started_epoch_seconds ? now - run.started_epoch_seconds : 0;
+      display.active = true;
+    }
+    return display;
+  }
+  if (run.status == CiRunStatus::Pending) {
+    display.active = true;  // queued: keep the view live until it starts
+    return display;
+  }
+  if (run.finished_epoch_seconds >= run.started_epoch_seconds && run.started_epoch_seconds != 0) {
+    display.seconds = run.finished_epoch_seconds - run.started_epoch_seconds;
+  }
+  return display;
+}
+
+bool ciAnyActiveRun(const std::vector<CiRunRecord>& runs) {
+  return std::any_of(runs.begin(), runs.end(), [](const CiRunRecord& run) { return ciRunDisplay(run).active; });
+}
+
+std::string ciRunTiming(const CiRunDisplay& display) {
+  if (display.name == "pending") return {};
+  if (display.seconds == 0 && !display.active) return {};
+  return formatDuration(display.seconds) + (display.seconds < 3600 ? " min" : "");
+}
 
 std::string renderCiRuns(const ProjectSummary& project) {
   std::string out = "<h1>Continuous integration</h1>";
@@ -43,12 +92,15 @@ std::string renderCiRuns(const ProjectSummary& project) {
   out += "<table class=\"ci-runs\"><thead><tr><th>Status</th><th>Ref</th><th>Commit</th><th>When</th>"
          "<th>Steps</th></tr></thead><tbody>";
   for (const CiRunRecord& run : project.ci_runs) {
-    out += "<tr><td>" + statusBadge(run.status) + "</td>";
+    const CiRunDisplay display = ciRunDisplay(run);
+    out += "<tr><td>" + statusBadge(project.name, run, display) + "</td>";
     out += "<td>" + htmlEscape(branchLabel(run.ref)) + "</td>";
     out += "<td><code>" + htmlEscape(shortId(run.commit_id)) + "</code></td>";
+    const std::string timing = ciRunTiming(display);
     const std::string when = run.started_epoch_seconds
         ? "<span title=\"" + htmlEscape(formatUtcTimestamp(run.started_epoch_seconds)) + "\">" +
-              htmlEscape(relativeTime(run.started_epoch_seconds)) + "</span>" + htmlEscape(duration(run))
+              htmlEscape(relativeTime(run.started_epoch_seconds)) + "</span>" +
+              (timing.empty() ? std::string() : " · " + htmlEscape(timing))
         : std::string("&mdash;");
     out += "<td>" + when + "</td><td>";
     for (std::size_t index = 0; index < run.steps.size(); ++index) {
@@ -86,6 +138,94 @@ std::string renderCiRuns(const ProjectSummary& project) {
     }
   }
   out += "</tbody></table>";
+  return out;
+}
+
+std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
+                              const std::optional<std::string>& live_log, std::size_t live_step) {
+  const CiRunDisplay display = ciRunDisplay(run);
+  const std::string project_url = "/project/" + htmlEscape(project.name);
+  std::string out = "<p><a href=\"" + project_url + "/ci\">\xe2\x86\x90 Back to CI</a></p>";
+  out += "<h1 class=\"ci-run-head\"><span class=\"ci-icon-lg\" aria-hidden=\"true\">" + std::string(display.icon) +
+         "</span> <span class=\"ci-status ci-" + std::string(display.name) + "\">" + std::string(display.name) +
+         "</span></h1>";
+
+  out += "<dl class=\"ci-run-meta\"><dt>Ref</dt><dd>" + htmlEscape(branchLabel(run.ref)) + "</dd>";
+  out += "<dt>Commit</dt><dd><a href=\"" + project_url + "/commit/" + htmlEscape(run.commit_id) + "\"><code>" +
+         htmlEscape(shortId(run.commit_id)) + "</code></a></dd>";
+  if (run.started_epoch_seconds) {
+    out += "<dt>Started</dt><dd><span title=\"" + htmlEscape(formatUtcTimestamp(run.started_epoch_seconds)) +
+           "\">" + htmlEscape(relativeTime(run.started_epoch_seconds)) + "</span></dd>";
+  }
+  const std::string timing = ciRunTiming(display);
+  if (!timing.empty()) {
+    out += "<dt>" + std::string(display.active ? "Elapsed" : "Duration") + "</dt><dd>" + htmlEscape(timing) + "</dd>";
+  }
+  if (!run.detail.empty()) out += "<dt>Detail</dt><dd>" + htmlEscape(run.detail) + "</dd>";
+  out += "</dl>";
+
+  // Cancel affordances, mirrored across channels: a loopback POST button and the
+  // equivalent CLI command (which drives the same cancel marker via the socket).
+  if (display.active) {
+    out += "<div class=\"ci-cancel\"><form method=\"post\" action=\"" + project_url + "/ci/" +
+           htmlEscape(run.run_id) + "/cancel\"><button type=\"submit\" class=\"ci-cancel-button\">\xe2\x9b\x94 "
+           "Cancel run</button></form>";
+    out += "<details class=\"ci-cancel-cli\"><summary>Cancel from the command line</summary><pre><code>"
+           "ckgit-admin ci cancel " + htmlEscape(project.name) + " " + htmlEscape(run.run_id) +
+           "</code></pre></details></div>";
+  } else if (display.name == "interrupted") {
+    out += "<p class=\"notice\">This run stopped reporting progress; its runner may have been interrupted. "
+           "The recorded status settles at the next runner sweep.</p>";
+  }
+
+  out += "<h2>Steps</h2><ol class=\"ci-steps\">";
+  for (std::size_t index = 0; index < run.steps.size(); ++index) {
+    const CiStepResult& step = run.steps[index];
+    const std::string label = step.name.empty() ? ("step " + std::to_string(index)) : step.name;
+    const std::string url = project_url + "/ci/" + htmlEscape(run.run_id) + "/" + std::to_string(index) + ".log";
+    const std::string state = step.timed_out ? "timeout" : ("exit " + std::to_string(step.exit_code));
+    out += "<li><span class=\"ci-icon\" aria-hidden=\"true\">" + std::string(stepIcon(step)) + "</span> <a href=\"" +
+           url + "\">" + htmlEscape(label) + "</a> <span class=\"muted\">(" + htmlEscape(state) +
+           (step.output_truncated ? ", log truncated" : "") + ")</span></li>";
+  }
+  const bool show_live = display.active && live_log.has_value();
+  if (show_live) {
+    out += "<li class=\"ci-step-running\"><span class=\"ci-icon\" aria-hidden=\"true\">" +
+           std::string(ciRunStatusIcon(CiRunStatus::Running)) + "</span> <a href=\"" + project_url + "/ci/" +
+           htmlEscape(run.run_id) + "/" + std::to_string(live_step) + ".log\">step " + std::to_string(live_step) +
+           "</a> <span class=\"muted\">(running\xe2\x80\xa6)</span></li>";
+  }
+  out += "</ol>";
+
+  if (show_live) {
+    out += "<h2>Live output <span class=\"muted\">\xc2\xb7 step " + std::to_string(live_step) + "</span></h2>";
+    constexpr std::size_t kTailBytes = 16 * 1024;
+    std::string_view view(*live_log);
+    const bool trimmed = view.size() > kTailBytes;
+    if (trimmed) view = view.substr(view.size() - kTailBytes);
+    out += "<pre class=\"ci-log ci-log-live\">";
+    if (trimmed) {
+      out += "<span class=\"muted\">\xe2\x80\xa6 showing the last 16 KiB; open the step log for the full "
+             "output\n</span>";
+    }
+    out += escapePre(view);
+    out += "</pre><p class=\"muted\">This page refreshes automatically while the run is active.</p>";
+  }
+
+  if (!run.artifacts.empty()) {
+    out += "<h2>Artifacts</h2><ul class=\"ci-artifacts\">";
+    for (const CiArtifactRecord& artifact : run.artifacts) {
+      if (!artifact.note.empty()) {
+        out += "<li>" + htmlEscape(artifact.name) + " <span class=\"muted\">(" + htmlEscape(artifact.note) +
+               ")</span></li>";
+        continue;
+      }
+      out += "<li><a href=\"" + project_url + "/ci/" + htmlEscape(run.run_id) + "/artifacts/" +
+             htmlEscape(artifact.name) + "\">" + htmlEscape(artifact.name) + ".tar</a> <span class=\"muted\">(" +
+             htmlEscape(formatBytes(artifact.bytes)) + ")</span></li>";
+    }
+    out += "</ul>";
+  }
   return out;
 }
 

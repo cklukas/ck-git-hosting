@@ -54,5 +54,29 @@ a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(
 .commit-table .graph-cell{position:relative;padding:0;vertical-align:middle}
 .graph-lines{position:absolute;left:0;top:-.5px;height:calc(100% + 1px);min-height:0;pointer-events:none}
 .graph-node{position:relative;z-index:1}
+/* Continuous integration: status pills with an icon, the live run page, and step logs. */
+.ci-status{display:inline-flex;align-items:center;gap:.35em;padding:.12em .55em;border-radius:999px;border:1px solid var(--line);font-size:.82rem;font-weight:600;white-space:nowrap;text-decoration:none;line-height:1.4}
+a.ci-status:hover{text-decoration:none;border-color:var(--accent)}
+.ci-icon{font-size:1em;line-height:1}.ci-icon-lg{font-size:1.6rem;line-height:1}
+.ci-pending,.ci-skipped{color:var(--muted);background:#88888822}
+.ci-running{color:#145ea8;background:#145ea81f}
+.ci-success{color:#176c3a;background:#2ea55f22}
+.ci-failure{color:#b3261e;background:#dc262622}
+.ci-timeout,.ci-error,.ci-interrupted{color:#9a5800;background:#d9770622}
+.ci-cancelled{color:#6b7280;background:#6b728022}
+.ci-running .ci-icon{animation:cipulse 1.4s ease-in-out infinite}
+@keyframes cipulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.ci-running .ci-icon{animation:none}}
+.project-ci{white-space:normal}
+.ci-run-head{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}.ci-run-meta{margin:1rem 0}
+.ci-steps{margin:.6rem 0;padding-left:1.3rem}.ci-steps li{margin:.3rem 0}.ci-step-running{font-weight:600}
+.ci-log{background:var(--bg);border:1px solid var(--line);border-radius:.4rem;padding:.8rem 1rem;max-height:34rem;overflow:auto}
+.ci-log-live{border-left:3px solid var(--accent)}
+.ci-cancel{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;margin:1rem 0}
+.ci-cancel-button{font:inherit;font-weight:600;color:#fff;background:#c0392b;border:1px solid #a93226;border-radius:.4rem;padding:.45rem .9rem;cursor:pointer}
+.ci-cancel-button:hover{background:#a93226}
+.ci-cancel-cli summary{cursor:pointer;color:var(--muted)}.ci-cancel-cli pre{margin:.4rem 0 0;padding:.6rem .8rem;border:1px solid var(--line);border-radius:.3rem;background:var(--bg)}
+@media(prefers-color-scheme:dark){.ci-running{color:#7db8ee}.ci-success{color:#79c58a}.ci-failure{color:#f19aa0}.ci-timeout,.ci-error,.ci-interrupted{color:#e7b765}.ci-cancelled{color:#aab3bf}}
+@media(max-width:700px){.project-ci{grid-row:5;grid-column:1/-1;font-size:.85rem}.project-ci:before{content:'Last CI: ';color:var(--muted)}}
 )CSS";
 }  // namespace ckgit

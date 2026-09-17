@@ -269,6 +269,12 @@ void testHttpRequestParser() {
   const auto head = ckgit::parseReadOnlyHttpRequest("HEAD / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\n\r\n");
   expect(head.has_value() && head->method == ckgit::HttpMethod::kHead,
          "bodyless HEAD request is accepted");
+  const auto post = ckgit::parseReadOnlyHttpRequest(
+      "POST /project/demo/ci/00000000000000000001-abcdabcd/cancel HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+      "Origin: http://127.0.0.1:8420\r\nContent-Length: 0\r\n\r\n");
+  expect(post.has_value() && post->method == ckgit::HttpMethod::kPost &&
+             post->origin == "http://127.0.0.1:8420",
+         "a bodyless POST is accepted and its Origin captured for the cancel endpoint");
   expect(!ckgit::parseReadOnlyHttpRequest("GET / HTTP/1.1\nHost: example.test\n\n").has_value(),
          "bare-LF request framing is rejected");
   expect(!ckgit::parseReadOnlyHttpRequest("GET / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1\r\n\r\n").has_value(),
@@ -277,8 +283,12 @@ void testHttpRequestParser() {
          "duplicate HTTP Host headers are rejected");
   expect(!ckgit::parseReadOnlyHttpRequest("GET / HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n").has_value(),
          "transfer encoding is rejected");
-  expect(!ckgit::parseReadOnlyHttpRequest("GET /?x=y HTTP/1.1\r\nHost: example.test\r\n\r\n").has_value(),
-         "non-canonical query targets are rejected");
+  const auto stripped_query = ckgit::parseReadOnlyHttpRequest("GET /?x=y HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  expect(stripped_query.has_value() && stripped_query->target == "/",
+         "a ?query is stripped and the path still routes (cache-busting asset requests)");
+  const auto stripped_fragment = ckgit::parseReadOnlyHttpRequest("GET /by-name#frag HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  expect(stripped_fragment.has_value() && stripped_fragment->target == "/by-name",
+         "a #fragment is stripped and the path still routes");
 }
 
 void testCheckoutMetadata() {

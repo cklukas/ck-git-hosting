@@ -519,6 +519,9 @@ class ProjectIndex::Impl {
         row.generated_epoch_seconds = record.generated_epoch_seconds;
         row.indexing = record.indexing;
         row.index_error = record.index_error;
+        // Carry only the newest run so the index page can show a compact CI
+        // status without copying every run's steps into every row.
+        if (!record.ci_runs.empty()) row.last_ci_run = record.ci_runs.front();
         records.push_back(std::move(row));
       }
     }
@@ -540,6 +543,24 @@ class ProjectIndex::Impl {
                                        std::size_t step) const {
     if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
     return readCiRunLog(*state_root_, project, run_id, step, kProjectIndexCiLogLimit);
+  }
+
+  // Reads one run fresh from disk (bypassing the cached snapshot) so the live
+  // status view sees the current heartbeat, step count, and status.
+  std::optional<CiRunRecord> readCiRun(std::string_view project, std::string_view run_id) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return ckgit::loadCiRun(*state_root_, project, run_id);
+  }
+
+  // Requests cancellation of a run by dropping its marker; the runner acts on
+  // it. Returns false when there is no such run to cancel.
+  bool requestCiCancel(std::string_view project, std::string_view run_id) const {
+    if (!state_root_ || !isValidProjectName(project) || !isValidCiId(run_id)) return false;
+    try {
+      return ckgit::requestCiCancel(*state_root_, project, run_id);
+    } catch (const std::exception&) {
+      return false;
+    }
   }
 
   std::optional<std::string> readCiArtifact(std::string_view project, std::string_view run_id,
@@ -786,6 +807,13 @@ std::optional<ProjectSummary> ProjectIndex::find(std::string_view name) const { 
 std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std::string_view run_id,
                                                    std::size_t step_index) const {
   return impl_->readCiLog(project, run_id, step_index);
+}
+std::optional<CiRunRecord> ProjectIndex::readCiRun(std::string_view project,
+                                                   std::string_view run_id) const {
+  return impl_->readCiRun(project, run_id);
+}
+bool ProjectIndex::requestCiCancel(std::string_view project, std::string_view run_id) const {
+  return impl_->requestCiCancel(project, run_id);
 }
 std::optional<std::string> ProjectIndex::readCiArtifact(std::string_view project, std::string_view run_id,
                                                         std::string_view artifact_name) const {
