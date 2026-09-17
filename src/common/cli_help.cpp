@@ -403,7 +403,9 @@ std::string shellCompletion(const std::string& shell) {
 
 std::string buildVersion() { return CKGIT_BUILD_VERSION; }
 
-std::string clientVersion() { return "ckgit " + buildVersion() + "\n"; }
+std::string versionLine(const std::string& program) { return program + " " + buildVersion() + "\n"; }
+
+std::string clientVersion() { return versionLine("ckgit"); }
 
 std::string clientHelp(const std::vector<std::string>& command_path) {
   std::ostringstream output;

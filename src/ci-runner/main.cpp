@@ -15,6 +15,7 @@
 
 #include "ckgit/ci_runner.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/server_config.hpp"
 
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
     if (argc < 2) return usage(std::cerr, 2);
     const std::string command = argv[1];
     if (command == "-h" || command == "--help") return usage(std::cout, 0);
+    if (command == "--version" || command == "-V") { std::cout << ckgit::versionLine("ck-ci-runnerd"); return 0; }
     if (command == "serve") {
       std::filesystem::path config_path;
       bool once = false;

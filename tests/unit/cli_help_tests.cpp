@@ -84,6 +84,11 @@ void testCliHelp() {
   require(version.standard_output == "ckgit " + build + "\n" &&
               ckgit::clientVersion() == version.standard_output,
           "CLI and dashboard should use the same running build identifier");
+  // Every daemon prints "<program> <build>\n" from the same helper, so the four
+  // suite versions the operator sees are all rooted in one build identifier.
+  require(ckgit::versionLine("ck-ci-runnerd") == "ck-ci-runnerd " + build + "\n" &&
+              ckgit::versionLine("ckgit") == ckgit::clientVersion(),
+          "daemon --version lines should share the CLI's build identifier");
 
   expectError({}, "a command is required", "");
   expectError({"puslish"}, "unknown command 'puslish'", "");

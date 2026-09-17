@@ -24,6 +24,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "ckgit/cli_help.hpp"
 #include "ckgit/http_request.hpp"
 #include "ckgit/pages_store.hpp"
 #include "ckgit/server_config.hpp"
@@ -220,6 +221,10 @@ int main(int argc, char** argv) {
   try {
     if (argc >= 2 && (std::string(argv[1]) == "-h" || std::string(argv[1]) == "--help")) {
       return usage(std::cout, 0);
+    }
+    if (argc >= 2 && (std::string(argv[1]) == "--version" || std::string(argv[1]) == "-V")) {
+      std::cout << ckgit::versionLine("ck-pagesd");
+      return 0;
     }
     if (argc < 2 || std::string(argv[1]) != "serve") return usage(std::cerr, 2);
     std::filesystem::path config_path;

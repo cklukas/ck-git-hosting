@@ -17,6 +17,7 @@
 
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/cli_help.hpp"
 #include "ckgit/pages_store.hpp"
 #include "ckgit/install_layout.hpp"
 #include "ckgit/repository_store.hpp"
@@ -553,6 +554,10 @@ int main(int argc, char* argv[]) {
       const std::string argument = argv[index];
       if (argument == "--help" || argument == "-h" || (index == 1 && argument == "help")) {
         usage(std::cout);
+        return 0;
+      }
+      if (argument == "--version" || argument == "-V") {
+        std::cout << ckgit::versionLine("ckgit-admin");
         return 0;
       }
     }

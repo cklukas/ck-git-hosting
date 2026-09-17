@@ -17,15 +17,30 @@ jobs:
   - name: build-test-package
     steps:
       - name: build
-        run: make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" all
+        script: |
+          # Stamp a reliable version into the binaries. The sandbox checkout has
+          # no .git, so the Makefile's `git describe` yields nothing and would
+          # fall back to "+source"; use the commit/ref the runner exports so the
+          # daemons and `ckgit --version` report the exact commit under build,
+          # tagged with the deploy tag on a tag build.
+          short=$(printf %s "${CKGIT_COMMIT:-}" | cut -c1-12)
+          if [ -n "$short" ]; then ver="$(tr -d '[:space:]' <VERSION)+g$short"; else ver="$(tr -d '[:space:]' <VERSION)+source"; fi
+          case "${CKGIT_REF:-}" in refs/tags/*) ver="$ver.${CKGIT_REF#refs/tags/}" ;; esac
+          printf '%s\n' "$ver" >"$TMPDIR/build-version"
+          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" all
       - name: unit-tests
         script: |
-          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" "$TMPDIR/build/bin/ckgit-unit-tests"
+          ver=$(cat "$TMPDIR/build-version")
+          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" "$TMPDIR/build/bin/ckgit-unit-tests"
           mkdir -p "$TMPDIR/build/test-tmp"
           CKGIT_TEST_ROOT="$TMPDIR" TMPDIR="$TMPDIR/build/test-tmp" "$TMPDIR/build/bin/ckgit-unit-tests"
       - name: package
         script: |
-          sh packaging/build-deb.sh --build-dir "$TMPDIR/build" --output "$PWD/dist"
+          # The .deb version stays timestamp-led so dpkg orders rebuilds
+          # correctly, but carries the commit for traceability back to a build.
+          short=$(printf %s "${CKGIT_COMMIT:-}" | cut -c1-12)
+          pkgver="$(tr -d '[:space:]' <VERSION)+$(date -u +%Y%m%d.%H%M)${short:+.g$short}"
+          sh packaging/build-deb.sh --build-dir "$TMPDIR/build" --output "$PWD/dist" --version "$pkgver"
           # A source tarball too, so the macOS client (which cannot run the Pi's
           # Linux binary) can build ckgit from the same release.
           tar -czf "$PWD/dist/ck-git-hosting-src.tar.gz" Makefile VERSION src include packaging

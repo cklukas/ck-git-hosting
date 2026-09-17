@@ -162,6 +162,10 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
       {"LC_ALL", "C"},
       {"CKGIT_CI", "1"},
       {"CI", "true"},
+      // The commit and ref under build, so a step can stamp a reliable version
+      // into the artifacts (the sandbox has no .git for `git describe`).
+      {"CKGIT_COMMIT", options.commit_id},
+      {"CKGIT_REF", options.ref},
   };
   const auto put = [&ordered](const std::string& key, const std::string& value) {
     for (auto& entry : ordered) {

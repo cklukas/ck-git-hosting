@@ -31,5 +31,8 @@ std::string clientHelp(const std::vector<std::string>& command_path = {});
 // dashboard. Contains neither a product prefix nor a trailing newline.
 std::string buildVersion();
 std::string clientVersion();
+// A single "<program> <build-version>\n" line, the common --version output for
+// every daemon and tool in the suite (they are all built from one buildVersion).
+std::string versionLine(const std::string& program);
 
 }  // namespace ckgit

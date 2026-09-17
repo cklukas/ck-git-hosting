@@ -1020,6 +1020,10 @@ int serve(const Options& options) {
 
 int main(int argc, char* argv[]) {
   try {
+    if (argc >= 2 && (std::string(argv[1]) == "--version" || std::string(argv[1]) == "-V")) {
+      std::cout << ckgit::versionLine("ck-git-hostingd");
+      return 0;
+    }
     Options options;
     if (!parseOptions(argc, argv, &options)) {
       usage(std::cerr);
