@@ -8,15 +8,18 @@
 #   sudo ck-git-hosting-deploy --dry-run     # preview the newest release
 #   sudo ck-git-hosting-deploy               # install it
 #   sudo ck-git-hosting-deploy --tag v0.1.1  # install one exact release
+#   sudo ck-git-hosting-deploy --all         # also run every configured
+#                                             # release-hook (see --all below)
 #
 # The security boundary: the CI step that produces the package is
 # unprivileged and sandboxed (see docs/operations/04-ci-cd.md); only this
 # root command installs it, only from a durable release (a pushed tag), and
 # only when an administrator runs this command -- nothing here runs
 # automatically unless the separate, opt-in deploy timer is enabled (see
-# docs/operations/05-releases-and-deploy.md). This script deploys the
-# ck-git-hosting project itself; deploying another project's own release
-# needs its own command for now (see the roadmap's release-hooks package).
+# docs/operations/05-releases-and-deploy.md). --all additionally runs any
+# release hooks configured for other projects (see --all below); the same
+# boundary applies to each: only a root-authored config can name a command,
+# and only a durable release triggers it.
 set -eu
 
 usage() {
@@ -46,10 +49,28 @@ Usage: ck-git-hosting-deploy [OPTIONS]
   --no-rollback      on a failed health check, do not reinstall the last
                      healthy package
   -h, --help         this help
+
+  --all              instead of the above, run every release hook under
+                     --deploy-config-dir: for each <name>.conf, select the
+                     newest release of its project= matching one of its
+                     tags= patterns, verify it, then run its command=
+                     <extracted-dir> <tag> <project> as root. There is no
+                     built-in rollback for a hook -- the command owns that.
+                     --dry-run and --wait apply to --all too; --project,
+                     --asset, --tag, --services, --if-new, and --no-rollback
+                     do not, since each hook names its own. See
+                     docs/operations/05-releases-and-deploy.md.
+  --deploy-config-dir DIR   where <name>.conf release-hook files are read
+                     from for --all (default: /etc/ck-git-hosting/deploy.d).
+                     The directory and every file read from it, including
+                     each command=, must be owned by root and inaccessible
+                     to any other user; a config or command that is not is
+                     skipped with a logged reason, never trusted.
 USAGE
 }
 
 deploy_dir_default=/var/lib/ck-git-hosting/deploy
+deploy_config_dir_default=/etc/ck-git-hosting/deploy.d
 config=/etc/ck-git-hosting/server.ini
 project=ck-git-hosting
 asset=packages
@@ -57,10 +78,12 @@ want_tag=''
 services=''
 services_explicit=0
 deploy_dir=''
+deploy_config_dir=''
 dry_run=0
 if_new=0
 wait_seconds=0
 rollback=1
+all_mode=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -70,10 +93,12 @@ while [ $# -gt 0 ]; do
     --tag) [ $# -ge 2 ] || { usage >&2; exit 2; }; want_tag=$2; shift 2 ;;
     --services) [ $# -ge 2 ] || { usage >&2; exit 2; }; services=$2; services_explicit=1; shift 2 ;;
     --deploy-dir) [ $# -ge 2 ] || { usage >&2; exit 2; }; deploy_dir=$2; shift 2 ;;
+    --deploy-config-dir) [ $# -ge 2 ] || { usage >&2; exit 2; }; deploy_config_dir=$2; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --if-new) if_new=1; shift ;;
     --wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; wait_seconds=$2; shift 2 ;;
     --no-rollback) rollback=0; shift ;;
+    --all) all_mode=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ck-git-hosting-deploy: unknown option $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -100,6 +125,204 @@ state_root=$(config_value state_root)
 [ -n "$state_root" ] || fail "state_root is not set in $config"
 http_port=$(config_value http_port)
 pages_http_port=$(config_value pages_http_port)
+
+# --all: every release hook is a config file naming a project, a set of tag
+# patterns, and a command to run as root against a verified, extracted
+# release -- with no built-in rollback, since only the command itself can
+# know what "healthy" means for an arbitrary project. Only a config, and
+# only a command, that root alone can read or write is ever trusted; find's
+# -perm /077 matches a path with any group- or other-accessible bit set,
+# portable across the GNU and BSD find this project already relies on
+# elsewhere (see has_mode() in tests/integration/install.sh).
+require_private_root_owned() {  # require_private_root_owned PATH KIND
+  hook_check_path=$1
+  hook_check_kind=$2
+  [ -e "$hook_check_path" ] || { log "$hook_check_kind not found: $hook_check_path"; return 1; }
+  [ "$(find "$hook_check_path" -maxdepth 0 -uid 0 2>/dev/null)" = "$hook_check_path" ] ||
+    { log "$hook_check_kind is not root-owned, refusing: $hook_check_path"; return 1; }
+  [ -z "$(find "$hook_check_path" -maxdepth 0 -perm /077 2>/dev/null)" ] ||
+    { log "$hook_check_kind must not be accessible to group or other, refusing: $hook_check_path"; return 1; }
+}
+
+# Runs one release hook. Never fails the whole --all pass on its own: a
+# problem with one hook is logged and skipped so the rest still run.
+run_one_hook() {  # run_one_hook CONF_PATH
+  hook_conf=$1
+  hook_name=$(basename "$hook_conf" .conf)
+  require_private_root_owned "$hook_conf" "release-hook config" || return 1
+
+  hook_value() { sed -n "s/^$1=//p" "$hook_conf" | head -n1; }
+  hook_project=$(hook_value project)
+  hook_asset=$(hook_value asset)
+  hook_tags=$(hook_value tags)
+  hook_command=$(hook_value command)
+  hook_services=$(hook_value services)
+  hook_health_url=$(hook_value health_url)
+  hook_timeout=$(hook_value timeout_seconds)
+  hook_timeout=${hook_timeout:-300}
+
+  # project=/asset= become filesystem path components below; reject anything
+  # that could be a traversal or is simply missing, the same shape rule
+  # hosted project and CI artifact names already follow elsewhere.
+  case "$hook_project" in ''|.*|*/*) log "$hook_name: project= is missing or unsafe"; return 1 ;; esac
+  case "$hook_asset" in ''|.*|*/*) log "$hook_name: asset= is missing or unsafe"; return 1 ;; esac
+  [ -n "$hook_tags" ] || { log "$hook_name: tags= is required"; return 1; }
+  case "$hook_command" in
+    /*) ;;
+    *) log "$hook_name: command= must be an absolute path"; return 1 ;;
+  esac
+  case "$hook_timeout" in ''|*[!0-9]*) log "$hook_name: timeout_seconds must be a whole number of seconds"; return 1 ;; esac
+  require_private_root_owned "$hook_command" "release-hook command" || return 1
+  [ -x "$hook_command" ] || { log "$hook_name: command= is not executable: $hook_command"; return 1; }
+
+  hook_releases="$state_root/releases/$hook_project"
+  if [ ! -d "$hook_releases" ]; then
+    log "$hook_name: no releases found yet for project '$hook_project'"
+    return 0
+  fi
+
+  # Newest release whose tag matches one of the space-separated tags=
+  # patterns -- the same exact-name-or-trailing-'*' syntax .ckgit/ci.yml's
+  # own on.tags uses -- selected the same way the single-project flow picks
+  # a release: by the record's own created_epoch, ties broken by tag name.
+  hook_work=$(mktemp -d "${TMPDIR:-/var/tmp}/ckdeploy-hook.XXXXXX")
+  hook_candidates="$hook_work/candidates"
+  : >"$hook_candidates"
+  for hook_dir in "$hook_releases"/*/; do
+    [ -f "${hook_dir}release.ini" ] || continue
+    this_tag=$(basename "$hook_dir")
+    tag_matches=0
+    for pattern in $hook_tags; do
+      case "$pattern" in
+        *'*') prefix=${pattern%\*}; case "$this_tag" in "$prefix"*) tag_matches=1 ;; esac ;;
+        *) [ "$this_tag" = "$pattern" ] && tag_matches=1 ;;
+      esac
+    done
+    [ "$tag_matches" -eq 1 ] || continue
+    this_epoch=$(sed -n 's/^created_epoch=//p' "${hook_dir}release.ini" | head -n1)
+    case "$this_epoch" in ''|*[!0-9]*) continue ;; esac
+    printf '%s %s\n' "$this_epoch" "$this_tag" >>"$hook_candidates"
+  done
+  hook_tag=$(sort -k1,1nr -k2,2r "$hook_candidates" | head -n1 | cut -d' ' -f2- || true)
+  rm -rf "$hook_work"
+  if [ -z "$hook_tag" ]; then
+    log "$hook_name: no release of '$hook_project' matches tags=$hook_tags"
+    return 0
+  fi
+
+  hook_deployed_dir="$deploy_dir/$hook_name"
+  if [ "$hook_tag" = "$(cat "$hook_deployed_dir/deployed-tag" 2>/dev/null || echo)" ]; then
+    log "$hook_name: release $hook_tag is already recorded; nothing to do"
+    return 0
+  fi
+
+  hook_release_dir="$hook_releases/$hook_tag"
+  hook_commit=$(sed -n 's/^commit=//p' "$hook_release_dir/release.ini" | head -n1)
+
+  # Verify the asset's checksum from its own sidecar, exactly as the
+  # single-project flow does, before extracting anything or running command=.
+  hook_sidecar="$hook_release_dir/$hook_asset.ini"
+  hook_blob="$hook_release_dir/$hook_asset.tar"
+  [ -f "$hook_sidecar" ] || { log "$hook_name: release $hook_tag has no $hook_asset.ini sidecar"; return 1; }
+  hook_expected_sha256=$(sed -n 's/^sha256=//p' "$hook_sidecar" | head -n1)
+  case "$hook_expected_sha256" in
+    *[!0-9a-f]*|'') log "$hook_name: release $hook_tag: $hook_asset.ini has no usable sha256"; return 1 ;;
+  esac
+  [ "${#hook_expected_sha256}" -eq 64 ] || { log "$hook_name: release $hook_tag: $hook_asset.ini sha256 is malformed"; return 1; }
+  [ -f "$hook_blob" ] || { log "$hook_name: release $hook_tag has no $hook_asset.tar asset"; return 1; }
+  hook_actual_sha256=$(sha256sum "$hook_blob" | cut -d' ' -f1)
+  if [ "$hook_actual_sha256" != "$hook_expected_sha256" ]; then
+    log "$hook_name: release $hook_tag: $hook_asset.tar sha256 mismatch -- refusing to run its command"
+    return 1
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log "$hook_name: plan: extract $hook_blob, then run $hook_command <dir> $hook_tag $hook_project"
+    return 0
+  fi
+
+  hook_extracted=$(mktemp -d "${TMPDIR:-/var/tmp}/ckdeploy-hook.XXXXXX")
+  # Checked explicitly, not left to `set -e`: run_one_hook is always called
+  # as `run_one_hook ... || ...` so its own failures keep the --all loop
+  # going, but that same construct suspends -e for everything inside this
+  # function (POSIX: -e is ignored for a compound list's tested command) --
+  # an unextracted or partially extracted release must never reach command=.
+  if ! tar --no-same-owner --no-same-permissions -xf "$hook_blob" -C "$hook_extracted"; then
+    log "$hook_name: could not extract release $hook_tag's $hook_asset.tar"
+    rm -rf "$hook_extracted"
+    return 1
+  fi
+
+  log "$hook_name: running release $hook_tag ($hook_commit) through $hook_command"
+  hook_ok=1
+  if ! timeout "$hook_timeout" "$hook_command" "$hook_extracted" "$hook_tag" "$hook_project"; then
+    log "$hook_name: command exited non-zero for release $hook_tag"
+    hook_ok=0
+  fi
+  rm -rf "$hook_extracted"
+
+  if [ -n "$hook_services" ]; then
+    hook_tries=0
+    hook_settled=0
+    while [ "$hook_tries" -lt 15 ]; do
+      hook_settled=1
+      for service in $hook_services; do
+        systemctl is-active --quiet "$service.service" || hook_settled=0
+      done
+      [ "$hook_settled" -eq 1 ] && break
+      sleep 1
+      hook_tries=$((hook_tries + 1))
+    done
+    [ "$hook_settled" -eq 1 ] || { log "$hook_name: service(s) not active after the command ran: $hook_services"; hook_ok=0; }
+  fi
+  if [ -n "$hook_health_url" ]; then
+    hook_code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "$hook_health_url" 2>/dev/null || echo 000)
+    [ "$hook_code" = 200 ] || { log "$hook_name: health_url did not answer 200 (got $hook_code)"; hook_ok=0; }
+  fi
+
+  # Recorded either way: a hook runs once per release and is not retried
+  # automatically, success or not -- the command owns retry semantics, the
+  # same way it owns rollback. An administrator can always re-run by hand or
+  # clear $hook_deployed_dir/deployed-tag to force a retry.
+  mkdir -p "$hook_deployed_dir"
+  printf '%s\n' "$hook_tag" >"$hook_deployed_dir/deployed-tag"
+  if [ "$hook_ok" -eq 1 ]; then
+    log "$hook_name: release $hook_tag OK"
+    return 0
+  fi
+  log "$hook_name: release $hook_tag ran with problems; see above (no generic rollback -- the command owns that)"
+  return 1
+}
+
+run_all_mode() {
+  deploy_config_dir=${deploy_config_dir:-$deploy_config_dir_default}
+  if [ ! -d "$deploy_config_dir" ]; then
+    log "no release-hook configs under $deploy_config_dir; nothing to do"
+    return 0
+  fi
+  require_private_root_owned "$deploy_config_dir" "release-hook config directory" ||
+    fail "refusing to read $deploy_config_dir"
+  deploy_dir=${deploy_dir:-$deploy_dir_default}
+  waited=0
+  while [ -n "$(ls -A "$state_root/ci/working" 2>/dev/null || true)" ]; do
+    if [ "$waited" -ge "$wait_seconds" ]; then
+      fail "a CI build is running; re-run once the runner is idle, or pass --wait SECONDS"
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  hooks_status=0
+  for hook_conf in "$deploy_config_dir"/*.conf; do
+    [ -e "$hook_conf" ] || continue  # the glob matched nothing
+    run_one_hook "$hook_conf" || hooks_status=1
+  done
+  return "$hooks_status"
+}
+
+if [ "$all_mode" -eq 1 ]; then
+  run_all_mode
+  exit $?
+fi
 
 if [ "$services_explicit" -eq 0 ]; then
   services="ck-git-hosting ck-ci-runner"

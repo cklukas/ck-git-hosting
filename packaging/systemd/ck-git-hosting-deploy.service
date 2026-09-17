@@ -1,27 +1,36 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 #
-# Runs ck-git-hosting-deploy once. Installed and staged by the installer and
-# the package alike, but never enabled by either — see the .timer unit in
-# this same directory for the explicit opt-in. --if-new makes a run with
-# nothing new to deploy exit 0 quietly, so an enabled timer's normal
-# activation produces no noise; --wait defers to a CI build already in
-# progress instead of refusing outright.
+# Runs ck-git-hosting-deploy, then ck-git-hosting-deploy --all. Installed and
+# staged by the installer and the package alike, but never enabled by
+# either — see the .timer unit in this same directory for the explicit
+# opt-in. --if-new makes the first run exit 0 quietly when there is nothing
+# new to deploy; --wait defers to a CI build already in progress instead of
+# refusing outright. The two ExecStart= lines are deliberately not chained
+# with "-": if the first (ck-git-hosting's own deploy) fails, the second
+# (every configured release hook, see deploy.d/ and --all --help) does not
+# run in that cycle either. This keeps the plain, visible "systemctl status"
+# failure this unit is meant to have (see docs/operations/05-releases-and-
+# deploy.md) instead of quietly downgrading a real problem to a journal
+# line; the next cycle, ten minutes later, tries both again.
 #
 # Trust boundary (see docs/operations/05-releases-and-deploy.md): whoever can
-# push a matching tag to the CI-enabled project this deploys from can put an
-# arbitrary package in front of root the next time this runs. There is no
-# per-ref or per-device access control beyond ordinary Git push access to
-# that one project. This is a deliberate, contained trade-off, not an
-# oversight -- the same trust already implied by giving someone push access
-# to a project whose CI output you install as root. Enable the .timer only
-# for a project whose pushers you would already trust with root on this
-# machine; keep this command manual (its default state) for any project with
-# a wider or less trusted set of pushers than that.
+# push a matching tag to a CI-enabled project this deploys from -- directly,
+# or through a release hook configured under deploy.d/ -- can put an
+# arbitrary package, or run an arbitrary command, in front of root the next
+# time this runs. There is no per-ref or per-device access control beyond
+# ordinary Git push access to that one project. This is a deliberate,
+# contained trade-off, not an oversight -- the same trust already implied by
+# giving someone push access to a project whose CI output you install or run
+# as root. Enable the .timer only for a project (or a set of hooked
+# projects) whose pushers you would already trust with root on this machine;
+# keep this command manual (its default state) for any project with a wider
+# or less trusted set of pushers than that.
 #
-# This runs as root with intentionally light hardening: dpkg, systemctl, and
-# a health-check curl each need broad filesystem and network access that
-# ProtectSystem=strict or a syscall allow-list would fight rather than help.
+# This runs as root with intentionally light hardening: dpkg, systemctl, a
+# health-check curl, and an administrator's own configured hook commands each
+# need broad filesystem and network access that ProtectSystem=strict or a
+# syscall allow-list would fight rather than help.
 
 [Unit]
 Description=ck-git-hosting self-hosted release deploy
@@ -30,7 +39,10 @@ ConditionPathExists=/etc/ck-git-hosting/server.ini
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/ck-git-hosting-deploy --if-new --wait 600 --config /etc/ck-git-hosting/server.ini
-TimeoutStartSec=900
+ExecStart=/usr/bin/ck-git-hosting-deploy --all --wait 600 --config /etc/ck-git-hosting/server.ini
+# Two --wait 600 invocations in sequence, plus the actual install/hook work
+# on top of each: generous enough that neither is ever cut off mid-run.
+TimeoutStartSec=1800
 UMask=0077
 Environment=LANG=C
 

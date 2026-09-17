@@ -173,6 +173,78 @@ ck-git-hosting-deploy.timer`) returns to the fully manual default without
 uninstalling anything. Uninstalling (`packaging/uninstall.sh`, or removing
 the package) disables and removes both units unconditionally.
 
+## Deploying your own project
+
+Everything above deploys `ck-git-hosting` itself. To deploy *your* project's
+own tag build the same way -- verified, then handed to a command you write --
+add a **release hook**: a config file under `/etc/ck-git-hosting/deploy.d/`
+naming your project, which releases to act on, and a command to run against
+each one. `ck-git-hosting-deploy --all` runs every configured hook; it is the
+second of the two commands the deploy timer already runs each cycle (see
+[Automatic deployment](#automatic-deployment) above), so enabling that one
+timer covers both ck-git-hosting's own deploy and every hook you configure.
+
+Copy the shipped template and edit it for your project:
+
+```text
+sudo cp /etc/ck-git-hosting/deploy.d/ck-git-hosting.conf.example \
+        /etc/ck-git-hosting/deploy.d/myapp.conf
+sudo chown root:root /etc/ck-git-hosting/deploy.d/myapp.conf
+sudo chmod 0600 /etc/ck-git-hosting/deploy.d/myapp.conf
+sudo "$EDITOR" /etc/ck-git-hosting/deploy.d/myapp.conf
+```
+
+A hook config is `key=value`, one per line:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `project` | yes | the hosted project whose releases to watch |
+| `asset` | yes | the release asset (`artifacts: name` in its `.ckgit/ci.yml`) to fetch |
+| `tags` | yes | space-separated tag patterns to act on -- the same exact-name-or-trailing-`*` syntax as `.ckgit/ci.yml`'s own `on.tags` |
+| `command` | yes | an absolute path to the command to run |
+| `services` | no | space-separated systemd unit basenames to health-check (active, within about 15 seconds) after `command` runs |
+| `health_url` | no | a URL that must answer HTTP 200 after `command` runs |
+| `timeout_seconds` | no | wall-clock budget for `command` itself (default 300) |
+
+For each hook, `--all` selects the newest release of `project` whose tag
+matches one of the `tags` patterns and is not already recorded as run for
+that hook, verifies its asset's checksum from its own sidecar exactly as the
+built-in deploy does, extracts it, and runs:
+
+```text
+command EXTRACTED-DIR TAG PROJECT
+```
+
+**There is no built-in rollback for a hook** -- `command` owns that,
+the same way it owns everything else about what "deployed" means for your
+project (installing a binary, restarting a service, writing files
+somewhere, or nothing filesystem-related at all). `services`/`health_url`
+are optional conveniences that only report a problem; `--all` never retries
+or reverts on your behalf. A hook runs at most once per release, success or
+not; an administrator who wants to force a retry removes
+`/var/lib/ck-git-hosting/deploy/<name>/deployed-tag` (`<name>` is the config's
+own filename without `.conf`) by hand.
+
+**The security boundary is stricter here than the trust boundary above
+already implies**, because a hook config *names an arbitrary command* rather
+than always running the one audited `dpkg -i`: `/etc/ck-git-hosting/deploy.d/`
+itself, every `*.conf` file read from it, and every file a `command=` points
+at must be owned by root and have no permission bits set for group or other
+(`0700`/`0600`, or tighter) -- checked fresh before every run, not just once.
+A directory, config, or command that fails this check is never read or run;
+the whole `--all` pass refuses outright if the directory itself fails it,
+and an individual misconfigured hook is skipped (with the reason logged) so
+one bad config does not stop every other hook's project from deploying.
+This means only root -- not the `ckgit` service account, not any other user
+-- can ever define what `--all` runs, which is exactly the same authority
+installing your own hook already requires.
+
+`ck-git-hosting-deploy.service`'s own two-step design (the built-in deploy,
+then `--all`) means the second step does not run in a cycle where the first
+one fails -- see that unit's header comment. Run `sudo ck-git-hosting-deploy
+--all --dry-run` by hand any time to preview what the next cycle would do
+without waiting for the timer or for the built-in deploy to succeed first.
+
 ## Upgrade notes
 
 `/etc/ck-git-hosting/server.ini` is a dpkg conffile, and `ck-git-hosting-deploy`

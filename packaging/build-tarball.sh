@@ -72,7 +72,7 @@ if [ "$client_only" -eq 0 ]; then
     install -m 0755 "$build_dir/bin/$binary" "$stage/bin/$binary"
   done
   [ -f "$build_dir/hooks/post-receive" ] || fail "missing $build_dir/hooks/post-receive"
-  install -d -m 0755 "$stage/hooks" "$stage/packaging/systemd"
+  install -d -m 0755 "$stage/hooks" "$stage/packaging/systemd" "$stage/packaging/deploy.d"
   install -m 0755 "$build_dir/hooks/post-receive" "$stage/hooks/post-receive"
   install -m 0755 "$script_dir/install.sh" "$stage/packaging/install.sh"
   install -m 0755 "$script_dir/uninstall.sh" "$stage/packaging/uninstall.sh"
@@ -82,6 +82,7 @@ if [ "$client_only" -eq 0 ]; then
   install -m 0644 "$script_dir/systemd/ck-pages.service" "$stage/packaging/systemd/ck-pages.service"
   install -m 0644 "$script_dir/systemd/ck-git-hosting-deploy.service" "$stage/packaging/systemd/ck-git-hosting-deploy.service"
   install -m 0644 "$script_dir/systemd/ck-git-hosting-deploy.timer" "$stage/packaging/systemd/ck-git-hosting-deploy.timer"
+  install -m 0644 "$script_dir/deploy.d/ck-git-hosting.conf.example" "$stage/packaging/deploy.d/ck-git-hosting.conf.example"
 fi
 install -m 0644 "$source_root/README.md" "$stage/README.md"
 install -m 0644 "$source_root/VERSION" "$stage/VERSION"

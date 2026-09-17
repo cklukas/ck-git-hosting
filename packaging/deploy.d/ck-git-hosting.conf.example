@@ -1,0 +1,36 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Example release-hook config for `ck-git-hosting-deploy --all`. This file
+# ends in .example and is never read by --all itself -- only a *.conf file
+# under this directory is. It uses ck-git-hosting's own release purely as a
+# familiar, concrete illustration of the format; do NOT copy this to
+# ck-git-hosting.conf to deploy ck-git-hosting itself. ck-git-hosting's own
+# deploy already runs automatically as the first step of the same timer
+# --all runs as the second step of (see ck-git-hosting-deploy.service), with
+# a health check and automatic rollback this generic mechanism does not
+# have. Copy this file (renamed, with real values) to deploy YOUR project
+# instead -- see "Deploying your own project" in
+# docs/operations/05-releases-and-deploy.md.
+#
+# This directory and every file read from it, including command= below,
+# must be owned by root and inaccessible to any other user (mode 0700 or
+# tighter); ck-git-hosting-deploy checks this before every run and skips,
+# rather than trusts, anything that is not.
+#
+# Required:
+project=ck-git-hosting
+asset=packages
+tags=v*
+# command= must be an absolute path to a command YOU write and secure the
+# same way (root-owned, mode 0700 or tighter). It is run as:
+#   command <extracted-release-dir> <tag> <project>
+# and is responsible for everything from there: installing or deploying
+# whatever the release contains, and its own retry or rollback strategy if
+# it needs one -- ck-git-hosting-deploy applies none on a hook's behalf.
+command=/usr/local/sbin/example-install-command
+#
+# Optional:
+# services=my-app.service
+# health_url=http://127.0.0.1:8080/
+# timeout_seconds=300

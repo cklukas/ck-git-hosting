@@ -107,6 +107,10 @@ deploy_unit_source="$script_dir/systemd/ck-git-hosting-deploy.service"
 deploy_timer_path="$unit_dir/ck-git-hosting-deploy.timer"
 deploy_timer_source="$script_dir/systemd/ck-git-hosting-deploy.timer"
 [ -f "$deploy_timer_source" ] || fail "missing unit template: $deploy_timer_source"
+deploy_config_dir="$etc_dir/deploy.d"
+deploy_example_path="$deploy_config_dir/ck-git-hosting.conf.example"
+deploy_example_source="$script_dir/deploy.d/ck-git-hosting.conf.example"
+[ -f "$deploy_example_source" ] || fail "missing example: $deploy_example_source"
 
 as_root=0
 [ -z "$staging" ] && [ "$(id -u)" -eq 0 ] && as_root=1
@@ -259,6 +263,11 @@ steps() {
   # separate, explicit step an administrator takes deliberately.
   act "install $deploy_unit_path (root:root 0644)" install_file 0644 root root "$deploy_unit_source" "$deploy_unit_path"
   act "install $deploy_timer_path (root:root 0644)" install_file 0644 root root "$deploy_timer_source" "$deploy_timer_path"
+  # 0700, root:root: ck-git-hosting-deploy --all refuses to read this
+  # directory, or anything in it, unless it is exactly this private -- see
+  # its own --deploy-config-dir help text.
+  act "create $deploy_config_dir (root:root 0700)" install_dir 0700 root root "$deploy_config_dir"
+  act "install $deploy_example_path (root:root 0600)" install_file 0600 root root "$deploy_example_source" "$deploy_example_path"
   if [ -z "$staging" ] && [ "$configure_service" -eq 1 ]; then
     act 'systemctl daemon-reload' systemctl daemon-reload
     act 'systemctl enable --now ck-git-hosting.service' systemctl enable --now ck-git-hosting.service

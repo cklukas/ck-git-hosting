@@ -142,5 +142,36 @@ fi
 
 # --help works offline, without --config or root.
 "$deploy" --help >/dev/null
+"$deploy" --help | grep -q -- '--all' || fail "--help does not document --all"
+
+# --all: release hooks for other projects, configured under a deploy.d
+# directory (see docs/operations/05-releases-and-deploy.md, "Deploying your
+# own project"). The one part of --all reachable without root is its
+# security gate: deploy.d and every file it reads (each *.conf, and every
+# command= it names) must be root-owned and inaccessible to any other user,
+# checked with `find -perm /077` before anything in it is trusted. A
+# workstation test cannot fabricate a genuinely root-owned fixture, so a
+# hook's own selection, checksum verification, and command execution --
+# including "ran once, not again on the next --all, and again after a newer
+# release appears" -- is verified by hand on the Lima VM instead (see
+# docs/planning/12-ci-cd-work-packages.md's WP11 notes).
+hook_dir="$test_root/deploy.d"
+mkdir -p "$hook_dir"
+cat >"$hook_dir/other.conf" <<'HOOKCONF'
+project=demo
+asset=packages
+tags=v*
+command=/bin/true
+HOOKCONF
+if "$deploy" --all --dry-run --config "$config" --deploy-config-dir "$hook_dir" \
+    >"$test_root/hooks-insecure.out" 2>&1; then
+  fail "--all accepted a release-hook directory not owned by root"
+fi
+grep -qi 'not root-owned' "$test_root/hooks-insecure.out" ||
+  fail "the refusal does not explain the ownership requirement"
+
+# A deploy.d that does not exist yet is not an error -- nothing configured.
+out=$("$deploy" --all --dry-run --config "$config" --deploy-config-dir "$test_root/no-such-deploy.d")
+printf '%s\n' "$out" | grep -qi 'nothing to do' || fail "--all did not report an absent deploy.d as nothing to do"
 
 echo "deploy command integration OK"
