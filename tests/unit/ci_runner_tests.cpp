@@ -114,6 +114,27 @@ std::string thisExecutablePath() {
 #endif
 }
 
+// Prefixes every line of `text` (assumed to already end in a newline) with
+// `indent` spaces, so a multi-line shell script can be embedded as a `|`
+// block-literal scalar in a workflow string built in C++, without juggling
+// nested YAML/shell quoting for a script that itself contains quotes or
+// interpolates absolute paths.
+std::string indentBlock(const std::string& text, std::size_t indent) {
+  const std::string prefix(indent, ' ');
+  std::string out;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t newline = text.find('\n', start);
+    const std::size_t end = newline == std::string::npos ? text.size() : newline;
+    out += prefix;
+    out.append(text, start, end - start);
+    out += '\n';
+    if (newline == std::string::npos) break;
+    start = newline + 1;
+  }
+  return out;
+}
+
 void testSuccess() {
   RunnerFixture fixture;
   const std::string id = fixture.commit(
@@ -218,6 +239,100 @@ void testLoopbackInsideSandbox() {
           "a step reaches loopback with the LAN denied (namespaces_available=" +
               std::string(sandbox.namespaces_available ? "true" : "false") +
               ", loopback_available=" + std::string(sandbox.loopback_available ? "true" : "false") + ")");
+}
+
+// D6/WP3: a step must not be able to see or write the service tree directly
+// by absolute path — the private state root, the CI build root (other runs'
+// scratch), and another project's cache — only its own checkout and its own
+// declared cache. Each marker file below is planted outside anything this
+// workflow references; if masking works, every `test ! -e` holds and the
+// step (and so the run) succeeds, and if D6 regresses, one of them is
+// visible again and the run fails. Meaningless without a real mount
+// namespace (degraded mode never attempts any masking at all, so the
+// markers would trivially still be visible there), so it is skipped rather
+// than asserted in that case.
+void testServiceTreeMasked() {
+  RunnerFixture fixture;
+  // Directly under state_root, not under state_root/ci/...: that subtree is
+  // the runner's own (spool, runs, projects), which requires every directory
+  // in it to be private (0700) -- a marker planted there under an ordinary
+  // mkdir would collide with that check rather than testing masking.
+  const std::filesystem::path state_marker = fixture.state / "marker";
+  { std::ofstream(state_marker) << "secret"; }
+  std::filesystem::create_directories(fixture.build);
+  const std::filesystem::path build_marker = fixture.build / "marker";
+  { std::ofstream(build_marker) << "secret"; }
+  const std::filesystem::path cache_root = fixture.root / "cache";
+  const std::filesystem::path other_cache_marker = cache_root / "other-project" / "ccache" / "marker";
+  std::filesystem::create_directories(other_cache_marker.parent_path());
+  { std::ofstream(other_cache_marker) << "secret"; }
+
+  const std::string script = "test ! -e \"" + state_marker.string() +
+                             "\"\n"
+                             "test ! -e \"" +
+                             build_marker.string() +
+                             "\"\n"
+                             "test ! -e \"" +
+                             other_cache_marker.string() +
+                             "\"\n"
+                             "test -d /mnt/src\n"
+                             "echo mask-ok\n";
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - script: |\n" +
+      indentBlock(script, 10));
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.cache_root = cache_root;  // exercises the hide list's cache_root entry too
+  ckgit::CiSandboxReport sandbox;
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts, &sandbox);
+  if (!sandbox.namespaces_available) return;  // degraded mode: no masking is attempted at all
+  require(record.status == ckgit::CiRunStatus::Success,
+          "the service tree is masked inside a step (filesystem_masked=" +
+              std::string(sandbox.filesystem_masked ? "true" : "false") + ", detail=" + record.detail + ")");
+}
+
+// D6/WP3: a persistent cache must still land at, and be readable back from,
+// its real cache_root/<project>/<name> path on the host — proving the bind
+// enterSandbox establishes actually carries writes through, not just that
+// the fixed CKGIT_CACHE_CCACHE path resolves to *something*. A second,
+// separate run then reads the same content back through the same fixed
+// path, proving persistence across runs, not merely within one run's scratch.
+void testCacheStillPersists() {
+  RunnerFixture fixture;
+  const std::filesystem::path cache_root = fixture.root / "cache";
+  const std::string write_id = fixture.commit(
+      "version: 1\n"
+      "cache:\n"
+      "  - ccache\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - script: |\n" +
+      indentBlock("printf ok > \"$CKGIT_CACHE_CCACHE/marker\"\n", 10));
+  ckgit::CiRunnerOptions write_opts = fixture.options(write_id);
+  write_opts.cache_root = cache_root;
+  const ckgit::CiRunRecord first = ckgit::runCiWorkflow(write_opts);
+  require(first.status == ckgit::CiRunStatus::Success, "a step can write to its persistent cache");
+  const std::filesystem::path persisted = cache_root / "demo" / "ccache" / "marker";
+  require(readFile(persisted) == "ok", "the write landed at the real, persistent cache_root path");
+
+  const std::string read_id = fixture.commit(
+      "version: 1\n"
+      "cache:\n"
+      "  - ccache\n"
+      "jobs:\n"
+      "  - name: check\n"
+      "    steps:\n"
+      "      - script: |\n" +
+      indentBlock("test \"$(cat \"$CKGIT_CACHE_CCACHE/marker\")\" = ok\n", 10));
+  ckgit::CiRunnerOptions read_opts = fixture.options(read_id);
+  read_opts.cache_root = cache_root;
+  const ckgit::CiRunRecord second = ckgit::runCiWorkflow(read_opts);
+  require(second.status == ckgit::CiRunStatus::Success,
+          "a separate run reads back the same cache content through the same fixed path");
 }
 
 void testSkippedWithoutWorkflow() {
@@ -454,6 +569,8 @@ void testCiRunner() {
   testTimeout();
   testOutputCap();
   testLoopbackInsideSandbox();
+  testServiceTreeMasked();
+  testCacheStillPersists();
   testSkippedWithoutWorkflow();
   testBranchTrigger();
   testDefaultBranchTrigger();

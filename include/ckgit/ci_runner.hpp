@@ -74,11 +74,19 @@ struct CiRunnerOptions {
 // reachable (a step's own local server or test fixture) while the LAN remains
 // denied; loopback_available reports whether that succeeded, and is true
 // unconditionally when no isolated namespace was created (loopback then simply
-// is the host's).
+// is the host's). When the mount namespace is available, the runner also
+// covers the service tree — the state root, the CI build root, the cache
+// root, Pages, and the bare-repository root — with a private tmpfs at each
+// real path, so a step can see and write only its own checkout and its own
+// declared cache; filesystem_masked reports whether that mounting actually
+// took effect (a kernel or LSM could silently refuse it), and like
+// loopback_available is meaningless (left false) when no mount namespace was
+// created at all.
 struct CiSandboxReport {
   bool namespaces_available = false;
   bool network_isolated = false;
   bool loopback_available = false;
+  bool filesystem_masked = false;
 };
 
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result

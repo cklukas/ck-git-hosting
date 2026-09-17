@@ -173,13 +173,15 @@ jobs:
 Each sister is a read-only snapshot from its own hosted project, placed beside
 the checkout, so a build finds `../ckmath` (or `$CKGIT_SISTER_CKMATH`) with no
 network and no submodules. The cache is a directory private to this project,
-owned by the runner account — the one place besides the scratch a step can
-write — exported here as both `CKGIT_CACHE_CCACHE` and `CCACHE_DIR`. Because
-every run executes at the same fixed path, ccache's stored objects stay valid
-from one run to the next: the first build fills the store and later builds
-recompile only what changed. Install `ccache` on the runner host and set
-`ci_cache_root` for the store to persist; leave `ci_cache_root` unset and the
-same workflow still runs, just without cross-run reuse. The store's size is the
+owned by the runner account — on Linux, with the service tree masked (see
+[below](#the-sandbox-and-its-requirements)), the checkout and this project's
+own declared caches are the only places a step can write — exported here as
+both `CKGIT_CACHE_CCACHE` and `CCACHE_DIR`. Because every run executes at the
+same fixed path, ccache's stored objects stay valid from one run to the next:
+the first build fills the store and later builds recompile only what changed.
+Install `ccache` on the runner host and set `ci_cache_root` for the store to
+persist; leave `ci_cache_root` unset and the same workflow still runs, just
+without cross-run reuse. The store's size is the
 tool's to manage (`CCACHE_MAXSIZE` above).
 
 ## Build artifacts and retention
@@ -363,25 +365,40 @@ content. On a trusted-committer LAN this is the accepted trade.
 
 ## The sandbox and its requirements
 
-Each step runs with a wall-clock timeout, an output-size cap, resource limits, a
-scrubbed environment, and a scratch-only working directory. On Linux it is
-additionally placed in its own user, mount, and network namespace, so it has no
-network beyond loopback unless `ci_allow_network=true`, and cannot see or change
-the host's mounts.
+Each step runs with a wall-clock timeout, an output-size cap, a scrubbed
+environment, and no core dumps or single file over 4 GiB (`RLIMIT_CORE` and
+`RLIMIT_FSIZE`; the timeout and output cap are the operative bounds on CPU and
+memory use, not a `setrlimit` on either). On Linux it is additionally placed in
+its own user, mount, and network namespace: it has no network beyond loopback
+unless `ci_allow_network=true`, and cannot see the host's mount table.
 
-The network and mount isolation needs **unprivileged user namespaces** enabled
-on the host. On Debian they are on by default; confirm with:
+On Linux the mount namespace also **masks the service tree**: the private
+state root, the CI build root (other runs' scratch), the cache root (other
+projects' caches), Pages, and the bare-repository root are each covered with
+an empty, private `tmpfs`, so a step can see and write only its own checkout
+and its own declared caches — not the CI spool or run records, not another
+project's release or cache, not the repositories directly (a `sisters` entry
+is the sanctioned, read-only way to reach another hosted project's source).
+
+The network and mount isolation, and the masking above, need **unprivileged
+user namespaces** enabled on the host. On Debian they are on by default;
+confirm with:
 
 ```text
 sysctl kernel.unprivileged_userns_clone   # 1 means enabled (if the key exists)
 cat /proc/sys/user/max_user_namespaces    # a non-zero value
 ```
 
-If they are disabled, the runner still enforces the timeout, output cap,
-resource limits, and scratch directory, but logs a warning that steps run
-without network and mount isolation. Enable user namespaces, or do not enable CI
-for untrusted work, if that isolation matters to you. macOS builds of the runner
-always operate in this degraded mode; run production CI on Linux.
+If they are disabled, the runner still enforces the timeout, output cap, and
+rlimits, and the working directory is still the scratch checkout, but there is
+no network or mount isolation at all: a step then sees the whole host
+filesystem exactly as the runner account does, and `ck-ci-runnerd` logs a
+warning to that effect. When namespaces are available but the mount masking
+itself could not be established (a restrictive LSM, say), a separate warning
+names that specifically, since the namespace warning above does not fire in
+that case. Enable user namespaces, or do not enable CI for untrusted work, if
+that isolation matters to you. macOS builds of the runner always operate in
+this degraded mode; run production CI on Linux.
 
 ## Operate the service
 

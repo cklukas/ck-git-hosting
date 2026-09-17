@@ -52,6 +52,30 @@ namespace {
 // FHS temporary-mount directory and always exists on the target.
 const std::filesystem::path kSandboxRoot = "/mnt";
 
+// D6/WP3: what enterSandbox exposes and hides inside a step's mount
+// namespace, beyond the scratch-at-kSandboxRoot bind it always does. Computed
+// once per run (not per step, though it is applied fresh in every step's own
+// namespace), so a step cannot see or write the CI spool, other projects'
+// releases, Pages, other projects' caches, or the bare repositories directly
+// — the point of D6: with only the scratch bind, none of that was actually
+// true, since a step could still reach every one of those by absolute path.
+struct SandboxMounts {
+  // Real host path -> path relative to the scratch root where enterSandbox
+  // must bind it before the scratch itself is bound to kSandboxRoot, so a
+  // persistent cache still appears at the same fixed path
+  // (kSandboxRoot/.cache/<name>) on every run regardless of where it
+  // physically lives. Only persistent (cache_root-backed) caches need an
+  // entry here: an ephemeral cache already lives inside the scratch tree and
+  // is carried across by the scratch bind alone.
+  std::vector<std::pair<std::filesystem::path, std::filesystem::path>> cache_binds;
+  // Absolute host paths to cover with an empty, private tmpfs after the
+  // scratch (and cache) binds are established. Order does not matter to the
+  // caller; enterSandbox covers the longest paths first so a root nested
+  // beneath another configured root is masked before its parent, and a path
+  // that does not exist is silently skipped.
+  std::vector<std::filesystem::path> hide;
+};
+
 std::uint64_t nowEpoch() {
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
@@ -228,7 +252,8 @@ bool bringUpLoopback() {
 // In the freshly forked child: enter unprivileged user, mount, and (unless
 // allowed) network namespaces, so the step has no network and cannot see the
 // host mount table. Returns false if the kernel denies unprivileged namespaces.
-bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source) {
+bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
+                  const SandboxMounts& mounts) {
   const uid_t uid = ::getuid();
   const gid_t gid = ::getgid();
   int flags = CLONE_NEWUSER | CLONE_NEWNS;
@@ -245,12 +270,44 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source) 
   if (!allow_network) bringUpLoopback();
   // Keep our mount changes from propagating back to the host namespace.
   ::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
-  // Present the scratch tree at one fixed path (kSandboxRoot). The bind lives
-  // only in this namespace: it never touches the host and is gone when the step
-  // exits. With the same privileges that carried the unshare it does not fail
-  // in practice; the caller runs the step with kSandboxRoot as its cwd.
   if (!bind_source.empty()) {
+    // Bind each persistent cache into the scratch tree at its fixed relative
+    // location first, so it is carried into kSandboxRoot by the whole-scratch
+    // bind right below — the same fixed path (kSandboxRoot/.cache/<name>) on
+    // every run, whether or not the cache is actually persistent.
+    for (const auto& [real, relative] : mounts.cache_binds) {
+      const std::filesystem::path target = bind_source / relative;
+      // Already created by provisionCaches in the parent; defensive here.
+      std::error_code error;
+      std::filesystem::create_directories(target, error);
+      ::mount(real.c_str(), target.c_str(), nullptr, MS_BIND | MS_REC, nullptr);
+    }
+    // Present the scratch tree at one fixed path (kSandboxRoot). The bind
+    // lives only in this namespace: it never touches the host and is gone
+    // when the step exits. With the same privileges that carried the unshare
+    // it does not fail in practice; the caller runs the step with
+    // kSandboxRoot as its cwd.
     ::mount(bind_source.c_str(), kSandboxRoot.c_str(), nullptr, MS_BIND | MS_REC, nullptr);
+  }
+  // Cover the service tree — the state root, the CI scratch parent, the
+  // cache root, Pages, and the bare-repository root — with an empty, private
+  // tmpfs at each real absolute path, so a step cannot read or write any of
+  // it directly, only through the sanctioned channels above (its own
+  // checkout, sisters, its own cache). Longest path first, so a root nested
+  // under another configured root is covered before its parent; a bind
+  // established above (the scratch itself living under the CI build root, or
+  // a persistent cache living under the cache root) keeps working after its
+  // source is covered, because a bind mount is resolved once, at the point it
+  // is established, not by the path string afterward.
+  std::vector<std::filesystem::path> hide = mounts.hide;
+  std::sort(hide.begin(), hide.end(), [](const std::filesystem::path& a, const std::filesystem::path& b) {
+    return a.native().size() > b.native().size();
+  });
+  for (const std::filesystem::path& path : hide) {
+    if (path.empty()) continue;
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) continue;
+    ::mount("tmpfs", path.c_str(), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=65536");
   }
   return true;
 }
@@ -291,10 +348,60 @@ bool probeLoopback() {
   }
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+
+// D6/WP3: whether an unprivileged mount namespace here can actually create a
+// tmpfs mount and have it take effect — the mechanism enterSandbox uses to
+// cover the service tree. Probed generically (its own throwaway directory,
+// not any real run's paths) once per run, the same way probeUserNamespaces
+// checks namespace creation and probeLoopback checks loopback: a kernel or
+// LSM that silently refuses this would otherwise leave every hide/cache_binds
+// mount in enterSandbox a harmless no-op, and a step would see the real,
+// unmasked service tree with nothing to say so.
+bool probeFilesystemMask() {
+  char pattern[] = "/tmp/ckgit-mask-probe-XXXXXX";
+  if (::mkdtemp(pattern) == nullptr) return false;
+  const std::string probe_dir = pattern;
+  const std::string sentinel = probe_dir + "/sentinel";
+  const int sentinel_fd = ::open(sentinel.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (sentinel_fd >= 0) {
+    const ssize_t written = ::write(sentinel_fd, "x", 1);
+    ::close(sentinel_fd);
+    (void)written;
+  }
+  const pid_t pid = ::fork();
+  if (pid < 0) {
+    std::error_code error;
+    std::filesystem::remove_all(probe_dir, error);
+    return false;
+  }
+  if (pid == 0) {
+    if (::unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) _exit(1);
+    writeProcFile("/proc/self/setgroups", "deny");
+    writeProcFile("/proc/self/uid_map", "0 " + std::to_string(::getuid()) + " 1\n");
+    writeProcFile("/proc/self/gid_map", "0 " + std::to_string(::getgid()) + " 1\n");
+    if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) _exit(1);
+    if (::mount("tmpfs", probe_dir.c_str(), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=65536") != 0) {
+      _exit(1);
+    }
+    // The mount must actually take effect in this namespace: the sentinel
+    // written into probe_dir before the fork must now be hidden.
+    struct stat info {};
+    _exit(::stat(sentinel.c_str(), &info) == 0 ? 1 : 0);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  // The child's mount lived only in its own (now-exited) mount namespace; the
+  // parent's view of probe_dir, including the sentinel, was never touched.
+  std::error_code error;
+  std::filesystem::remove_all(probe_dir, error);
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 #else
-bool enterSandbox(bool, const std::filesystem::path&) { return false; }
+bool enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return false; }
 bool probeUserNamespaces(bool) { return false; }
 bool probeLoopback() { return false; }
+bool probeFilesystemMask() { return false; }
 #endif
 
 void applyRlimits() {
@@ -328,7 +435,7 @@ struct StepHooks {
 StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesystem::path& cwd,
                         const std::vector<std::string>& env, const CiRunnerOptions& options,
                         const std::filesystem::path& log_path, const std::filesystem::path& bind_source,
-                        const StepHooks& hooks) {
+                        const SandboxMounts& mounts, const StepHooks& hooks) {
   StepOutcome outcome;
   int pipe_fd[2];
   if (::pipe(pipe_fd) != 0) {
@@ -354,7 +461,7 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     ::close(pipe_fd[0]);
     ::close(log);
     ::setpgid(0, 0);
-    enterSandbox(options.allow_network, bind_source);
+    enterSandbox(options.allow_network, bind_source, mounts);
     applyRlimits();
     const int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (devnull >= 0) {
@@ -666,36 +773,72 @@ std::string cacheEnvName(const std::string& name) {
   return out;
 }
 
-// Provisions each declared build cache and returns the environment pointing
-// steps at it. With a configured cache_root a cache persists across runs at
-// cache_root/<project>/<name>; without one it falls back to a scratch
-// directory (so the workflow still runs, only without persistence). The
-// directory is owned by the runner account — writable inside the sandbox,
-// which maps to that account — and exported as CKGIT_CACHE_<NAME> plus every
-// variable the cache binds (e.g. CCACHE_DIR).
-std::vector<std::string> provisionCaches(const CiWorkflow& workflow, const std::string& project,
-                                         const std::filesystem::path& cache_root,
-                                         const std::filesystem::path& scratch,
-                                         const std::filesystem::path& visible_root) {
+// The result of provisioning a workflow's declared caches: the environment
+// pointing steps at each one, plus (D6/WP3) the real-path -> scratch-relative
+// bind that enterSandbox must establish, each step, for a *persistent*
+// (cache_root-backed) cache under the Linux sandbox, so it still appears at
+// the same fixed path (visible_root/.cache/<name>) as an ephemeral one would.
+// Empty in degraded mode (no Linux sandbox at all) and for an ephemeral
+// cache, which is already inside the scratch tree the whole-scratch bind
+// carries across — see provisionCaches for exactly when an entry is added.
+struct CacheProvision {
   std::vector<std::string> env;
+  std::vector<std::pair<std::filesystem::path, std::filesystem::path>> mounts;
+};
+
+// Provisions each declared build cache. With a configured cache_root a cache
+// persists across runs at cache_root/<project>/<name>; without one it falls
+// back to a directory inside the scratch (so the workflow still runs, only
+// without persistence). Under the Linux sandbox a step always sees it at the
+// same fixed path — visible_root/.cache/<name> — so a workflow does not need
+// to know whether this server configured persistence; the directory is then,
+// together with the scratch checkout itself, the only place a step can write
+// (see the hide list built in runCiWorkflow). In degraded mode (no Linux
+// sandbox: no bind is available to redirect a fixed path to) a persistent
+// cache is exported at its real, persistent path directly instead.
+CacheProvision provisionCaches(const CiWorkflow& workflow, const std::string& project,
+                               const std::filesystem::path& cache_root,
+                               const std::filesystem::path& scratch,
+                               const std::filesystem::path& visible_root) {
+  // The scratch-at-kSandboxRoot bind (established in enterSandbox, per step)
+  // is what makes a fixed visible_root/.cache/<name> path meaningful. Without
+  // it -- degraded mode: no Linux sandbox at all, so visible_root is scratch
+  // itself -- a step runs directly in the real filesystem and there is no
+  // bind to redirect a persistent cache's fixed path to; it must be exported
+  // at its real, persistent path instead, exactly as before this cache also
+  // supported the fixed-path form.
+  const bool sandboxed = visible_root != scratch;
+  CacheProvision result;
   for (const CiCache& cache : workflow.caches) {
-    std::filesystem::path real;     // where it physically lives on the host
-    std::filesystem::path visible;  // where a step sees it
-    if (!cache_root.empty()) {
-      real = cache_root / project / cache.name;
-      visible = real;  // a persistent host path, visible in the sandbox as itself
-    } else {
-      real = scratch / ".cache" / cache.name;        // ephemeral, wiped with the run
-      visible = visible_root / ".cache" / cache.name;
-    }
+    const std::filesystem::path relative = std::filesystem::path(".cache") / cache.name;
+    std::filesystem::path visible;
     std::error_code error;
-    std::filesystem::create_directories(real, error);
-    if (error) throw std::runtime_error("could not create the cache '" + cache.name + "'");
+    if (!cache_root.empty()) {
+      const std::filesystem::path real = cache_root / project / cache.name;
+      std::filesystem::create_directories(real, error);
+      if (error) throw std::runtime_error("could not create the cache '" + cache.name + "'");
+      if (sandboxed) {
+        // A mount point for enterSandbox's bind, created empty here; its
+        // content comes from `real` only inside each step's own namespace.
+        // This is what makes a persistent cache appear at the same fixed
+        // path every run, exactly like an ephemeral one below.
+        std::filesystem::create_directories(scratch / relative, error);
+        if (error) throw std::runtime_error("could not create a mount point for cache '" + cache.name + "'");
+        result.mounts.emplace_back(real, relative);
+        visible = visible_root / relative;
+      } else {
+        visible = real;  // no bind is coming; the real path is the only path
+      }
+    } else {
+      std::filesystem::create_directories(scratch / relative, error);  // ephemeral, wiped with the run
+      if (error) throw std::runtime_error("could not create the cache '" + cache.name + "'");
+      visible = visible_root / relative;  // == scratch/relative in degraded mode: already correct
+    }
     const std::string path = visible.string();
-    env.push_back(cacheEnvName(cache.name) + "=" + path);
-    for (const std::string& var : cache.env) env.push_back(var + "=" + path);
+    result.env.push_back(cacheEnvName(cache.name) + "=" + path);
+    for (const std::string& var : cache.env) result.env.push_back(var + "=" + path);
   }
-  return env;
+  return result;
 }
 
 }  // namespace
@@ -726,6 +869,10 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // namespace (allow_network, or namespaces unavailable at all in degraded
   // mode) and its loopback trivially works, same as the host's.
   report.loopback_available = !report.network_isolated || probeLoopback();
+  // D6/WP3: the tmpfs/bind masking below is Linux-only, exactly like the
+  // namespaces it runs inside; there is nothing to probe when they are
+  // unavailable, since no masking mount is attempted at all in that case.
+  report.filesystem_masked = report.namespaces_available && probeFilesystemMask();
   if (sandbox != nullptr) *sandbox = report;
 
   const auto finish = [&](CiRunStatus status, const std::string& detail) -> CiRunRecord {
@@ -828,13 +975,33 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   }
   // Provision persistent build caches (a warm ccache store, say), which survive
   // across runs when the server configures a cache root.
+  CacheProvision cache_provision;
   try {
-    std::vector<std::string> cache_env =
-        provisionCaches(workflow, options.project_name, options.cache_root, scratch, visible_root);
-    sister_env.insert(sister_env.end(), cache_env.begin(), cache_env.end());
+    cache_provision = provisionCaches(workflow, options.project_name, options.cache_root, scratch, visible_root);
+    sister_env.insert(sister_env.end(), cache_provision.env.begin(), cache_provision.env.end());
   } catch (const std::exception& error) {
     return finish(CiRunStatus::Error, std::string("cache: ") + error.what());
   }
+
+  // D6/WP3: the service tree a step must never see or write directly,
+  // regardless of where the scratch physically lives — this is what makes the
+  // checkout and a declared cache "the only places a step can write" actually
+  // true, not just documented. Built once per run (not per step, though
+  // enterSandbox applies it fresh in every step's own namespace): the private
+  // state root (spool, run records, other projects' releases), the CI build
+  // root (sibling runs' scratch), the cache root (other projects' caches —
+  // this project's own is exempted via the bind above), Pages, and the
+  // bare-repository root (every hosted project's real Git data; sisters are
+  // the sanctioned, read-only, git-archived way to reach another one). Only
+  // non-empty, existing paths are included; enterSandbox silently skips the
+  // rest.
+  SandboxMounts sandbox_mounts;
+  sandbox_mounts.cache_binds = cache_provision.mounts;
+  for (const std::filesystem::path* candidate :
+       {&options.state_root, &options.build_root, &options.cache_root, &options.pages_root}) {
+    if (!candidate->empty()) sandbox_mounts.hide.push_back(*candidate);
+  }
+  if (!options.repository.empty()) sandbox_mounts.hide.push_back(options.repository.parent_path());
 
   // Liveness and cancellation share one small surface. writeProgress republishes
   // the run.ini (Running plus the steps finished so far) with a fresh heartbeat,
@@ -887,7 +1054,8 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       } else {
         argv = step.argv;
       }
-      const StepOutcome outcome = executeStep(argv, work_visible, env, options, log_path, bind_source, hooks);
+      const StepOutcome outcome =
+          executeStep(argv, work_visible, env, options, log_path, bind_source, sandbox_mounts, hooks);
       CiStepResult result;
       result.name = step.name.empty() ? job.name : step.name;
       result.exit_code = outcome.exit_code;

@@ -90,6 +90,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
 
   bool warned_degraded = false;
   bool warned_loopback = false;
+  bool warned_unmasked = false;
   while (g_stop == 0) {
     std::optional<ckgit::CiJobRequest> job;
     try {
@@ -150,6 +151,12 @@ int serve(const std::filesystem::path& config_path, bool once) {
         std::cerr << "ck-ci-runnerd: warning: could not bring up loopback inside the isolated network "
                      "namespace — steps cannot reach 127.0.0.1/::1\n";
         warned_loopback = true;
+      }
+      if (sandbox.namespaces_available && !sandbox.filesystem_masked && !warned_unmasked) {
+        std::cerr << "ck-ci-runnerd: warning: could not mask the service tree inside the mount "
+                     "namespace — steps may be able to read and write the state root, other "
+                     "projects' releases, and other projects' caches directly\n";
+        warned_unmasked = true;
       }
       std::cout << "ck-ci-runnerd: " << job->project_name << " " << record.run_id << " "
                 << ckgit::ciRunStatusName(record.status) << "\n";
@@ -244,6 +251,11 @@ int main(int argc, char** argv) {
     } else if (!sandbox.loopback_available) {
       std::cerr << "ck-ci-runnerd: warning: could not bring up loopback inside the isolated network "
                    "namespace — steps could not reach 127.0.0.1/::1\n";
+    }
+    if (sandbox.namespaces_available && !sandbox.filesystem_masked) {
+      std::cerr << "ck-ci-runnerd: warning: could not mask the service tree inside the mount "
+                   "namespace — steps may have been able to read and write the state root, other "
+                   "projects' releases, and other projects' caches directly\n";
     }
 
     std::cout << "run " << record.run_id << ": " << ckgit::ciRunStatusName(record.status);
