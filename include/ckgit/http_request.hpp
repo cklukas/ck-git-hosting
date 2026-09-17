@@ -18,6 +18,10 @@ struct HttpRequest {
   // read-only; the single mutating route (CI cancel) uses this to refuse a
   // cross-origin POST, since it carries no credentials to protect otherwise.
   std::string origin;
+  // The Last-Event-ID header, or empty. An SSE client sends it on reconnect so
+  // the log-stream endpoint can resume tailing from that byte offset instead of
+  // replaying the whole log.
+  std::string last_event_id;
 };
 
 // Parses the complete header block for the deliberately small, one-request

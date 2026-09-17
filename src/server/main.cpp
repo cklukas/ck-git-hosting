@@ -601,12 +601,14 @@ std::string generateNonce() {
 }
 
 // Streams one CI step's captured log to the client as Server-Sent Events: it
-// tails the file while that step is the run's currently-executing one and ends
-// with an `event: done` once the step completes or the run reaches a terminal
-// state. Runs inline on the calling worker (bounded by kMaxLogStreams) and never
-// throws; a failed send (the client went away) simply ends the stream.
+// tails only the newly appended bytes (from `start_offset`, which a reconnecting
+// client supplies via Last-Event-ID) while that step is the run's currently
+// executing one, and ends with an `event: done` once the step completes or the
+// run reaches a terminal state. Each event carries an `id:` byte offset so a
+// reconnect resumes exactly where it left off — no replay, no duplicates. Runs
+// inline on the calling worker (bounded by kMaxLogStreams) and never throws.
 void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& project,
-                 const std::string& run_id, std::size_t step) noexcept {
+                 const std::string& run_id, std::size_t step, std::uint64_t start_offset) noexcept {
   if (g_active_log_streams.fetch_add(1, std::memory_order_relaxed) >= kMaxLogStreams) {
     g_active_log_streams.fetch_sub(1, std::memory_order_relaxed);
     const std::string busy =
@@ -620,56 +622,92 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
   } release;
 
   const Deadline deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+  // `retry` sets the client's reconnect backoff; the opening comment flushes headers.
   if (!sendHttpBytes(descriptor,
                      "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n"
                      "X-Content-Type-Options: nosniff\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n"
-                     ": stream open\n\n",
+                     "retry: 2000\n: stream open\n\n",
                      deadline)) {
     return;
   }
 
-  const auto frame = [](std::string_view line) {
-    std::string clean;  // one SSE event per log line; no stray CR/LF can split a frame
-    clean.reserve(line.size());
+  const auto clean = [](std::string_view line) {
+    std::string out;  // one SSE event per log line; no stray CR/LF can split a frame
+    out.reserve(line.size());
     for (const char c : line) {
-      if (c != '\r' && c != '\n') clean += c;
+      if (c != '\r' && c != '\n') out += c;
     }
-    return "data: " + clean + "\n\n";
+    return out;
   };
 
-  std::size_t offset = 0;
-  std::string pending;
+  constexpr std::size_t kChunkBytes = 256 * 1024;
+  std::uint64_t offset = start_offset;   // next unread byte in the log file
+  std::uint64_t emitted = start_offset;  // bytes emitted as whole lines (the resume point)
+  std::string pending;                   // bytes read but not yet ending in a newline
+
+  // Appends the log's growth since `offset` into `pending`; returns the number of
+  // bytes read (0 when caught up, the step has not started writing, or on error).
+  const auto pull = [&]() -> std::size_t {
+    const auto chunk = index.readCiLogChunk(project, run_id, step, offset, kChunkBytes);
+    if (!chunk || chunk->empty()) return 0;
+    offset += chunk->size();
+    pending += *chunk;
+    return chunk->size();
+  };
+  // Moves every complete line out of `pending` into `out` as an id'd SSE event.
+  const auto drainLines = [&](std::string& out) {
+    std::size_t newline;
+    while ((newline = pending.find('\n')) != std::string::npos) {
+      emitted += newline + 1;
+      out += "id: " + std::to_string(emitted) + "\ndata: " +
+             clean(std::string_view(pending).substr(0, newline)) + "\n\n";
+      pending.erase(0, newline + 1);
+    }
+  };
+
+  int since_status = 0;
   for (;;) {
     if (stop_requested) return;
+    bool wrote = false;
     try {
-      const auto log = index.readCiLog(project, run_id, step);
-      if (log && log->size() > offset) {
-        pending.append(log->data() + offset, log->size() - offset);
-        offset = log->size();
-        std::string batch;
-        std::size_t newline;
-        while ((newline = pending.find('\n')) != std::string::npos) {
-          batch += frame(std::string_view(pending).substr(0, newline));
-          pending.erase(0, newline + 1);
-        }
-        if (!batch.empty() && !sendHttpBytes(descriptor, batch, deadline)) return;
+      pull();
+      std::string batch;
+      drainLines(batch);
+      if (!batch.empty()) {
+        if (!sendHttpBytes(descriptor, batch, deadline)) return;
+        wrote = true;
       }
-      const auto record = index.readCiRun(project, run_id);
-      const bool active =
-          record && ckgit::ciRunStatusIsActive(record->status) && step == record->steps.size();
-      if (!active) {
-        if (!pending.empty() && !sendHttpBytes(descriptor, frame(pending), deadline)) return;
-        sendHttpBytes(descriptor, "event: done\ndata: end\n\n", deadline);
-        return;
+      // The run status is heavier to read, so check it about once a second while
+      // the log itself is tailed several times faster.
+      if (++since_status >= 4) {
+        since_status = 0;
+        const auto record = index.readCiRun(project, run_id);
+        const bool active =
+            record && ckgit::ciRunStatusIsActive(record->status) && step == record->steps.size();
+        if (!active) {
+          // The step's whole log is on disk before its result is recorded, so
+          // drain until caught up — no trailing bytes are lost to the final poll.
+          std::string final_batch;
+          for (int guard = 0; guard < 256 && pull() != 0; ++guard) drainLines(final_batch);
+          if (!pending.empty()) {  // a final line with no trailing newline
+            emitted += pending.size();
+            final_batch += "id: " + std::to_string(emitted) + "\ndata: " + clean(pending) + "\n\n";
+            pending.clear();
+          }
+          if (!final_batch.empty() && !sendHttpBytes(descriptor, final_batch, deadline)) return;
+          sendHttpBytes(descriptor, "event: done\ndata: end\n\n", deadline);
+          return;
+        }
       }
     } catch (const std::exception&) {
       return;  // a read failure ends the stream rather than spinning on the error
     }
-    // A keep-alive comment holds the connection open and surfaces a gone client.
-    if (!sendHttpBytes(descriptor, ": ping\n\n", deadline)) return;
+    // When idle, a keep-alive comment holds the connection and surfaces a gone
+    // client; active writes already do that.
+    if (!wrote && !sendHttpBytes(descriptor, ": ping\n\n", deadline)) return;
     if (std::chrono::steady_clock::now() >= deadline) return;
-    for (int tick = 0; tick < 10 && !stop_requested; ++tick) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    for (int tick = 0; tick < 5 && !stop_requested; ++tick) {  // ~250 ms, shutdown-responsive
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
   }
 }
@@ -724,8 +762,15 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         if (is_head) {
           response.content_type = "text/event-stream";
         } else {
+          // A reconnecting EventSource resumes from the byte offset it last saw.
+          std::uint64_t start_offset = 0;
+          if (!parsed->last_event_id.empty()) {
+            const auto& id = parsed->last_event_id;
+            const auto [end, error] = std::from_chars(id.data(), id.data() + id.size(), start_offset);
+            if (error != std::errc{} || end != id.data() + id.size()) start_offset = 0;
+          }
           streamCiLog(descriptor, index, route.project, route.run_id,
-                      static_cast<std::size_t>(std::max(0, route.step)));
+                      static_cast<std::size_t>(std::max(0, route.step)), start_offset);
           return;
         }
       } else if (route.kind == ckgit::RouteKind::kCiCancel) {

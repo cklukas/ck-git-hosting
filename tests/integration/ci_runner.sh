@@ -152,6 +152,7 @@ curl --path-as-is --max-time 6 --silent -D "$test_root/stream.headers" -o "$test
   "$base/project/demo/ci/$run_id/0.stream" || fail "curl ci log stream"
 grep -qi "^Content-Type: text/event-stream" "$test_root/stream.headers" || fail "the stream is not text/event-stream"
 grep -q "^data: integ-ci-ok" "$test_root/stream.body" || { cat "$test_root/stream.body"; fail "the stream did not carry the step output"; }
+grep -q "^id: [0-9]" "$test_root/stream.body" || fail "the stream did not emit resumable event ids"
 grep -q "^event: done" "$test_root/stream.body" || fail "the stream did not end with a done event"
 # The log page carries the follow control and a nonce-scoped script policy.
 curl --path-as-is --max-time 4 --silent -D "$test_root/log.headers" -o "$test_root/log.html" \

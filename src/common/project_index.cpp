@@ -545,6 +545,13 @@ class ProjectIndex::Impl {
     return readCiRunLog(*state_root_, project, run_id, step, kProjectIndexCiLogLimit);
   }
 
+  // Reads only the bytes appended past `offset`, for live SSE tailing.
+  std::optional<std::string> readCiLogChunk(std::string_view project, std::string_view run_id,
+                                            std::size_t step, std::uint64_t offset, std::size_t cap) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return readCiRunLogChunk(*state_root_, project, run_id, step, offset, cap);
+  }
+
   // Reads one run fresh from disk (bypassing the cached snapshot) so the live
   // status view sees the current heartbeat, step count, and status.
   std::optional<CiRunRecord> readCiRun(std::string_view project, std::string_view run_id) const {
@@ -811,6 +818,11 @@ std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std
 std::optional<CiRunRecord> ProjectIndex::readCiRun(std::string_view project,
                                                    std::string_view run_id) const {
   return impl_->readCiRun(project, run_id);
+}
+std::optional<std::string> ProjectIndex::readCiLogChunk(std::string_view project, std::string_view run_id,
+                                                        std::size_t step, std::uint64_t offset,
+                                                        std::size_t cap) const {
+  return impl_->readCiLogChunk(project, run_id, step, offset, cap);
 }
 bool ProjectIndex::requestCiCancel(std::string_view project, std::string_view run_id) const {
   return impl_->requestCiCancel(project, run_id);

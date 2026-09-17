@@ -253,10 +253,13 @@ std::string renderCiLogView(const ProjectSummary& project, const std::string& ru
          "n=document.getElementById('ci-follow-note'),"
          "x=document.getElementById('ci-log'),"
          "u=b.getAttribute('data-stream'),e=null;"
+         "function atBottom(){return (window.innerHeight+window.scrollY)>=(document.body.scrollHeight-48);}"
          "function stop(m){if(e){e.close();e=null;}b.textContent='Follow live';if(m)n.textContent=m;}"
-         "function start(){b.textContent='Stop';n.textContent='Connecting\\u2026';e=new EventSource(u);"
-         "e.onopen=function(){x.textContent='';n.textContent='Following live\\u2026';};"
-         "e.onmessage=function(ev){x.textContent+=ev.data+'\\n';window.scrollTo(0,document.body.scrollHeight);};"
+         // Clear the static snapshot once when following begins; a later reconnect
+         // resumes from Last-Event-ID and appends, so it must not clear.
+         "function start(){b.textContent='Stop';n.textContent='Connecting\\u2026';x.textContent='';e=new EventSource(u);"
+         "e.onopen=function(){n.textContent='Following live\\u2026';};"
+         "e.onmessage=function(ev){var s=atBottom();x.textContent+=ev.data+'\\n';if(s)window.scrollTo(0,document.body.scrollHeight);};"
          "e.addEventListener('done',function(){stop('Run finished.');});"
          "e.onerror=function(){n.textContent='Reconnecting\\u2026';};}"
          "b.addEventListener('click',function(){e?stop(''):start();});"

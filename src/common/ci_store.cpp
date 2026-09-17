@@ -710,6 +710,55 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
   }
 }
 
+std::optional<std::string> readCiRunLogChunk(const std::filesystem::path& state_root,
+                                             std::string_view project_name, std::string_view run_id,
+                                             std::size_t step_index, std::uint64_t offset, std::size_t cap) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || cap == 0) return std::nullopt;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor runs_fd(openDirAt(ci_fd, "runs", &missing));
+    if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(runs_fd, std::string(project_name), &missing));
+    if (missing) return std::nullopt;
+    Descriptor run_fd(openDirAt(project_fd, std::string(run_id), &missing));
+    if (missing) return std::nullopt;
+    Descriptor steps_fd(openDirAt(run_fd, "steps", &missing));
+    if (missing) return std::nullopt;
+    const std::string name = std::to_string(step_index) + ".log";
+    const int raw = ::openat(steps_fd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (raw < 0) {
+      if (errno == ENOENT) return std::nullopt;  // the step has not begun writing
+      fail("could not open a CI step log");
+    }
+    Descriptor file(raw);
+    struct stat status {};
+    if (::fstat(file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+        (status.st_mode & 0077) != 0 || status.st_size < 0) {
+      fail("a CI step log is unsafe");
+    }
+    const std::uint64_t size = static_cast<std::uint64_t>(status.st_size);
+    if (offset >= size) return std::string{};  // present, but nothing new past the offset
+    const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(size - offset, cap));
+    std::string content(want, '\0');
+    std::size_t got = 0;
+    while (got < want) {
+      const ssize_t received =
+          ::pread(file, content.data() + got, want - got, static_cast<off_t>(offset + got));
+      if (received < 0 && errno == EINTR) continue;
+      if (received <= 0) break;  // a short read returns what is available so far
+      got += static_cast<std::size_t>(received);
+    }
+    content.resize(got);
+    return content;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
 std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::string_view run_id,
                                           std::string_view artifact_name, std::size_t cap) {

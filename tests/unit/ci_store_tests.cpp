@@ -415,6 +415,27 @@ void testCancelMarkerLifecycle() {
           "cancel is refused for an unknown run");
 }
 
+void testLogChunkTailing() {
+  StoreFixture fixture;
+  const std::string run_id = "00000000000000000500-1234abcd";
+  const auto dir = ckgit::prepareCiRunDirectory(fixture.state, "demo", run_id);
+  {
+    std::ofstream log(dir / "steps" / "0.log");
+    log << "line one\nline two\n";  // 18 bytes; "line one\n" is the first 9
+  }
+  require(chmod((dir / "steps" / "0.log").c_str(), 0600) == 0, "step log made private");
+  const auto whole = ckgit::readCiRunLogChunk(fixture.state, "demo", run_id, 0, 0, 1u << 20);
+  require(whole.has_value() && *whole == "line one\nline two\n", "reads the whole log from offset 0");
+  const auto tail = ckgit::readCiRunLogChunk(fixture.state, "demo", run_id, 0, 9, 1u << 20);
+  require(tail.has_value() && *tail == "line two\n", "reads only the bytes appended past the offset");
+  const auto none = ckgit::readCiRunLogChunk(fixture.state, "demo", run_id, 0, 18, 1u << 20);
+  require(none.has_value() && none->empty(), "no bytes past the end returns empty, not absent");
+  const auto capped = ckgit::readCiRunLogChunk(fixture.state, "demo", run_id, 0, 0, 4);
+  require(capped.has_value() && *capped == "line", "honours the byte cap");
+  require(!ckgit::readCiRunLogChunk(fixture.state, "demo", run_id, 1, 0, 1u << 20).has_value(),
+          "an absent step log reads as std::nullopt");
+}
+
 }  // namespace
 
 void testCiStore() {
@@ -433,4 +454,5 @@ void testCiStore() {
   testLiveRecordHeartbeatAndSingleLoad();
   testSchemaVersionOneBackCompat();
   testCancelMarkerLifecycle();
+  testLogChunkTailing();
 }

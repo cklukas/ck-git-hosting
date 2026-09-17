@@ -56,6 +56,9 @@ class ProjectIndex {
   // Reads one run fresh from disk (with artifacts), bypassing the cached
   // snapshot so the live status page reflects the run's current bytes.
   std::optional<CiRunRecord> readCiRun(std::string_view project_name, std::string_view run_id) const;
+  // Reads only a step log's bytes appended past `offset`, for live SSE tailing.
+  std::optional<std::string> readCiLogChunk(std::string_view project_name, std::string_view run_id,
+                                            std::size_t step, std::uint64_t offset, std::size_t cap) const;
   // Requests cancellation of a run (drops its marker for the runner to honour).
   // Returns false when no such run exists. The only index entry point that
   // writes: it touches the private CI state, never Git or the ref cache.

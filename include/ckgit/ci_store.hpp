@@ -207,6 +207,15 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
                                         std::string_view project_name, std::string_view run_id,
                                         std::size_t step_index, std::size_t cap);
 
+// Reads up to `cap` bytes of a step's log starting at byte `offset`, for live
+// tailing: only the bytes appended since `offset` are returned. An empty string
+// means the log exists but has not grown past `offset` yet; std::nullopt means
+// the step log is absent. Step logs are append-only, so an offset stays valid
+// across polls.
+std::optional<std::string> readCiRunLogChunk(const std::filesystem::path& state_root,
+                                             std::string_view project_name, std::string_view run_id,
+                                             std::size_t step_index, std::uint64_t offset, std::size_t cap);
+
 // Reads one artifact bundle (<run>/artifacts/<name>.tar) for a run, bounded to
 // `cap` bytes. Returns std::nullopt when it is absent or `name` is invalid. Used
 // by the read-only dashboard to serve an artifact download.
