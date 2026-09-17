@@ -145,6 +145,20 @@ code=$(curl --path-as-is --max-time 4 --silent -o /dev/null -w '%{http_code}' \
   -X POST "$base/project/demo/ci/$run_id/cancel")
 [ "$code" = 303 ] || fail "a same-origin cancel POST should redirect (got $code)"
 
+# The step log also tails live over SSE. A finished run streams its whole log
+# then closes, so a bounded curl sees the event-stream content type, the output
+# as data lines, and the terminal done event.
+curl --path-as-is --max-time 6 --silent -D "$test_root/stream.headers" -o "$test_root/stream.body" \
+  "$base/project/demo/ci/$run_id/0.stream" || fail "curl ci log stream"
+grep -qi "^Content-Type: text/event-stream" "$test_root/stream.headers" || fail "the stream is not text/event-stream"
+grep -q "^data: integ-ci-ok" "$test_root/stream.body" || { cat "$test_root/stream.body"; fail "the stream did not carry the step output"; }
+grep -q "^event: done" "$test_root/stream.body" || fail "the stream did not end with a done event"
+# The log page carries the follow control and a nonce-scoped script policy.
+curl --path-as-is --max-time 4 --silent -D "$test_root/log.headers" -o "$test_root/log.html" \
+  "$base/project/demo/ci/$run_id/0.log" || fail "curl ci log page"
+grep -q "id=\"ci-follow-btn\"" "$test_root/log.html" || fail "the log page has no follow control"
+grep -qi "^Content-Security-Policy:.*script-src 'nonce-" "$test_root/log.headers" || fail "the log page did not scope a script nonce"
+
 # The dashboard links the artifact and serves the bundle as a downloadable tar.
 grep -q "/project/demo/ci/$run_id/artifacts/build" "$test_root/ci.html" || fail "CI page has no artifact link"
 curl --path-as-is --max-time 4 --silent -o "$test_root/build.tar" \

@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <random>
 #include <fcntl.h>
 #include <iostream>
 #include <optional>
@@ -536,10 +537,16 @@ void sendHttp(int descriptor, const ckgit::DashboardResponse& response, bool hea
   const auto reason = response.status == 200 ? "OK" : response.status == 302 ? "Found" : response.status == 303 ? "See Other" :
       response.status == 400 ? "Bad Request" : response.status == 403 ? "Forbidden" : response.status == 404 ? "Not Found" :
       response.status == 405 ? "Method Not Allowed" : response.status == 413 ? "Content Too Large" : "Service Unavailable";
+  std::string policy;
+  if (!response.csp.empty()) {
+    policy = response.csp;  // a page (the log follow view) that needs a scoped relaxation
+  } else {
+    policy = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'";
+    if (response.raw) policy += "; sandbox";
+    else if (response.body.find("<img ") != std::string::npos) policy += "; img-src 'self'";
+  }
   std::string headers = "HTTP/1.1 " + std::to_string(response.status) + " " + reason + "\r\nContent-Type: " +
-      response.content_type + "\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'";
-  if (response.raw) headers += "; sandbox";
-  else if (response.body.find("<img ") != std::string::npos) headers += "; img-src 'self'";
+      response.content_type + "\r\nContent-Security-Policy: " + policy;
   headers += "\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n";
   if (response.raw) {
     std::string filename;
@@ -576,6 +583,95 @@ bool isLoopbackOrigin(std::string_view origin) {
   const auto colon = authority.rfind(':');
   const std::string_view host = colon == std::string_view::npos ? authority : authority.substr(0, colon);
   return host == "127.0.0.1" || host == "localhost";
+}
+
+// Live log streams occupy a worker for their whole duration, so cap how many run
+// at once; the fixed worker pool always keeps headroom for ordinary requests.
+std::atomic<int> g_active_log_streams{0};
+constexpr int kMaxLogStreams = 4;
+
+// A 96-bit hex token for a per-response CSP script nonce.
+std::string generateNonce() {
+  std::random_device device;
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string nonce;
+  nonce.reserve(24);
+  for (int i = 0; i < 24; ++i) nonce += hex[device() & 0x0f];
+  return nonce;
+}
+
+// Streams one CI step's captured log to the client as Server-Sent Events: it
+// tails the file while that step is the run's currently-executing one and ends
+// with an `event: done` once the step completes or the run reaches a terminal
+// state. Runs inline on the calling worker (bounded by kMaxLogStreams) and never
+// throws; a failed send (the client went away) simply ends the stream.
+void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& project,
+                 const std::string& run_id, std::size_t step) noexcept {
+  if (g_active_log_streams.fetch_add(1, std::memory_order_relaxed) >= kMaxLogStreams) {
+    g_active_log_streams.fetch_sub(1, std::memory_order_relaxed);
+    const std::string busy =
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n"
+        "Connection: close\r\nContent-Length: 22\r\n\r\ntoo many live streams\n";
+    sendHttpBytes(descriptor, busy, std::chrono::steady_clock::now() + std::chrono::seconds(5));
+    return;
+  }
+  struct Release {
+    ~Release() { g_active_log_streams.fetch_sub(1, std::memory_order_relaxed); }
+  } release;
+
+  const Deadline deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+  if (!sendHttpBytes(descriptor,
+                     "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n"
+                     "X-Content-Type-Options: nosniff\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n"
+                     ": stream open\n\n",
+                     deadline)) {
+    return;
+  }
+
+  const auto frame = [](std::string_view line) {
+    std::string clean;  // one SSE event per log line; no stray CR/LF can split a frame
+    clean.reserve(line.size());
+    for (const char c : line) {
+      if (c != '\r' && c != '\n') clean += c;
+    }
+    return "data: " + clean + "\n\n";
+  };
+
+  std::size_t offset = 0;
+  std::string pending;
+  for (;;) {
+    if (stop_requested) return;
+    try {
+      const auto log = index.readCiLog(project, run_id, step);
+      if (log && log->size() > offset) {
+        pending.append(log->data() + offset, log->size() - offset);
+        offset = log->size();
+        std::string batch;
+        std::size_t newline;
+        while ((newline = pending.find('\n')) != std::string::npos) {
+          batch += frame(std::string_view(pending).substr(0, newline));
+          pending.erase(0, newline + 1);
+        }
+        if (!batch.empty() && !sendHttpBytes(descriptor, batch, deadline)) return;
+      }
+      const auto record = index.readCiRun(project, run_id);
+      const bool active =
+          record && ckgit::ciRunStatusIsActive(record->status) && step == record->steps.size();
+      if (!active) {
+        if (!pending.empty() && !sendHttpBytes(descriptor, frame(pending), deadline)) return;
+        sendHttpBytes(descriptor, "event: done\ndata: end\n\n", deadline);
+        return;
+      }
+    } catch (const std::exception&) {
+      return;  // a read failure ends the stream rather than spinning on the error
+    }
+    // A keep-alive comment holds the connection open and surfaces a gone client.
+    if (!sendHttpBytes(descriptor, ": ping\n\n", deadline)) return;
+    if (std::chrono::steady_clock::now() >= deadline) return;
+    for (int tick = 0; tick < 10 && !stop_requested; ++tick) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
 }
 
 void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::ProjectIndex& index, Deadline deadline,
@@ -619,7 +715,20 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       const auto repository = ckgit::bareRepositoryPath(root, route.project);
       const auto status = std::filesystem::symlink_status(repository);
       if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status)) throw ckgit::WebError(404, "Repository was not found.");
-      if (route.kind == ckgit::RouteKind::kCiCancel) {
+      if (route.kind == ckgit::RouteKind::kCiLogStream) {
+        // A live Server-Sent-Events tail of one step's log. GET only; verify the
+        // run exists, then stream directly (the stream writes its own response)
+        // and return without the buffered sendHttp path.
+        const auto run = index.readCiRun(route.project, route.run_id);
+        if (!run) throw ckgit::WebError(404, "CI run was not found.");
+        if (is_head) {
+          response.content_type = "text/event-stream";
+        } else {
+          streamCiLog(descriptor, index, route.project, route.run_id,
+                      static_cast<std::size_t>(std::max(0, route.step)));
+          return;
+        }
+      } else if (route.kind == ckgit::RouteKind::kCiCancel) {
         // The single mutating endpoint: POST only, same-origin only. It drops a
         // cancel marker (via the index) that the runner honours; the browser is
         // sent back to the live run page, which shows the result.
@@ -667,14 +776,17 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         response.filename = route.path + ".tar";
         response.body = *blob;
       } else if (route.kind == ckgit::RouteKind::kCiLog) {
-        const auto log = index.readCiLog(route.project, route.run_id,
-                                         static_cast<std::size_t>(std::max(0, route.step)));
+        const int step = std::max(0, route.step);
+        const auto log = index.readCiLog(route.project, route.run_id, static_cast<std::size_t>(step));
         if (!log) throw ckgit::WebError(404, "CI log was not found.");
+        const std::string nonce = generateNonce();
         ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
-        const std::string body =
-            "<p><a href=\"/project/" + ckgit::htmlEscape(route.project) + "/ci\">Back to CI</a></p>"
-            "<pre class=\"ci-log\">" + ckgit::escapePre(*log) + "</pre>";
-        response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI log", body, &*project, &ci_context);
+        response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI log",
+            ckgit::renderCiLogView(*project, route.run_id, step, *log, nonce), &*project, &ci_context);
+        // Scope the relaxation to this page only: its nonce'd follow script and a
+        // same-origin EventSource; every other page keeps the strict default.
+        response.csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-" + nonce +
+                       "'; connect-src 'self'";
       } else {
         response = ckgit::renderDashboard(route, *project, repository, deadline);
         if (response.status == 302 && (response.raw || response.location.empty() ||
@@ -704,7 +816,9 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
 
 void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,
                 const std::string& ssh_clone_target) {
-  constexpr std::size_t kHttpWorkerCount = 4;
+  // Live log streams (SSE) hold a worker for their duration, bounded by
+  // kMaxLogStreams; the extra workers keep ordinary requests responsive.
+  constexpr std::size_t kHttpWorkerCount = 8;
   constexpr std::size_t kMaximumQueuedHttpClients = 12;
   struct Client { int descriptor; Deadline deadline; };
   std::deque<Client> queue;

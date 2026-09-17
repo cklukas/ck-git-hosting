@@ -230,6 +230,41 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
   return out;
 }
 
+std::string renderCiLogView(const ProjectSummary& project, const std::string& run_id, int step,
+                            const std::string& log, const std::string& nonce) {
+  const std::string project_url = "/project/" + htmlEscape(project.name) + "/ci";
+  // project.name, run_id and step are all validated tokens ([A-Za-z0-9._-] etc.),
+  // so this URL carries no character that could escape the data attribute or the
+  // script; the follow script reads it from the attribute and interpolates
+  // nothing itself.
+  const std::string stream_url =
+      "/project/" + project.name + "/ci/" + run_id + "/" + std::to_string(step) + ".stream";
+
+  std::string out = "<p><a href=\"" + project_url + "\">\xe2\x86\x90 Back to CI</a> \xc2\xb7 <a href=\"" +
+      project_url + "/" + htmlEscape(run_id) + "\">run</a></p>";
+  out += "<div class=\"ci-log-controls\"><button type=\"button\" id=\"ci-follow-btn\" data-stream=\"" +
+      htmlEscape(stream_url) + "\">Follow live</button> <span id=\"ci-follow-note\" class=\"muted\"></span></div>";
+  out += "<pre class=\"ci-log\" id=\"ci-log\">" + escapePre(log) + "</pre>";
+  // A static, self-contained follow script: it reads the SSE endpoint from the
+  // button's data attribute, so nothing is interpolated into the script body.
+  out += "<script nonce=\"" + nonce + "\">";
+  out += "(function(){"
+         "var b=document.getElementById('ci-follow-btn'),"
+         "n=document.getElementById('ci-follow-note'),"
+         "x=document.getElementById('ci-log'),"
+         "u=b.getAttribute('data-stream'),e=null;"
+         "function stop(m){if(e){e.close();e=null;}b.textContent='Follow live';if(m)n.textContent=m;}"
+         "function start(){b.textContent='Stop';n.textContent='Connecting\\u2026';e=new EventSource(u);"
+         "e.onopen=function(){x.textContent='';n.textContent='Following live\\u2026';};"
+         "e.onmessage=function(ev){x.textContent+=ev.data+'\\n';window.scrollTo(0,document.body.scrollHeight);};"
+         "e.addEventListener('done',function(){stop('Run finished.');});"
+         "e.onerror=function(){n.textContent='Reconnecting\\u2026';};}"
+         "b.addEventListener('click',function(){e?stop(''):start();});"
+         "})();";
+  out += "</script>";
+  return out;
+}
+
 std::string renderReleases(const ProjectSummary& project) {
   std::string out = "<h1>Releases</h1>";
   if (project.releases.empty()) {

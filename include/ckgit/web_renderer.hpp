@@ -34,6 +34,14 @@ std::string renderCiRuns(const ProjectSummary& project);
 // is active (std::nullopt otherwise); `live_step` is that step's index.
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
                               const std::optional<std::string>& live_log, std::size_t live_step);
+// The step-log page body: the captured output, plus a "Follow live" control that
+// tails the running step over Server-Sent Events. Progressive enhancement — the
+// static log is the whole page without JavaScript. `nonce` authorizes the small
+// inline follow script under the page's scoped CSP; the SSE endpoint is the
+// step's `.stream` sibling, carried in a data attribute so the script stays
+// static (no interpolation).
+std::string renderCiLogView(const ProjectSummary& project, const std::string& run_id, int step,
+                            const std::string& log, const std::string& nonce);
 std::string renderReleases(const ProjectSummary& project);
 
 // Presentation-ready view of a run at render time, shared by the index table,

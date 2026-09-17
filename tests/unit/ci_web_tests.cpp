@@ -29,6 +29,10 @@ void testRoutes() {
   require(cancel.kind == ckgit::RouteKind::kCiCancel && cancel.project == "demo" &&
               cancel.run_id == "00000000000000000001-abcdabcd",
           "the cancel route parses");
+  const auto stream = ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/2.stream");
+  require(stream.kind == ckgit::RouteKind::kCiLogStream && stream.project == "demo" &&
+              stream.run_id == "00000000000000000001-abcdabcd" && stream.step == 2,
+          "the log stream (SSE) route parses");
   require(ckgit::parseHttpRoute("/project/demo/ci/00000000000000000001-abcdabcd/cancel/x").kind ==
               ckgit::RouteKind::kNotFound,
           "a route past cancel is rejected");
@@ -201,10 +205,26 @@ void testRunDetailAndDisplay() {
   require(done_detail.find("3:20 min") != std::string::npos, "a finished run shows its total duration");
 }
 
+void testLogView() {
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  const std::string html =
+      ckgit::renderCiLogView(project, "00000000000000000001-abcdabcd", 0, "line one\nline two", "abc123deadbeefnonce00000");
+  require(html.find("line one") != std::string::npos && html.find("line two") != std::string::npos,
+          "the static log is present without JavaScript");
+  require(html.find("id=\"ci-follow-btn\"") != std::string::npos, "renders the follow button");
+  require(html.find("data-stream=\"/project/demo/ci/00000000000000000001-abcdabcd/0.stream\"") != std::string::npos,
+          "wires the SSE endpoint via a data attribute");
+  require(html.find("<script nonce=\"abc123deadbeefnonce00000\">") != std::string::npos,
+          "the follow script carries the CSP nonce");
+  require(html.find("EventSource") != std::string::npos, "the follow script uses Server-Sent Events");
+}
+
 void testCiWeb() {
   testRoutes();
   testRender();
   testRunDetailAndDisplay();
+  testLogView();
   testReleaseRoutes();
   testReleaseRender();
 }

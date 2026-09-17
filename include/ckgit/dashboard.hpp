@@ -14,6 +14,10 @@ struct DashboardResponse {
   bool raw{false};
   std::string filename;
   std::string location;
+  // Optional Content-Security-Policy override. Empty keeps the default strict
+  // policy; the log-follow page sets a scoped policy that additionally permits
+  // its nonce'd inline script and a same-origin EventSource connection.
+  std::string csp;
 };
 DashboardResponse renderDashboard(const Route& route, const ProjectSummary& project,
                                    const std::filesystem::path& repository,

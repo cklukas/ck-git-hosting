@@ -162,6 +162,7 @@ Route parseHttpRoute(std::string_view target) {
     // /project/<id>/ci/<run-id>                     — the live run status page
     // /project/<id>/ci/<run-id>/cancel              — POST: request cancellation
     // /project/<id>/ci/<run-id>/<step>.log          — a single step's captured log
+    // /project/<id>/ci/<run-id>/<step>.stream       — that step's log as a live SSE tail
     // /project/<id>/ci/<run-id>/artifacts/<name>    — an artifact bundle download
     const auto slash = target.find('/');
     const auto run = slash == std::string_view::npos ? target : target.substr(0, slash);
@@ -189,6 +190,14 @@ Route parseHttpRoute(std::string_view target) {
           })) return {};
       route.kind = RouteKind::kCiArtifact;
       route.path = std::string(name);
+      return route;
+    }
+    if (tail.ends_with(".stream")) {
+      const auto number = tail.substr(0, tail.size() - 7);
+      if (number.empty() || number.size() > 6 || !parseDecimal(number, number.size(), 0, 100000, route.step)) {
+        return {};
+      }
+      route.kind = RouteKind::kCiLogStream;
       return route;
     }
     if (!tail.ends_with(".log")) return {};

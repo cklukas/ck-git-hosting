@@ -226,7 +226,12 @@ In the dashboard, open a project and follow the **CI** tab:
   and artifacts. While the run is active the page auto-refreshes (no JavaScript —
   a plain `<meta refresh>` that fits the dashboard's strict content policy) and
   stops once the run is terminal.
-- `/<...>/project/<id>/ci/<run-id>/<step>.log` shows one step's full output.
+- `/<...>/project/<id>/ci/<run-id>/<step>.log` shows one step's full output, with
+  a **Follow live** button that tails the running step in real time over
+  Server-Sent Events (`<step>.stream`). This is the one page that runs a small,
+  nonce-scoped script under a relaxed policy; the static log still works without
+  JavaScript, and the number of concurrent live streams is capped so followers
+  cannot starve the dashboard.
 
 The projects index also carries a **Last CI** column with each project's newest
 run status and timing, so a running or failed build is visible without opening

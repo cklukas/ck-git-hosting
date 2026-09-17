@@ -76,6 +76,9 @@ a.ci-status:hover{text-decoration:none;border-color:var(--accent)}
 .ci-cancel-button{font:inherit;font-weight:600;color:#fff;background:#c0392b;border:1px solid #a93226;border-radius:.4rem;padding:.45rem .9rem;cursor:pointer}
 .ci-cancel-button:hover{background:#a93226}
 .ci-cancel-cli summary{cursor:pointer;color:var(--muted)}.ci-cancel-cli pre{margin:.4rem 0 0;padding:.6rem .8rem;border:1px solid var(--line);border-radius:.3rem;background:var(--bg)}
+.ci-log-controls{display:flex;gap:.6rem;align-items:center;margin:.5rem 0}
+#ci-follow-btn{font:inherit;font-weight:600;color:var(--text);border:1px solid var(--line);background:var(--panel);padding:.35rem .8rem;border-radius:.4rem;cursor:pointer}
+#ci-follow-btn:hover{background:var(--tint);border-color:var(--accent)}
 @media(prefers-color-scheme:dark){.ci-running{color:#7db8ee}.ci-success{color:#79c58a}.ci-failure{color:#f19aa0}.ci-timeout,.ci-error,.ci-interrupted{color:#e7b765}.ci-cancelled{color:#aab3bf}}
 @media(max-width:700px){.project-ci{grid-row:5;grid-column:1/-1;font-size:.85rem}.project-ci:before{content:'Last CI: ';color:var(--muted)}}
 )CSS";
