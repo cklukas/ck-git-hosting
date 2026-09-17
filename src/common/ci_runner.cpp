@@ -922,8 +922,12 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
           publishPagesSite(options.pages_root, options.project_name, record.run_id, site,
                            options.pages_keep_versions);
         }
-      } catch (const std::exception&) {
-        // Publishing a site never fails the build.
+      } catch (const std::exception& publish_error) {
+        // A build whose steps all passed but whose site failed to publish would
+        // otherwise report success while the live site silently stayed on its
+        // previous version. Fail the run so the broken publish is never hidden.
+        status = CiRunStatus::Error;
+        detail = std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
       }
     }
   }

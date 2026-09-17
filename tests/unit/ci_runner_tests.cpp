@@ -331,6 +331,31 @@ void testPagesNotPublishedOnFeatureBranch() {
           "only the default branch publishes the site");
 }
 
+void testPagesPublishFailureFailsRun() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "pages: { path: public }\n"
+      "jobs:\n"
+      "  - name: site\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p public && printf x > public/index.html'\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  // A pages_root that is a regular file makes publishing throw (its destination
+  // cannot be created), so the otherwise-green default-branch build must fail
+  // visibly instead of reporting success while the live site stays stale.
+  const std::filesystem::path broken = fixture.root / "pages-not-a-dir";
+  std::ofstream(broken) << "x";
+  opts.pages_root = broken;
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Error, "a failed Pages publish fails the run");
+  require(record.detail.find("failed to publish") != std::string::npos,
+          "the run detail explains the swallowed publish failure");
+  const auto runs = ckgit::loadCiRuns(fixture.state, "demo");
+  require(runs.size() == 1 && runs[0].status == ckgit::CiRunStatus::Error,
+          "the failed publish is persisted as a failed run");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -347,4 +372,5 @@ void testCiRunner() {
   testReleaseFailedPublishesNothing();
   testPagesPublish();
   testPagesNotPublishedOnFeatureBranch();
+  testPagesPublishFailureFailsRun();
 }

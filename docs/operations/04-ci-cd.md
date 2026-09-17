@@ -324,6 +324,12 @@ versioned copy, and the newest `pages_keep_versions` are kept, so a bad deploy
 can be rolled back by re-running an earlier commit's build. Deleting the project
 removes its sites.
 
+If the steps pass but publishing the site fails — for example the site exceeds
+`kMaximumPagesSiteBytes` — the **run is marked failed** (with the reason in its
+detail) rather than reporting success while the live site silently stays on the
+previous version. Keep generated caches (a Sphinx `.doctrees` directory, say)
+out of the published directory so they do not count against the size limit.
+
 ### Serving it on the intranet
 
 Sites are served by a **separate process, `ck-pagesd`, on its own port** — a
