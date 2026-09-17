@@ -42,9 +42,15 @@ constexpr std::size_t kMaximumRequestBytes = 16 * 1024;
 constexpr std::size_t kMaximumServedBytes = static_cast<std::size_t>(1) << 30;   // 1 GiB per file
 
 int usage(std::ostream& out, int code) {
-  out << "usage: ck-pagesd serve --config FILE\n\n"
-         "Serves published static sites from pages_root on pages_http_port. Both\n"
-         "must be set in the configuration file.\n";
+  out << "usage:\n"
+         "  ck-pagesd serve --config FILE\n"
+         "  ck-pagesd check --config FILE\n"
+         "\n"
+         "serve serves published static sites from pages_root on pages_http_port; both\n"
+         "must be set in the configuration file. check exits 0 when they are both set,\n"
+         "printing nothing, and 1 with a one-line reason otherwise -- used by the\n"
+         "packaged unit's ExecCondition so the service stays cleanly inactive, rather\n"
+         "than restart-looping, when Pages is not configured.\n";
   return code;
 }
 
@@ -153,6 +159,25 @@ void handle(int fd, const std::filesystem::path& pages_root) {
   sendResponse(fd, 200, "OK", page->content_type, page->content, head_only);
 }
 
+// WP4/D3: whether this server is configured to serve Pages at all. Shared by
+// the packaged unit's ExecCondition (see packaging/systemd/ck-pages.service)
+// and by an operator running it by hand. Deliberately does not open the
+// listening socket or touch pages_root: it only reads the same two keys
+// serve() requires, so it is safe to run as a pre-flight check before the
+// service account and its filesystem access are fully set up.
+int check(const std::filesystem::path& config_path) {
+  const ckgit::ServerConfig config = ckgit::loadServerConfig(config_path);
+  if (!config.pages_root.has_value() || config.pages_root->empty()) {
+    std::cerr << "ck-pagesd: pages_root is not set in " << config_path.string() << "\n";
+    return 1;
+  }
+  if (!config.pages_http_port.has_value()) {
+    std::cerr << "ck-pagesd: pages_http_port is not set in " << config_path.string() << "\n";
+    return 1;
+  }
+  return 0;
+}
+
 int serve(const std::filesystem::path& config_path) {
   const ckgit::ServerConfig config = ckgit::loadServerConfig(config_path);
   if (!config.pages_root.has_value() || config.pages_root->empty()) {
@@ -232,7 +257,9 @@ int main(int argc, char** argv) {
       std::cout << ckgit::versionLine("ck-pagesd");
       return 0;
     }
-    if (argc < 2 || std::string(argv[1]) != "serve") return usage(std::cerr, 2);
+    if (argc < 2) return usage(std::cerr, 2);
+    const std::string command = argv[1];
+    if (command != "serve" && command != "check") return usage(std::cerr, 2);
     std::filesystem::path config_path;
     for (int i = 2; i < argc; ++i) {
       const std::string option = argv[i];
@@ -240,14 +267,14 @@ int main(int argc, char** argv) {
         if (++i >= argc) throw std::runtime_error("--config requires a value");
         config_path = argv[i];
       } else {
-        throw std::runtime_error("unknown serve option: " + option);
+        throw std::runtime_error("unknown " + command + " option: " + option);
       }
     }
     if (config_path.empty()) {
-      std::cerr << "ck-pagesd: serve requires --config FILE\n";
+      std::cerr << "ck-pagesd: " << command << " requires --config FILE\n";
       return usage(std::cerr, 2);
     }
-    return serve(config_path);
+    return command == "check" ? check(config_path) : serve(config_path);
   } catch (const std::exception& error) {
     std::cerr << "ck-pagesd: " << error.what() << "\n";
     return 2;

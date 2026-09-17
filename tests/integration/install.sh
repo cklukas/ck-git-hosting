@@ -84,6 +84,7 @@ grep -q '^ReadWritePaths=/var/lib/ck-git-hosting /srv/ck-git-hosting/repos$' "$u
 grep -q '^ExecStart=/usr/bin/ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini$' "$runner_unit"
 grep -q '^User=ckgit$' "$runner_unit"
 grep -q '^RestrictNamespaces=user mnt net$' "$runner_unit"
+grep -q '^ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^ExecStart=/usr/bin/ck-pagesd serve --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^User=ckgit$' "$pages_unit"
 grep -q '^Match User ckgit$' "$dropin"

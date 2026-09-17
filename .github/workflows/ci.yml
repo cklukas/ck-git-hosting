@@ -104,6 +104,19 @@ jobs:
           ck-ci-runnerd --help >/dev/null
           ck-pagesd --help >/dev/null
           ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
+          # A fresh install sets pages_root but leaves pages_http_port
+          # commented out; ck-pagesd check (what the unit's ExecCondition
+          # runs) must say so, so the service stays inactive rather than
+          # restart-loop until an administrator also sets the port. This
+          # container has no running systemd to exercise the unit itself
+          # (see the maintainer scripts' own [ -d /run/systemd/system ]
+          # guard), so the check command is exercised directly instead.
+          if ck-pagesd check --config /etc/ck-git-hosting/server.ini; then
+            echo "ck-pagesd check unexpectedly succeeded without pages_http_port set" >&2
+            exit 1
+          fi
+          grep -q '^ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini$' \
+            /usr/lib/systemd/system/ck-pages.service
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/device"
           ckgit-admin authorized-key --client-id ci-device --public-key "$RUNNER_TEMP/device.pub"
           ckgit-admin create smoke --repo-root /srv/ck-git-hosting/repos --hook-directory /usr/lib/ck-git-hosting/hooks

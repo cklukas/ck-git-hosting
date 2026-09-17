@@ -8,6 +8,14 @@
 # separate process from the control-plane daemon, with no control socket, no
 # repository access, and no write access at all: it only reads pages_root.
 # Firewall pages_http_port to the intended subnet.
+#
+# A fresh install sets pages_root but leaves pages_http_port commented out
+# (see packaging/install.sh), so this unit is enabled by the installer and the
+# package alike, the same as the other two. ExecCondition below is what keeps
+# it correctly inactive rather than restart-looping until an administrator
+# also sets pages_http_port and restarts it (D3/WP4): systemd treats a nonzero
+# ExecCondition as "skip this activation", not a failed start, so Restart=
+# never engages for it the way it would for a failing ExecStart.
 
 [Unit]
 Description=ck-git-hosting Pages server
@@ -18,6 +26,7 @@ ConditionPathExists=/etc/ck-git-hosting/server.ini
 Type=simple
 User=ckgit
 Group=ckgit
+ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini
 ExecStart=/usr/bin/ck-pagesd serve --config /etc/ck-git-hosting/server.ini
 Restart=on-failure
 RestartSec=5s

@@ -152,7 +152,8 @@ write_server_ini() {
     fi
     printf '%s\n' '# Advertise the SSH destination used by visitors, not the loopback dashboard address:' \
       '#ssh_clone_target=ckgit@git-server'
-    printf '%s\n' '# Uncomment and enable ck-pages.service to serve project sites on the LAN:' \
+    printf '%s\n' '# Uncomment and restart ck-pages.service to serve project sites on the LAN' \
+      '# (the service is already enabled; it stays inactive until this is set):' \
       '#pages_http_port=8421'
   } >"$server_ini.new"
   mv "$server_ini.new" "$server_ini"
@@ -246,7 +247,11 @@ steps() {
     act 'systemctl daemon-reload' systemctl daemon-reload
     act 'systemctl enable --now ck-git-hosting.service' systemctl enable --now ck-git-hosting.service
     act 'systemctl enable --now ck-ci-runner.service' systemctl enable --now ck-ci-runner.service
-    printf '  = ck-pages.service installed, not started; set pages_http_port then: systemctl enable --now ck-pages.service\n'
+    # ck-pages.service's own ExecCondition (ck-pagesd check) keeps it cleanly
+    # inactive, not restart-looping, until pages_http_port is also set; enable
+    # it unconditionally, the same as the other two, so it starts on its own
+    # the moment that key is uncommented and the service is restarted.
+    act 'systemctl enable --now ck-pages.service' systemctl enable --now ck-pages.service
   fi
   if [ "$configure_sshd" -eq 1 ]; then
     if [ -n "$staging" ]; then
