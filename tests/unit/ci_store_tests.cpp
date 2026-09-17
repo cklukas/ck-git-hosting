@@ -333,6 +333,31 @@ void testReleaseTagValidation() {
   require(!ckgit::isValidReleaseTag("a/b"), "slashed tag rejected");
 }
 
+// D1/WP1: "release" is reserved for release.ini itself; writing an asset
+// record under that name must fail rather than silently overwrite it. The
+// workflow parser already refuses the name (ci_workflow_tests.cpp), so this
+// is defence in depth for a direct store caller.
+void testReservedReleaseArtifactName() {
+  StoreFixture fixture;
+  const std::filesystem::path dir = ckgit::prepareCiReleaseDirectory(fixture.state, "demo", "v1");
+  {
+    std::ofstream out(dir / "release.tar", std::ios::binary);
+    out << "x";
+  }
+  require(chmod((dir / "release.tar").c_str(), 0600) == 0, "could not secure the fixture asset");
+  ckgit::CiArtifactRecord record;
+  record.name = "release";
+  record.bytes = 1;
+  record.expires_epoch_seconds = 0;
+  bool threw = false;
+  try {
+    ckgit::writeCiReleaseArtifactRecord(fixture.state, "demo", "v1", record);
+  } catch (const std::exception&) {
+    threw = true;
+  }
+  require(threw, "writing a release asset named 'release' is refused");
+}
+
 void testStatusHelpers() {
   require(ckgit::ciRunStatusName(ckgit::CiRunStatus::Cancelled) == "cancelled", "cancelled has a name");
   const auto parsed = ckgit::ciRunStatusFromName("cancelled");
@@ -450,6 +475,7 @@ void testCiStore() {
   testReleaseRoundTrip();
   testReleaseRemovalCascades();
   testReleaseTagValidation();
+  testReservedReleaseArtifactName();
   testStatusHelpers();
   testLiveRecordHeartbeatAndSingleLoad();
   testSchemaVersionOneBackCompat();

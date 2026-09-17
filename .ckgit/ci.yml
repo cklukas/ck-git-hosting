@@ -55,5 +55,7 @@ jobs:
           # (which carries no .git) reports the same version as this release.
           cp "$TMPDIR/build-version" "$PWD/dist/build-version"
     artifacts:
-      name: release
+      # Not "release": that name is reserved for the tag build's own
+      # release.ini record (an artifact of that name would overwrite it).
+      name: packages
       paths: [dist]

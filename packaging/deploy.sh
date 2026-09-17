@@ -63,8 +63,13 @@ log "deploying release $tag"
 work=$(mktemp -d "${TMPDIR:-/tmp}/ckdeploy.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-asset="$RELEASES/$tag/release.tar"
-[ -f "$asset" ] || { log "release $tag has no release.tar asset"; exit 1; }
+# The workflow's artifacts: block is named "packages" (an artifact named
+# "release" is rejected by the parser: it would collide with the release
+# record itself). Older releases built before that rename still carry
+# release.tar, so accept either name.
+asset="$RELEASES/$tag/packages.tar"
+[ -f "$asset" ] || asset="$RELEASES/$tag/release.tar"
+[ -f "$asset" ] || { log "release $tag has no packages.tar (or legacy release.tar) asset"; exit 1; }
 tar -xf "$asset" -C "$work"
 deb=$(find "$work" -name 'ck-git-hosting_*.deb' | head -1)
 [ -n "$deb" ] || { log "release $tag carries no ck-git-hosting_*.deb"; exit 1; }

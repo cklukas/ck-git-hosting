@@ -47,10 +47,13 @@ printf 'update-cli: fetching release %s from %s\n' "$tag" "$ssh_host"
 work=$(mktemp -d "${TMPDIR:-/tmp}/ckcli.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-# 2. Fetch and unpack the release, then the source tarball inside it.
-ssh "$ssh_host" "sudo cat $releases/$tag/release.tar" >"$work/release.tar" \
-  || fail "could not fetch release.tar for $tag"
-tar -xf "$work/release.tar" -C "$work"
+# 2. Fetch and unpack the release, then the source tarball inside it. The
+#    workflow's artifacts: block is named "packages" (an artifact named
+#    "release" would collide with the release record); older releases built
+#    before that rename still carry release.tar, so try both.
+ssh "$ssh_host" "sudo sh -c 'cat $releases/$tag/packages.tar 2>/dev/null || cat $releases/$tag/release.tar'" \
+  >"$work/packages.tar" || fail "could not fetch the packages (or legacy release) asset for $tag"
+tar -xf "$work/packages.tar" -C "$work"
 src_tar=$(find "$work" -name 'ck-git-hosting-src.tar.gz' | head -1)
 [ -n "$src_tar" ] || fail "release $tag has no source tarball (ck-git-hosting-src.tar.gz)"
 mkdir -p "$work/src"

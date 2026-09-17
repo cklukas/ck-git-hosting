@@ -123,8 +123,10 @@ jobs:
   `run:` **scalar** or a `script:` block runs with `sh -ec` inside the sandbox.
 - `artifacts:` (optional, per job) packs the named `paths` into one bundle after
   the job's steps succeed. `paths` are relative to the checkout and may not be
-  absolute or contain `..`; `name` defaults to the job name; `retention_days`
-  overrides the server default and is clamped to its maximum.
+  absolute or contain `..`; `name` defaults to the job name and may not be
+  `release`, which names the release record a tag build writes beside each
+  asset's own sidecar; `retention_days` overrides the server default and is
+  clamped to its maximum.
 - `sisters:` lists other projects hosted on this server whose source the build
   needs. Each is materialised read-only beside the checkout — reachable as
   `../<name>` and exported as `CKGIT_SISTER_<NAME>` — from its default branch, or

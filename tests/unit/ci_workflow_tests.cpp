@@ -185,6 +185,22 @@ void testArtifacts() {
   require(rejected(base + "      paths: [out]\n      retention_days: 0\n"), "zero retention");
   require(rejected(base + "      paths: [out]\n      surprise: 1\n"), "unknown artifact key");
   require(rejected(base + "      retention_days: 3\n"), "artifacts without paths");
+
+  // "release" is reserved: it would collide with the tag build's own
+  // release.ini record written beside each asset's sidecar (D1/WP1).
+  require(rejected(base + "      name: release\n      paths: [out]\n"), "explicit artifact name 'release' rejected");
+  require(rejected(
+              "version: 1\njobs:\n  - name: release\n    steps:\n      - run: [x]\n    artifacts:\n      paths: "
+              "[out]\n"),
+          "artifact name defaulted from a job named 'release' is also rejected");
+  // Any other name, including one that merely contains "release", is fine.
+  const ckgit::CiWorkflow renamed =
+      ckgit::parseCiWorkflow(base + "      name: packages\n      paths: [out]\n");
+  require(renamed.jobs[0].artifact->name == "packages", "a non-reserved artifact name parses");
+  const ckgit::CiWorkflow substring =
+      ckgit::parseCiWorkflow(base + "      name: release-notes\n      paths: [out]\n");
+  require(substring.jobs[0].artifact->name == "release-notes",
+          "a name merely containing 'release' is not reserved");
 }
 
 void testTagTriggers() {

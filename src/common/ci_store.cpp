@@ -1064,6 +1064,11 @@ void writeCiReleaseArtifactRecord(const std::filesystem::path& state_root, std::
   if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidArtifactName(record.name)) {
     fail("refusing to write an invalid release asset record");
   }
+  // "release" is reserved for release.ini itself (written by
+  // writeCiReleaseRecord in the same directory); the workflow parser already
+  // rejects the name, but a direct caller (a test, or future code) must not
+  // be able to silently overwrite the release record with an asset sidecar.
+  if (record.name == "release") fail("artifact name 'release' is reserved for the release record");
   const std::string content = serializeArtifact(record);
   if (content.size() > kMaximumCiArtifactRecordBytes) fail("a release asset record exceeds its size limit");
   const std::filesystem::path root = validatedMetadataRoot(state_root);

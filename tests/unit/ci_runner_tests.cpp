@@ -273,8 +273,39 @@ void testReleaseOnTag() {
   require(releases[0].assets.size() == 1 && releases[0].assets[0].name == "app" &&
               releases[0].assets[0].expires_epoch_seconds == 0,
           "the release asset is durable");
+  // D1/WP1: this is the exact dashboard-visible contract that a same-named
+  // "release" artifact used to break (a release with no visible assets). Bytes
+  // and a well-formed sha256 prove the sidecar was written and not silently
+  // overwritten by the release record in the same directory.
+  const ckgit::CiArtifactRecord& asset = releases[0].assets[0];
+  require(asset.bytes > 0, "the release asset records a non-zero byte count");
+  require(asset.sha256.size() == 64 &&
+              asset.sha256.find_first_not_of("0123456789abcdef") == std::string::npos,
+          "the release asset records a 64-hex sha256");
   const auto blob = ckgit::readCiReleaseAsset(fixture.state, "demo", "v1.0.0", "app", 1u << 20);
   require(blob.has_value() && !blob->empty(), "the release asset is downloadable");
+  require(blob->size() == asset.bytes, "the downloaded asset size matches its recorded byte count");
+}
+
+// D1/WP1: a workflow that names its artifact "release" is rejected by the
+// parser before the runner ever executes a step, so a tag build cannot
+// silently produce a release with a clobbered record.
+void testReleaseArtifactNamedReleaseRejected() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: sh -ec 'mkdir -p dist && printf x > dist/app.bin'\n"
+      "    artifacts:\n"
+      "      name: release\n"
+      "      paths: [dist]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.ref = "refs/tags/v1.0.0";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Error, "a workflow naming its artifact 'release' errors out");
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "no release is published for the rejected workflow");
 }
 
 void testReleaseFailedPublishesNothing() {
@@ -369,6 +400,7 @@ void testCiRunner() {
   testArtifacts();
   testArtifactOverCap();
   testReleaseOnTag();
+  testReleaseArtifactNamedReleaseRejected();
   testReleaseFailedPublishesNothing();
   testPagesPublish();
   testPagesNotPublishedOnFeatureBranch();

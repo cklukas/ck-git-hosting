@@ -82,7 +82,9 @@ struct CiStep {
 // An optional bundle of build outputs a job publishes when all its steps
 // succeed. `paths` are relative to the checkout, validated to stay within it;
 // `retention_days` of 0 means "use the server default", and the runner clamps
-// any value to the server's maximum. `name` defaults to the job's name.
+// any value to the server's maximum. `name` defaults to the job's name, and
+// may not be "release" (reserved for the tag-build release record; see
+// ci_store.hpp).
 struct CiArtifact {
   std::string name;
   std::vector<std::string> paths;

@@ -541,6 +541,16 @@ CiArtifact interpretArtifact(const Node& node, const std::string& job_name) {
     artifact.name = requireKind(*name, Node::Kind::Scalar, "an artifact name to be a scalar").scalar;
     if (!isValidCiName(artifact.name)) malformed("invalid artifact name '" + artifact.name + "'", node.line);
   }
+  // "release" is reserved: a tag build's release record is stored as
+  // release.ini beside each asset's own <name>.ini sidecar in the same
+  // directory (see writeCiReleaseRecord/writeCiReleaseArtifactRecord), so an
+  // artifact named "release" would silently overwrite the release record
+  // instead of getting its own sidecar. Caught here (whether the name came
+  // from an explicit `name:` or defaulted from the job name) rather than
+  // discovered later as a release with no visible assets.
+  if (artifact.name == "release") {
+    malformed("artifact name 'release' is reserved for the release record", node.line);
+  }
   const Node* paths = findEntry(node, "paths");
   if (paths == nullptr) malformed("artifacts needs a 'paths' list", node.line);
   requireKind(*paths, Node::Kind::Sequence, "artifact paths to be a list");
