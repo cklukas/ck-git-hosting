@@ -134,6 +134,8 @@ install -d -m 0755 "$server_root/usr/lib/systemd/system"
 mv "$server_root/etc/systemd/system/ck-git-hosting.service" "$server_root/usr/lib/systemd/system/ck-git-hosting.service"
 mv "$server_root/etc/systemd/system/ck-ci-runner.service" "$server_root/usr/lib/systemd/system/ck-ci-runner.service"
 mv "$server_root/etc/systemd/system/ck-pages.service" "$server_root/usr/lib/systemd/system/ck-pages.service"
+mv "$server_root/etc/systemd/system/ck-git-hosting-deploy.service" "$server_root/usr/lib/systemd/system/ck-git-hosting-deploy.service"
+mv "$server_root/etc/systemd/system/ck-git-hosting-deploy.timer" "$server_root/usr/lib/systemd/system/ck-git-hosting-deploy.timer"
 rmdir "$server_root/etc/systemd/system" "$server_root/etc/systemd"
 write_copyright "$server_root" ck-git-hosting
 install -d -m 0755 "$server_root/DEBIAN"
@@ -202,6 +204,8 @@ case "$1" in
       fi
     fi
     echo "ck-git-hosting: pair a device with: ckgit-admin authorized-key --client-id ID --public-key KEY.pub >> /etc/ck-git-hosting/authorized_keys"
+    echo "ck-git-hosting: automatic deployment is installed but disabled; enable it only for a project"
+    echo "ck-git-hosting: whose pushers you would already trust with root: systemctl enable --now ck-git-hosting-deploy.timer"
     ;;
 esac
 exit 0
@@ -212,6 +216,11 @@ set -e
 case "$1" in
   remove|deconfigure)
     if [ -d /run/systemd/system ]; then
+      # The timer carries [Install]/WantedBy=; the oneshot service it runs is
+      # never enabled directly, so disabling it here would be a no-op that
+      # only masks a real failure from set -e -- disable-then-remove the
+      # timer alone, whether or not an administrator ever enabled it.
+      systemctl disable --now ck-git-hosting-deploy.timer >/dev/null 2>&1 || true
       systemctl disable --now ck-pages.service >/dev/null 2>&1 || true
       systemctl disable --now ck-ci-runner.service >/dev/null 2>&1 || true
       systemctl disable --now ck-git-hosting.service >/dev/null 2>&1 || true

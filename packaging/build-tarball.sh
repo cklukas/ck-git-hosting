@@ -80,6 +80,8 @@ if [ "$client_only" -eq 0 ]; then
   install -m 0644 "$script_dir/systemd/ck-git-hosting.service" "$stage/packaging/systemd/ck-git-hosting.service"
   install -m 0644 "$script_dir/systemd/ck-ci-runner.service" "$stage/packaging/systemd/ck-ci-runner.service"
   install -m 0644 "$script_dir/systemd/ck-pages.service" "$stage/packaging/systemd/ck-pages.service"
+  install -m 0644 "$script_dir/systemd/ck-git-hosting-deploy.service" "$stage/packaging/systemd/ck-git-hosting-deploy.service"
+  install -m 0644 "$script_dir/systemd/ck-git-hosting-deploy.timer" "$stage/packaging/systemd/ck-git-hosting-deploy.timer"
 fi
 install -m 0644 "$source_root/README.md" "$stage/README.md"
 install -m 0644 "$source_root/VERSION" "$stage/VERSION"

@@ -1,0 +1,25 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Disabled by default -- see ck-git-hosting-deploy.service for the trust
+# boundary this accepts once enabled. The explicit opt-in:
+#
+#   sudo systemctl enable --now ck-git-hosting-deploy.timer
+#
+# OnUnitActiveSec counts from the end of the previous run, so a slow deploy
+# (ck-git-hosting-deploy --wait) never causes back-to-back runs once it
+# finally finishes. Persistent=false: a run missed while the machine was off
+# is not made up retroactively -- the next regular tick is soon enough for an
+# unattended maintenance check, and a catch-up run immediately at boot would
+# fire before the network and any dependent services are fully up anyway.
+
+[Unit]
+Description=Periodic ck-git-hosting self-hosted release deploy
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

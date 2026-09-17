@@ -10,10 +10,14 @@
 # Debian packages as release assets, versioned identically to what the GitHub
 # release workflow (.github/workflows/release.yml) produces for the same tag
 # (WP6/D7): the two channels never disagree about what "v0.1.0" means. An
-# administrator runs the packaged `ck-git-hosting-deploy` command by hand on
-# the server to install a release's server package and restart the services,
-# with a health check and automatic rollback; see docs/operations/04-ci-cd.md.
-# The CI step itself stays unprivileged: it only builds, tests, and packages.
+# administrator installs a release's server package with the packaged
+# `ck-git-hosting-deploy` command, which has a health check and automatic
+# rollback; see docs/operations/05-releases-and-deploy.md. That command runs
+# by hand by default -- the packaged ck-git-hosting-deploy.timer that would
+# run it automatically is installed disabled, and enabling it means trusting
+# whoever can push a tag here with root on the deploying machine (see that
+# timer's own header comment). The CI step itself stays unprivileged: it
+# only builds, tests, and packages.
 version: 1
 on:
   branches: [master]

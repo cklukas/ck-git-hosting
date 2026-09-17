@@ -125,10 +125,53 @@ runs: there is no per-ref or per-device access control beyond ordinary Git
 push access to that one project. This is a deliberate, contained trade-off,
 not an oversight -- the same trust already implied by giving someone push
 access to a project whose CI output you install as root. Keep the deploy
-command a manual, human-run step (as it is today), or only enable an
-automatic timer (once available) for a project whose pushers you would already
-trust with root on this machine. Do not point it at a project with a wider or
-less trusted set of pushers than that.
+command a manual, human-run step (its default state), or only enable the
+timer below for a project whose pushers you would already trust with root on
+this machine. Do not point it at a project with a wider or less trusted set
+of pushers than that.
+
+## Automatic deployment
+
+`ck-git-hosting-deploy.service` and `ck-git-hosting-deploy.timer` are
+installed by both the package and the tarball installer, alongside the other
+units, but **never enabled by either** -- opting in is a separate, deliberate
+step:
+
+```text
+sudo systemctl enable --now ck-git-hosting-deploy.timer
+```
+
+Once enabled, the timer runs `ck-git-hosting-deploy --if-new --wait 600
+--config /etc/ck-git-hosting/server.ini` five minutes after boot and every
+ten minutes after the previous run finishes (`OnUnitActiveSec` counts from
+completion, not from the previous start, so a slow deploy never causes
+back-to-back runs). `--if-new` makes a run with nothing new to deploy exit
+`0` quietly, so the steady-state case produces no journal noise; `--wait 600`
+defers to a CI build already in progress for up to ten minutes rather than
+refusing outright. A missed run (the machine was off) is not made up
+retroactively (`Persistent=false`) -- the next regular tick is soon enough
+for unattended maintenance, and a catch-up run at boot could otherwise fire
+before the network is even up.
+
+Every run's outcome is in the journal:
+
+```text
+journalctl -u ck-git-hosting-deploy.service
+```
+
+A run that finds nothing to deploy yet (no release has been published for
+the configured project) exits non-zero and shows as a **failed** unit --
+this is deliberate, not a bug: it surfaces a real misconfiguration (the timer
+was enabled before the project ever produced a release) the same way any
+other unexpected failure would, rather than swallowing it silently. A
+genuinely failed deploy still rolls back automatically, exactly as it would
+run by hand; the timer changes only when `ck-git-hosting-deploy` runs, never
+how it behaves once it does.
+
+Disabling the timer (`sudo systemctl disable --now
+ck-git-hosting-deploy.timer`) returns to the fully manual default without
+uninstalling anything. Uninstalling (`packaging/uninstall.sh`, or removing
+the package) disables and removes both units unconditionally.
 
 ## Upgrade notes
 

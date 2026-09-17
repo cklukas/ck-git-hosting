@@ -1,0 +1,39 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Runs ck-git-hosting-deploy once. Installed and staged by the installer and
+# the package alike, but never enabled by either — see the .timer unit in
+# this same directory for the explicit opt-in. --if-new makes a run with
+# nothing new to deploy exit 0 quietly, so an enabled timer's normal
+# activation produces no noise; --wait defers to a CI build already in
+# progress instead of refusing outright.
+#
+# Trust boundary (see docs/operations/05-releases-and-deploy.md): whoever can
+# push a matching tag to the CI-enabled project this deploys from can put an
+# arbitrary package in front of root the next time this runs. There is no
+# per-ref or per-device access control beyond ordinary Git push access to
+# that one project. This is a deliberate, contained trade-off, not an
+# oversight -- the same trust already implied by giving someone push access
+# to a project whose CI output you install as root. Enable the .timer only
+# for a project whose pushers you would already trust with root on this
+# machine; keep this command manual (its default state) for any project with
+# a wider or less trusted set of pushers than that.
+#
+# This runs as root with intentionally light hardening: dpkg, systemctl, and
+# a health-check curl each need broad filesystem and network access that
+# ProtectSystem=strict or a syscall allow-list would fight rather than help.
+
+[Unit]
+Description=ck-git-hosting self-hosted release deploy
+ConditionPathExists=/etc/ck-git-hosting/server.ini
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ck-git-hosting-deploy --if-new --wait 600 --config /etc/ck-git-hosting/server.ini
+TimeoutStartSec=900
+UMask=0077
+Environment=LANG=C
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes

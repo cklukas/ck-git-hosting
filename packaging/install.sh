@@ -101,6 +101,12 @@ pages_unit_source="$script_dir/systemd/ck-pages.service"
 [ -f "$pages_unit_source" ] || fail "missing unit template: $pages_unit_source"
 deploy_source="$script_dir/ck-git-hosting-deploy"
 [ -f "$deploy_source" ] || fail "missing script: $deploy_source"
+deploy_unit_path="$unit_dir/ck-git-hosting-deploy.service"
+deploy_unit_source="$script_dir/systemd/ck-git-hosting-deploy.service"
+[ -f "$deploy_unit_source" ] || fail "missing unit template: $deploy_unit_source"
+deploy_timer_path="$unit_dir/ck-git-hosting-deploy.timer"
+deploy_timer_source="$script_dir/systemd/ck-git-hosting-deploy.timer"
+[ -f "$deploy_timer_source" ] || fail "missing unit template: $deploy_timer_source"
 
 as_root=0
 [ -z "$staging" ] && [ "$(id -u)" -eq 0 ] && as_root=1
@@ -246,6 +252,13 @@ steps() {
   act "install $unit_path (root:root 0644)" install_file 0644 root root "$unit_source" "$unit_path"
   act "install $runner_unit_path (root:root 0644)" install_file 0644 root root "$runner_unit_source" "$runner_unit_path"
   act "install $pages_unit_path (root:root 0644)" install_file 0644 root root "$pages_unit_source" "$pages_unit_path"
+  # The deploy service and its timer are staged like every other unit, but
+  # never enabled here: running it means trusting whoever can push a tag to
+  # the deployed project with root on this machine (see its own header
+  # comment and docs/operations/05-releases-and-deploy.md). Opting in is a
+  # separate, explicit step an administrator takes deliberately.
+  act "install $deploy_unit_path (root:root 0644)" install_file 0644 root root "$deploy_unit_source" "$deploy_unit_path"
+  act "install $deploy_timer_path (root:root 0644)" install_file 0644 root root "$deploy_timer_source" "$deploy_timer_path"
   if [ -z "$staging" ] && [ "$configure_service" -eq 1 ]; then
     act 'systemctl daemon-reload' systemctl daemon-reload
     act 'systemctl enable --now ck-git-hosting.service' systemctl enable --now ck-git-hosting.service
@@ -297,4 +310,7 @@ steps
 printf 'Installation complete.\n'
 if [ -z "$staging" ]; then
   printf 'Pair a device: ckgit-admin authorized-key --client-id ID --public-key KEY.pub >> %s\n' "$authorized_keys"
+  printf 'Automatic deployment is installed but disabled. Enable it only for a project\n'
+  printf 'whose pushers you would already trust with root on this machine:\n'
+  printf '  sudo systemctl enable --now ck-git-hosting-deploy.timer\n'
 fi

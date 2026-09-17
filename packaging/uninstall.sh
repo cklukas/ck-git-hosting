@@ -64,6 +64,8 @@ lib_dir="$staging/var/lib/ck-git-hosting"
 unit_path="$staging/etc/systemd/system/ck-git-hosting.service"
 runner_unit_path="$staging/etc/systemd/system/ck-ci-runner.service"
 pages_unit_path="$staging/etc/systemd/system/ck-pages.service"
+deploy_unit_path="$staging/etc/systemd/system/ck-git-hosting-deploy.service"
+deploy_timer_path="$staging/etc/systemd/system/ck-git-hosting-deploy.timer"
 sshd_dropin="$staging/etc/ssh/sshd_config.d/ck-git-hosting.conf"
 mode=plan
 
@@ -97,15 +99,26 @@ steps() {
   [ -e "$runner_unit_path" ] && had_runner_unit=1
   had_pages_unit=0
   [ -e "$pages_unit_path" ] && had_pages_unit=1
+  had_deploy_unit=0
+  [ -e "$deploy_unit_path" ] && had_deploy_unit=1
+  had_deploy_timer=0
+  [ -e "$deploy_timer_path" ] && had_deploy_timer=1
   if [ -z "$staging" ]; then
+    # The timer is what carries [Install]/WantedBy=; disabling it also
+    # removes its symlink regardless of whether an administrator ever
+    # enabled it. The oneshot service itself is never enabled directly.
+    [ "$had_deploy_timer" -eq 1 ] && act 'systemctl disable --now ck-git-hosting-deploy.timer' systemctl disable --now ck-git-hosting-deploy.timer
     [ "$had_pages_unit" -eq 1 ] && act 'systemctl disable --now ck-pages.service' systemctl disable --now ck-pages.service
     [ "$had_runner_unit" -eq 1 ] && act 'systemctl disable --now ck-ci-runner.service' systemctl disable --now ck-ci-runner.service
     [ "$had_unit" -eq 1 ] && act 'systemctl disable --now ck-git-hosting.service' systemctl disable --now ck-git-hosting.service
   fi
+  [ "$had_deploy_timer" -eq 1 ] && act "remove $deploy_timer_path" remove_path "$deploy_timer_path"
+  [ "$had_deploy_unit" -eq 1 ] && act "remove $deploy_unit_path" remove_path "$deploy_unit_path"
   [ "$had_pages_unit" -eq 1 ] && act "remove $pages_unit_path" remove_path "$pages_unit_path"
   [ "$had_runner_unit" -eq 1 ] && act "remove $runner_unit_path" remove_path "$runner_unit_path"
   [ "$had_unit" -eq 1 ] && act "remove $unit_path" remove_path "$unit_path"
-  if [ -z "$staging" ] && { [ "$had_unit" -eq 1 ] || [ "$had_runner_unit" -eq 1 ] || [ "$had_pages_unit" -eq 1 ]; }; then
+  if [ -z "$staging" ] && { [ "$had_unit" -eq 1 ] || [ "$had_runner_unit" -eq 1 ] || [ "$had_pages_unit" -eq 1 ] ||
+        [ "$had_deploy_unit" -eq 1 ] || [ "$had_deploy_timer" -eq 1 ]; }; then
     act 'systemctl daemon-reload' systemctl daemon-reload
   fi
   for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd ck-git-hosting-deploy; do

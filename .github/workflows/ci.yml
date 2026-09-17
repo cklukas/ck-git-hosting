@@ -98,6 +98,9 @@ jobs:
           test -f /usr/lib/systemd/system/ck-ci-runner.service
           test -x /usr/bin/ck-pagesd
           test -f /usr/lib/systemd/system/ck-pages.service
+          test -x /usr/bin/ck-git-hosting-deploy
+          test -f /usr/lib/systemd/system/ck-git-hosting-deploy.service
+          test -f /usr/lib/systemd/system/ck-git-hosting-deploy.timer
           test -d /var/lib/ck-git-hosting/ci-build
           test -d /var/lib/ck-git-hosting/pages
           test -f /etc/ck-git-hosting/authorized_keys
@@ -117,6 +120,13 @@ jobs:
           fi
           grep -q '^ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini$' \
             /usr/lib/systemd/system/ck-pages.service
+          # WP10: the deploy timer is installed but, unlike the other three
+          # units, never auto-enabled -- opting into automatic deployment
+          # means trusting whoever can push a tag with root on this machine,
+          # a decision only an administrator makes deliberately. Enabling a
+          # unit is exactly the symlink systemctl enable would create; this
+          # container has no running systemd (see above) to ask instead.
+          test ! -e /etc/systemd/system/timers.target.wants/ck-git-hosting-deploy.timer
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/device"
           ckgit-admin authorized-key --client-id ci-device --public-key "$RUNNER_TEMP/device.pub"
           ckgit-admin create smoke --repo-root /srv/ck-git-hosting/repos --hook-directory /usr/lib/ck-git-hosting/hooks

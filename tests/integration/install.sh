@@ -88,6 +88,32 @@ grep -q '^RestrictNamespaces=user mnt net$' "$runner_unit"
 grep -q '^ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^ExecStart=/usr/bin/ck-pagesd serve --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^User=ckgit$' "$pages_unit"
+
+# WP10: the deploy timer is staged, disabled by default -- never in the
+# installer's own enable step -- with the explicit opt-in named for the
+# administrator. A structural check of the source itself, not just this
+# staging run's output, since staging mode skips the whole enable step for
+# every unit and so cannot show the difference on its own.
+deploy_unit="$staging/etc/systemd/system/ck-git-hosting-deploy.service"
+deploy_timer="$staging/etc/systemd/system/ck-git-hosting-deploy.timer"
+[ -f "$deploy_unit" ] || fail "deploy service was not staged"
+[ -f "$deploy_timer" ] || fail "deploy timer was not staged"
+grep -q '^Type=oneshot$' "$deploy_unit"
+grep -q '^ExecStart=/usr/bin/ck-git-hosting-deploy --if-new --wait 600 --config /etc/ck-git-hosting/server.ini$' "$deploy_unit"
+grep -q '^OnBootSec=5min$' "$deploy_timer"
+grep -q '^OnUnitActiveSec=10min$' "$deploy_timer"
+grep -q '^Persistent=false$' "$deploy_timer"
+grep -q '^WantedBy=timers.target$' "$deploy_timer"
+# Excludes printf/echo lines so the installer's own opt-in message (which
+# names "systemctl enable --now ck-git-hosting-deploy.timer" as text for the
+# administrator to read, not a command the script runs) does not trip this.
+if grep -v 'printf\|echo' "$packaging/install.sh" | grep -Eq 'enable.*ck-git-hosting-deploy'; then
+  fail "install.sh must never auto-enable ck-git-hosting-deploy"
+fi
+grep -q 'enable --now ck-git-hosting.service' "$packaging/install.sh" ||
+  fail "sanity check: the other units should still be auto-enabled by install.sh"
+grep -q 'ck-git-hosting-deploy.timer' "$packaging/install.sh" ||
+  fail "install.sh's final message should name the explicit opt-in"
 grep -q '^Match User ckgit$' "$dropin"
 grep -q '^    AuthorizedKeysFile /etc/ck-git-hosting/authorized_keys$' "$dropin"
 grep -q '^    PermitTTY no$' "$dropin"
@@ -191,6 +217,20 @@ sh "$packaging/build-deb.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-ci-runner.service" ] || fail "packaged CI runner unit is not under /usr/lib/systemd/system"
 [ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-pagesd" ] || fail "staged server package lacks the pages server"
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-pages.service" ] || fail "packaged pages unit is not under /usr/lib/systemd/system"
+[ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-git-hosting-deploy" ] || fail "staged server package lacks ck-git-hosting-deploy"
+[ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting-deploy.service" ] || fail "packaged deploy unit is not under /usr/lib/systemd/system"
+[ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting-deploy.timer" ] || fail "packaged deploy timer is not under /usr/lib/systemd/system"
+# The enable loop reads systemctl enable "$unit" for whatever it iterates,
+# so the real risk is the deploy unit joining that iterated list, not the
+# literal text "enable" beside its name.
+grep -q '^      for unit in ck-git-hosting.service ck-ci-runner.service ck-pages.service; do$' \
+  "$test_root/deb/ck-git-hosting/DEBIAN/postinst" ||
+  fail "postinst's enable loop has changed shape; review it for an accidental deploy-unit addition"
+if grep 'for unit in' "$test_root/deb/ck-git-hosting/DEBIAN/postinst" | grep -q 'ck-git-hosting-deploy'; then
+  fail "postinst must never auto-enable the deploy service or timer"
+fi
+grep -q 'disable --now ck-git-hosting-deploy.timer' "$test_root/deb/ck-git-hosting/DEBIAN/prerm" ||
+  fail "prerm must disable the deploy timer on removal"
 [ ! -e "$test_root/deb/ck-git-hosting/etc/systemd" ] || fail "package must not ship the unit under /etc"
 [ ! -e "$test_root/deb/ck-git-hosting/etc/ck-git-hosting/authorized_keys" ] || fail "package must not ship authorized_keys"
 grep -q '^Package: ck-git-hosting$' "$test_root/deb/ck-git-hosting/DEBIAN/control"
@@ -226,6 +266,8 @@ tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-ci-runner.service$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/bin/ck-pagesd$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-pages.service$"
+tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-git-hosting-deploy.service$"
+tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-git-hosting-deploy.timer$"
 tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q "^ckgit-$version-test-client/bin/ckgit$"
 if tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q 'ck-git-hostingd'; then
   fail "client archive must not contain server binaries"
@@ -252,6 +294,8 @@ grep -q 'Removal complete' "$test_root/uninstall.out"
 [ ! -e "$unit" ] || fail "unit file was not removed"
 [ ! -e "$runner_unit" ] || fail "CI runner unit was not removed"
 [ ! -e "$pages_unit" ] || fail "pages unit was not removed"
+[ ! -e "$deploy_unit" ] || fail "deploy service was not removed"
+[ ! -e "$deploy_timer" ] || fail "deploy timer was not removed"
 [ ! -e "$dropin" ] || fail "sshd drop-in was not removed"
 [ -f "$server_ini" ] || fail "server.ini was removed without --remove-state"
 [ -f "$authorized_keys" ] || fail "authorized_keys was removed without --remove-state"
