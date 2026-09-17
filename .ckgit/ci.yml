@@ -1,0 +1,34 @@
+# ck-git-hosting builds and self-deploys through its own CI runner.
+#
+# Every push to master builds the whole suite and runs the unit tests (the
+# loopback integration suite needs real networking, which the sandbox denies,
+# so it stays the developer's pre-push gate). Pushing a deploy-* tag does the
+# same and, because a tag build publishes a durable release, attaches the built
+# Debian packages as release assets. A small root-owned deploy watcher on the
+# server (packaging/deploy.sh, run by ck-git-hosting-deploy.timer) installs the
+# newest release's server package and restarts the services, with a health
+# check and automatic rollback. The CI step itself stays unprivileged: it only
+# builds, tests, and packages.
+version: 1
+on:
+  branches: [master]
+  tags: [deploy-*]
+jobs:
+  - name: build-test-package
+    steps:
+      - name: build
+        run: make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" all
+      - name: unit-tests
+        script: |
+          make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" "$TMPDIR/build/bin/ckgit-unit-tests"
+          mkdir -p "$TMPDIR/build/test-tmp"
+          CKGIT_TEST_ROOT="$TMPDIR" TMPDIR="$TMPDIR/build/test-tmp" "$TMPDIR/build/bin/ckgit-unit-tests"
+      - name: package
+        script: |
+          sh packaging/build-deb.sh --build-dir "$TMPDIR/build" --output "$PWD/dist"
+          # A source tarball too, so the macOS client (which cannot run the Pi's
+          # Linux binary) can build ckgit from the same release.
+          tar -czf "$PWD/dist/ck-git-hosting-src.tar.gz" Makefile VERSION src include packaging
+    artifacts:
+      name: release
+      paths: [dist]
