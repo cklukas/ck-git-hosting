@@ -28,11 +28,13 @@ tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.
   and the repository survive, then purges and verifies that the repository
   still survives.
 
-Every job passes `BUILD_ROOT=$RUNNER_TEMP`; the Makefile keeps its default
-build root for the development Mac and only accepts build directories beneath
-the selected root. The arm64 jobs use the `ubuntu-24.04-arm` runner label and
-the Intel macOS job uses `macos-15-intel`; both are hosted labels that GitHub
-may rename in future, in which case only the matrix entries change.
+Every job passes `BUILD_ROOT=$RUNNER_TEMP`, overriding the Makefile's own
+portable default (`TMPDIR`, or `/tmp`; a checkout's own `local.mk` can pin a
+different one — see `local.mk.example`), and the Makefile only accepts build
+directories beneath the selected root either way. The arm64 jobs use the
+`ubuntu-24.04-arm` runner label and the Intel macOS job uses `macos-15-intel`;
+both are hosted labels that GitHub may rename in future, in which case only
+the matrix entries change.
 
 ## Debian and Raspberry Pi
 

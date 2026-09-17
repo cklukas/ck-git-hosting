@@ -2,7 +2,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 set -eu
-test_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_parent" ] || exit 1
 case "${TMPDIR:-}" in "$test_parent"/*) ;; *) exit 1 ;; esac
 root=$(mktemp -d "$test_parent/ckd.XXXXXX")

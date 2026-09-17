@@ -7,7 +7,7 @@
 
 set -eu
 
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in
   "$test_root_parent"/*) ;;
   *) echo "TMPDIR must be beneath $test_root_parent" >&2; exit 1 ;;

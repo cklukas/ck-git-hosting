@@ -17,3 +17,7 @@ staging/
 
 # Internal planning notes; not part of the published project.
 docs/planning/
+
+# A per-checkout Makefile override (see local.mk.example); never one
+# contributor's local paths for another.
+local.mk

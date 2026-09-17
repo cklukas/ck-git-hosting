@@ -107,6 +107,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dist"
           git archive --format=tar.gz --prefix="ck-git-hosting-$version/" \
             -o "$RUNNER_TEMP/dist/ck-git-hosting-$version-source.tar.gz" "$GITHUB_REF_NAME"
+      - name: Verify the archive builds and stamps a real version with no .git
+        run: |
+          # WP12/D9: a git-archive export has no .git for `git describe`, so
+          # this proves the .ckgit/build-commit export-subst fallback (see
+          # Makefile) actually works on the exact kind of tree a downstream
+          # builder (a distro packager, Homebrew's --HEAD-less path, ...)
+          # would build from -- not just "+source".
+          version=${{ needs.verify-version.outputs.version }}
+          expected_short=$(git rev-parse HEAD | cut -c1-12)
+          work="$RUNNER_TEMP/verify-source"
+          mkdir -p "$work"
+          tar -xzf "$RUNNER_TEMP/dist/ck-git-hosting-$version-source.tar.gz" -C "$work"
+          cd "$work/ck-git-hosting-$version"
+          test ! -e .git
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/verify-build" client
+          reported=$("$RUNNER_TEMP/verify-build/bin/ckgit" --version)
+          echo "reported: $reported"
+          case "$reported" in
+            *"+g$expected_short"*) ;;
+            *) echo "expected +g$expected_short in the reported version" >&2; exit 1 ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: source

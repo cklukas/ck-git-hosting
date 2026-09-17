@@ -7,9 +7,10 @@
 
 set -eu
 
-# The Makefile exports the approved build root; on the development Mac that is
-# /Volumes/PRO-BLADE/tmp, in CI it is the runner's temporary directory.
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+# The Makefile exports the approved build root (this Mac's local.mk pins it to
+# /Volumes/PRO-BLADE/tmp; the portable default otherwise is TMPDIR, or /tmp);
+# run standalone, this falls back the same way the Makefile itself does.
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in
   "$test_root_parent"/*) ;;
   *)

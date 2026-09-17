@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 set -eu
 
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in "$test_root_parent"/*) ;; *) echo 'Select an approved TMPDIR' >&2; exit 1 ;; esac
 [ -d "$test_root_parent" ]
 test_root=$(mktemp -d "$test_root_parent/cks.XXXXXX")

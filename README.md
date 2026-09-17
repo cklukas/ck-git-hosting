@@ -45,18 +45,26 @@ for every install path, including the server.
 
 ## Build and test
 
-The source tree is never used for build products.  Choose a new directory under
-`/Volumes/PRO-BLADE/tmp` for each build:
+The source tree is never used for build products.  Choose a new directory
+under the build root for each build — by default your system's temporary
+directory (`TMPDIR`, or `/tmp`), so this works unmodified on a fresh clone:
 
 ```text
-make BUILD_DIR=/Volumes/PRO-BLADE/tmp/ck-git-hosting-my-build
-make BUILD_DIR=/Volumes/PRO-BLADE/tmp/ck-git-hosting-my-build check
+make BUILD_DIR=/tmp/ck-git-hosting-my-build
+make BUILD_DIR=/tmp/ck-git-hosting-my-build check
 ```
 
+To pin a different default for one particular checkout instead of typing
+`BUILD_ROOT=` every time — for example to keep build products off a
+network-mounted source volume — copy `local.mk.example` to `local.mk`
+(gitignored) and set `BUILD_ROOT` there.
+
 `ckgit --version` identifies the release version and Git revision, including
-tracked changes. Source archives use the release version with a `+source`
-suffix. Packaging can supply `CKGIT_BUILD_VERSION=0.1.0` or another exact build
-identifier to `make`.
+tracked changes. A source archive with no `.git` (a `git archive` export, or
+this project's own self-hosted CI checkout) instead reads the commit
+`export-subst` stamps into `.ckgit/build-commit`, falling back to a plain
+`+source` suffix only if that is unavailable too. Packaging can supply
+`CKGIT_BUILD_VERSION=0.1.0` or another exact build identifier to `make`.
 
 On another machine, or in CI, pass `BUILD_ROOT` explicitly; the build
 directory must lie beneath it and the test suite keeps every scratch file
@@ -450,9 +458,9 @@ moves the `ckgit` account's authorized keys to a root-owned file, device
 pairing with `ckgit-admin authorized-key`, upgrade, and removal. In short:
 
 ```text
-make BUILD_DIR=/Volumes/PRO-BLADE/tmp/ck-git-hosting-my-build all
-sudo sh packaging/install.sh --build-dir /Volumes/PRO-BLADE/tmp/ck-git-hosting-my-build --dry-run
-sudo sh packaging/install.sh --build-dir /Volumes/PRO-BLADE/tmp/ck-git-hosting-my-build --yes
+make BUILD_DIR=/tmp/ck-git-hosting-my-build all
+sudo sh packaging/install.sh --build-dir /tmp/ck-git-hosting-my-build --dry-run
+sudo sh packaging/install.sh --build-dir /tmp/ck-git-hosting-my-build --yes
 ```
 
 The daemon then reads `/etc/ck-git-hosting/server.ini`; `--check` prints the

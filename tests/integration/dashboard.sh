@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 set -eu
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_root_parent" ] || { echo "Approved temporary volume is unavailable" >&2; exit 1; }
 case "${TMPDIR:-}" in
   "$test_root_parent"/*) ;;

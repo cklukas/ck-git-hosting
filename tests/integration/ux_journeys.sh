@@ -5,7 +5,7 @@
 # End-user regression journeys for review findings C1-C6 and W1-W5. All Git,
 # SSH, registrations, configuration, and HTTP requests belong to this fixture.
 set -eu
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_root_parent" ] || { echo 'Approved temporary volume is unavailable' >&2; exit 1; }
 case "${TMPDIR:-}" in
   "$test_root_parent"/*) ;;

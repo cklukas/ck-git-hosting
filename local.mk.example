@@ -1,0 +1,14 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Copy this file to local.mk (gitignored, never committed) to pin a default
+# BUILD_ROOT for this particular checkout, instead of the portable default
+# (TMPDIR, or /tmp when TMPDIR is unset) or typing BUILD_ROOT= on every
+# invocation. Makefile does `-include local.mk` before applying its own
+# `BUILD_ROOT ?=` default, so a value set here wins.
+#
+#   cp local.mk.example local.mk
+#   edit local.mk to taste
+#
+# Example: keep build products off a network-mounted source volume.
+#BUILD_ROOT := /Volumes/PRO-BLADE/tmp

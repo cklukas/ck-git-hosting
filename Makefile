@@ -3,9 +3,13 @@
 
 # Every build artifact is deliberately kept outside the source tree.  A caller
 # must select an explicit, unique build directory beneath the approved build
-# root.  On the development Mac that root is /Volumes/PRO-BLADE/tmp; CI and
-# package builds pass BUILD_ROOT explicitly (for example $RUNNER_TEMP).
-BUILD_ROOT ?= /Volumes/PRO-BLADE/tmp
+# root.  The portable default is the system temp directory (TMPDIR when set,
+# else /tmp); CI and package builds pass BUILD_ROOT explicitly (for example
+# $RUNNER_TEMP). A local, untracked local.mk (see local.mk.example) can pin a
+# different default for one particular checkout -- this development Mac uses
+# it to keep builds off the source volume, under /Volumes/PRO-BLADE/tmp.
+-include local.mk
+BUILD_ROOT ?= $(or $(TMPDIR),/tmp)
 BUILD_ROOT_ABS := $(abspath $(BUILD_ROOT))
 ifeq ($(strip $(BUILD_DIR)),)
 $(error Set BUILD_DIR to a unique directory beneath $(BUILD_ROOT_ABS))
@@ -22,10 +26,24 @@ CXXFLAGS ?= -std=c++20 -Wall -Wextra -Wpedantic -Werror -O2
 LDFLAGS ?= -pthread
 
 # Source archives retain their release version; Git checkouts additionally
-# identify the revision and tracked modifications. Release packaging may pass
-# an exact CKGIT_BUILD_VERSION without requiring Git in the source archive.
+# identify the revision and tracked modifications. When there is no .git at
+# all (a git-archive export, including this project's own self-hosted CI
+# sandbox checkout) but the commit was stamped into .ckgit/build-commit via
+# export-subst (see .gitattributes), fall back to that -- the same recipe
+# .ckgit/ci.yml's own build step already uses, so a source tarball built by
+# hand reports a real commit too, not just "+source". Release packaging may
+# pass an exact CKGIT_BUILD_VERSION, bypassing all of this.
 CKGIT_RELEASE_VERSION := $(strip $(shell cat VERSION))
 CKGIT_GIT_VERSION := $(strip $(shell git describe --always --dirty --abbrev=12 --exclude '*' 2>/dev/null))
+ifeq ($(CKGIT_GIT_VERSION),)
+# Deliberately avoids shell's ${#var} length syntax here: Make's own
+# variable-reference syntax is also ${...}, and even after Make reduces $$
+# to a literal $, the following { confuses Make's (naive, quote-blind) paren
+# counting for the enclosing $(shell ...)/$(strip ...) calls. awk's length()
+# and substr() sidestep that -- their parens are literal text to Make, and
+# happen to stay balanced, which is all its counting actually checks.
+CKGIT_GIT_VERSION := $(strip $(shell e=`tr -cd '0-9a-f' < .ckgit/build-commit 2>/dev/null`; printf '%s' "$$e" | awk 'length($$0) >= 40 { print substr($$0,1,12) }'))
+endif
 CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKGIT_GIT_VERSION),+source)
 
 COMMON_SOURCES := \

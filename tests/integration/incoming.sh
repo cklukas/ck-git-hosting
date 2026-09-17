@@ -5,7 +5,7 @@
 # Real hosted Git histories exercise incoming updates without touching any
 # physical user project. Only the SSH transport is redirected to the fixture.
 set -eu
-test_root_parent=${CKGIT_TEST_ROOT:-/Volumes/PRO-BLADE/tmp}
+test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_root_parent" ] || { echo 'Approved temporary volume is unavailable' >&2; exit 1; }
 case "${TMPDIR:-}" in
   "$test_root_parent"/*) ;;
