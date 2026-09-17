@@ -23,8 +23,12 @@ namespace ckgit {
 // the `current` pointer atomically, so a partial publish never replaces a live
 // site. Older versions are pruned for rollback headroom.
 
-inline constexpr std::size_t kMaximumPagesSiteBytes = static_cast<std::size_t>(512) << 20;
-inline constexpr std::size_t kMaximumPagesFileBytes = static_cast<std::size_t>(64) << 20;
+// Generous ceilings so a project can host large artifacts -- for example a
+// multi-hundred-megabyte reference-handbook PDF -- without a publish silently
+// failing. Publishing copies files to disk and the pages server reads a whole
+// file into memory to serve it, so these bound disk use and per-request memory.
+inline constexpr std::size_t kMaximumPagesSiteBytes = static_cast<std::size_t>(8) << 30;   // 8 GiB total site
+inline constexpr std::size_t kMaximumPagesFileBytes = static_cast<std::size_t>(1) << 30;    // 1 GiB per file
 inline constexpr std::size_t kMaximumPagesEntries = 100000;
 
 // A resolved page ready to serve: its bytes and a content type chosen by

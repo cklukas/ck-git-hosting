@@ -35,7 +35,9 @@ volatile std::sig_atomic_t g_stop = 0;
 void onStop(int) { g_stop = 1; }
 
 constexpr std::size_t kMaximumRequestBytes = 16 * 1024;
-constexpr std::size_t kMaximumServedBytes = static_cast<std::size_t>(64) << 20;
+// Matches kMaximumPagesFileBytes; a served file is read fully into memory, so
+// this also bounds per-request memory. 1 GiB comfortably serves large PDFs.
+constexpr std::size_t kMaximumServedBytes = static_cast<std::size_t>(1) << 30;   // 1 GiB per file
 
 int usage(std::ostream& out, int code) {
   out << "usage: ck-pagesd serve --config FILE\n\n"
