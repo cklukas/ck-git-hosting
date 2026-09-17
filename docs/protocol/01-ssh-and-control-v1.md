@@ -30,6 +30,7 @@ ckgit-rpc 1 create project branch
 ckgit-rpc 1 register project path-hex
 ckgit-rpc 1 replace-checkout project path-hex
 ckgit-rpc 1 forget-checkout project
+ckgit-rpc 1 releases project
 ```
 
 `project` must meet the first-release project-name grammar.  The quoted
@@ -87,8 +88,9 @@ CKGIT-CONTROL/1 <client-id> <operation>\n
 ```
 
 For version 1, `operation` is `ping`, `version`, `list-projects`, `checkouts`,
-`refs`, `refresh`, `create`, `register`, `replace-checkout`, or `forget-checkout`.
-`refs`, `refresh`, and `forget-checkout` add
+`refs`, `refresh`, `create`, `register`, `replace-checkout`, `forget-checkout`,
+or `releases`.
+`refs`, `refresh`, `forget-checkout`, and `releases` add
 one validated project-name argument and reject any further arguments.
 `create` adds a validated project name and branch.
 `register` and `replace-checkout` add a project and a lowercase hex encoding of
@@ -122,6 +124,17 @@ files. Success is exactly `ok forgotten`. The client removes its private local
 selection only after receiving that acknowledgement. Negative tests cover
 extra arguments, unsafe names, symlinks, and cross-device isolation.
 
+`releases` accepts exactly one project argument and lists that project's
+durable, tag-triggered releases, each produced by a `.ckgit/ci.yml` `package`
+step run against a pushed tag. It
+takes no authorization beyond the standard project-name argument shape: the
+listing carries only a release's tag, commit, creation time, and its assets'
+names, sizes, and checksums, which is no more than a client already learns
+from `refs`, so it is available to any client that can reach the control
+socket. It never touches the hosted repository or another client's records.
+Negative tests cover extra arguments, an unsafe or unknown project name, and
+a project with no releases (`ok 0`, no further lines).
+
 The daemon sends at most one response of 256 KiB (262144 bytes), enough for
 a listing of tens of thousands of refs while still bounding every client
 buffer.  Its first line is one of:
@@ -138,7 +151,13 @@ line.  `version` responds with `ok <build-identifier>`, the same identifier
 takes no arguments and changes nothing.
 `list-projects` uses `ok <count>` followed by one project name per line.
 `refs` uses `ok <count>` followed by `refname object-id` lines; a client
-rejects a count above 65536 or a listing that does not match it. `checkouts`
+rejects a count above 65536 or a listing that does not match it. `releases`
+uses `ok <count>` where `<count>` is the number of releases, each contributing
+one `release tag commit created-epoch` line followed by zero or more
+`asset tag name bytes sha256` lines (`sha256` is `-` when the asset predates
+checksums), newest release first and bounded to 64 releases; `sha256` and
+`bytes` let `ckgit release download` verify an asset before it replaces
+anything on disk. `checkouts`
 uses `ok <count>` followed by `project path-hex` lines and lists only the
 registrations made under the requesting client ID, which the dispatcher fixes
 from the forced command; a host can therefore retrieve its own checkout

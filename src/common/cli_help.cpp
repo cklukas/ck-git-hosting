@@ -29,6 +29,10 @@ struct Option {
   std::string description;
   ValueKind kind{ValueKind::kFlag};
   bool repeatable{false};
+  // Still parsed and validated like any other option; only omitted from the
+  // synopsis, the detailed help block, and shell completion. For test-only
+  // seams that a normal user has no reason to discover.
+  bool hidden{false};
 };
 
 struct Argument {
@@ -152,6 +156,26 @@ const std::vector<Command>& commands() {
         {"--no-open", "", "Print the dashboard URL without opening a browser."}},
        {{"ADMIN-HOST", "SSH host alias or user@host with forwarding permission.", ValueKind::kHost}},
        {"ckgit web", "ckgit web --no-open", "ckgit web --project my-project", "ckgit web --port 8421 --remote-port 8420 admin@server"}},
+      {{"release"}, "Inspect and download a project's durable, tag-triggered releases.",
+       "A release is created on the server by a `.ckgit/ci.yml` package step running against a pushed tag; it is kept until the tag is deleted.",
+       "Use list to see a project's releases and their assets, or download to fetch one asset.",
+       {}, {}, {"ckgit release list my-project", "ckgit release download my-project --asset packages --into /tmp"}},
+      {{"release", "list"}, "List a hosted project's durable releases.",
+       "Query PROJECT over the restricted SSH control channel used by refs and refresh.",
+       "Read-only. Shows each release's tag, commit, creation time, and assets (name, size, sha256), newest first, bounded to the 64 most recent releases.",
+       {{"--json", "", "Print a versioned JSON report instead of text."}},
+       {{"PROJECT", "Hosted project to list releases for.", ValueKind::kProject, true}},
+       {"ckgit release list my-project", "ckgit release list my-project --json"}},
+      {{"release", "download"}, "Download one release asset.",
+       "List PROJECT's releases over SSH, then choose the newest release or --tag, and its sole asset or --asset.",
+       "Opens a short-lived loopback tunnel like web (the same ordinary SSH login; the restricted ckgit Git account cannot forward ports), downloads the asset into --into (default: the current directory) as NAME.tar, verifies its size and sha256 against the SSH listing, then closes the tunnel. Requires http_port configured and the dashboard reachable on the server.",
+       {{"--tag", "TAG", "Release to download from (default: the newest).", ValueKind::kText},
+        {"--asset", "NAME", "Asset to download (default: the release's only asset).", ValueKind::kText},
+        {"--into", "DIR", "Directory to write NAME.tar into (default: the current directory).", ValueKind::kPath},
+        {"--dashboard-url", "URL", "Test seam: fetch from this base URL instead of opening an SSH tunnel.",
+         ValueKind::kText, false, true}},
+       {{"PROJECT", "Hosted project to download a release asset from.", ValueKind::kProject, true}},
+       {"ckgit release download my-project --asset packages", "ckgit release download my-project --tag v1.2.0 --asset packages --into /tmp"}},
       {{"checkout"}, "Inspect and select this device's managed checkouts.",
        "One main checkout is used per project and device. Full local paths are stored privately; the server receives only the path information allowed by public_path_mode.",
        "Use list to inspect the inventory, set-canonical to select the main folder, migrate to resolve legacy server-only registrations, or forget to stop managing a checkout while retaining its files.",
@@ -299,6 +323,7 @@ std::string synopsis(const Command& command) {
   if (!children(command.path).empty()) result += " COMMAND";
   if (command.uses_config) result += " [--config PATH]";
   for (const auto& option : command.options) {
+    if (option.hidden) continue;
     result += " [" + option.name;
     if (!option.value_name.empty()) result += " " + option.value_name;
     if (option.repeatable) result += " ...";
@@ -326,7 +351,8 @@ std::vector<std::string> completionChoices(const std::vector<std::string>& path)
     choices.insert(choices.end(), {"--version", "--config", "help"});
   } else if (const auto* command = findCommand(path)) {
     if (command->uses_config) choices.push_back("--config");
-    for (const auto& option : command->options) choices.push_back(option.name);
+    for (const auto& option : command->options)
+      if (!option.hidden) choices.push_back(option.name);
     if (path == std::vector<std::string>{"completion"}) choices.insert(choices.end(), {"bash", "zsh"});
   }
   for (const auto* child : children(path)) choices.push_back(child->path.back());
@@ -339,7 +365,7 @@ std::string shellCompletion(const std::string& shell) {
   std::set<std::string> value_options{kConfig.name};
   for (const auto& command : commands())
     for (const auto& option : command.options)
-      if (option.kind != ValueKind::kFlag) value_options.insert(option.name);
+      if (option.kind != ValueKind::kFlag && !option.hidden) value_options.insert(option.name);
   const std::vector<std::string> valued(value_options.begin(), value_options.end());
   std::ostringstream output;
   if (shell == "bash") {
@@ -461,7 +487,8 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
       for (const auto& argument : command->arguments) output << "  " << argument.name << "\n      " << argument.description << "\n";
     }
     output << "\nOptions:\n";
-    for (const auto& option : command->options) optionHelp(output, option);
+    for (const auto& option : command->options)
+      if (!option.hidden) optionHelp(output, option);
     if (command->uses_config) {
       optionHelp(output, kConfig);
       output << "      Its server, device identity, and remote name determine the target.\n";

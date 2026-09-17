@@ -105,6 +105,8 @@ ckgit checkout set-canonical NAME PATH
 ckgit checkout migrate [--dry-run]
 ckgit checkout forget NAME [--dry-run] [--yes]
 ckgit web [--config PATH] [--port PORT] [--remote-port PORT] [--project NAME] [--no-open] [ADMIN-HOST]
+ckgit release list PROJECT [--json]
+ckgit release download PROJECT [--tag TAG] [--asset NAME] [--into DIR]
 ckgit completion bash
 ckgit completion zsh
 
@@ -308,6 +310,19 @@ the dashboard port; explicit `ADMIN-HOST` and `--remote-port` override them.
 The remote port must match `http_port` in the server's `server.ini`.
 `--project NAME` opens that hosted project's overview directly instead of the
 project index.
+
+`ckgit release list PROJECT` shows that project's durable, tag-triggered
+releases (tag, commit, creation time, and each asset's name, size, and
+checksum) over the same restricted SSH control channel as `refs` and
+`refresh` -- no dashboard tunnel needed. `ckgit release download PROJECT`
+lists the same way, picks the newest release or `--tag`, picks its only asset
+or `--asset`, then opens a tunnel exactly like `web` (the ordinary SSH login,
+since the restricted `ckgit` account still allows no forwarding) to fetch it,
+verifies its size and checksum against the listing, and writes
+`--into DIR/NAME.tar` (default: the current directory) only once that
+verification passes. See [Releases](docs/operations/04-ci-cd.md#releases) for
+how a release is produced and `packaging/update-cli.sh` for a scripted
+example that updates this same CLI from one.
 
 Git and SSH children of the client run in their own session with standard
 input from `/dev/null`: they can never wait on a terminal prompt, so the

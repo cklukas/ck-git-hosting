@@ -28,6 +28,8 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 fail() { echo "$1" >&2; exit 1; }
 
+: "${CKGIT:?CKGIT must point at ckgit}"
+: "${CK_GIT_SHELL:?CK_GIT_SHELL must point at ck-git-shell}"
 : "${CKGIT_ADMIN:?CKGIT_ADMIN must point at ckgit-admin}"
 : "${CK_CI_RUNNER:?CK_CI_RUNNER must point at ck-ci-runnerd}"
 : "${CKGIT_POST_RECEIVE:?CKGIT_POST_RECEIVE must point at the post-receive hook}"
@@ -189,6 +191,59 @@ grep -q "/project/demo/releases/v1.0.0/build" "$test_root/rel.html" || fail "rel
 curl --path-as-is --max-time 4 --silent -o "$test_root/rel.tar" \
   "$base/project/demo/releases/v1.0.0/build" || fail "curl release asset"
 tar -tf "$test_root/rel.tar" | grep -q 'out/artifact.txt' || fail "release asset is not the expected bundle"
+
+# WP7: `ckgit release list|download`. list goes over the SSH control RPC; a
+# stub ssh hands the forced command straight to ck-git-shell against the same
+# live control socket the curl checks above used, exactly as a real sshd
+# would for this key. download then fetches the asset directly from the
+# already-running dashboard with --dashboard-url, bypassing the interactive
+# SSH tunnel `ckgit web` would otherwise open.
+mkdir -p "$test_root/ssh-bin"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'for argument do request=$argument; done' \
+  'SSH_ORIGINAL_COMMAND="$request" exec "$CK_GIT_SHELL" --client-id mac-studio --repo-root "$REPOS" --control-socket "$CONTROL_SOCKET" --state-root "$STATE"' \
+  >"$test_root/ssh-bin/ssh"
+chmod 0700 "$test_root/ssh-bin/ssh"
+printf '%s\n' \
+  'schema_version=1' \
+  'client_id=mac-studio' \
+  'display_name=Mac Studio' \
+  'server=ckgit@rpi4' \
+  'remote_name=ckgit' \
+  'public_path_mode=basename' >"$test_root/client.ini"
+
+list_output=$(PATH="$test_root/ssh-bin:$PATH" CK_GIT_SHELL="$CK_GIT_SHELL" REPOS="$repos" STATE="$state" \
+  CONTROL_SOCKET="$test_root/control.sock" "$CKGIT" release list demo --config "$test_root/client.ini") \
+  || fail "ckgit release list failed"
+case "$list_output" in
+  *v1.0.0*build*) ;;
+  *) echo "$list_output" >&2; fail "release list did not show the tagged release and its asset" ;;
+esac
+
+json_output=$(PATH="$test_root/ssh-bin:$PATH" CK_GIT_SHELL="$CK_GIT_SHELL" REPOS="$repos" STATE="$state" \
+  CONTROL_SOCKET="$test_root/control.sock" "$CKGIT" release list demo --config "$test_root/client.ini" --json) \
+  || fail "ckgit release list --json failed"
+case "$json_output" in
+  *'"schema_version":1'*'"tag":"v1.0.0"'*'"name":"build"'*) ;;
+  *) echo "$json_output" >&2; fail "release list --json did not report the fixture release" ;;
+esac
+
+mkdir -p "$test_root/dl"
+download_output=$(PATH="$test_root/ssh-bin:$PATH" CK_GIT_SHELL="$CK_GIT_SHELL" REPOS="$repos" STATE="$state" \
+  CONTROL_SOCKET="$test_root/control.sock" "$CKGIT" release download demo --config "$test_root/client.ini" \
+  --dashboard-url "$base" --into "$test_root/dl") || fail "ckgit release download failed"
+case "$download_output" in
+  *verified*) ;;
+  *) echo "$download_output" >&2; fail "release download did not report a verified checksum" ;;
+esac
+[ -f "$test_root/dl/build.tar" ] || fail "release download did not write build.tar"
+downloaded_sha=$(sha256sum "$test_root/dl/build.tar" 2>/dev/null | cut -d' ' -f1)
+[ -n "$downloaded_sha" ] || downloaded_sha=$(shasum -a 256 "$test_root/dl/build.tar" | cut -d' ' -f1)
+listed_sha=$(printf '%s\n' "$json_output" | sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p')
+[ -n "$listed_sha" ] || fail "could not extract the listed sha256 from the JSON report"
+[ "$downloaded_sha" = "$listed_sha" ] || fail "downloaded asset sha256 does not match the listing"
+tar -tf "$test_root/dl/build.tar" | grep -q 'out/artifact.txt' || fail "downloaded release asset is not the expected bundle"
 
 # Deleting the tag drops its release and every asset.
 printf '%s %s refs/tags/v1.0.0\n' "$tag_id" "$(printf '0%.0s' $(seq 1 40))" | \

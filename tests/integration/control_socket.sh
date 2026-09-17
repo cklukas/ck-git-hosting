@@ -650,6 +650,44 @@ refs/heads/main "*) ;;
     ;;
 esac
 
+# releases: the WP7 listing RPC behind `ckgit release list|download`. The
+# fixture is written directly under the private state root (the same shape
+# ckgit-ci-runnerd's package step would produce) rather than through a real
+# tag build, which tests/integration/ci_runner.sh already covers end to end.
+mkdir -p "$test_root/state/releases/alpha/v1.0.0"
+chmod 0700 "$test_root/state/releases" "$test_root/state/releases/alpha" \
+  "$test_root/state/releases/alpha/v1.0.0"
+release_commit='cccccccccccccccccccccccccccccccccccccccc'
+asset_sha='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+printf 'schema_version=1\ntag=v1.0.0\ncommit=%s\ncreated_epoch=1700000100\nnotes_hex=\n' "$release_commit" \
+  >"$test_root/state/releases/alpha/v1.0.0/release.ini"
+printf 'schema_version=1\nname=packages\nbytes=4\nsha256=%s\ncreated_epoch=1700000100\nexpires_epoch=0\nnote_hex=\n' \
+  "$asset_sha" >"$test_root/state/releases/alpha/v1.0.0/packages.ini"
+chmod 0600 "$test_root/state/releases/alpha/v1.0.0/release.ini" \
+  "$test_root/state/releases/alpha/v1.0.0/packages.ini"
+
+releases=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 releases alpha' "$CK_GIT_SHELL" \
+  --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
+[ "$releases" = "ok 1
+release v1.0.0 $release_commit 1700000100
+asset v1.0.0 packages 4 $asset_sha" ] ||
+  { echo "control releases response did not match the fixture release: $releases" >&2; exit 1; }
+
+# A project with no releases yet lists cleanly rather than erroring, so a
+# fresh project (or an unknown one -- the same validated-name argument shape)
+# never breaks `ckgit release list`.
+no_releases=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 releases beta' "$CK_GIT_SHELL" \
+  --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
+[ "$no_releases" = 'ok 0' ] ||
+  { echo "a project with no releases should list cleanly, not error: $no_releases" >&2; exit 1; }
+
+if SSH_ORIGINAL_COMMAND='ckgit-rpc 1 releases alpha extra' "$CK_GIT_SHELL" \
+  --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock" \
+  --dry-run >/dev/null 2>&1; then
+  echo "dispatcher accepted a releases request with an extra argument" >&2
+  exit 1
+fi
+
 if SSH_ORIGINAL_COMMAND="git-upload-pack '../alpha.git'" "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock" \
   --dry-run >/dev/null 2>&1; then

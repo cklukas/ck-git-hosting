@@ -308,6 +308,25 @@ Download a release asset the same way as a CI artifact:
 curl -O http://<server>:<http_port>/project/myproject/releases/<tag>/<name>
 ```
 
+Or from any paired device, without `curl` or a known `http_port`:
+
+```text
+ckgit release list myproject                       # tag, commit, assets, newest first
+ckgit release list myproject --json                 # the same, as a versioned report
+ckgit release download myproject --asset NAME        # newest release's asset -> ./NAME.tar
+ckgit release download myproject --tag v1.0.0 --asset NAME --into /tmp
+```
+
+`release list` queries the same restricted SSH control channel as `refs` and
+`refresh`. `release download` lists the same way, then opens a tunnel exactly
+like `ckgit web` (the administrator's own SSH login; the restricted `ckgit`
+transport account allows no forwarding) to fetch the asset, verifies its size
+and checksum against the listing before writing anything, and closes the
+tunnel. `--asset` is optional only when the release has exactly one asset.
+`packaging/update-cli.sh` is a worked example: it updates a device's own
+`ckgit` from this project's own self-hosted release, with no SSH login or
+sudo access on the server at all.
+
 ### Deploying ck-git-hosting's own release
 
 This project builds and packages itself through its own CI (`.ckgit/ci.yml`

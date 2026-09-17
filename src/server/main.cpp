@@ -270,8 +270,8 @@ std::optional<ControlRequest> parseRequest(std::string_view request) {
   if (!((operation == "ping" || operation == "list-projects" || operation == "checkouts" ||
          operation == "version" || operation == "versions") && no_arguments) &&
       !((operation == "refs" || operation == "refresh" || operation == "forget-checkout" ||
-         operation == "ci-status") && !argument.empty() && second_argument.empty() &&
-        ckgit::isValidProjectName(argument)) &&
+         operation == "ci-status" || operation == "releases") && !argument.empty() &&
+        second_argument.empty() && ckgit::isValidProjectName(argument)) &&
       !(operation == "create" && !argument.empty() && !second_argument.empty() &&
         ckgit::isValidProjectName(argument) && ckgit::isValidBranchName(second_argument)) &&
       !((operation == "register" || operation == "replace-checkout") && !argument.empty() &&
@@ -414,6 +414,34 @@ std::string ciStatusResponse(const std::filesystem::path& state_root, std::strin
       throw std::runtime_error("CI status exceeds control response limit");
     }
     response += line;
+  }
+  return response;
+}
+
+// A project's durable releases (see ckgit::loadReleases), newest first, as one
+// `release tag commit created_epoch` line per release followed by one
+// `asset tag name bytes sha256` line per stored asset -- the leading tag on
+// each asset line lets a client that only scans asset lines still know which
+// release it belongs to without tracking the preceding release line.
+std::string releasesResponse(const std::filesystem::path& state_root, std::string_view project) {
+  const auto releases = ckgit::loadReleases(state_root, project);
+  std::string response = "ok " + std::to_string(releases.size()) + "\n";
+  for (const auto& release : releases) {
+    const std::string line = "release " + release.tag + " " + release.commit_id + " " +
+        std::to_string(release.created_epoch_seconds) + "\n";
+    if (response.size() + line.size() > kMaximumResponseBytes) {
+      throw std::runtime_error("release list exceeds control response limit");
+    }
+    response += line;
+    for (const auto& asset : release.assets) {
+      const std::string sha = asset.sha256.empty() ? "-" : asset.sha256;
+      const std::string asset_line =
+          "asset " + release.tag + " " + asset.name + " " + std::to_string(asset.bytes) + " " + sha + "\n";
+      if (response.size() + asset_line.size() > kMaximumResponseBytes) {
+        throw std::runtime_error("release list exceeds control response limit");
+      }
+      response += asset_line;
+    }
   }
   return response;
 }
@@ -1089,6 +1117,9 @@ int serve(const Options& options) {
         } else if (request->operation == "ci-status") {
           if (!state_root.has_value()) throw std::runtime_error("CI state is not configured");
           sendAll(client, ciStatusResponse(*state_root, request->argument));
+        } else if (request->operation == "releases") {
+          if (!state_root.has_value()) throw std::runtime_error("CI state is not configured");
+          sendAll(client, releasesResponse(*state_root, request->argument));
         } else {
           sendAll(client, refsResponse(repository_root, request->argument));
         }

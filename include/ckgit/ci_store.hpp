@@ -274,6 +274,13 @@ void writeCiReleaseRecord(const std::filesystem::path& state_root, std::string_v
 std::vector<CiReleaseRecord> loadReleases(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::size_t maximum = 64);
 
+// Client: parses a bounded, version-1 `releases` control response (see
+// docs/protocol/01-ssh-and-control-v1.md) into the same record type
+// `loadReleases` returns. Every tag, commit, name, and checksum is
+// re-validated; a release's assets are the `asset` lines that follow it up to
+// the next `release` line.
+std::vector<CiReleaseRecord> parseReleasesControlResponse(std::string_view response);
+
 // Dashboard: read one release asset bundle (releases/<project>/<tag>/<name>.tar),
 // bounded to `cap`. std::nullopt when absent or a name/tag is invalid.
 std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,

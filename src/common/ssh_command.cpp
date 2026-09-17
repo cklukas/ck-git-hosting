@@ -145,7 +145,7 @@ std::optional<SshCommand> parseSshOriginalCommand(std::string_view command,
   if (tokens->size() == 4 && (*tokens)[0].value == "ckgit-rpc" &&
       (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
       !(*tokens)[3].quoted && ((*tokens)[2].value == "refs" || (*tokens)[2].value == "refresh" ||
-       (*tokens)[2].value == "forget-checkout") &&
+       (*tokens)[2].value == "forget-checkout" || (*tokens)[2].value == "releases") &&
       isValidProjectName((*tokens)[3].value)) {
     return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, (*tokens)[3].value, {}};
   }

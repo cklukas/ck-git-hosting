@@ -358,6 +358,71 @@ void testReservedReleaseArtifactName() {
   require(threw, "writing a release asset named 'release' is refused");
 }
 
+// WP7: the `releases` control response line format
+// (docs/protocol/01-ssh-and-control-v1.md) built from real loadReleases
+// output round-trips through the client-side parser, and the parser rejects
+// the malformed shapes a buggy or hostile server could send.
+void testReleasesControlResponseRoundTrip() {
+  StoreFixture fixture;
+  const std::filesystem::path dir = ckgit::prepareCiReleaseDirectory(fixture.state, "demo", "v1.0.0");
+  {
+    std::ofstream out(dir / "packages.tar", std::ios::binary);
+    out << std::string(20, 'x');
+  }
+  require(chmod((dir / "packages.tar").c_str(), 0600) == 0, "could not secure the fixture release asset");
+  ckgit::CiArtifactRecord asset;
+  asset.name = "packages";
+  asset.bytes = 20;
+  asset.sha256 = std::string(64, 'a');
+  asset.expires_epoch_seconds = 0;
+  ckgit::writeCiReleaseArtifactRecord(fixture.state, "demo", "v1.0.0", asset);
+  ckgit::CiReleaseRecord release;
+  release.tag = "v1.0.0";
+  release.commit_id = std::string(40, 'b');
+  release.created_epoch_seconds = 2000;
+  ckgit::writeCiReleaseRecord(fixture.state, "demo", release);
+  writeReleaseWithAsset(fixture.state, "v0.9.0", "", "app", 10, 1000);  // asset with no sha256 on record
+
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 2, "two fixture releases load");
+  std::string wire = "ok " + std::to_string(releases.size()) + "\n";
+  for (const auto& entry : releases) {
+    wire += "release " + entry.tag + " " + entry.commit_id + " " + std::to_string(entry.created_epoch_seconds) + "\n";
+    for (const auto& entry_asset : entry.assets) {
+      wire += "asset " + entry.tag + " " + entry_asset.name + " " + std::to_string(entry_asset.bytes) + " " +
+              (entry_asset.sha256.empty() ? "-" : entry_asset.sha256) + "\n";
+    }
+  }
+  const auto parsed = ckgit::parseReleasesControlResponse(wire);
+  require(parsed.size() == 2, "both releases round trip through the wire format");
+  require(parsed[0].tag == "v1.0.0" && parsed[0].commit_id == releases[0].commit_id &&
+              parsed[0].created_epoch_seconds == 2000,
+          "release fields round trip");
+  require(parsed[0].assets.size() == 1 && parsed[0].assets[0].name == "packages" &&
+              parsed[0].assets[0].bytes == 20 && parsed[0].assets[0].sha256 == std::string(64, 'a'),
+          "asset fields including sha256 round trip");
+  require(parsed[1].tag == "v0.9.0" && parsed[1].assets.size() == 1 && parsed[1].assets[0].sha256.empty(),
+          "a '-' sha256 field parses back to empty, not the literal dash");
+
+  const auto rejects = [](std::string_view response) {
+    try {
+      static_cast<void>(ckgit::parseReleasesControlResponse(response));
+    } catch (const std::exception&) {
+      return true;
+    }
+    return false;
+  };
+  require(rejects("ok 2\nrelease v1 " + std::string(40, 'a') + " 1\n"), "count mismatch is rejected");
+  require(rejects("ok 1\nasset v1 app 1 -\n"), "an asset before any release is rejected");
+  require(rejects("ok 1\nrelease v1 " + std::string(40, 'a') + " 1\nasset other app 1 -\n"),
+          "an asset whose tag does not match its release is rejected");
+  require(rejects("ok 1\nrelease v1 not-hex 1\n"), "a non-hex commit id is rejected");
+  require(rejects("ok 1\nrelease v1 " + std::string(40, 'a') + " 1\nasset v1 app 1 " + std::string(63, 'a') + "\n"),
+          "a short sha256 is rejected");
+  require(rejects("ok 1\nbogus v1\n"), "an unrecognized record prefix is rejected");
+  require(ckgit::parseReleasesControlResponse("ok 0\n").empty(), "zero releases parses to an empty list");
+}
+
 void testStatusHelpers() {
   require(ckgit::ciRunStatusName(ckgit::CiRunStatus::Cancelled) == "cancelled", "cancelled has a name");
   const auto parsed = ckgit::ciRunStatusFromName("cancelled");
@@ -476,6 +541,7 @@ void testCiStore() {
   testReleaseRemovalCascades();
   testReleaseTagValidation();
   testReservedReleaseArtifactName();
+  testReleasesControlResponseRoundTrip();
   testStatusHelpers();
   testLiveRecordHeartbeatAndSingleLoad();
   testSchemaVersionOneBackCompat();

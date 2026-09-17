@@ -13,8 +13,10 @@
 #include <exception>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <optional>
 #include <poll.h>
@@ -29,16 +31,19 @@
 #include <unistd.h>
 #include <vector>
 
+#include "ckgit/ci_store.hpp"
 #include "ckgit/client_config.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/client_state.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/git_repository.hpp"
+#include "ckgit/hash.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/ref_status.hpp"
 #include "ckgit/server_identity.hpp"
 #include "ckgit/validation.hpp"
+#include "ckgit/web_renderer.hpp"
 
 namespace {
 
@@ -830,6 +835,19 @@ std::vector<ckgit::RefTip> fetchServerRefs(const ckgit::ClientConfig& config,
                              describeProcessFailure(result, kControlTimeout) + ")");
   }
   return ckgit::parseRefsControlResponse(result.output);
+}
+
+std::vector<ckgit::CiReleaseRecord> fetchReleases(const ckgit::ClientConfig& config,
+                                                  const std::string& project) {
+  const ckgit::ProcessResult result = ckgit::runProcess(
+      {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
+       "-o", "ClearAllForwardings=yes", config.server, "ckgit-rpc 1 releases " + project},
+      kControlTimeout, ckgit::kMaximumControlResponseBytes + 4096);
+  if (result.exit_code != 0 || result.timed_out || result.output_truncated) {
+    throw std::runtime_error("could not query paired server releases (" +
+                             describeProcessFailure(result, kControlTimeout) + ")");
+  }
+  return ckgit::parseReleasesControlResponse(result.output);
 }
 
 bool printPairedStatus(const ckgit::RepositoryAudit& audit, const ckgit::ClientConfig& config) {
@@ -2226,6 +2244,375 @@ int webCommand(const std::vector<std::string>& arguments) {
   return 0;
 }
 
+// Extracted from web's ssh -N -L start/wait/stop: opens a loopback tunnel to
+// the paired server's dashboard through the same ordinary SSH login web uses
+// (the restricted ckgit Git account allows no forwarding), waits for it to
+// come up, calls fn(local_port), then always closes the tunnel, including
+// when fn throws or Ctrl+C interrupts the wait. Unlike web, this is a single
+// bounded operation: no browser is opened and nothing loops after fn returns.
+template <typename Fn>
+void withDashboardTunnel(const ckgit::ClientConfig& config, Fn&& fn) {
+  const std::string admin_host =
+      config.web_host.empty() ? config.server.substr(config.server.find('@') + 1) : config.web_host;
+  const unsigned short remote_port = config.web_port;
+  const unsigned short port = pickLocalPort(std::nullopt);
+
+  struct sigaction action {};
+  action.sa_handler = requestTunnelStop;
+  sigemptyset(&action.sa_mask);
+  if (sigaction(SIGINT, &action, nullptr) != 0 || sigaction(SIGTERM, &action, nullptr) != 0) {
+    throw std::runtime_error("could not install signal handlers");
+  }
+  const int child = ckgit::spawnAttachedProcess(
+      {"ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "RequestTTY=no",
+       "-o", "ServerAliveInterval=30", "-L",
+       "127.0.0.1:" + std::to_string(port) + ":127.0.0.1:" + std::to_string(remote_port), admin_host});
+  int status = 0;
+  const auto stopChild = [&]() {
+    if (!childHasExited(child, &status)) {
+      kill(child, SIGTERM);
+      waitpid(child, &status, 0);
+    }
+  };
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+  bool listening = false;
+  while (!listening && !tunnel_stop_requested) {
+    if (childHasExited(child, &status)) {
+      throw std::runtime_error("ssh exited before the tunnel to " + admin_host + " was ready");
+    }
+    const int probe = connectLoopback(port, 250);
+    if (probe >= 0) {
+      close(probe);
+      listening = true;
+      break;
+    }
+    if (std::chrono::steady_clock::now() > deadline) {
+      stopChild();
+      throw std::runtime_error("the tunnel to " + admin_host + " did not become ready within 20 seconds");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+  if (tunnel_stop_requested) {
+    stopChild();
+    throw std::runtime_error("interrupted");
+  }
+  const auto status_line = probeDashboard(port);
+  if (!status_line.has_value() || status_line->rfind("HTTP/1.1 200", 0) != 0) {
+    stopChild();
+    throw std::runtime_error(
+        "the tunnel is up but the dashboard did not answer on the server's port " + std::to_string(remote_port) +
+        "; set http_port in /etc/ck-git-hosting/server.ini and restart the service");
+  }
+  try {
+    fn(port);
+  } catch (...) {
+    stopChild();
+    throw;
+  }
+  stopChild();
+}
+
+struct DashboardTarget {
+  std::string host;
+  unsigned short port;
+};
+
+// Parses the hidden --dashboard-url test seam: an http origin only, no path.
+DashboardTarget parseDashboardUrl(const std::string& url) {
+  constexpr std::string_view scheme{"http://"};
+  if (url.rfind(scheme, 0) != 0) {
+    throw std::runtime_error("--dashboard-url must start with http://");
+  }
+  const std::string_view rest(url.data() + scheme.size(), url.size() - scheme.size());
+  if (rest.find('/') != std::string_view::npos) {
+    throw std::runtime_error("--dashboard-url must be an origin only, for example http://127.0.0.1:8420");
+  }
+  const auto colon = rest.rfind(':');
+  if (colon == std::string_view::npos) {
+    throw std::runtime_error("--dashboard-url must include a port, for example http://127.0.0.1:8420");
+  }
+  const std::string host(rest.substr(0, colon));
+  const std::string_view port_text = rest.substr(colon + 1);
+  unsigned int port = 0;
+  const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+  if (error != std::errc{} || end != port_text.data() + port_text.size() || port == 0 || port > 65535 ||
+      host.empty()) {
+    throw std::runtime_error("--dashboard-url has an invalid host or port");
+  }
+  return DashboardTarget{host, static_cast<unsigned short>(port)};
+}
+
+// Fetches `target` from host:port over one plain HTTP/1.1 request and returns
+// the body, which must be exactly `expected_bytes` long -- the caller already
+// knows the size from the release listing, so this doubles as a
+// transfer-integrity check without needing to parse Content-Length.
+std::string fetchHttpBody(const std::string& host, unsigned short port, const std::string& target,
+                          std::uint64_t expected_bytes) {
+  addrinfo hints{};
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  addrinfo* resolved = nullptr;
+  const int resolve_error = getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &resolved);
+  if (resolve_error != 0 || resolved == nullptr) {
+    throw std::runtime_error("could not resolve " + host + ": " +
+                             (resolve_error != 0 ? gai_strerror(resolve_error) : "no address"));
+  }
+  int descriptor = -1;
+  for (const addrinfo* candidate = resolved; candidate != nullptr; candidate = candidate->ai_next) {
+    descriptor = socket(candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
+    if (descriptor < 0) continue;
+    if (connect(descriptor, candidate->ai_addr, candidate->ai_addrlen) == 0) break;
+    close(descriptor);
+    descriptor = -1;
+  }
+  freeaddrinfo(resolved);
+  if (descriptor < 0) {
+    throw std::runtime_error("could not connect to " + host + ":" + std::to_string(port));
+  }
+  const timeval timeout{30, 0};
+  setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  const std::string request = "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
+  std::size_t sent = 0;
+  while (sent < request.size()) {
+    const ssize_t written = send(descriptor, request.data() + sent, request.size() - sent, 0);
+    if (written <= 0) {
+      close(descriptor);
+      throw std::runtime_error("could not send the request to " + host);
+    }
+    sent += static_cast<std::size_t>(written);
+  }
+
+  std::string buffer;
+  char chunk[8192];
+  std::size_t header_end = std::string::npos;
+  while (header_end == std::string::npos) {
+    const ssize_t received = recv(descriptor, chunk, sizeof(chunk), 0);
+    if (received <= 0) {
+      close(descriptor);
+      throw std::runtime_error("connection closed before the response headers arrived");
+    }
+    buffer.append(chunk, static_cast<std::size_t>(received));
+    if (buffer.size() > 16384) {
+      close(descriptor);
+      throw std::runtime_error("response headers exceed the expected size");
+    }
+    header_end = buffer.find("\r\n\r\n");
+  }
+  const std::string_view status_line(buffer.data(), buffer.find("\r\n"));
+  if (status_line.rfind("HTTP/1.1 200", 0) != 0) {
+    close(descriptor);
+    throw std::runtime_error("server returned " + std::string(status_line));
+  }
+
+  std::string body = buffer.substr(header_end + 4);
+  while (body.size() < expected_bytes) {
+    const ssize_t received = recv(descriptor, chunk, sizeof(chunk), 0);
+    if (received < 0) {
+      close(descriptor);
+      throw std::runtime_error("could not read the response body");
+    }
+    if (received == 0) break;
+    if (body.size() + static_cast<std::size_t>(received) > expected_bytes) {
+      close(descriptor);
+      throw std::runtime_error("asset is larger than the size listed for it");
+    }
+    body.append(chunk, static_cast<std::size_t>(received));
+  }
+  close(descriptor);
+  if (body.size() != expected_bytes) {
+    throw std::runtime_error("asset size mismatch: expected " + std::to_string(expected_bytes) +
+                             " bytes, got " + std::to_string(body.size()));
+  }
+  return body;
+}
+
+// `ckgit release list PROJECT`: the releases control response as text or,
+// with --json, a versioned report like `projects --json`.
+int releaseListCommand(const std::vector<std::string>& arguments) {
+  std::optional<std::filesystem::path> config_path;
+  bool json = false;
+  std::string project;
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto& argument = arguments[index];
+    if (argument == "--config" && index + 1 < arguments.size()) {
+      config_path = arguments[++index];
+    } else if (argument == "--json") {
+      json = true;
+    } else {
+      project = argument;
+    }
+  }
+  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  std::vector<ckgit::CiReleaseRecord> releases;
+  try {
+    releases = fetchReleases(config, project);
+  } catch (const std::exception& error) {
+    std::cerr << "ckgit: " << error.what() << "\n";
+    return 1;
+  }
+  if (json) {
+    std::cout << "{\"schema_version\":1,\"releases\":[";
+    for (std::size_t index = 0; index < releases.size(); ++index) {
+      if (index != 0) std::cout << ",";
+      const auto& release = releases[index];
+      std::cout << "\n    {\"tag\":\"" << jsonEscape(release.tag) << "\",\"commit\":\""
+                << jsonEscape(release.commit_id) << "\",\"created_epoch\":" << release.created_epoch_seconds
+                << ",\"assets\":[";
+      for (std::size_t asset_index = 0; asset_index < release.assets.size(); ++asset_index) {
+        if (asset_index != 0) std::cout << ",";
+        const auto& asset = release.assets[asset_index];
+        std::cout << "{\"name\":\"" << jsonEscape(asset.name) << "\",\"bytes\":" << asset.bytes
+                  << ",\"sha256\":\"" << jsonEscape(asset.sha256) << "\"}";
+      }
+      std::cout << "]}";
+    }
+    std::cout << "\n  ]}\n";
+    return 0;
+  }
+  if (releases.empty()) {
+    std::cout << "No releases for " << project << ".\n";
+    return 0;
+  }
+  for (const auto& release : releases) {
+    std::cout << release.tag << "  " << release.commit_id.substr(0, 12) << "  "
+              << ckgit::formatUtcTimestamp(release.created_epoch_seconds) << "\n";
+    for (const auto& asset : release.assets) {
+      std::cout << "  " << asset.name << "  " << asset.bytes
+                << " bytes  sha256:" << (asset.sha256.empty() ? "unknown" : asset.sha256) << "\n";
+    }
+  }
+  return 0;
+}
+
+// `ckgit release download PROJECT`: lists releases over SSH like list, then
+// fetches one asset through the dashboard tunnel and verifies it before
+// installing it, so a failed or tampered transfer never replaces anything.
+int releaseDownloadCommand(const std::vector<std::string>& arguments) {
+  std::optional<std::filesystem::path> config_path;
+  std::string project;
+  std::optional<std::string> tag_filter;
+  std::optional<std::string> asset_filter;
+  std::filesystem::path into_dir = ".";
+  std::optional<std::string> dashboard_url;
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const auto& argument = arguments[index];
+    if ((argument == "--config" || argument == "--tag" || argument == "--asset" || argument == "--into" ||
+         argument == "--dashboard-url") &&
+        index + 1 < arguments.size()) {
+      const std::string value = arguments[++index];
+      if (argument == "--config") config_path = value;
+      else if (argument == "--tag") tag_filter = value;
+      else if (argument == "--asset") asset_filter = value;
+      else if (argument == "--into") into_dir = value;
+      else dashboard_url = value;
+    } else {
+      project = argument;
+    }
+  }
+  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  std::vector<ckgit::CiReleaseRecord> releases;
+  try {
+    releases = fetchReleases(config, project);
+  } catch (const std::exception& error) {
+    std::cerr << "ckgit: " << error.what() << "\n";
+    return 1;
+  }
+  if (releases.empty()) {
+    std::cerr << "ckgit: " << project << " has no releases\n";
+    return 1;
+  }
+  const ckgit::CiReleaseRecord* release = nullptr;
+  if (tag_filter.has_value()) {
+    const auto found = std::find_if(releases.begin(), releases.end(), [&](const ckgit::CiReleaseRecord& candidate) {
+      return candidate.tag == *tag_filter;
+    });
+    if (found == releases.end()) {
+      std::cerr << "ckgit: " << project << " has no release tagged " << *tag_filter << "\n";
+      return 1;
+    }
+    release = &*found;
+  } else {
+    release = &releases.front();
+  }
+  const ckgit::CiArtifactRecord* asset = nullptr;
+  if (asset_filter.has_value()) {
+    const auto found =
+        std::find_if(release->assets.begin(), release->assets.end(), [&](const ckgit::CiArtifactRecord& candidate) {
+          return candidate.name == *asset_filter;
+        });
+    if (found == release->assets.end()) {
+      std::cerr << "ckgit: release " << release->tag << " has no asset named " << *asset_filter << "\n";
+      return 1;
+    }
+    asset = &*found;
+  } else if (release->assets.size() == 1) {
+    asset = &release->assets.front();
+  } else {
+    std::cerr << "ckgit: release " << release->tag << " has " << release->assets.size()
+              << " assets; choose one with --asset:";
+    for (const auto& candidate : release->assets) std::cerr << " " << candidate.name;
+    std::cerr << "\n";
+    return 1;
+  }
+  std::error_code directory_error;
+  if (!std::filesystem::is_directory(into_dir, directory_error)) {
+    std::cerr << "ckgit: --into " << into_dir.string() << " is not a directory\n";
+    return 1;
+  }
+  const std::string target = "/project/" + project + "/releases/" + release->tag + "/" + asset->name;
+  std::string body;
+  try {
+    if (dashboard_url.has_value()) {
+      const auto url_target = parseDashboardUrl(*dashboard_url);
+      body = fetchHttpBody(url_target.host, url_target.port, target, asset->bytes);
+    } else {
+      withDashboardTunnel(config,
+                          [&](unsigned short port) { body = fetchHttpBody("127.0.0.1", port, target, asset->bytes); });
+    }
+  } catch (const std::exception& error) {
+    std::cerr << "ckgit: " << error.what() << "\n";
+    return 1;
+  }
+  const std::string digest = ckgit::sha256Hex(body);
+  if (!asset->sha256.empty() && digest != asset->sha256) {
+    std::cerr << "ckgit: downloaded asset sha256 mismatch (expected " << asset->sha256 << ", got " << digest
+              << "); refusing to write it\n";
+    return 1;
+  }
+  if (asset->sha256.empty()) {
+    std::cerr << "ckgit: warning: release " << release->tag << " asset " << asset->name
+              << " has no recorded sha256; downloaded content was not verified\n";
+  }
+  const std::filesystem::path destination = into_dir / (asset->name + ".tar");
+  const std::filesystem::path staging = into_dir / ("." + asset->name + ".tar.partial");
+  {
+    std::ofstream out(staging, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      std::cerr << "ckgit: could not create " << staging.string() << "\n";
+      return 1;
+    }
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    if (!out) {
+      std::error_code ignore;
+      std::filesystem::remove(staging, ignore);
+      std::cerr << "ckgit: could not write " << staging.string() << "\n";
+      return 1;
+    }
+  }
+  std::error_code rename_error;
+  std::filesystem::rename(staging, destination, rename_error);
+  if (rename_error) {
+    std::error_code ignore;
+    std::filesystem::remove(staging, ignore);
+    std::cerr << "ckgit: could not install " << destination.string() << ": " << rename_error.message() << "\n";
+    return 1;
+  }
+  std::cout << "Downloaded " << release->tag << "/" << asset->name << " to " << destination.string() << " ("
+            << body.size() << " bytes, sha256 " << (asset->sha256.empty() ? "unverified" : "verified") << ").\n";
+  return 0;
+}
+
 #include "discovery.inc"
 #include "setup_doctor.inc"
 #include "incoming.inc"
@@ -2342,6 +2729,16 @@ int main(int argc, char* argv[]) {
     }
     if (command == "web") {
       return webCommand(arguments);
+    }
+    if (command == "release") {
+      if (!arguments.empty() && arguments.front() == "list") {
+        return releaseListCommand(std::vector<std::string>(arguments.begin() + 1, arguments.end()));
+      }
+      if (!arguments.empty() && arguments.front() == "download") {
+        return releaseDownloadCommand(std::vector<std::string>(arguments.begin() + 1, arguments.end()));
+      }
+      printUsage(std::cerr);
+      return kUsage;
     }
     if (command == "version") {
       return versionCommand(arguments);

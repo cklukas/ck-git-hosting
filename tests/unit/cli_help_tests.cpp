@@ -41,6 +41,7 @@ void testCliHelp() {
   const std::vector<std::vector<std::string>> command_paths{
       {"setup"}, {"doctor"}, {"projects"}, {"fetch"}, {"update"}, {"checkout", "forget"},
       {"publish"}, {"sync"}, {"status"}, {"clone"}, {"scan"}, {"web"},
+      {"release"}, {"release", "list"}, {"release", "download"},
       {"checkout"}, {"checkout", "list"}, {"checkout", "set-canonical"},
       {"checkout", "migrate"}, {"register"}, {"create"}, {"config"},
       {"config", "show"}, {"completion"}};
@@ -128,6 +129,17 @@ void testCliHelp() {
   expectError({"status", "--repo", ".", "--scan"}, "--repo and --scan", " status");
   expectError({"sync", "--replace-checkout"}, "--replace-checkout requires --repo PATH", " sync");
   expectError({"completion", "fish"}, "SHELL must be bash or zsh", " completion");
+  expectError({"release"}, "a release subcommand is required", " release");
+  expectError({"release", "list"}, "missing required argument PROJECT", " release list");
+  expectError({"release", "download", "demo", "--bogus"}, "unknown option '--bogus'", " release download");
+  const auto release_download = ckgit::prepareClientInvocation(
+      {"release", "download", "--tag", "v1", "--asset", "packages", "--dashboard-url", "http://127.0.0.1:9",
+       "--into", ".", "demo"});
+  require(!release_download.exit_code &&
+              release_download.arguments ==
+                  std::vector<std::string>{"download",  "--tag", "v1",  "--asset", "packages", "--dashboard-url",
+                                            "http://127.0.0.1:9", "--into", ".",       "demo"},
+          "release download accepts its hidden test option alongside its documented ones");
 
   const auto normalized = ckgit::prepareClientInvocation(
       {"--config=/path/to/client.ini", "publish", "--branch=main", "--branch", "main", "--branch", "topic", "--yes", "--yes", "--", "-folder"});
@@ -164,5 +176,7 @@ void testCliHelp() {
     for (const auto* option : {"--verbose", "--dry-run", "--remote-port", "--no-tags", "--replace-checkout"})
       require(completion.standard_output.find(option) != std::string::npos,
               "completion should share current option definitions");
+    require(completion.standard_output.find("--dashboard-url") == std::string::npos,
+            "a hidden option should not appear in completion");
   }
 }

@@ -15,6 +15,7 @@ namespace ckgit {
 // repository must fit, while an unbounded reply can never exhaust a client.
 inline constexpr std::size_t kMaximumControlResponseBytes = 256 * 1024;
 inline constexpr std::size_t kMaximumControlRefs = 65536;
+inline constexpr std::size_t kMaximumControlReleases = 64;
 
 // Sends the fixed, line-based version-1 request to the local control socket.
 // It throws for transport and framing failures, and returns true only for an
