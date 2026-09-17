@@ -99,6 +99,8 @@ runner_unit_source="$script_dir/systemd/ck-ci-runner.service"
 pages_unit_path="$unit_dir/ck-pages.service"
 pages_unit_source="$script_dir/systemd/ck-pages.service"
 [ -f "$pages_unit_source" ] || fail "missing unit template: $pages_unit_source"
+deploy_source="$script_dir/ck-git-hosting-deploy"
+[ -f "$deploy_source" ] || fail "missing script: $deploy_source"
 
 as_root=0
 [ -z "$staging" ] && [ "$(id -u)" -eq 0 ] && as_root=1
@@ -228,6 +230,7 @@ steps() {
   for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
     act "install $bin_dir/$binary (root:root 0755)" install_file 0755 root root "$build_dir/bin/$binary" "$bin_dir/$binary"
   done
+  act "install $bin_dir/ck-git-hosting-deploy (root:root 0755)" install_file 0755 root root "$deploy_source" "$bin_dir/ck-git-hosting-deploy"
   act "install $hook_dir/post-receive (root:root 0755)" install_file 0755 root root "$build_dir/hooks/post-receive" "$hook_dir/post-receive"
   if [ -e "$server_ini" ]; then
     printf '  = keep existing %s\n' "$server_ini"

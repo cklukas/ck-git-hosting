@@ -108,7 +108,7 @@ steps() {
   if [ -z "$staging" ] && { [ "$had_unit" -eq 1 ] || [ "$had_runner_unit" -eq 1 ] || [ "$had_pages_unit" -eq 1 ]; }; then
     act 'systemctl daemon-reload' systemctl daemon-reload
   fi
-  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
+  for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd ck-git-hosting-deploy; do
     [ -e "$bin_dir/$binary" ] && act "remove $bin_dir/$binary" remove_path "$bin_dir/$binary"
   done
   [ -e "$hook_parent" ] && act "remove $hook_parent" remove_path "$hook_parent"

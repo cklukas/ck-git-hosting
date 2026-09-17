@@ -76,6 +76,7 @@ if [ "$client_only" -eq 0 ]; then
   install -m 0755 "$build_dir/hooks/post-receive" "$stage/hooks/post-receive"
   install -m 0755 "$script_dir/install.sh" "$stage/packaging/install.sh"
   install -m 0755 "$script_dir/uninstall.sh" "$stage/packaging/uninstall.sh"
+  install -m 0755 "$script_dir/ck-git-hosting-deploy" "$stage/packaging/ck-git-hosting-deploy"
   install -m 0644 "$script_dir/systemd/ck-git-hosting.service" "$stage/packaging/systemd/ck-git-hosting.service"
   install -m 0644 "$script_dir/systemd/ck-ci-runner.service" "$stage/packaging/systemd/ck-ci-runner.service"
   install -m 0644 "$script_dir/systemd/ck-pages.service" "$stage/packaging/systemd/ck-pages.service"

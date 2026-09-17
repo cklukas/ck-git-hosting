@@ -6,10 +6,11 @@
 # network namespace's loopback interface up for exactly this; the LAN stays
 # denied). Pushing a deploy-* tag does the same and, because a tag build
 # publishes a durable release, attaches the built Debian packages as release
-# assets. An administrator runs packaging/deploy.sh by hand on the server to
-# install a release's server package and restart the services, with a health
-# check and automatic rollback; see docs/operations/04-ci-cd.md. The CI step
-# itself stays unprivileged: it only builds, tests, and packages.
+# assets. An administrator runs the packaged `ck-git-hosting-deploy` command
+# by hand on the server to install a release's server package and restart the
+# services, with a health check and automatic rollback; see
+# docs/operations/04-ci-cd.md. The CI step itself stays unprivileged: it only
+# builds, tests, and packages.
 version: 1
 on:
   branches: [master]

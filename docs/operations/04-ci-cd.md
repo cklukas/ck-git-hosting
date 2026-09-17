@@ -308,6 +308,33 @@ Download a release asset the same way as a CI artifact:
 curl -O http://<server>:<http_port>/project/myproject/releases/<tag>/<name>
 ```
 
+### Deploying ck-git-hosting's own release
+
+This project builds and packages itself through its own CI (`.ckgit/ci.yml`
+at the repository root): a tag push produces a release whose `packages` asset
+is the server `.deb`. The packaged `ck-git-hosting-deploy` command installs
+it and restarts the services, with a health check and automatic rollback to
+the last healthy package:
+
+```text
+sudo ck-git-hosting-deploy --dry-run   # preview the newest release
+sudo ck-git-hosting-deploy             # install it
+sudo ck-git-hosting-deploy --tag v0.1.1
+sudo ck-git-hosting-deploy --help      # every option, including --services,
+                                        # --deploy-dir, --wait, --no-rollback
+```
+
+It reads `state_root`, `http_port`, and `pages_http_port` from
+`/etc/ck-git-hosting/server.ini` (override with `--config`), verifies the
+release asset's checksum from its own sidecar before installing anything,
+refuses to run while a CI build is in progress (`--wait SECONDS` polls
+instead of refusing immediately), and confirms every daemon reports the
+release's commit before declaring success — not just that the services
+restarted. Nothing here runs on its own; there is no timer yet, so a release
+is deployed only when this command is run by hand. See
+[Packages, continuous integration, and releases](02-packages-and-releases.md)
+for how the packages themselves are built.
+
 ## Pages
 
 A build can publish a static site that anyone on the LAN can browse. Add a

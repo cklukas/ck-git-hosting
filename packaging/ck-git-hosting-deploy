@@ -1,0 +1,305 @@
+#!/bin/sh
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Installs a release's server package and restarts the services, with a
+# health check and automatic rollback to the last healthy package.
+#
+#   sudo ck-git-hosting-deploy --dry-run     # preview the newest release
+#   sudo ck-git-hosting-deploy               # install it
+#   sudo ck-git-hosting-deploy --tag v0.1.1  # install one exact release
+#
+# The security boundary: the CI step that produces the package is
+# unprivileged and sandboxed (see docs/operations/04-ci-cd.md); only this
+# root command installs it, only from a durable release (a pushed tag), and
+# only when an administrator runs this command -- nothing here runs
+# automatically unless the separate, opt-in deploy timer is enabled (see
+# docs/operations/05-releases-and-deploy.md). This script deploys the
+# ck-git-hosting project itself; deploying another project's own release
+# needs its own command for now (see the roadmap's release-hooks package).
+set -eu
+
+usage() {
+  cat <<'USAGE'
+Usage: ck-git-hosting-deploy [OPTIONS]
+
+  --config FILE     server.ini to read state_root/http_port/pages_http_port
+                     from (default: /etc/ck-git-hosting/server.ini)
+  --project NAME     project whose releases to deploy (default: ck-git-hosting)
+  --asset NAME       release asset (artifacts: name in .ckgit/ci.yml) to
+                     install (default: packages)
+  --tag TAG          deploy this exact release; default: the newest release
+                     with a committed record (by created_epoch, ties broken
+                     by tag name)
+  --services LIST    space-separated systemd unit basenames (without
+                     ".service") to restart and health-check; default:
+                     "ck-git-hosting ck-ci-runner", plus "ck-pages" when
+                     pages_http_port is set in --config
+  --deploy-dir DIR   where the last healthy package is kept for rollback
+                     (default: /var/lib/ck-git-hosting/deploy)
+  --dry-run          select, verify, and print the plan; install nothing
+                     (the only mode that does not require root)
+  --if-new           exit 0 quietly if the selected release is already
+                     the one deployed
+  --wait SECONDS     poll up to this long for a running CI build to finish,
+                     instead of refusing immediately (default: 0)
+  --no-rollback      on a failed health check, do not reinstall the last
+                     healthy package
+  -h, --help         this help
+USAGE
+}
+
+deploy_dir_default=/var/lib/ck-git-hosting/deploy
+config=/etc/ck-git-hosting/server.ini
+project=ck-git-hosting
+asset=packages
+want_tag=''
+services=''
+services_explicit=0
+deploy_dir=''
+dry_run=0
+if_new=0
+wait_seconds=0
+rollback=1
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) [ $# -ge 2 ] || { usage >&2; exit 2; }; config=$2; shift 2 ;;
+    --project) [ $# -ge 2 ] || { usage >&2; exit 2; }; project=$2; shift 2 ;;
+    --asset) [ $# -ge 2 ] || { usage >&2; exit 2; }; asset=$2; shift 2 ;;
+    --tag) [ $# -ge 2 ] || { usage >&2; exit 2; }; want_tag=$2; shift 2 ;;
+    --services) [ $# -ge 2 ] || { usage >&2; exit 2; }; services=$2; services_explicit=1; shift 2 ;;
+    --deploy-dir) [ $# -ge 2 ] || { usage >&2; exit 2; }; deploy_dir=$2; shift 2 ;;
+    --dry-run) dry_run=1; shift ;;
+    --if-new) if_new=1; shift ;;
+    --wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; wait_seconds=$2; shift 2 ;;
+    --no-rollback) rollback=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ck-git-hosting-deploy: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+log() { printf '%s ck-deploy: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+fail() { log "ERROR: $*"; exit 1; }
+
+case "$wait_seconds" in ''|*[!0-9]*) fail "--wait must be a whole number of seconds" ;; esac
+# --dry-run changes nothing and only needs read access to whatever state_root
+# --config points at; a real install needs root for dpkg and systemctl.
+[ "$dry_run" -eq 1 ] || [ "$(id -u)" -eq 0 ] || fail "must run as root (use sudo), or pass --dry-run to preview"
+[ -f "$config" ] || fail "config file not found: $config"
+
+# A strict single-key reader for server.ini's "key=value" lines: first
+# uncommented match wins (server.ini itself forbids duplicates; this only
+# guards a stray hand-edit), value runs to end of line (no inline comments
+# in this format).
+config_value() {  # config_value KEY
+  sed -n "s/^$1=//p" "$config" | head -n1
+}
+
+state_root=$(config_value state_root)
+[ -n "$state_root" ] || fail "state_root is not set in $config"
+http_port=$(config_value http_port)
+pages_http_port=$(config_value pages_http_port)
+
+if [ "$services_explicit" -eq 0 ]; then
+  services="ck-git-hosting ck-ci-runner"
+  [ -n "$pages_http_port" ] && services="$services ck-pages"
+fi
+
+deploy_dir=${deploy_dir:-$deploy_dir_default}
+
+releases="$state_root/releases/$project"
+[ -d "$releases" ] || fail "no releases found for project '$project' under $releases"
+
+work=$(mktemp -d "${TMPDIR:-/var/tmp}/ckdeploy.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+# Select the release: an explicit --tag, else the newest by the release
+# record's own created_epoch (not directory mtime, which a restore or a
+# clock change could reorder), ties broken by tag name.
+tag="$want_tag"
+if [ -z "$tag" ]; then
+  candidates="$work/candidates"
+  : >"$candidates"
+  for dir in "$releases"/*/; do
+    [ -f "${dir}release.ini" ] || continue
+    this_tag=$(basename "$dir")
+    this_epoch=$(sed -n 's/^created_epoch=//p' "${dir}release.ini" | head -n1)
+    case "$this_epoch" in ''|*[!0-9]*) continue ;; esac
+    printf '%s %s\n' "$this_epoch" "$this_tag" >>"$candidates"
+  done
+  tag=$(sort -k1,1nr -k2,2r "$candidates" | head -n1 | cut -d' ' -f2- || true)
+fi
+[ -n "$tag" ] || fail "no committed release found for project '$project' under $releases"
+release_dir="$releases/$tag"
+[ -f "$release_dir/release.ini" ] || fail "release '$tag' has no committed record (release.ini)"
+
+if [ "$if_new" -eq 1 ] && [ "$tag" = "$(cat "$deploy_dir/deployed-tag" 2>/dev/null || echo)" ]; then
+  log "release $tag is already deployed; nothing to do"
+  exit 0
+fi
+
+# Never restart the runner out from under a build in progress.
+waited=0
+while [ -n "$(ls -A "$state_root/ci/working" 2>/dev/null || true)" ]; do
+  if [ "$waited" -ge "$wait_seconds" ]; then
+    fail "a CI build is running; re-run once the runner is idle, or pass --wait SECONDS"
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+
+commit=$(sed -n 's/^commit=//p' "$release_dir/release.ini" | head -n1)
+short=$(printf '%s' "$commit" | cut -c1-12)
+
+# Verify the asset's checksum from its own sidecar before anything here runs
+# as root. An artifact named "release" is rejected by the workflow parser
+# (see D1/WP1) and cannot be produced going forward; a release built before
+# that fix may still carry one, with no verifiable sidecar (the bug this
+# script's own predecessor helped surface) -- fall back to it, unverified,
+# only when the requested asset is still the default.
+sidecar="$release_dir/$asset.ini"
+blob="$release_dir/$asset.tar"
+if [ -f "$sidecar" ]; then
+  expected_sha256=$(sed -n 's/^sha256=//p' "$sidecar" | head -n1)
+  case "$expected_sha256" in
+    *[!0-9a-f]*|'') fail "release $tag: $asset.ini has no usable sha256" ;;
+  esac
+  [ "${#expected_sha256}" -eq 64 ] || fail "release $tag: $asset.ini sha256 is malformed"
+  [ -f "$blob" ] || fail "release $tag has no $asset.tar asset"
+  actual_sha256=$(sha256sum "$blob" | cut -d' ' -f1)
+  [ "$actual_sha256" = "$expected_sha256" ] ||
+    fail "release $tag: $asset.tar sha256 mismatch (expected $expected_sha256, got $actual_sha256) -- refusing to install"
+elif [ "$asset" = packages ] && [ -f "$release_dir/release.tar" ]; then
+  log "WARNING: release $tag has no packages.ini sidecar (a release built before D1/WP1, using the reserved artifact name 'release'); installing release.tar UNVERIFIED"
+  blob="$release_dir/release.tar"
+else
+  fail "release $tag has no $asset.ini sidecar for asset '$asset'"
+fi
+
+# Extract as root's own identity, not whatever uid/mode the unprivileged
+# build recorded.
+extracted="$work/extracted"
+mkdir -p "$extracted"
+tar --no-same-owner --no-same-permissions -xf "$blob" -C "$extracted"
+# dpkg is always present on the real target (a real install needs it anyway,
+# for dpkg -i); its absence only matters to a --dry-run selection/checksum
+# check exercised on a workstation, where any architecture match is fine.
+if command -v dpkg >/dev/null 2>&1; then
+  deb_pattern="ck-git-hosting_*_$(dpkg --print-architecture).deb"
+else
+  deb_pattern="ck-git-hosting_*_*.deb"
+fi
+deb_count=$(find "$extracted" -maxdepth 4 -name "$deb_pattern" | wc -l | tr -d ' ')
+case "$deb_count" in
+  0) fail "release $tag's $asset asset carries no $deb_pattern" ;;
+  1) ;;
+  *) fail "release $tag's $asset asset carries more than one $deb_pattern" ;;
+esac
+deb=$(find "$extracted" -maxdepth 4 -name "$deb_pattern")
+
+if [ "$dry_run" -eq 1 ]; then
+  log "plan: install $tag ($commit) from $blob"
+  log "  + dpkg -i --force-confold $deb"
+  for service in $services; do log "  + systemctl restart $service.service"; done
+  log "  + health check: services active, http (if configured), version=+g$short in runtime records"
+  exit 0
+fi
+
+mkdir -p "$deploy_dir"
+prev="$deploy_dir/deployed.deb"  # last package confirmed healthy (rollback target)
+
+install_deb() {  # $1 = .deb
+  # --force-confold keeps the server's configured /etc/ck-git-hosting/server.ini
+  # (a dpkg conffile) instead of stopping at an interactive prompt with no
+  # stdin, which would leave the package half-configured and the services
+  # un-restarted.
+  DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "$1" >/dev/null 2>&1 || return 1
+  systemctl daemon-reload 2>/dev/null || true
+  for service in $services; do
+    # A unit that crash-looped enough to hit systemd's StartLimitBurst
+    # refuses to (re)start at all -- "Start request repeated too quickly" --
+    # until explicitly cleared, even once a fixed binary is installed. This
+    # matters most for the rollback path, which restarts services right
+    # after a failing deploy's own settle() may have crash-looped them past
+    # that limit; harmless when the unit was never in that state.
+    systemctl reset-failed "$service.service" 2>/dev/null || true
+    systemctl restart "$service.service" 2>/dev/null || true
+  done
+}
+
+runtime_component_for() {  # the binary name recordRuntimeComponent() used, for a short service name
+  case "$1" in
+    ck-git-hosting) echo ck-git-hostingd ;;
+    ck-ci-runner) echo ck-ci-runnerd ;;
+    ck-pages) echo ck-pagesd ;;
+    *) echo "" ;;  # an unrecognised service: skip its version check
+  esac
+}
+
+healthy() {
+  for service in $services; do
+    systemctl is-active --quiet "$service.service" || return 1
+  done
+  if [ -n "$http_port" ]; then
+    [ "$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$http_port/" 2>/dev/null || echo 000)" = 200 ] ||
+      return 1
+  fi
+  for service in $services; do
+    component=$(runtime_component_for "$service")
+    [ -n "$component" ] || continue
+    record="$state_root/runtime/$component.txt"
+    [ -f "$record" ] || return 1
+    version=$(sed -n 's/^version=//p' "$record" | head -n1)
+    case "$version" in *"$short"*) ;; *) return 1 ;; esac
+  done
+  return 0
+}
+# 45s, not 20: verified by hand in the Lima VM (a faster machine than the
+# Raspberry Pi this targets) that a real dpkg -i plus three sequential
+# `systemctl restart` calls, especially back to back for a failed deploy
+# immediately followed by its own rollback, can need noticeably more than
+# 20s end to end before every service is genuinely active and its runtime
+# record updated -- a tight window here risks calling a rollback "failed"
+# when it actually succeeded a few seconds later.
+settle() { i=0; while [ "$i" -lt 45 ] && ! healthy; do sleep 1; i=$((i + 1)); done; }
+
+log "deploying release $tag ($commit)"
+install_deb "$deb" || log "dpkg -i reported an error for $tag"
+settle
+
+if healthy; then
+  cp "$deb" "$prev"
+  printf '%s\n' "$tag" >"$deploy_dir/deployed-tag"
+  extra=''
+  [ -n "$http_port" ] && extra=', dashboard 200'
+  log "deployed $tag OK (services active$extra, every daemon reports +g$short)"
+  exit 0
+fi
+
+log "release $tag did not come up healthy"
+if [ "$rollback" -eq 0 ]; then
+  log "rollback disabled (--no-rollback); leaving the failed install in place"
+  exit 1
+fi
+log "rolling back"
+if [ -f "$prev" ]; then
+  # healthy()'s version check compares each daemon's runtime record against
+  # $short, still the release that just failed. The rollback brings the
+  # *previous* release's daemon back up, which correctly reports the
+  # previous commit -- checking it against the failed release's commit could
+  # never pass, no matter how long settle() waited. Re-point $short at the
+  # rollback target's own commit (from the last successfully deployed tag's
+  # own release.ini) before checking health again.
+  prev_tag=$(cat "$deploy_dir/deployed-tag" 2>/dev/null || echo)
+  if [ -n "$prev_tag" ] && [ -f "$releases/$prev_tag/release.ini" ]; then
+    prev_commit=$(sed -n 's/^commit=//p' "$releases/$prev_tag/release.ini" | head -n1)
+    [ -n "$prev_commit" ] && short=$(printf '%s' "$prev_commit" | cut -c1-12)
+  fi
+  install_deb "$prev" || true
+  settle
+  if healthy; then log "rolled back to the previous package OK"; else log "ROLLBACK FAILED - manual intervention needed"; fi
+else
+  log "no previous package to roll back to - manual intervention needed"
+fi
+exit 1

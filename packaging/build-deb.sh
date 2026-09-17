@@ -139,7 +139,7 @@ Section: vcs
 Priority: optional
 Architecture: $arch
 Maintainer: $maintainer
-Depends: git, openssh-server, systemd
+Depends: git, openssh-server, systemd, curl
 Recommends: ckgit
 Description: private LAN Git control plane over OpenSSH
  ck-git-hosting keeps Git transport in Git and OpenSSH and adds a small,
@@ -148,7 +148,9 @@ Description: private LAN Git control plane over OpenSSH
  command for each device key, a compiled shared receive hook, and an
  administrative tool for project creation and device pairing.  An opt-in,
  sandboxed CI runner executes each project's .ckgit/ci.yml workflow on push
- and shows the results read-only in the dashboard.
+ and shows the results read-only in the dashboard. ck-git-hosting-deploy
+ installs a release's server package by hand, with a health check and
+ automatic rollback.
 CONTROL
 printf '%s\n' /etc/ck-git-hosting/server.ini /etc/ssh/sshd_config.d/ck-git-hosting.conf >"$server_root/DEBIAN/conffiles"
 cat >"$server_root/DEBIAN/postinst" <<'POSTINST'
