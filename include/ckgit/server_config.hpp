@@ -53,6 +53,11 @@ struct ServerConfig {
   std::optional<std::filesystem::path> pages_root;
   std::optional<unsigned short> pages_http_port;
   std::optional<unsigned> pages_keep_versions;
+  // Public base URL of the Pages origin as reached from a browser (e.g.
+  // https://pages.example.org or http://host:8421), used verbatim to build the
+  // dashboard's per-project "Docs" link. Empty falls back to the advertised
+  // clone host and pages_http_port, then to the request Host.
+  std::optional<std::string> pages_public_url;
 };
 
 // Loads the strict, bounded version-1 daemon configuration.  Every path must

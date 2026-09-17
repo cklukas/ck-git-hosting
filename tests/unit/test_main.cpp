@@ -460,6 +460,27 @@ void testServerConfig() {
            "optional server fields stay unset when absent");
     expect(ckgit::renderServerConfig(minimal).find("ssh_clone_target=") == std::string::npos,
            "legacy configurations render without inventing an SSH destination");
+    // pages_public_url: an optional public base URL for the dashboard Docs link.
+    const auto pages_url_path = directory / "pages-url.ini";
+    {
+      std::ofstream f(pages_url_path);
+      f << "schema_version=1\nrepo_root=/srv/repos\ncontrol_socket=/run/control.sock\n"
+        << "pages_root=/var/lib/ck-git-hosting/pages\npages_http_port=8421\npages_public_url=https://docs.example.org\n";
+    }
+    const auto pages_cfg = ckgit::loadServerConfig(pages_url_path);
+    expect(pages_cfg.pages_public_url.has_value() && *pages_cfg.pages_public_url == "https://docs.example.org" &&
+               ckgit::renderServerConfig(pages_cfg).find("pages_public_url=https://docs.example.org\n") != std::string::npos,
+           "pages_public_url round-trips as the public Pages base URL");
+    for (const auto* bad : {"ftp://x", "rpi4:8421", "http://has space", "https://a<b>", "javascript:alert(1)"}) {
+      const auto bad_path = directory / "pages-bad.ini";
+      {
+        std::ofstream f(bad_path);
+        f << "schema_version=1\nrepo_root=/srv/repos\ncontrol_socket=/run/control.sock\npages_public_url=" << bad << "\n";
+      }
+      bool rejected = false;
+      try { ckgit::loadServerConfig(bad_path); } catch (const std::exception&) { rejected = true; }
+      expect(rejected, "pages_public_url rejects unsafe or non-http(s) values");
+    }
     for (const auto* target : {"ckgit@rpi4", "git_user@git-server", "git.user@git.example.test", "ckgit@192.0.2.1"}) {
       expect(ckgit::isValidSshCloneTarget(target), "safe SSH aliases, DNS names, and IPv4 targets are accepted");
     }

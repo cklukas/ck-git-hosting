@@ -53,6 +53,16 @@ bool isValidSshCloneTarget(std::string_view value) {
   return safe(value.substr(0, at)) && safe(value.substr(at + 1));
 }
 
+// A public base URL safe to embed verbatim in an href: an http(s) scheme and no
+// whitespace, control characters, or markup-significant bytes.
+bool isValidPublicUrl(std::string_view value) {
+  if (value.size() < 8 || value.size() > 512) return false;
+  if (value.rfind("http://", 0) != 0 && value.rfind("https://", 0) != 0) return false;
+  return std::all_of(value.begin(), value.end(), [](unsigned char byte) {
+    return byte > 0x20 && byte != '"' && byte != '\'' && byte != '<' && byte != '>' && byte != '`' && byte != '\\';
+  });
+}
+
 ServerConfig loadServerConfig(const std::filesystem::path& path) {
   std::error_code status_error;
   const auto status = std::filesystem::symlink_status(path, status_error);
@@ -182,6 +192,11 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
       }
       config.ssh_clone_target = value;
+    } else if (key == "pages_public_url") {
+      if (!isValidPublicUrl(value)) {
+        configError(path, line_number, "pages_public_url must be an http(s):// URL without spaces or control characters");
+      }
+      config.pages_public_url = value;
     } else if (key == "http_port" || key == "pages_http_port") {
       unsigned int port = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), port);
@@ -267,6 +282,9 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.pages_http_port.has_value()) {
     rendered += "pages_http_port=" + std::to_string(*config.pages_http_port) + "\n";
+  }
+  if (config.pages_public_url.has_value()) {
+    rendered += "pages_public_url=" + *config.pages_public_url + "\n";
   }
   if (config.pages_keep_versions.has_value()) {
     rendered += "pages_keep_versions=" + std::to_string(*config.pages_keep_versions) + "\n";

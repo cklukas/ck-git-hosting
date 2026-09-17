@@ -76,6 +76,7 @@ struct Options {
   // build the link on ck-pagesd's separate origin.
   std::optional<std::filesystem::path> pages_root;
   std::optional<unsigned short> pages_http_port;
+  std::optional<std::string> pages_public_url;
 };
 
 struct ControlRequest {
@@ -170,6 +171,7 @@ void applyServerConfig(Options* options) {
   options->ssh_clone_target = config.ssh_clone_target;
   options->pages_root = config.pages_root;
   options->pages_http_port = config.pages_http_port;
+  options->pages_public_url = config.pages_public_url;
 }
 
 ckgit::ServerConfig effectiveConfig(const Options& options) {
@@ -754,7 +756,8 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
 void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::ProjectIndex& index, Deadline deadline,
                       const std::string& ssh_clone_target, const std::optional<std::filesystem::path>& state_root,
                       const std::optional<std::filesystem::path>& pages_root,
-                      const std::optional<unsigned short>& pages_http_port) {
+                      const std::optional<unsigned short>& pages_http_port,
+                      const std::optional<std::string>& pages_public_url) {
   // Refresh the versions the About dialog lists, so every page shows the running
   // host and service builds. Best-effort and per request (the dashboard is
   // loopback-only and low-traffic), reflecting a service restart immediately.
@@ -796,29 +799,37 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       if (route.kind == ckgit::RouteKind::kNotFound || !project) throw ckgit::WebError(404, "Page was not found.");
       project->ssh_clone_target = ssh_clone_target;
       // Link the project's published Pages site when one exists. It lives on the
-      // separate ck-pagesd origin (a distinct port). Prefer the advertised clone
-      // host (a LAN name that also serves Pages) over the request Host, which is
-      // often a loopback tunnel to the dashboard that cannot reach the Pages
-      // port; fall back to the request Host when no clone host is configured.
-      if (pages_root.has_value() && pages_http_port.has_value()) {
+      // separate ck-pagesd origin (a distinct port, often a distinct public
+      // name). Prefer the configured public Pages URL; otherwise derive the
+      // origin from the advertised clone host (a LAN name that also serves
+      // Pages) and pages_http_port, since the request Host is usually a loopback
+      // tunnel to the dashboard that cannot reach the Pages port; fall back to
+      // the request Host only when neither is configured.
+      if (pages_root.has_value()) {
         std::error_code pages_ec;
         if (std::filesystem::exists(*pages_root / route.project / "current", pages_ec)) {
-          std::string host;
-          if (!ssh_clone_target.empty()) {
-            const auto at = ssh_clone_target.rfind('@');
-            host = at == std::string::npos ? ssh_clone_target : ssh_clone_target.substr(at + 1);
-          }
-          if (host.empty()) host = parsed->host;
-          if (!host.empty()) {
-            std::size_t port_colon;
-            if (host.front() == '[') {  // [IPv6]:port
-              const auto bracket = host.find(']');
-              port_colon = bracket == std::string::npos ? std::string::npos : host.find(':', bracket);
-            } else {
-              port_colon = host.rfind(':');
+          if (pages_public_url.has_value() && !pages_public_url->empty()) {
+            std::string base = *pages_public_url;
+            while (!base.empty() && base.back() == '/') base.pop_back();
+            project->pages_site_url = base + "/" + route.project + "/";
+          } else if (pages_http_port.has_value()) {
+            std::string host;
+            if (!ssh_clone_target.empty()) {
+              const auto at = ssh_clone_target.rfind('@');
+              host = at == std::string::npos ? ssh_clone_target : ssh_clone_target.substr(at + 1);
             }
-            if (port_colon != std::string::npos) host.erase(port_colon);
-            project->pages_site_url = "http://" + host + ":" + std::to_string(*pages_http_port) + "/" + route.project + "/";
+            if (host.empty()) host = parsed->host;
+            if (!host.empty()) {
+              std::size_t port_colon;
+              if (host.front() == '[') {  // [IPv6]:port
+                const auto bracket = host.find(']');
+                port_colon = bracket == std::string::npos ? std::string::npos : host.find(':', bracket);
+              } else {
+                port_colon = host.rfind(':');
+              }
+              if (port_colon != std::string::npos) host.erase(port_colon);
+              project->pages_site_url = "http://" + host + ":" + std::to_string(*pages_http_port) + "/" + route.project + "/";
+            }
           }
         }
       }
@@ -934,7 +945,8 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
 
 void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,
                 const std::string& ssh_clone_target, std::optional<std::filesystem::path> state_root,
-                std::optional<std::filesystem::path> pages_root, std::optional<unsigned short> pages_http_port) {
+                std::optional<std::filesystem::path> pages_root, std::optional<unsigned short> pages_http_port,
+                std::optional<std::string> pages_public_url) {
   // Live log streams (SSE) hold a worker for their duration, bounded by
   // kMaxLogStreams; the extra workers keep ordinary requests responsive.
   constexpr std::size_t kHttpWorkerCount = 8;
@@ -954,7 +966,7 @@ void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIn
         if (stopping) return;
         client = queue.front(); queue.pop_front();
       }
-      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target, state_root, pages_root, pages_http_port); } catch (...) {}
+      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target, state_root, pages_root, pages_http_port, pages_public_url); } catch (...) {}
       close(client.descriptor);
     }
   });
@@ -997,7 +1009,7 @@ int serve(const Options& options) {
   std::thread http_thread;
   if (http_listener >= 0) {
     std::cout << "ck-git-hostingd: loopback HTTP ready on " << bound_http_port << "\n" << std::flush;
-    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""), state_root, options.pages_root, options.pages_http_port);
+    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""), state_root, options.pages_root, options.pages_http_port, options.pages_public_url);
   }
   while (!stop_requested) {
     pollfd ready{listener, POLLIN, 0};
