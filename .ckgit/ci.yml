@@ -4,17 +4,20 @@
 # unit binary plus every tests/integration/*.sh script, including the ones
 # that need loopback networking (the runner brings the sandbox's isolated
 # network namespace's loopback interface up for exactly this; the LAN stays
-# denied). Pushing a deploy-* tag does the same and, because a tag build
-# publishes a durable release, attaches the built Debian packages as release
-# assets. An administrator runs the packaged `ck-git-hosting-deploy` command
-# by hand on the server to install a release's server package and restart the
-# services, with a health check and automatic rollback; see
-# docs/operations/04-ci-cd.md. The CI step itself stays unprivileged: it only
-# builds, tests, and packages.
+# denied). Pushing a version tag (vMAJOR.MINOR.PATCH, matching the VERSION
+# file -- the package step below refuses any tag that does not) does the same
+# and, because a tag build publishes a durable release, attaches the built
+# Debian packages as release assets, versioned identically to what the GitHub
+# release workflow (.github/workflows/release.yml) produces for the same tag
+# (WP6/D7): the two channels never disagree about what "v0.1.0" means. An
+# administrator runs the packaged `ck-git-hosting-deploy` command by hand on
+# the server to install a release's server package and restart the services,
+# with a health check and automatic rollback; see docs/operations/04-ci-cd.md.
+# The CI step itself stays unprivileged: it only builds, tests, and packages.
 version: 1
 on:
   branches: [master]
-  tags: [deploy-*]
+  tags: [v*]
 jobs:
   - name: build-test-package
     steps:
@@ -25,7 +28,8 @@ jobs:
           # fall back to "+source". Prefer the commit the runner exports; when it
           # does not (an older runner), fall back to the hash git archive
           # substituted into .ckgit/build-commit via export-subst. The ref, when
-          # the runner exports it, tags a deploy build with its deploy tag.
+          # the runner exports it, tags a release build's binaries with its
+          # own tag name too, distinct from a plain commit-stamped build.
           short=$(printf %s "${CKGIT_COMMIT:-}" | cut -c1-12)
           if [ -z "$short" ] && [ -f .ckgit/build-commit ]; then
             embedded=$(tr -cd '0-9a-f' < .ckgit/build-commit)
@@ -46,11 +50,34 @@ jobs:
           make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" check
       - name: package
         script: |
-          # The .deb version stays timestamp-led so dpkg orders rebuilds
-          # correctly, but carries the commit (from the build step) for
-          # traceability back to a build.
+          # A tag build whose tag matches VERSION exactly publishes the
+          # clean release version -- byte-identical to what the GitHub
+          # release workflow produces for the same tag, so the two channels
+          # never disagree (WP6/D7). Any other tag (this workflow's own
+          # trigger already narrowed it to v*, but a future edit to that
+          # filter should not silently publish a mismatched release) fails
+          # the build, which also means no release is published under it
+          # (a failed tag build's release is removed; see the Releases
+          # section of docs/operations/04-ci-cd.md). A branch build stays a
+          # development snapshot: packaging/build-deb.sh's own default
+          # (VERSION~timestamp.commit) sorts below the plain release of the
+          # same VERSION, so installing a real release is never seen by dpkg
+          # as a downgrade from an earlier snapshot.
+          version=$(tr -d '[:space:]' <VERSION)
           short=$(cat "$TMPDIR/build-commit-short" 2>/dev/null || true)
-          pkgver="$(tr -d '[:space:]' <VERSION)+$(date -u +%Y%m%d.%H%M)${short:+.g$short}"
+          case "${CKGIT_REF:-}" in
+            refs/tags/*)
+              tag=${CKGIT_REF#refs/tags/}
+              if [ "$tag" != "v$version" ]; then
+                echo "package: tag $tag does not match VERSION $version" >&2
+                exit 1
+              fi
+              pkgver="$version"
+              ;;
+            *)
+              pkgver="$version~$(date -u +%Y%m%d.%H%M)${short:+.g$short}"
+              ;;
+          esac
           sh packaging/build-deb.sh --build-dir "$TMPDIR/build" --output "$PWD/dist" --version "$pkgver"
           # A source tarball too, so the macOS client (which cannot run the Pi's
           # Linux binary) can build ckgit from the same release.

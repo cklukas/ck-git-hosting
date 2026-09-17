@@ -67,12 +67,22 @@ sh packaging/build-deb.sh --build-dir /tmp/ck/build --output /tmp/ck/dist
 test suite uses on a workstation. `CKGIT_MAINTAINER` overrides the
 `Maintainer` field.
 
-Without `--version`, a local build is stamped `0.1.0+YYYYMMDD.HHMM.<commit>`,
-which sorts above the plain release version and above every earlier local
-build, so `apt install ./ck-git-hosting_*.deb` always upgrades. A rebuilt
-package with an unchanged version is "already installed" to apt and needs
-`dpkg -i` or `apt reinstall`. The release workflow passes the tag version
-explicitly, so published packages carry the clean `0.1.0`.
+Without `--version`, a local build is stamped `0.1.0~YYYYMMDD.HHMM.<commit>`.
+dpkg orders `~` below anything, including the empty string, so this snapshot
+sorts *below* the plain release `0.1.0` and above every earlier snapshot of
+the same `VERSION` — a real `0.1.0` release is never seen as a downgrade from
+an earlier development build, and `apt install ./ck-git-hosting_*.deb` still
+always upgrades from one snapshot to the next. A rebuilt package with an
+unchanged version is "already installed" to apt and needs `dpkg -i` or
+`apt reinstall`. Both the GitHub release workflow and this project's own
+self-hosted CI (`.ckgit/ci.yml`) pass the tag version explicitly for a tag
+matching `VERSION`, so a release published either way carries the identical
+clean version, for example `0.1.0`. Installing a snapshot of an
+already-released `VERSION` over that release (for example testing a further
+change to `master` before bumping `VERSION` again) needs `apt
+--allow-downgrades` or `dpkg -i`, which only warns; this is deliberate — bump
+`VERSION` on `master` right after tagging a release, and a plain `apt
+upgrade` keeps working during the normal cycle.
 
 ## Other Linux distributions
 

@@ -194,6 +194,18 @@ sh "$packaging/build-deb.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root
 [ ! -e "$test_root/deb/ck-git-hosting/etc/ck-git-hosting/authorized_keys" ] || fail "package must not ship authorized_keys"
 grep -q '^Package: ck-git-hosting$' "$test_root/deb/ck-git-hosting/DEBIAN/control"
 grep -q '^Version: ' "$test_root/deb/ck-git-hosting/DEBIAN/control"
+# WP6/D7: a snapshot build's default version uses '~', which dpkg orders
+# below the plain release of the same VERSION -- so a real release package
+# always outranks any earlier development build, never the reverse.
+staged_version=$(sed -n 's/^Version: //p' "$test_root/deb/ck-git-hosting/DEBIAN/control")
+case "$staged_version" in
+  *~*) ;;
+  *) fail "a snapshot build's default version does not use '~': $staged_version" ;;
+esac
+if command -v dpkg >/dev/null 2>&1; then
+  dpkg --compare-versions "$staged_version" lt "${staged_version%%~*}" ||
+    fail "a snapshot version does not sort below the plain release: $staged_version"
+fi
 grep -q '^Architecture: arm64$' "$test_root/deb/ck-git-hosting/DEBIAN/control"
 grep -q '^/etc/ck-git-hosting/server.ini$' "$test_root/deb/ck-git-hosting/DEBIAN/conffiles"
 grep -q '^/etc/ssh/sshd_config.d/ck-git-hosting.conf$' "$test_root/deb/ck-git-hosting/DEBIAN/conffiles"

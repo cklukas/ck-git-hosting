@@ -60,12 +60,17 @@ source_root=$(cd "$script_dir/.." && pwd)
 if [ -z "$version" ]; then
   [ -f "$source_root/VERSION" ] || fail "missing VERSION file"
   version=$(tr -d '[:space:]' <"$source_root/VERSION")
-  # A development build must sort above the plain release version and above
-  # any earlier development build, otherwise dpkg treats a rebuilt package
-  # with unchanged sources as already installed.  Releases pass --version.
+  # A development build must still sort above any earlier development build
+  # (otherwise dpkg treats a rebuilt package with unchanged sources as
+  # already installed), but *below* the plain release of the same VERSION:
+  # dpkg's version ordering treats '~' as sorting before anything, including
+  # the empty string, so "0.1.0~20260917.1200.abc123" < "0.1.0" (WP6/D7). A
+  # snapshot only outranks a release once VERSION itself is bumped past it,
+  # which is the discipline this is meant to enforce: bump VERSION right
+  # after tagging, not before. Releases pass --version with the clean tag.
   stamp=$(date -u +%Y%m%d.%H%M)
   commit=$(git -C "$source_root" rev-parse --short HEAD 2>/dev/null || echo nogit)
-  version="$version+$stamp.$commit"
+  version="$version~$stamp.$commit"
 fi
 case "$version" in
   [0-9]*.[0-9]*.[0-9]*) ;;
