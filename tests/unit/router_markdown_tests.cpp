@@ -67,6 +67,16 @@ void testRouterMarkdown() {
   check(!contains(pageLayout("demo", "<p>x</p>", &no_pages), ">Docs</a>"),
         "a project without a published site shows no Docs link");
 
+  // The no-JS refresh fallback is wrapped in <noscript>, not emitted bare: a
+  // bare <meta refresh> arms its timer the moment the browser parses it, well
+  // before any later body script could remove it, so a script-enabled reader
+  // must never see it live at all rather than racing to cancel it.
+  const auto refreshing = pageLayout("demo", "<p>x</p>", nullptr, nullptr, 3u);
+  check(contains(refreshing, "<noscript><meta http-equiv=\"refresh\" content=\"3\"></noscript>"),
+        "an active-run page's refresh fallback is confined to <noscript>");
+  check(!contains(pageLayout("demo", "<p>x</p>"), "http-equiv=\"refresh\""),
+        "a page with no refresh interval emits no refresh meta at all");
+
   check(isObjectId(sha) && isObjectId(sha256), "both full Git object formats are accepted");
   check(!isObjectId("abcdef") && !isObjectId(std::string(40, 'A')) && !isObjectId(std::string(40, 'g')),
         "abbreviated, uppercase, and nonhex object IDs rejected");

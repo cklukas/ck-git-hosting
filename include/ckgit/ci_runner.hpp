@@ -24,6 +24,12 @@ struct CiRunnerOptions {
   std::filesystem::path state_root;      // where ci/runs/... records and logs are written
   std::filesystem::path build_root;      // scratch parent; a per-run subtree is created here
 
+  // The queued job's id, when this run came from the spool: the run reuses it
+  // as its run_id so it becomes the same run the dashboard already published as
+  // Pending (see enqueueCiJob), rather than a second, disconnected record.
+  // Empty generates a fresh id instead (the one-shot `run` command, and tests).
+  std::string run_id;
+
   unsigned timeout_seconds = 1800;       // per-step wall-clock budget
   std::size_t max_log_bytes = 1u << 20;  // per-step captured-output cap
   bool allow_network = false;            // Linux: keep a network namespace? default: deny

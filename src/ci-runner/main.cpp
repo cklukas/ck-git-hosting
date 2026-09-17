@@ -114,6 +114,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.project_name = job->project_name;
     options.ref = job->ref;
     options.commit_id = job->commit_id;
+    options.run_id = job->job_id;
     options.state_root = state_root;
     options.build_root = build_root;
     options.timeout_seconds = config.ci_timeout_seconds.value_or(1800);

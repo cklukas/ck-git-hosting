@@ -169,18 +169,20 @@ int run() {
         event_failure = std::current_exception();
       }
     }
+    try {
+      enqueueCiJobs(state_root, project_name, client_id, updates);
+    } catch (const std::exception& error) {
+      std::cerr << "ckgit post-receive: CI enqueue failed: " << error.what() << "\n";
+    }
     if (control_socket != nullptr) {
       try {
+        // After enqueueCiJobs above, so a freshly queued job's Pending record
+        // is already on disk for this same refresh to pick up.
         ckgit::forwardControlRpc(control_socket, client_id, "refresh", project_name, {}, nullptr,
                                  std::chrono::seconds(2));
       } catch (const std::exception&) {
         // Index availability must never delay or fail an already accepted push.
       }
-    }
-    try {
-      enqueueCiJobs(state_root, project_name, client_id, updates);
-    } catch (const std::exception& error) {
-      std::cerr << "ckgit post-receive: CI enqueue failed: " << error.what() << "\n";
     }
     if (event_failure) std::rethrow_exception(event_failure);
   }

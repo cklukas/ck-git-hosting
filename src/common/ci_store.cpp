@@ -481,6 +481,24 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
   Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
   lockExclusive(spool_fd);
   atomicWriteAt(spool_fd, request.job_id + ".ini", serializeJob(request));
+
+  // Publish the run as Pending immediately, reusing the job id as the run id
+  // (the runner reuses it too — see CiRunnerOptions::run_id), so the dashboard
+  // lists it and its Cancel button works from the moment it is queued rather
+  // than only once a runner claims it. Best-effort: the job is already
+  // durably queued above and must run whether or not this preview record can
+  // be written.
+  try {
+    CiRunRecord pending;
+    pending.run_id = request.job_id;
+    pending.project_name = request.project_name;
+    pending.ref = request.ref;
+    pending.commit_id = request.commit_id;
+    pending.status = CiRunStatus::Pending;
+    prepareCiRunDirectory(state_root, request.project_name, request.job_id);
+    writeCiRunRecord(state_root, pending);
+  } catch (const std::exception&) {
+  }
 }
 
 std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_root) {

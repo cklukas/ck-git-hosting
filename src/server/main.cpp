@@ -906,18 +906,26 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
             ckgit::htmlEscape(response.location) + "\">Return to the run</a></p>", &*project);
       } else if (route.kind == ckgit::RouteKind::kCiRun) {
         // The live status page reads the run fresh from disk (not the cached
-        // snapshot) plus the running step's log tail, and auto-refreshes while
-        // the run is active.
+        // snapshot) plus the running step's log tail. While active it carries
+        // a nonce'd follow script (see renderCiRunDetail) and a lightweight
+        // meta-refresh as a no-JS fallback in case that script never runs.
         const auto run = index.readCiRun(route.project, route.run_id);
         if (!run) throw ckgit::WebError(404, "CI run was not found.");
         const ckgit::CiRunDisplay display = ckgit::ciRunDisplay(*run);
         const std::size_t live_step = run->steps.size();
         std::optional<std::string> live_log;
+        const std::string nonce = display.active ? generateNonce() : std::string();
         if (display.active) live_log = index.readCiLog(route.project, route.run_id, live_step);
         ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
         response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI run",
-            ckgit::renderCiRunDetail(*project, *run, live_log, live_step), &*project, &ci_context,
+            ckgit::renderCiRunDetail(*project, *run, live_log, live_step, nonce), &*project, &ci_context,
             display.active ? 3u : 0u);
+        if (display.active) {
+          // Scope the relaxation to this page only, matching the per-step log
+          // page: a nonce'd follow script and a same-origin EventSource.
+          response.csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-" + nonce +
+                         "'; connect-src 'self'";
+        }
       } else if (route.kind == ckgit::RouteKind::kCiArtifact) {
         const auto blob = index.readCiArtifact(route.project, route.run_id, route.path);
         if (!blob) throw ckgit::WebError(404, "Artifact was not found.");

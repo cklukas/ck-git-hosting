@@ -251,6 +251,66 @@ printf '%s %s refs/tags/v1.0.0\n' "$tag_id" "$(printf '0%.0s' $(seq 1 40))" | \
       CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive failed for the tag deletion"
 [ ! -e "$state/releases/demo/v1.0.0" ] || fail "the release survived its tag being deleted"
 
+# --- A queued job is visible, and cancellable, before any runner claims it -
+# The dashboard publishes a job as a Pending run (same id as the job) the
+# moment it is queued — via the hook's own "refresh" RPC to the already-
+# running daemon above, the same nudge every other push in this script uses —
+# and its Cancel marker is honored by the runner before it does anything else.
+queued_work="$test_root/queued-work"
+git -c init.defaultBranch=main init -q "$queued_work"
+mkdir -p "$queued_work/.ckgit"
+cat > "$queued_work/.ckgit/ci.yml" <<'YML'
+version: 1
+jobs:
+  - name: build
+    steps:
+      - run: sh -ec 'echo integ-queued-should-not-run'
+YML
+git -C "$queued_work" add -A
+git -C "$queued_work" -c user.email=t@example.invalid -c user.name=Test commit -q -m queued
+queued_commit=$(git -C "$queued_work" rev-parse HEAD)
+git -C "$repos" -c init.defaultBranch=main init --bare -q queued.git
+git -C "$queued_work" push -q "$repos/queued.git" main
+"$CKGIT_ADMIN" ci enable queued --config "$test_root/server.ini" >/dev/null || fail "ci enable (queued) failed"
+
+# No runner is running at this point in the script, so the push only ever
+# queues the job — it must already read back as a Pending run, both on disk
+# and (through the live refresh RPC) on the dashboard.
+printf '%s %s refs/heads/main\n' "$(printf '0%.0s' $(seq 1 40))" "$queued_commit" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=queued \
+      CKGIT_REPOSITORY_ROOT="$repos" CKGIT_CONTROL_SOCKET="$test_root/control.sock" \
+      "$CKGIT_POST_RECEIVE" || fail "post-receive (queued) failed"
+ls "$state"/ci/spool/*.ini >/dev/null 2>&1 || fail "the queued push did not queue a job"
+
+queued_ini=$(ls "$state"/ci/runs/queued/*/run.ini 2>/dev/null | head -n1 || true)
+[ -n "$queued_ini" ] || fail "the queued job has no run record before any runner claimed it"
+grep -q "status=pending" "$queued_ini" || { cat "$queued_ini"; fail "the queued job's run record is not Pending"; }
+queued_run=$(basename "$(dirname "$queued_ini")")
+
+"$CKGIT_ADMIN" ci runs queued --state-root "$state" | grep -q "pending" || fail "ci runs did not show the job as pending"
+
+attempt=0
+while :; do
+  curl --path-as-is --max-time 4 --silent -o "$test_root/queued.html" "$base/project/queued/ci" \
+    || fail "curl queued ci page"
+  grep -q "ci-status ci-pending" "$test_root/queued.html" && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || { cat "$test_root/queued.html"; fail "CI page never showed the queued job as pending"; }
+  sleep .1
+done
+
+curl --path-as-is --max-time 4 --silent -o "$test_root/queued-run.html" "$base/project/queued/ci/$queued_run" \
+  || fail "curl queued run page"
+grep -q "Queued" "$test_root/queued-run.html" || fail "the queued run's own page does not explain it is waiting"
+grep -q "$queued_run/cancel" "$test_root/queued-run.html" || fail "the queued run's page has no cancel form"
+
+# Cancel it while it is still sitting in the spool, then let a runner claim it.
+"$CKGIT_ADMIN" ci cancel queued "$queued_run" --state-root "$state" >/dev/null || fail "ci cancel (queued) failed"
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once >/dev/null 2>&1 || fail "serve (queued) failed"
+grep -q "status=cancelled" "$queued_ini" || { cat "$queued_ini"; fail "the pre-cancelled job did not record Cancelled"; }
+[ -z "$(ls -A "$state/ci/runs/queued/$queued_run/steps" 2>/dev/null || true)" ] || \
+  fail "a step ran even though the job was cancelled before any runner claimed it"
+[ -z "$(ls -A "$state/ci/spool" 2>/dev/null || true)" ] || fail "the spool was not drained after the queued run was claimed"
+
 # --- Live cancellation -----------------------------------------------------
 # A long-running build is stopped on request: ckgit-admin drops the cancel
 # marker, the runner kills the step's process group and records the run as

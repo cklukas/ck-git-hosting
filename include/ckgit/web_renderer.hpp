@@ -31,9 +31,13 @@ std::string renderCiRuns(const ProjectSummary& project);
 // The live status page for one run: overall status with elapsed/total time,
 // per-step results, the running step's log tail, artifacts, and the cancel
 // affordances. `live_log` is the current step's captured output while the run
-// is active (std::nullopt otherwise); `live_step` is that step's index.
+// is active (std::nullopt otherwise); `live_step` is that step's index. While
+// live, the log tail carries the same "Stop"/follow control as the step-log
+// page (see below); `nonce` authorizes that inline script and is ignored
+// (may be empty) when `live_log` is std::nullopt.
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
-                              const std::optional<std::string>& live_log, std::size_t live_step);
+                              const std::optional<std::string>& live_log, std::size_t live_step,
+                              const std::string& nonce);
 // The step-log page body: the captured output, plus a "Follow live" control that
 // tails the running step over Server-Sent Events. Progressive enhancement — the
 // static log is the whole page without JavaScript. `nonce` authorizes the small

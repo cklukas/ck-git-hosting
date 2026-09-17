@@ -190,8 +190,8 @@ void testRunDetailAndDisplay() {
 
   ckgit::ProjectSummary project;
   project.name = "demo";
-  const std::string detail =
-      ckgit::renderCiRunDetail(project, live, std::optional<std::string>("integ-live-output"), 0);
+  const std::string detail = ckgit::renderCiRunDetail(
+      project, live, std::optional<std::string>("integ-live-output"), 0, "test-nonce");
   require(detail.find("/project/demo/ci/00000000000000000002-abcdabcd/cancel") != std::string::npos,
           "the live run page posts to the cancel endpoint");
   require(detail.find("method=\"post\"") != std::string::npos, "cancel is a POST form");
@@ -199,10 +199,41 @@ void testRunDetailAndDisplay() {
           "the live run page shows the CLI cancel command");
   require(detail.find("integ-live-output") != std::string::npos,
           "the live run page shows the running step's output");
+  require(detail.find("script nonce=\"test-nonce\"") != std::string::npos,
+          "the live run page carries the nonce'd follow script");
+  require(detail.find("00000000000000000002-abcdabcd/0.stream") != std::string::npos,
+          "the follow script targets the running step's SSE endpoint");
 
-  const std::string done_detail = ckgit::renderCiRunDetail(project, done, std::nullopt, 0);
+  const std::string done_detail = ckgit::renderCiRunDetail(project, done, std::nullopt, 0, "");
   require(done_detail.find("/cancel") == std::string::npos, "a finished run offers no cancel");
   require(done_detail.find("3:20 min") != std::string::npos, "a finished run shows its total duration");
+}
+
+void testPendingRunRender() {
+  ckgit::CiRunRecord pending;
+  pending.run_id = "00000000000000000003-abcdabcd";
+  pending.project_name = "demo";
+  pending.ref = "refs/heads/main";
+  pending.commit_id = std::string(40, 'c');
+  pending.status = ckgit::CiRunStatus::Pending;
+  const auto display = ckgit::ciRunDisplay(pending);
+  require(display.active && display.name == "pending", "a queued run is active and named pending");
+  require(ckgit::ciRunTiming(display).empty(), "a queued run shows no elapsed/duration timing");
+
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  project.ci_runs.push_back(pending);
+  const std::string list = ckgit::renderCiRuns(project);
+  require(list.find("pending") != std::string::npos, "the run list shows a queued job as pending");
+  require(list.find("/project/demo/ci/00000000000000000003-abcdabcd") != std::string::npos,
+          "the queued job links to its (already existing) run page");
+
+  const std::string detail = ckgit::renderCiRunDetail(project, pending, std::nullopt, 0, "");
+  require(detail.find("/project/demo/ci/00000000000000000003-abcdabcd/cancel") != std::string::npos,
+          "a queued run can be cancelled the same way a running one can");
+  require(detail.find("Queued") != std::string::npos, "a queued run explains that it is waiting for a runner");
+  require(detail.find("Live output") == std::string::npos,
+          "a queued run has nothing to stream yet, so no live-output section renders");
 }
 
 void testLogView() {
@@ -224,6 +255,7 @@ void testCiWeb() {
   testRoutes();
   testRender();
   testRunDetailAndDisplay();
+  testPendingRunRender();
   testLogView();
   testReleaseRoutes();
   testReleaseRender();

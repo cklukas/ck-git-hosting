@@ -854,26 +854,12 @@ bool ciSandboxCompiledIn() {
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
   if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
   CiRunRecord record;
-  record.run_id = generateCiId();
+  record.run_id = options.run_id.empty() ? generateCiId() : options.run_id;
   record.project_name = options.project_name;
   record.ref = options.ref;
   record.commit_id = options.commit_id;
   record.status = CiRunStatus::Running;
   record.started_epoch_seconds = nowEpoch();
-
-  CiSandboxReport report;
-  report.namespaces_available = probeUserNamespaces(options.allow_network);
-  report.network_isolated = report.namespaces_available && !options.allow_network;
-  // Loopback only needs its own probe when the isolated network namespace is
-  // actually created (network_isolated): otherwise a step shares the host's
-  // namespace (allow_network, or namespaces unavailable at all in degraded
-  // mode) and its loopback trivially works, same as the host's.
-  report.loopback_available = !report.network_isolated || probeLoopback();
-  // D6/WP3: the tmpfs/bind masking below is Linux-only, exactly like the
-  // namespaces it runs inside; there is nothing to probe when they are
-  // unavailable, since no masking mount is attempted at all in that case.
-  report.filesystem_masked = report.namespaces_available && probeFilesystemMask();
-  if (sandbox != nullptr) *sandbox = report;
 
   const auto finish = [&](CiRunStatus status, const std::string& detail) -> CiRunRecord {
     record.status = status;
@@ -888,6 +874,32 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
     }
     return record;
   };
+
+  // A queued job can be cancelled while it still sits in the spool, before any
+  // runner claims it: the dashboard publishes it as Pending (same run_id) as
+  // soon as it is queued, and its Cancel button writes the ordinary marker.
+  // Honor that before doing anything else — no sandbox probe, no checkout — so
+  // the record goes straight from Pending to Cancelled and never shows Running.
+  try {
+    if (isCiCancelRequested(options.state_root, options.project_name, record.run_id)) {
+      return finish(CiRunStatus::Cancelled, "cancelled before it started");
+    }
+  } catch (const std::exception&) {
+  }
+
+  CiSandboxReport report;
+  report.namespaces_available = probeUserNamespaces(options.allow_network);
+  report.network_isolated = report.namespaces_available && !options.allow_network;
+  // Loopback only needs its own probe when the isolated network namespace is
+  // actually created (network_isolated): otherwise a step shares the host's
+  // namespace (allow_network, or namespaces unavailable at all in degraded
+  // mode) and its loopback trivially works, same as the host's.
+  report.loopback_available = !report.network_isolated || probeLoopback();
+  // D6/WP3: the tmpfs/bind masking below is Linux-only, exactly like the
+  // namespaces it runs inside; there is nothing to probe when they are
+  // unavailable, since no masking mount is attempted at all in that case.
+  report.filesystem_masked = report.namespaces_available && probeFilesystemMask();
+  if (sandbox != nullptr) *sandbox = report;
 
   CiWorkflow workflow;
   try {

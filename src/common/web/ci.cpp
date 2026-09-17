@@ -143,7 +143,8 @@ std::string renderCiRuns(const ProjectSummary& project) {
 }
 
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
-                              const std::optional<std::string>& live_log, std::size_t live_step) {
+                              const std::optional<std::string>& live_log, std::size_t live_step,
+                              const std::string& nonce) {
   const CiRunDisplay display = ciRunDisplay(run);
   const std::string project_url = "/project/" + htmlEscape(project.name);
   std::string out = "<p><a href=\"" + project_url + "/ci\">\xe2\x86\x90 Back to CI</a></p>";
@@ -167,7 +168,12 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
 
   // Cancel affordances, mirrored across channels: a loopback POST button and the
   // equivalent CLI command (which drives the same cancel marker via the socket).
+  // The marker is honored by the runner even before it claims the job (see
+  // runCiWorkflow), so this same button also cancels a run still Pending.
   if (display.active) {
+    if (display.name == "pending") {
+      out += "<p class=\"notice\">Queued \xe2\x80\x94 waiting for a runner.</p>";
+    }
     out += "<div class=\"ci-cancel\"><form method=\"post\" action=\"" + project_url + "/ci/" +
            htmlEscape(run.run_id) + "/cancel\"><button type=\"submit\" class=\"ci-cancel-button\">\xe2\x9b\x94 "
            "Cancel run</button></form>";
@@ -199,18 +205,58 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
   out += "</ol>";
 
   if (show_live) {
+    // project.name and run.run_id are validated tokens ([A-Za-z0-9._-] etc.), so
+    // this URL carries no character that could escape the data attribute or the
+    // script below; the follow script reads it from the attribute and
+    // interpolates nothing itself.
+    const std::string stream_url =
+        project_url + "/ci/" + htmlEscape(run.run_id) + "/" + std::to_string(live_step) + ".stream";
     out += "<h2>Live output <span class=\"muted\">\xc2\xb7 step " + std::to_string(live_step) + "</span></h2>";
+    out += "<div class=\"ci-log-controls\"><button type=\"button\" id=\"ci-live-btn\" data-stream=\"" +
+           htmlEscape(stream_url) + "\">Stop</button> <span id=\"ci-live-note\" class=\"muted\"></span></div>";
     constexpr std::size_t kTailBytes = 16 * 1024;
     std::string_view view(*live_log);
     const bool trimmed = view.size() > kTailBytes;
     if (trimmed) view = view.substr(view.size() - kTailBytes);
-    out += "<pre class=\"ci-log ci-log-live\">";
+    out += "<pre class=\"ci-log ci-log-live\" id=\"ci-live-log\">";
     if (trimmed) {
       out += "<span class=\"muted\">\xe2\x80\xa6 showing the last 16 KiB; open the step log for the full "
              "output\n</span>";
     }
     out += escapePre(view);
-    out += "</pre><p class=\"muted\">This page refreshes automatically while the run is active.</p>";
+    out += "</pre>";
+    out += "<noscript><p class=\"muted\">This page refreshes automatically while the run is active.</p>"
+           "</noscript>";
+    // A nonce-scoped follow script mirroring renderCiLogView's below: same
+    // atBottom()-gated auto-scroll so new output never yanks a reader back up,
+    // same Last-Event-ID resume on a dropped connection. Two differences: it
+    // starts following immediately (this block only renders while the run is
+    // active, so there is nothing to opt into), and instead of relying on the
+    // page's own meta-refresh (inert here — see pageLayout's <noscript> wrap,
+    // since this script's whole premise is that scripting is enabled), it
+    // reloads once when the step's "done" event arrives, so the Steps list
+    // and overall status catch up without a recurring whole-page reload.
+    out += "<script nonce=\"" + nonce + "\">";
+    out += "(function(){"
+           "var b=document.getElementById('ci-live-btn'),"
+           "n=document.getElementById('ci-live-note'),"
+           "x=document.getElementById('ci-live-log'),"
+           "u=b.getAttribute('data-stream'),e=null;"
+           // The log box scrolls itself (max-height + overflow:auto in the
+           // stylesheet) rather than growing the page, so "at the bottom" is
+           // measured against the box's own scroll position, not the window's.
+           "function atBottom(){return x.scrollTop+x.clientHeight>=x.scrollHeight-24;}"
+           "function stop(m){if(e){e.close();e=null;}b.textContent='Resume';if(m)n.textContent=m;}"
+           "function start(){b.textContent='Stop';n.textContent='Connecting\\u2026';x.textContent='';e=new EventSource(u);"
+           "e.onopen=function(){n.textContent='Following live\\u2026';};"
+           "e.onmessage=function(ev){var s=atBottom();x.textContent+=ev.data+'\\n';if(s)x.scrollTop=x.scrollHeight;};"
+           "e.addEventListener('done',function(){n.textContent='Step finished \\u2014 reloading\\u2026';"
+           "if(e){e.close();e=null;}setTimeout(function(){location.reload();},600);});"
+           "e.onerror=function(){n.textContent='Reconnecting\\u2026';};}"
+           "b.addEventListener('click',function(){e?stop('Paused.'):start();});"
+           "start();"
+           "})();";
+    out += "</script>";
   }
 
   if (!run.artifacts.empty()) {
@@ -253,13 +299,16 @@ std::string renderCiLogView(const ProjectSummary& project, const std::string& ru
          "n=document.getElementById('ci-follow-note'),"
          "x=document.getElementById('ci-log'),"
          "u=b.getAttribute('data-stream'),e=null;"
-         "function atBottom(){return (window.innerHeight+window.scrollY)>=(document.body.scrollHeight-48);}"
+         // The log box scrolls itself (max-height + overflow:auto in the
+         // stylesheet) rather than growing the page, so "at the bottom" is
+         // measured against the box's own scroll position, not the window's.
+         "function atBottom(){return x.scrollTop+x.clientHeight>=x.scrollHeight-24;}"
          "function stop(m){if(e){e.close();e=null;}b.textContent='Follow live';if(m)n.textContent=m;}"
          // Clear the static snapshot once when following begins; a later reconnect
          // resumes from Last-Event-ID and appends, so it must not clear.
          "function start(){b.textContent='Stop';n.textContent='Connecting\\u2026';x.textContent='';e=new EventSource(u);"
          "e.onopen=function(){n.textContent='Following live\\u2026';};"
-         "e.onmessage=function(ev){var s=atBottom();x.textContent+=ev.data+'\\n';if(s)window.scrollTo(0,document.body.scrollHeight);};"
+         "e.onmessage=function(ev){var s=atBottom();x.textContent+=ev.data+'\\n';if(s)x.scrollTop=x.scrollHeight;};"
          "e.addEventListener('done',function(){stop('Run finished.');});"
          "e.onerror=function(){n.textContent='Reconnecting\\u2026';};}"
          "b.addEventListener('click',function(){e?stop(''):start();});"

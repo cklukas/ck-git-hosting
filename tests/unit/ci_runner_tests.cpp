@@ -342,6 +342,47 @@ void testSkippedWithoutWorkflow() {
   require(record.status == ckgit::CiRunStatus::Skipped, "a commit with no workflow is skipped");
 }
 
+void testRunIdReusedFromOptions() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [true]\n");
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.run_id = "00000000000000000777-1a2b3c4d";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success, "the run still succeeds");
+  require(record.run_id == "00000000000000000777-1a2b3c4d",
+          "a caller-supplied run_id is reused rather than a fresh one minted");
+}
+
+void testCancelledBeforeStart() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: echo should-not-run\n");
+  const std::string run_id = "00000000000000000888-deadbeef";
+  // Mirrors enqueueCiJob: the dashboard's Pending record (and thus the run
+  // directory a cancel marker needs) exists before the runner ever claims the
+  // job.
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", run_id);
+  require(ckgit::requestCiCancel(fixture.state, "demo", run_id), "cancel accepted while still queued");
+
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.run_id = run_id;
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Cancelled, "a pre-cancelled job records Cancelled");
+  require(record.run_id == run_id, "the cancelled record is the same run_id, not a fresh one");
+  require(record.steps.empty(), "no step ever ran: the workflow was never parsed or checked out");
+  require(!ckgit::isCiCancelRequested(fixture.state, "demo", run_id),
+          "the marker is cleared once the run reaches a terminal state");
+}
+
 void testBranchTrigger() {
   RunnerFixture fixture;
   const std::string id = fixture.commit(
@@ -572,6 +613,8 @@ void testCiRunner() {
   testServiceTreeMasked();
   testCacheStillPersists();
   testSkippedWithoutWorkflow();
+  testRunIdReusedFromOptions();
+  testCancelledBeforeStart();
   testBranchTrigger();
   testDefaultBranchTrigger();
   testArtifacts();

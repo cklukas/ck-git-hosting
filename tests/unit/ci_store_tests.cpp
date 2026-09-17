@@ -79,6 +79,30 @@ void testSpoolFifo() {
   ckgit::releaseCiJob(fixture.state, "00000000000000000002-bbbbbbbb");  // idempotent-ish
 }
 
+void testEnqueuePublishesPendingRun() {
+  StoreFixture fixture;
+  const std::string id = "00000000000000000003-eeeeeeee";
+  ckgit::enqueueCiJob(fixture.state, sampleJob(id));
+
+  // The job is visible as a Pending run under its own id from the moment it is
+  // queued, before any runner has claimed it — the dashboard list and the
+  // Cancel button both key off this record.
+  const auto pending = ckgit::loadCiRun(fixture.state, "demo", id);
+  require(pending.has_value(), "the queued job has an immediately loadable run record");
+  require(pending->run_id == id, "the pending run reuses the job id as its run id");
+  require(pending->status == ckgit::CiRunStatus::Pending, "the freshly queued run is Pending");
+  require(pending->ref == "refs/heads/main" && pending->commit_id == std::string(40, 'a'),
+          "the pending run carries the job's ref and commit");
+  require(pending->steps.empty(), "a pending run has no steps yet");
+
+  const auto runs = ckgit::loadCiRuns(fixture.state, "demo");
+  require(runs.size() == 1 && runs.front().run_id == id, "loadCiRuns also lists the pending run");
+
+  // Still claimable exactly as before: the pending preview does not consume it.
+  const auto claimed = ckgit::claimNextCiJob(fixture.state);
+  require(claimed.has_value() && claimed->job_id == id, "the job remains claimable");
+}
+
 void testMalformedSpoolSkipped() {
   StoreFixture fixture;
   const std::filesystem::path spool = fixture.state / "ci" / "spool";
@@ -531,6 +555,7 @@ void testLogChunkTailing() {
 void testCiStore() {
   testIdsAndStatus();
   testSpoolFifo();
+  testEnqueuePublishesPendingRun();
   testMalformedSpoolSkipped();
   testRunRecordRoundTrip();
   testRunsNewestFirstAndCap();
