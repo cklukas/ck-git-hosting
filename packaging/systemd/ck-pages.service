@@ -51,9 +51,10 @@ SystemCallFilter=~@privileged @resources
 # The server only reads pages_root, so the filesystem stays read-only under
 # ProtectSystem=strict, with one exception: a single runtime directory where it
 # records its own version at startup (for the dashboard and `ckgit version`).
-# The leading '-' tolerates the directory not existing yet; the package
-# pre-creates it, and ck-pagesd's write there is best-effort regardless.
-ReadWritePaths=-/var/lib/ck-git-hosting/state/runtime
+# The package's postinst pre-creates the directory before starting the service.
+# No '-' prefix: systemd (Debian 13) silently drops a '-'-prefixed ReadWritePaths
+# even when the path exists, which left pages unable to record its version.
+ReadWritePaths=/var/lib/ck-git-hosting/state/runtime
 
 [Install]
 WantedBy=multi-user.target
