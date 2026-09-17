@@ -53,6 +53,20 @@ void testRouterMarkdown() {
         contains(about_page, "<main id=\"main-content\"><p>Page content</p></main>"),
         "shared layout emits one About target while preserving normal page content");
 
+  // A project with a published Pages site gets a header Docs button linking to
+  // it on the separate Pages origin; a project without one shows no such button.
+  ProjectSummary with_pages{};
+  with_pages.name = "demo";
+  with_pages.pages_site_url = "http://host.example:8421/demo/";
+  const auto pages_page = pageLayout("demo", "<p>x</p>", &with_pages);
+  check(contains(pages_page, "class=\"docs-trigger\" href=\"http://host.example:8421/demo/\" target=\"_blank\" rel=\"noopener\">Docs</a>"),
+        "a project with a published site gets a header Docs link to the Pages origin");
+  ProjectSummary no_pages{};
+  no_pages.name = "demo";
+  // The stylesheet always defines .docs-trigger, so assert on the button markup.
+  check(!contains(pageLayout("demo", "<p>x</p>", &no_pages), ">Docs</a>"),
+        "a project without a published site shows no Docs link");
+
   check(isObjectId(sha) && isObjectId(sha256), "both full Git object formats are accepted");
   check(!isObjectId("abcdef") && !isObjectId(std::string(40, 'A')) && !isObjectId(std::string(40, 'g')),
         "abbreviated, uppercase, and nonhex object IDs rejected");

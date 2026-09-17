@@ -22,6 +22,9 @@ struct HttpRequest {
   // the log-stream endpoint can resume tailing from that byte offset instead of
   // replaying the whole log.
   std::string last_event_id;
+  // The Host header value (host[:port]), or empty. The dashboard derives the
+  // published Pages site's link from it, swapping in the Pages port.
+  std::string host;
 };
 
 // Parses the complete header block for the deliberately small, one-request

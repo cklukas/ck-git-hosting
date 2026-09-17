@@ -169,6 +169,10 @@ std::string pageLayout(std::string_view title, std::string_view body, const Proj
     }
     out += "</nav>";
   }
+  if (p && !p->pages_site_url.empty()) {
+    out += "<a class=\"docs-trigger\" href=\"" + htmlEscape(p->pages_site_url) +
+        "\" target=\"_blank\" rel=\"noopener\">Docs</a>";
+  }
   out += "<button type=\"button\" class=\"about-trigger\" popovertarget=\"about-dialog\" popovertargetaction=\"show\" aria-haspopup=\"dialog\">About</button></header>";
   return out + aboutDialog() + "<main id=\"main-content\">" + std::string(body) + "</main><footer>Read-only Git dashboard · All dates in UTC</footer></body></html>";
 }

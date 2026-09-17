@@ -123,6 +123,7 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
   bool content_length_seen = false;
   std::string origin;
   std::string last_event_id;
+  std::string host;
   std::size_t header_count = 0;
   for (std::size_t position = request_line_end + 2; position < request.size() - 2;) {
     const std::size_t line_end = request.find("\r\n", position);
@@ -148,6 +149,7 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
         return std::nullopt;
       }
       host_seen = true;
+      host = std::string(value);
     } else if (equalsIgnoreCase(name, "transfer-encoding")) {
       return std::nullopt;
     } else if (equalsIgnoreCase(name, "content-length")) {
@@ -170,7 +172,7 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
   if (!host_seen) {
     return std::nullopt;
   }
-  return HttpRequest{*method, std::string(target), origin, last_event_id};
+  return HttpRequest{*method, std::string(target), origin, last_event_id, host};
 }
 
 }  // namespace ckgit
