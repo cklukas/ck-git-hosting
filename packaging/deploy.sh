@@ -71,9 +71,15 @@ deb=$(find "$work" -name 'ck-git-hosting_*.deb' | head -1)
 
 prev="$DEPLOY_DIR/deployed.deb"                   # last package confirmed healthy (rollback target)
 
-install_deb() {                                  # postinst restarts hosting+runner, not pages
-  dpkg -i "$1" >/dev/null 2>&1 || return 1
-  systemctl restart ck-pages.service 2>/dev/null || true
+install_deb() {                                  # $1 = .deb
+  # --force-confold keeps the server's configured /etc/ck-git-hosting/server.ini
+  # (a dpkg conffile) instead of stopping at an interactive prompt with no stdin,
+  # which would leave the package half-configured and the services un-restarted.
+  DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "$1" >/dev/null 2>&1 || return 1
+  systemctl daemon-reload 2>/dev/null || true
+  # Restart every service explicitly so the new binaries are actually running,
+  # not only unpacked (the postinst restarts hosting+runner, not pages).
+  systemctl restart ck-git-hosting.service ck-ci-runner.service ck-pages.service 2>/dev/null || true
 }
 healthy() {
   systemctl is-active --quiet ck-git-hosting.service ck-ci-runner.service ck-pages.service || return 1
