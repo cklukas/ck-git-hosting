@@ -70,7 +70,7 @@ std::string filePreview(WebRepository& repo, const ProjectSummary& p, const std:
             htmlEscape(sourceUrl(p.name, "source", ref, path)) + "\"" + (source ? " aria-current=\"page\"" : "") + ">Source</a></nav>";
       }
       if (markdown && !source)
-        out += "<section class=\"readme\">" + renderMarkdown(content, LinkContext{p.name, id, parentPath(path), ref}) + "</section>";
+        out += "<section class=\"readme\">" + renderMarkdown(markdownBody(content), LinkContext{p.name, id, parentPath(path), ref}) + "</section>";
       else out += sourceLines(content);
     }
     else out += "<p class=\"muted\">Binary file; preview unavailable.</p>";

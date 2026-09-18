@@ -872,6 +872,7 @@ int runLoopbackProbe() {
 
 void testProjectIndex();
 void testRouterMarkdown();
+void testMarkdownExtensions();
 void testDeletion();
 void testDashboard();
 void testBulkPublishDiscovery();
@@ -896,6 +897,7 @@ int main(int argc, char** argv) {
   try {
     testProjectIndex();
     testRouterMarkdown();
+    testMarkdownExtensions();
     testDeletion();
     testDashboard();
     testBulkPublishDiscovery();

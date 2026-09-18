@@ -413,6 +413,8 @@ returns to the default revision. Calendar branch/tag choices preserve the month.
 
 READMEs render a built-in Markdown subset in the overview and in directories.
 Other Markdown files also open rendered, with a Source mode and heading links.
+GitHub-flavoured tables, alerts (`> [!NOTE]`), task lists, and strikethrough
+render as on GitHub, and YAML front matter is kept out of the rendered view.
 Raw HTML is escaped, comments outside code are hidden, and relative document
 links retain the selected branch or tag. Directory links also work without a
 trailing slash. Images, including SVG, load through an immutable protected raw

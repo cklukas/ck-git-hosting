@@ -203,7 +203,7 @@ void testDashboard() {
   std::filesystem::create_directories(work / "src/internal");
   std::filesystem::create_directories(work / "configuration");
   write(work / "README.md", "# Welcome\n\n<script>unsafe()</script>\n\n![Diagram](diagram.svg)\n\n[Doc](docs/README.md)\n");
-  write(work / "docs/README.md", "# Directory\n\n**Strong** paragraph.\n");
+  write(work / "docs/README.md", "---\ntitle: Directory\nnav_order: 2\n---\n# Directory\n\n**Strong** paragraph.\n");
   write(work / "docs/nested/guide.md", "# Nested guide\n\nVisible below an expandable ancestor.\n");
   write(work / "src/internal/engine.cpp", "int engine() { return 42; }\n");
   write(work / "configuration/settings.ini", "enabled=true\n");
@@ -254,7 +254,10 @@ void testDashboard() {
   auto tree = page("tree/" + resolved.id + ":").body;
   require(tree.find("Welcome") != std::string::npos && tree.find("<script>") == std::string::npos, "README renders escaped");
   require(tree.find("submodule") != std::string::npos && tree.find("symlink") != std::string::npos, "special tree entries labeled");
-  require(page("tree/" + resolved.id + ":docs").body.find("<strong>Strong</strong>") != std::string::npos, "directory README");
+  const auto directory_readme = page("tree/" + resolved.id + ":docs").body;
+  require(directory_readme.find("<strong>Strong</strong>") != std::string::npos, "directory README");
+  require(directory_readme.find("title: Directory") == std::string::npos && directory_readme.find("<hr>") == std::string::npos,
+          "a README's front matter is kept out of its rendered view");
   auto text = page("blob/" + resolved.id + ":" + ckgit::encodePathSegment("ü #%.txt")).body;
   require(text.find("id=\"L2\"") != std::string::npos && text.find("&lt;script&gt;second") != std::string::npos, "line numbers escape content");
   auto svg = page("blob/" + resolved.id + ":diagram.svg").body;
@@ -303,9 +306,12 @@ void testDashboard() {
   require(rendered_doc.find("<strong>Strong</strong>") != std::string::npos && rendered_doc.find("id=\"directory\"") != std::string::npos,
           "linked Markdown renders with heading targets");
   require(rendered_doc.find("/project/demo/source/heads/main:docs/README.md") != std::string::npos, "Markdown source mode link keeps branch");
+  require(rendered_doc.find("title: Directory") == std::string::npos && rendered_doc.find("<hr>") == std::string::npos,
+          "a Markdown file's front matter is kept out of its rendered view");
   const auto source_doc = page("source/heads/main:docs/README.md").body;
   require(source_doc.find("id=\"L1\"") != std::string::npos && source_doc.find("**Strong**") != std::string::npos &&
           source_doc.find("Wrap lines") != std::string::npos, "source mode includes line navigation and wrapping");
+  require(source_doc.find("title: Directory") != std::string::npos, "source mode still shows the front matter");
   const auto directory_redirect = page("blob/tags/main:docs");
   require(directory_redirect.status == 302 && directory_redirect.location == "/project/demo/tree/tags/main:docs", "directory without slash redirects preserving tag");
   const auto selected_overview = page("overview/heads/side").body;

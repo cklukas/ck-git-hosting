@@ -273,3 +273,128 @@ void testRouterMarkdown() {
   check(renderMarkdown(std::string(kMaximumMarkdownInputBytes, 'a'), root_context).size() <= kMaximumMarkdownOutputBytes,
         "maximum-size ordinary Markdown remains renderable");
 }
+
+// GitHub-flavoured extensions: alerts, task lists, strikethrough, the heading
+// outline, and front matter.
+void testMarkdownExtensions() {
+  using namespace ckgit;
+  const LinkContext ctx{"example", std::string(40, 'a'), ""};
+
+  struct Alert { const char* marker; const char* kind; const char* title; };
+  for (const Alert& alert : {Alert{"NOTE", "note", "Note"}, Alert{"TIP", "tip", "Tip"},
+                             Alert{"IMPORTANT", "important", "Important"}, Alert{"WARNING", "warning", "Warning"},
+                             Alert{"CAUTION", "caution", "Caution"}}) {
+    const auto html = renderMarkdown(std::string("> [!") + alert.marker + "]\n> Body **text**\n", ctx);
+    check(html == std::string("<div class=\"alert alert-") + alert.kind + "\"><p class=\"alert-title\">" + alert.title +
+                      "</p>\n<p>Body <strong>text</strong></p>\n</div>\n",
+          std::string("alert kind ") + alert.marker);
+  }
+  check(renderMarkdown("> [!NOTE] extra\n> more\n", ctx) == "<blockquote>\n<p>[!NOTE] extra\nmore</p>\n</blockquote>\n",
+        "a marker with text after it on the same line is an ordinary blockquote");
+  check(renderMarkdown("> [!note]\n> body\n", ctx) == "<blockquote>\n<p>[!note]\nbody</p>\n</blockquote>\n",
+        "a lowercase marker is an ordinary blockquote");
+  check(renderMarkdown("> [!NOTE]\n", ctx) == "<blockquote>\n<p>[!NOTE]</p>\n</blockquote>\n",
+        "a marker with nothing below it is an ordinary blockquote");
+  check(renderMarkdown("> [!TIP]\n> > inner\n", ctx) ==
+            "<div class=\"alert alert-tip\"><p class=\"alert-title\">Tip</p>\n<blockquote>\n<p>inner</p>\n</blockquote>\n</div>\n",
+        "a quote nests inside an alert as a plain blockquote");
+  check(renderMarkdown("> [!WARNING]  \n>\n> - a\n> - b\n", ctx) ==
+            "<div class=\"alert alert-warning\"><p class=\"alert-title\">Warning</p>\n<ul>\n<li>a\n</li>\n<li>b\n</li>\n</ul>\n</div>\n",
+        "trailing spaces after the marker and a blank quoted line are fine");
+
+  check(renderMarkdown("- [ ] open\n- [x] done\n- [X] also\n- plain\n", ctx) ==
+            "<ul class=\"contains-task-list\">\n"
+            "<li class=\"task-list-item\"><input type=\"checkbox\" disabled> open\n</li>\n"
+            "<li class=\"task-list-item\"><input type=\"checkbox\" disabled checked> done\n</li>\n"
+            "<li class=\"task-list-item\"><input type=\"checkbox\" disabled checked> also\n</li>\n"
+            "<li>plain\n</li>\n</ul>\n",
+        "task items unchecked, checked either way, mixed with a plain item");
+  check(renderMarkdown("- [ ] a\n\n  second\n", ctx) ==
+            "<ul class=\"contains-task-list\">\n<li class=\"task-list-item\"><p><input type=\"checkbox\" disabled> a</p>\n<p>second</p>\n</li>\n</ul>\n",
+        "a loose task item keeps its checkbox inside the first paragraph");
+  check(renderMarkdown("- [ ] first\n  second\n", ctx) ==
+            "<ul class=\"contains-task-list\">\n<li class=\"task-list-item\"><input type=\"checkbox\" disabled> first\nsecond\n</li>\n</ul>\n",
+        "a task item's paragraph may continue on the next line");
+  check(renderMarkdown("- [ ] parent\n  - [x] child\n", ctx) ==
+            "<ul class=\"contains-task-list\">\n<li class=\"task-list-item\"><input type=\"checkbox\" disabled> parent\n"
+            "<ul class=\"contains-task-list\">\n<li class=\"task-list-item\"><input type=\"checkbox\" disabled checked> child\n</li>\n</ul>\n"
+            "</li>\n</ul>\n",
+        "task lists nest");
+  check(contains(renderMarkdown("1. [ ] one\n2. [x] two\n", ctx), "<ol class=\"contains-task-list\">\n<li class=\"task-list-item\">"),
+        "ordered lists carry task items too");
+  const auto literal = renderMarkdown("- [ ]\n- [ ]x\n- text [ ] mid\n- [ ] # not a heading\n- [y] no\n", ctx);
+  check(!contains(literal, "checkbox") && !contains(literal, "contains-task-list") && contains(literal, "<li>[ ]\n</li>") &&
+            contains(literal, "<li>[ ]x\n</li>") && contains(literal, "text [ ] mid") &&
+            contains(literal, "<li>[ ] # not a heading\n</li>") && contains(literal, "<li>[y] no\n</li>"),
+        "brackets that are not a task marker followed by text stay literal");
+
+  check(renderMarkdown("~~gone~~ and ~~ a~~ and ~a~ and ~~x~~~", ctx) ==
+            "<p><del>gone</del> and ~~ a~~ and ~a~ and ~~x~~~</p>\n",
+        "double tildes strike through; whitespace inside, single and triple tildes stay text");
+  check(renderMarkdown("~~[link](https://example.test/)~~ **~~x~~** `~~code~~` \\~~no~~", ctx) ==
+            "<p><del><a href=\"https://example.test/\">link</a></del> <strong><del>x</del></strong> <code>~~code~~</code> ~~no~~</p>\n",
+        "strikethrough wraps links, nests in emphasis, and yields to code spans and escapes");
+
+  std::vector<MarkdownHeading> outline{{9, "stale", "stale"}};
+  const auto outlined = renderMarkdown(
+      "# Top\n\n## **Read** `the code`\n\n> ### Quoted\n\n- ### Listed\n\n> [!NOTE]\n> #### Alerted\n\n## Top\n\n## A & B <!-- c -->\n",
+      ctx, &outline);
+  check(outline.size() == 4, "the outline is replaced and lists top-level headings only");
+  check(outline[0].level == 1 && outline[0].id == "top" && outline[0].text == "Top", "outline entry 1");
+  check(outline[1].level == 2 && outline[1].id == "read-the-code" && outline[1].text == "Read the code",
+        "outline text is the heading's plain text");
+  check(outline[2].level == 2 && outline[2].id == "top-1" && outline[2].text == "Top", "outline ids are the deduplicated HTML ids");
+  check(outline[3].level == 2 && outline[3].id == "a-b" && outline[3].text == "A & B", "outline text has entities decoded and comments removed");
+  check(contains(outlined, "id=\"quoted\"") && contains(outlined, "id=\"listed\"") && contains(outlined, "id=\"alerted\""),
+        "nested headings still get ids in the HTML");
+
+  const std::string doc =
+      "---\ntitle: \"A \\\"quoted\\\" title\"\ndescription: 'it''s'  # comment\nnav_order: 3\n\n# a comment line\n"
+      "tags:\n  - a\nnav_exclude: true\n---\n# Body\n";
+  const auto front = splitFrontMatter(doc);
+  check(front.has_value() && front->error.empty(), "a valid block splits without an error");
+  check(front->entries.size() == 4 && front->entries[0].first == "title" && front->entries[0].second == "A \"quoted\" title" &&
+            front->entries[1].first == "description" && front->entries[1].second == "it's" &&
+            front->entries[2].first == "nav_order" && front->entries[2].second == "3" &&
+            front->entries[3].first == "nav_exclude" && front->entries[3].second == "true",
+        "scalar entries in file order, quoting and escapes decoded, a list-valued key left out");
+  check(front->body_offset == doc.find("# Body") && markdownBody(doc) == "# Body\n" &&
+            renderMarkdown(markdownBody(doc), ctx) == "<h1 id=\"body\">Body</h1>\n",
+        "the body starts after the closing fence");
+  check(markdownBody("---\nk: v\n...\nbody") == "body", "a `...` line closes front matter");
+  check(markdownBody("---\r\nk: v\r\n---\r\nbody") == "body" && splitFrontMatter("---\r\nk: v\r\n---\r\n")->entries[0].second == "v",
+        "CRLF line endings are accepted");
+  const auto empty = splitFrontMatter("---\n---\nbody");
+  check(empty && empty->entries.empty() && empty->error.empty() && empty->body_offset == 8, "an empty block is front matter");
+  check(!splitFrontMatter("---\nk: v\n") && !splitFrontMatter("---\nk: v") && !splitFrontMatter("---") &&
+            !splitFrontMatter("\n---\nk: v\n---\n") && !splitFrontMatter(" ---\nk: v\n---\n") && !splitFrontMatter("plain"),
+        "no closing fence, or no opening fence on line 1, means no front matter");
+  check(!splitFrontMatter("---\n\nSome text\n\n---\n") && contains(renderMarkdown(markdownBody("---\n\nSome text\n\n---\n"), ctx), "<hr>"),
+        "a document that merely starts with a thematic break is all body");
+  std::string many = "---\n";
+  for (int index = 0; index < 64; ++index) many += "k" + std::to_string(index) + ": v\n";
+  const auto at_limit = splitFrontMatter(many + "---\n");
+  check(at_limit && at_limit->error.empty() && at_limit->entries.size() == 64, "64 lines are within the bound");
+  check(!splitFrontMatter(many + "k64: v\n---\n"), "65 lines are not front matter");
+  std::string big = "---\n";
+  for (int index = 0; index < 60; ++index) big += "k" + std::to_string(index) + ": " + std::string(200, 'x') + "\n";
+  check(!splitFrontMatter(big + "---\n"), "a block over 8 KiB is not front matter");
+  const auto duplicate = splitFrontMatter("---\na: 1\na: 2\n---\nbody");
+  check(duplicate && duplicate->entries.empty() && duplicate->error == "front matter: duplicate key 'a' (line 3)" &&
+            markdownBody("---\na: 1\na: 2\n---\nbody") == "body",
+        "a duplicate key is reported with the file's line number and the block still splits");
+  const auto missing = splitFrontMatter("---\ntitle:\n---\n");
+  check(missing && missing->error == "front matter: 'title' has no value (line 2)", "a key without a value is reported");
+  check(splitFrontMatter("---\ntitle:\nx: 1\n---\n")->error == "front matter: 'title' has no value (line 2)",
+        "a key without a value followed by another key is reported");
+  check(splitFrontMatter("---\nk: 'open\n---\n")->error == "front matter: unterminated single-quoted scalar (line 2)",
+        "YAML errors carry the front matter prefix and the file line");
+  const auto long_value = splitFrontMatter("---\nk: " + std::string(kMaximumFrontMatterValueBytes + 1, 'v') + "\n---\n");
+  check(long_value && long_value->entries.empty() && !long_value->error.empty(), "a value over its bound is an error");
+  const auto long_key = splitFrontMatter("---\n" + std::string(kMaximumFrontMatterKeyBytes + 1, 'k') + ": v\n---\n");
+  check(long_key && long_key->entries.empty() && contains(long_key->error, "a key is empty or too long (line 2)"),
+        "a key over its bound is an error");
+  check(splitFrontMatter("---\n- a\n- b\n---\n")->error == "front matter: a block mapping has no entries (line 2)",
+        "a top-level list is an error, not body text");
+  check(markdownBody("plain") == "plain", "a file without front matter is all body");
+}

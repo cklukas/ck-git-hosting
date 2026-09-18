@@ -5,15 +5,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "ckgit/http_router.hpp"
 #include "ckgit/validation.hpp"
+#include "ckgit/yaml_subset.hpp"
 
 namespace ckgit {
 namespace {
@@ -283,12 +287,63 @@ std::optional<std::vector<std::string>> tableAlignment(std::string_view line) {
   return alignment;
 }
 
+// GitHub's alerts: a blockquote whose first line is exactly one of these
+// markers (case-sensitive, nothing else on the line) and which has content
+// below it. Any other first line, or a marker with no body, is a blockquote.
+struct AlertKind {
+  std::string_view marker;
+  std::string_view kind;   // the class suffix
+  std::string_view title;  // the visible title
+};
+
+constexpr AlertKind kAlertKinds[] = {
+    {"[!NOTE]", "note", "Note"},
+    {"[!TIP]", "tip", "Tip"},
+    {"[!IMPORTANT]", "important", "Important"},
+    {"[!WARNING]", "warning", "Warning"},
+    {"[!CAUTION]", "caution", "Caution"},
+};
+
+const AlertKind* alertKind(const Lines& quoted) {
+  if (quoted.empty()) return nullptr;
+  const auto first = trim(quoted.front());
+  const bool has_body = std::any_of(quoted.begin() + 1, quoted.end(),
+                                    [](const std::string& line) { return !trim(line).empty(); });
+  if (!has_body) return nullptr;
+  for (const auto& kind : kAlertKinds) {
+    if (first == kind.marker) return &kind;
+  }
+  return nullptr;
+}
+
+// A task-list marker at the start of a list item's first line: `[ ]`, `[x]`
+// or `[X]` after at most three spaces, then whitespace, then the item's text
+// on the same line. `rest` is that text.
+struct TaskMarker {
+  bool checked = false;
+  std::string rest;
+};
+
+std::optional<TaskMarker> taskMarker(std::string_view line) {
+  std::size_t index = 0;
+  while (index < line.size() && index < 3 && line[index] == ' ') ++index;
+  if (line.size() < index + 4 || line[index] != '[' || line[index + 2] != ']') return {};
+  const char state = line[index + 1];
+  if (state != ' ' && state != 'x' && state != 'X') return {};
+  if (line[index + 3] != ' ' && line[index + 3] != '\t') return {};
+  const auto rest = trimLeft(line.substr(index + 4));
+  if (rest.empty()) return {};
+  return TaskMarker{state != ' ', std::string(rest)};
+}
+
 class Renderer {
  public:
-  Renderer(const LinkContext& context, std::size_t input_size)
-      : context_(context), work_(input_size * 64 + 4096) {}
+  Renderer(const LinkContext& context, std::size_t input_size, std::vector<MarkdownHeading>* outline)
+      : context_(context), work_(input_size * 64 + 4096), outline_(outline) {}
 
-  std::string blocks(Lines lines, std::size_t depth = 0, bool tight = false) {
+  // `lead` is HTML placed at the start of the first paragraph (a task item's
+  // checkbox); it is dropped if the first block is not a paragraph.
+  std::string blocks(Lines lines, std::size_t depth = 0, bool tight = false, std::string_view lead = {}) {
     std::string output;
     if (depth >= kMaximumMarkdownDepth) {
       append(output, "<pre>");
@@ -339,9 +394,11 @@ class Renderer {
         if (closing < text.size() && (closing == 0 || text[closing - 1] == ' ' || text[closing - 1] == '\t')) text = trim(text.substr(0, closing));
         const auto visible = withoutComments(text);
         const auto rendered = inlineText(visible, 0);
-        append(output, "<h" + std::to_string(level) + " id=\"" + escaped(headingId(rendered)) + "\">");
+        const auto [id, plain] = headingId(rendered);
+        append(output, "<h" + std::to_string(level) + " id=\"" + escaped(id) + "\">");
         append(output, rendered);
         append(output, "</h" + std::to_string(level) + ">\n");
+        if (depth == 0 && outline_ != nullptr) outline_->push_back({static_cast<int>(level), id, plain});
       } else if (thematic(lines[index])) {
         append(output, "<hr>\n");
         ++index;
@@ -353,14 +410,21 @@ class Renderer {
           if (!line.empty() && line.front() == ' ') line.remove_prefix(1);
           quoted.emplace_back(line);
         }
-        append(output, "<blockquote>\n");
-        append(output, blocks(quoted, depth + 1));
-        append(output, "</blockquote>\n");
+        if (const auto* alert = alertKind(quoted)) {
+          quoted.erase(quoted.begin());
+          append(output, "<div class=\"alert alert-" + std::string(alert->kind) + "\"><p class=\"alert-title\">" +
+                             std::string(alert->title) + "</p>\n");
+          append(output, blocks(quoted, depth + 1));
+          append(output, "</div>\n");
+        } else {
+          append(output, "<blockquote>\n");
+          append(output, blocks(quoted, depth + 1));
+          append(output, "</blockquote>\n");
+        }
       } else if (const auto marker = listMarker(lines[index])) {
         const bool ordered = marker->ordered;
-        append(output, ordered ? "<ol" : "<ul");
-        if (ordered && marker->start != "1") append(output, " start=\"" + marker->start + "\"");
-        append(output, ">\n");
+        std::string items;
+        bool tasks = false;
         while (index < lines.size()) {
           const auto current = listMarker(lines[index]);
           if (!current || current->ordered != ordered || current->indent != marker->indent) break;
@@ -382,10 +446,26 @@ class Renderer {
             if (indentation(lines[index]) <= marker->indent && beginsBlock(lines[index])) break;
             item.push_back(removeIndent(lines[index++], current->content_indent));
           }
-          append(output, "<li>");
-          append(output, blocks(item, depth + 1, !loose));
-          append(output, "</li>\n");
+          // A task marker counts only when what follows it on the line is
+          // paragraph text, so `[ ] # x` or `[ ] > x` stay literal.
+          std::string_view item_lead;
+          if (const auto task = taskMarker(item.front())) {
+            const bool table = task->rest.find('|') != std::string::npos && item.size() > 1 && tableAlignment(item[1]);
+            if (!beginsBlock(task->rest) && !table) {
+              item.front() = task->rest;
+              item_lead = task->checked ? "<input type=\"checkbox\" disabled checked> " : "<input type=\"checkbox\" disabled> ";
+              tasks = true;
+            }
+          }
+          append(items, item_lead.empty() ? "<li>" : "<li class=\"task-list-item\">");
+          append(items, blocks(item, depth + 1, !loose, item_lead));
+          append(items, "</li>\n");
         }
+        append(output, ordered ? "<ol" : "<ul");
+        if (tasks) append(output, " class=\"contains-task-list\"");
+        if (ordered && marker->start != "1") append(output, " start=\"" + marker->start + "\"");
+        append(output, ">\n");
+        append(output, items);
         append(output, ordered ? "</ol>\n" : "</ul>\n");
       } else if (index + 1 < lines.size() && lines[index].find('|') != std::string::npos && tableAlignment(lines[index + 1])) {
         const auto alignments = *tableAlignment(lines[index + 1]);
@@ -414,6 +494,10 @@ class Renderer {
         const auto visible = withoutComments(paragraph);
         if (!trim(visible).empty()) {
           if (!tight) append(output, "<p>");
+          if (!lead.empty()) {
+            append(output, lead);
+            lead = {};
+          }
           append(output, inlineText(visible, 0));
           append(output, tight ? "\n" : "</p>\n");
         }
@@ -425,6 +509,7 @@ class Renderer {
  private:
   const LinkContext& context_;
   std::size_t work_;
+  std::vector<MarkdownHeading>* outline_;
   std::map<std::string, std::size_t> heading_counts_;
   std::set<std::string> heading_ids_;
   bool comment_open_{false};
@@ -489,7 +574,8 @@ class Renderer {
            listMarker(line).has_value() || (indentation(line) <= 3 && trim(line).starts_with('>'));
   }
 
-  std::string headingId(std::string_view rendered) {
+  // The heading's unique id and its plain text (for an outline).
+  std::pair<std::string, std::string> headingId(std::string_view rendered) {
     // Slugs follow the heading's displayed text, so links contribute their
     // label and images their alternative text rather than their destinations.
     // Only markup generated by inlineText is stripped; escaped raw HTML stays
@@ -550,7 +636,7 @@ class Renderer {
       candidate = result + (count == 0 ? "" : "-" + std::to_string(count));
       ++count;
     } while (!heading_ids_.insert(candidate).second);
-    return candidate;
+    return {candidate, std::string(trim(plain))};
   }
 
   void tableRow(std::string& output, const std::vector<std::string>& cells,
@@ -669,6 +755,35 @@ class Renderer {
           }
         }
       }
+      if (value[index] == '~') {
+        // GitHub strikethrough: exactly two tildes, no whitespace just inside
+        // either pair. A single tilde and a run of three or more are text.
+        std::size_t count = 1;
+        while (index + count < value.size() && value[index + count] == '~') ++count;
+        if (count == 2 && index + 2 < value.size() && std::isspace(static_cast<unsigned char>(value[index + 2])) == 0) {
+          std::size_t end = index + 2;
+          bool closed = false;
+          while (end + 1 < value.size()) {
+            spend(1);
+            if (value[end] == '\\' && end + 1 < value.size()) { end += 2; continue; }
+            if (value[end] != '~') { ++end; continue; }
+            std::size_t run = 1;
+            while (end + run < value.size() && value[end + run] == '~') ++run;
+            if (run == 2 && end > index + 2 && std::isspace(static_cast<unsigned char>(value[end - 1])) == 0) { closed = true; break; }
+            end += run;
+          }
+          if (closed) {
+            append(output, "<del>");
+            append(output, inlineText(value.substr(index + 2, end - index - 2), depth + 1, allow_links));
+            append(output, "</del>");
+            index = end + 2;
+            continue;
+          }
+        }
+        escape(output, value.substr(index, count));
+        index += count;
+        continue;
+      }
       if (value[index] == '*' || value[index] == '_') {
         const auto marker = value[index];
         std::size_t count = 1;
@@ -705,10 +820,49 @@ class Renderer {
   }
 };
 
+// Front matter is read with the shared YAML subset. The block handed to the
+// parser starts with a blank line standing in for the opening fence, so the
+// line numbers in its messages are the file's own.
+constexpr YamlBounds kFrontMatterYamlBounds{
+    kMaximumFrontMatterBytes + 2,
+    4096,
+    kMaximumFrontMatterLines + 2,
+    kMaximumFrontMatterKeyBytes,
+    kMaximumFrontMatterValueBytes,
+    kMaximumFrontMatterValueBytes,
+    64,
+    kMaximumFrontMatterLines,
+    kMaximumFrontMatterLines,
+    4,
+};
+constexpr YamlDialect kFrontMatterYamlDialect{kFrontMatterYamlBounds, "front matter", "the front matter"};
+
+bool fenceLine(std::string_view line, std::string_view marker) {
+  return line.starts_with(marker) && trim(line.substr(marker.size())).empty();
+}
+
+// The `key` of a flat `key: value` line, or empty when the line has no such
+// shape. `rest` receives what follows the colon.
+std::string_view frontMatterKey(std::string_view line, std::string_view& rest) {
+  const auto colon = line.find(':');
+  if (colon == std::string_view::npos || colon == 0) return {};
+  if (colon + 1 < line.size() && line[colon + 1] != ' ') return {};
+  const auto key = line.substr(0, colon);
+  for (const unsigned char byte : key) {
+    const bool plain = (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+                       (byte >= '0' && byte <= '9') || byte == '.' || byte == '_' || byte == '-';
+    if (!plain) return {};
+  }
+  rest = trim(line.substr(colon + 1));
+  return key;
+}
+
 }  // namespace
 
-std::string renderMarkdown(std::string_view source, const LinkContext& context) {
+std::string renderMarkdown(std::string_view source, const LinkContext& context,
+                           std::vector<MarkdownHeading>* outline) {
   if (source.size() > kMaximumMarkdownInputBytes) throw std::length_error("Markdown input exceeds 512 KiB");
+  if (outline != nullptr) outline->clear();
   Lines lines;
   for (std::size_t start = 0; start < source.size();) {
     const auto newline = source.find('\n', start);
@@ -718,7 +872,85 @@ std::string renderMarkdown(std::string_view source, const LinkContext& context) 
     if (newline == std::string_view::npos) break;
     start = newline + 1;
   }
-  return Renderer(context, source.size()).blocks(lines);
+  return Renderer(context, source.size(), outline).blocks(lines);
+}
+
+std::optional<FrontMatter> splitFrontMatter(std::string_view source) {
+  // Physical lines up to the closing fence, without newlines or a trailing CR;
+  // lines[0] is the opening fence.
+  std::vector<std::string_view> lines;
+  std::size_t body_offset = std::string_view::npos;
+  for (std::size_t start = 0; start <= source.size();) {
+    const auto newline = source.find('\n', start);
+    const auto end = newline == std::string_view::npos ? source.size() : newline;
+    auto line = source.substr(start, end - start);
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    if (lines.empty()) {
+      if (!fenceLine(line, "---")) return {};
+    } else {
+      if (end > kMaximumFrontMatterBytes) return {};
+      if (fenceLine(line, "---") || fenceLine(line, "...")) {
+        body_offset = newline == std::string_view::npos ? source.size() : newline + 1;
+        break;
+      }
+      if (lines.size() > kMaximumFrontMatterLines) return {};
+    }
+    lines.push_back(line);
+    if (newline == std::string_view::npos) break;
+    start = newline + 1;
+  }
+  if (body_offset == std::string_view::npos) return {};
+
+  // Every line must look like YAML (a flat entry, an indented continuation, a
+  // list item, a comment, or blank), or this is a document that merely starts
+  // with a thematic break.
+  FrontMatter result;
+  result.body_offset = body_offset;
+  std::string block = "\n";
+  std::string_view pending_key;  // a `key:` with nothing after it, awaiting its block
+  std::size_t pending_line = 0;
+  bool any = false;
+  for (std::size_t number = 1; number < lines.size(); ++number) {
+    const auto line = lines[number];
+    block.append(line);
+    block.push_back('\n');
+    const auto content = trim(line);
+    if (content.empty() || content.front() == '#') continue;
+    any = true;
+    const bool continuation = line.front() == ' ' || line.front() == '\t' || line.starts_with("- ") || line == "-";
+    if (!pending_key.empty() && !continuation && result.error.empty()) {
+      result.error = "front matter: '" + std::string(pending_key) + "' has no value (line " +
+                     std::to_string(pending_line + 1) + ")";
+    }
+    pending_key = {};
+    if (continuation) continue;
+    std::string_view rest;
+    const auto key = frontMatterKey(line, rest);
+    if (key.empty()) return {};
+    if (rest.empty()) {
+      pending_key = key;
+      pending_line = number;
+    }
+  }
+  if (!pending_key.empty() && result.error.empty()) {
+    result.error = "front matter: '" + std::string(pending_key) + "' has no value (line " +
+                   std::to_string(pending_line + 1) + ")";
+  }
+  if (!result.error.empty() || !any) return result;
+  try {
+    const YamlNode root = parseYamlSubset(block, kFrontMatterYamlDialect);
+    for (const auto& [key, value] : root.entries) {
+      if (value.kind == YamlNode::Kind::Scalar) result.entries.emplace_back(key, value.scalar);
+    }
+  } catch (const std::exception& error) {
+    result.error = error.what();
+  }
+  return result;
+}
+
+std::string_view markdownBody(std::string_view source) {
+  const auto front = splitFrontMatter(source);
+  return front ? source.substr(front->body_offset) : source;
 }
 
 }  // namespace ckgit

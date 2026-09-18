@@ -121,7 +121,7 @@ std::string renderReadme(const ProjectSummary& p, const std::string& id,
   const auto slash = path.rfind('/');
   std::string out = "<section class=\"readme\"><h2>" + htmlEscape(path) + "</h2>";
   if (lower.ends_with(".md") || lower.ends_with(".markdown"))
-    out += renderMarkdown(content, LinkContext{p.name, id, slash == std::string::npos ? "" : path.substr(0, slash), ref});
+    out += renderMarkdown(markdownBody(content), LinkContext{p.name, id, slash == std::string::npos ? "" : path.substr(0, slash), ref});
   else out += "<pre>" + escapePre(content) + "</pre>";
   return out + "</section>";
 }

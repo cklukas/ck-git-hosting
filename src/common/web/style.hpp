@@ -18,6 +18,11 @@ a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(
   .project-table tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem .8rem;border:1px solid var(--line);background:var(--panel);border-radius:.5rem;padding:1rem;margin-bottom:1rem}.project-table td{display:block;padding:0;border:0;min-width:0}.project-name{grid-row:1;grid-column:1/-1;font-size:1.15rem}.project-last-commit{grid-row:2;grid-column:1/-1}.project-default,.project-branches,.project-tags{grid-row:3;font-size:.85rem}.project-default:before{content:'Default: ';color:var(--muted)}.project-branches:before{content:'Branches: ';color:var(--muted)}.project-tags:before{content:'Tags: ';color:var(--muted)}.project-checkout{grid-row:4;grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 }
 .view-mode{display:flex;margin-bottom:.75rem}.source code{font-size:inherit}.readme th,.readme td{overflow-wrap:normal;word-break:normal}
+/* GitHub-flavoured alerts and task lists in rendered Markdown. */
+.alert{--alert:var(--accent);margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--alert);border-radius:.25rem;background:var(--tint)}.alert>:last-child{margin-bottom:0}.alert-title{margin:0 0 .35rem;font-weight:600;color:var(--alert)}
+.alert-note{--alert:#0969da}.alert-tip{--alert:#1a7f37}.alert-important{--alert:#8250df}.alert-warning{--alert:#9a6700}.alert-caution{--alert:#cf222e}
+.contains-task-list{list-style:none;padding-left:.4rem}.task-list-item input{margin:0 .45rem 0 0;vertical-align:-.1rem}
+@media(prefers-color-scheme:dark){.alert-note{--alert:#4493f8}.alert-tip{--alert:#3fb950}.alert-important{--alert:#ab7df8}.alert-warning{--alert:#d29922}.alert-caution{--alert:#f85149}}
 @media(max-width:700px){.project-checkout:before{content:'Checkout: '}.project-last-commit>.muted:only-child:before{content:'Last commit: '}}
 /* Native disclosures keep the repository tree usable without JavaScript. */
 .tree-pane{padding:.75rem;font-size:.9rem;align-self:start;min-width:0}
