@@ -95,4 +95,22 @@ bool isValidBranchName(std::string_view branch) {
   return true;
 }
 
+bool isSafeRelativePath(std::string_view path) {
+  while (path.size() > 1 && path.back() == '/') path.remove_suffix(1);
+  if (path.empty() || path.size() > kMaximumSafeRelativePathBytes || path.front() == '/') return false;
+  std::size_t start = 0;
+  while (start <= path.size()) {
+    const std::size_t slash = path.find('/', start);
+    const std::string_view component =
+        path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+    if (component.empty() || component == "." || component == "..") return false;
+    for (const unsigned char character : component) {
+      if (character < 0x20 || character == 0x7f || character == '\\') return false;
+    }
+    if (slash == std::string_view::npos) break;
+    start = slash + 1;
+  }
+  return true;
+}
+
 }  // namespace ckgit

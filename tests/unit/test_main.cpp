@@ -874,6 +874,7 @@ void testProjectIndex();
 void testRouterMarkdown();
 void testMarkdownExtensions();
 void testHighlight();
+void testDocsSite();
 void testDeletion();
 void testDashboard();
 void testBulkPublishDiscovery();
@@ -900,6 +901,7 @@ int main(int argc, char** argv) {
     testRouterMarkdown();
     testMarkdownExtensions();
     testHighlight();
+    testDocsSite();
     testDeletion();
     testDashboard();
     testBulkPublishDiscovery();
