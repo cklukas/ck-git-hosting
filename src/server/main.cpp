@@ -486,6 +486,9 @@ std::string readRequest(int descriptor) {
       return request;
     }
     if (received < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
       throw std::runtime_error("could not read control request");
     }
     if (request.size() + static_cast<std::size_t>(received) > kMaximumRequestBytes) {
@@ -1140,7 +1143,12 @@ int serve(const Options& options) {
           sendAll(client, refsResponse(repository_root, request->argument));
         }
       }
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+      // The client only ever sees the generic "internal" code below -- sending
+      // the real reason back over the control protocol would leak repository
+      // paths and Git error text to whatever asked. Log it here instead, or a
+      // transient failure is unrecoverable noise with no way to diagnose it.
+      std::cerr << "ck-git-hostingd: warning: control operation failed: " << error.what() << "\n" << std::flush;
       sendError(client, "internal", "control operation failed");
     }
     close(client);
