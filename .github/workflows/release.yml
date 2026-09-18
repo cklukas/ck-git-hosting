@@ -8,10 +8,16 @@
 # Artifacts:
 #   ck-git-hosting_V_amd64.deb, ck-git-hosting_V_arm64.deb   Debian 13 server
 #   ckgit_V_amd64.deb, ckgit_V_arm64.deb                     Debian 13 client
-#   ck-git-hosting-V-linux-{amd64,arm64}.tar.gz              other systemd distros
-#   ckgit-V-macos-{arm64,x86_64}.tar.gz                      macOS client
+#   ckdocs_V_amd64.deb, ckdocs_V_arm64.deb                   Debian 13 docs-site generator
+#   ck-git-hosting-V-linux-{amd64,arm64}.tar.gz              other systemd distros (carries ckdocs too)
+#   ckgit-V-macos-{arm64,x86_64}.tar.gz                      macOS client (carries ckdocs too)
 #   ck-git-hosting-V-source.tar.gz                           Homebrew source
 #   SHA256SUMS
+#
+# packaging/build-deb.sh and packaging/build-tarball.sh already produce the
+# ckdocs artifacts above from `make ... all`/`make ... client`; nothing in
+# this workflow's steps changed for them, since every upload and checksum
+# step below is glob-based (dist/*, then `sha256sum -- *`).
 
 name: Release
 

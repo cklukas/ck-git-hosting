@@ -6,7 +6,9 @@
 # A server archive contains the binaries, the hook, the installer scripts,
 # and the unit so `sh packaging/install.sh --build-dir .` works from the
 # unpacked directory on any systemd host.  A client archive contains only
-# the ckgit executable and documentation.
+# the ckgit and ckdocs executables and documentation -- ckdocs travels with
+# ckgit in both archives so a developer machine can preview documentation
+# sites without a server installation.
 
 set -eu
 
@@ -66,6 +68,8 @@ rm -rf "$stage"
 install -d -m 0755 "$stage/bin" "$stage/docs/operations"
 [ -f "$build_dir/bin/ckgit" ] || fail "missing $build_dir/bin/ckgit"
 install -m 0755 "$build_dir/bin/ckgit" "$stage/bin/ckgit"
+[ -f "$build_dir/bin/ckdocs" ] || fail "missing $build_dir/bin/ckdocs"
+install -m 0755 "$build_dir/bin/ckdocs" "$stage/bin/ckdocs"
 if [ "$client_only" -eq 0 ]; then
   for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
     [ -f "$build_dir/bin/$binary" ] || fail "missing $build_dir/bin/$binary"

@@ -95,6 +95,7 @@ RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
 PAGES_SERVER_SOURCES := src/pages-server/main.cpp
+CKDOCS_SOURCES := src/ckdocs/main.cpp
 TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
@@ -104,14 +105,16 @@ CK_GIT_POST_RECEIVE := $(BUILD_DIR_ABS)/hooks/post-receive
 CK_GIT_HOSTINGD := $(BUILD_DIR_ABS)/bin/ck-git-hostingd
 CK_CI_RUNNER := $(BUILD_DIR_ABS)/bin/ck-ci-runnerd
 CK_PAGES := $(BUILD_DIR_ABS)/bin/ck-pagesd
+CKDOCS := $(BUILD_DIR_ABS)/bin/ckdocs
 TEST_BIN := $(BUILD_DIR_ABS)/bin/ckgit-unit-tests
 
 .PHONY: all client check test force-build-version
 
-all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES)
+all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES) $(CKDOCS)
 
-# The macOS/Linux client alone; used by the Homebrew formula.
-client: $(CKGIT)
+# The macOS/Linux client and ckdocs; used by the Homebrew formula, which
+# packages both from one `make client`.
+client: $(CKGIT) $(CKDOCS)
 
 check: test
 
@@ -143,6 +146,9 @@ $(CK_CI_RUNNER): $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(COMMON_HEADERS) | $(BU
 $(CK_PAGES): $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(LDFLAGS) -o $@
 
+$(CKDOCS): $(COMMON_OBJECTS) $(CKDOCS_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CKDOCS_SOURCES) $(LDFLAGS) -o $@
+
 $(TEST_BIN): $(COMMON_OBJECTS) $(TEST_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(TEST_SOURCES) $(LDFLAGS) -o $@
 
@@ -158,7 +164,7 @@ $(BUILD_DIR_ABS)/bin:
 $(BUILD_DIR_ABS)/hooks:
 	mkdir -p $@
 
-test: $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES)
+test: $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES) $(CKDOCS)
 	mkdir -p $(BUILD_DIR_ABS)/test-tmp
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_SOURCE_ROOT=$(CURDIR) TMPDIR=$(BUILD_DIR_ABS)/test-tmp $(TEST_BIN)
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT=$(CKGIT) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_GIT_SHELL=$(CK_GIT_SHELL) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/control_socket.sh
@@ -174,3 +180,4 @@ test: $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE)
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CK_PAGES=$(CK_PAGES) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/pages.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/deploy.sh
 	TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/docs.sh
+	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKDOCS=$(CKDOCS) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/docs_site.sh

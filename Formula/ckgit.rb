@@ -18,11 +18,15 @@ class Ckgit < Formula
   def install
     # Build products never land in the source tree by default; the formula
     # picks its own build root beneath Homebrew's temporary build path.
+    # `client` also builds ckdocs, the documentation-site generator, so a
+    # docs site can be previewed without a server installation.
     system "make", "BUILD_ROOT=#{buildpath}", "BUILD_DIR=#{buildpath}/build", "client"
     bin.install "build/bin/ckgit"
+    bin.install "build/bin/ckdocs"
   end
 
   test do
     assert_match "ckgit scan", shell_output("#{bin}/ckgit --help")
+    assert_match "ckdocs", shell_output("#{bin}/ckdocs --version")
   end
 end

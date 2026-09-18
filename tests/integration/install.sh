@@ -257,6 +257,12 @@ sh -n "$test_root/deb/ck-git-hosting/DEBIAN/postrm"
 [ -x "$test_root/deb/ckgit/usr/bin/ckgit" ] || fail "staged client package lacks ckgit"
 grep -q '^Package: ckgit$' "$test_root/deb/ckgit/DEBIAN/control"
 [ -f "$test_root/deb/ckgit/usr/share/doc/ckgit/copyright" ] || fail "client package lacks a copyright file"
+[ -x "$test_root/deb/ckdocs/usr/bin/ckdocs" ] || fail "staged ckdocs package lacks ckdocs"
+grep -q '^Package: ckdocs$' "$test_root/deb/ckdocs/DEBIAN/control"
+grep -q '^Section: doc$' "$test_root/deb/ckdocs/DEBIAN/control"
+[ -f "$test_root/deb/ckdocs/usr/share/doc/ckdocs/copyright" ] || fail "ckdocs package lacks a copyright file"
+grep -q '^Recommends: ckgit, ckdocs$' "$test_root/deb/ck-git-hosting/DEBIAN/control" ||
+  fail "server package should recommend both ckgit and ckdocs"
 sh "$packaging/build-tarball.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/tar" --platform test-server >/dev/null
 sh "$packaging/build-tarball.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/tar" --platform test-client --client-only >/dev/null
 version=$(tr -d '[:space:]' <"$packaging/../VERSION")
@@ -268,7 +274,11 @@ tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-pages.service$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-git-hosting-deploy.service$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/systemd/ck-git-hosting-deploy.timer$"
+tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/bin/ckdocs$" ||
+  fail "server archive should also carry ckdocs, for manual use on the server"
 tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q "^ckgit-$version-test-client/bin/ckgit$"
+tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q "^ckgit-$version-test-client/bin/ckdocs$" ||
+  fail "client archive should carry ckdocs alongside ckgit"
 if tar -tzf "$test_root/tar/ckgit-$version-test-client.tar.gz" | grep -q 'ck-git-hostingd'; then
   fail "client archive must not contain server binaries"
 fi

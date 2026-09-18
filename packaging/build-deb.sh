@@ -2,15 +2,21 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 #
-# Builds two Debian packages from a finished build directory:
+# Builds three Debian packages from a finished build directory:
 #   ck-git-hosting_VERSION_ARCH.deb  server daemon, dispatcher, admin tool, hook,
 #                                    systemd unit, sshd drop-in, server.ini
 #   ckgit_VERSION_ARCH.deb           the client
+#   ckdocs_VERSION_ARCH.deb          the documentation-site generator
 # The server tree is produced by packaging/install.sh in staging mode so a
 # package and a script installation lay out identical files.  Account
 # creation, ownership, systemd, and sshd handling live in the maintainer
-# scripts.  --stage-only prepares both package roots without dpkg-deb, which
-# lets the layout be tested on a workstation.
+# scripts.  ckdocs is standalone like ckgit -- not part of the server
+# package's own file list -- so it installs on a developer's machine or the
+# server without any dpkg file-ownership conflict between the two packages;
+# the sandboxed CI runner's own docs step compiles its own copy per run and
+# never depends on this one being installed anywhere.  --stage-only prepares
+# every package root without dpkg-deb, which lets the layout be tested on a
+# workstation.
 
 set -eu
 
@@ -91,7 +97,8 @@ maintainer=${CKGIT_MAINTAINER:-'C. Klukas <christian.klukas@gmail.com>'}
 mkdir -p "$output"
 server_root="$output/ck-git-hosting"
 client_root="$output/ckgit"
-rm -rf "$server_root" "$client_root"
+docs_root="$output/ckdocs"
+rm -rf "$server_root" "$client_root" "$docs_root"
 
 write_copyright() {  # write_copyright PACKAGE
   install -d -m 0755 "$1/usr/share/doc/$2"
@@ -147,7 +154,7 @@ Priority: optional
 Architecture: $arch
 Maintainer: $maintainer
 Depends: git, openssh-server, systemd, curl
-Recommends: ckgit
+Recommends: ckgit, ckdocs
 Description: private LAN Git control plane over OpenSSH
  ck-git-hosting keeps Git transport in Git and OpenSSH and adds a small,
  dependency-free control plane: a hardened daemon with a same-user control
@@ -276,8 +283,29 @@ Description: client for a private ck-git-hosting Git server
 CONTROL
 chmod 0644 "$client_root/DEBIAN/control"
 
+# ---- ckdocs package --------------------------------------------------------
+install -d -m 0755 "$docs_root/usr/bin"
+install -m 0755 "$build_dir/bin/ckdocs" "$docs_root/usr/bin/ckdocs"
+write_copyright "$docs_root" ckdocs
+install -d -m 0755 "$docs_root/DEBIAN"
+cat >"$docs_root/DEBIAN/control" <<CONTROL
+Package: ckdocs
+Version: $version
+Section: doc
+Priority: optional
+Architecture: $arch
+Maintainer: $maintainer
+Description: documentation-site generator for Markdown
+ ckdocs turns a repository's README and docs/ tree into a self-contained
+ static documentation site: tabs, a sidebar, section outlines, previous/next
+ navigation, relative links that work from file:// or under any URL prefix,
+ and a pull model for referenced images and files. It has no dependencies
+ beyond a standard C library and no JavaScript in its own output.
+CONTROL
+chmod 0644 "$docs_root/DEBIAN/control"
+
 if [ "$stage_only" -eq 1 ]; then
-  printf 'Staged package roots: %s %s\n' "$server_root" "$client_root"
+  printf 'Staged package roots: %s %s %s\n' "$server_root" "$client_root" "$docs_root"
   exit 0
 fi
 
@@ -287,7 +315,10 @@ write_md5sums() {
 }
 write_md5sums "$server_root"
 write_md5sums "$client_root"
+write_md5sums "$docs_root"
 dpkg-deb --root-owner-group --build "$server_root" "$output/ck-git-hosting_${version}_${arch}.deb" >/dev/null
 dpkg-deb --root-owner-group --build "$client_root" "$output/ckgit_${version}_${arch}.deb" >/dev/null
-rm -rf "$server_root" "$client_root"
-printf 'Built %s and %s\n' "$output/ck-git-hosting_${version}_${arch}.deb" "$output/ckgit_${version}_${arch}.deb"
+dpkg-deb --root-owner-group --build "$docs_root" "$output/ckdocs_${version}_${arch}.deb" >/dev/null
+rm -rf "$server_root" "$client_root" "$docs_root"
+printf 'Built %s, %s, and %s\n' "$output/ck-git-hosting_${version}_${arch}.deb" "$output/ckgit_${version}_${arch}.deb" \
+  "$output/ckdocs_${version}_${arch}.deb"

@@ -421,9 +421,28 @@ case "$deb_count" in
 esac
 deb=$(find "$extracted" -maxdepth 4 -name "$deb_pattern")
 
+# ckdocs is optional and best-effort: it is a standalone package (no file
+# overlap with $deb_pattern above, so installing both is never a conflict),
+# it is not required for any service's health, and the sandboxed CI runner's
+# own docs step compiles its own copy per run regardless. When the release
+# bundle happens to carry one, installing it here just keeps the server's
+# own copy current without an administrator doing it by hand.
+if command -v dpkg >/dev/null 2>&1; then
+  ckdocs_deb_pattern="ckdocs_*_$(dpkg --print-architecture).deb"
+else
+  ckdocs_deb_pattern="ckdocs_*_*.deb"
+fi
+ckdocs_deb_count=$(find "$extracted" -maxdepth 4 -name "$ckdocs_deb_pattern" | wc -l | tr -d ' ')
+case "$ckdocs_deb_count" in
+  0) ckdocs_deb='' ;;
+  1) ckdocs_deb=$(find "$extracted" -maxdepth 4 -name "$ckdocs_deb_pattern") ;;
+  *) fail "release $tag's $asset asset carries more than one $ckdocs_deb_pattern" ;;
+esac
+
 if [ "$dry_run" -eq 1 ]; then
   log "plan: install $tag ($commit) from $blob"
   log "  + dpkg -i --force-confold $deb"
+  [ -n "$ckdocs_deb" ] && log "  + dpkg -i --force-confold $ckdocs_deb (best-effort, not health-checked)"
   for service in $services; do log "  + systemctl restart $service.service"; done
   log "  + health check: services active, http (if configured), version=+g$short in runtime records"
   exit 0
@@ -489,6 +508,10 @@ settle() { i=0; while [ "$i" -lt 45 ] && ! healthy; do sleep 1; i=$((i + 1)); do
 
 log "deploying release $tag ($commit)"
 install_deb "$deb" || log "dpkg -i reported an error for $tag"
+if [ -n "$ckdocs_deb" ]; then
+  DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "$ckdocs_deb" >/dev/null 2>&1 ||
+    log "WARNING: ckdocs package failed to install; leaving the previous ckdocs (if any) in place"
+fi
 settle
 
 if healthy; then

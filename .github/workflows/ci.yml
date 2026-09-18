@@ -89,7 +89,7 @@ jobs:
           lintian --no-tag-display-limit "$RUNNER_TEMP"/dist/*.deb || true
       - name: Install, exercise, and purge the packages
         run: |
-          apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb
+          apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb "$RUNNER_TEMP"/dist/ckdocs_*.deb
           id ckgit
           test -x /usr/bin/ck-git-hostingd
           test -x /usr/bin/ck-ci-runnerd
@@ -132,7 +132,9 @@ jobs:
           ckgit-admin create smoke --repo-root /srv/ck-git-hosting/repos --hook-directory /usr/lib/ck-git-hosting/hooks
           test -d /srv/ck-git-hosting/repos/smoke.git
           ckgit --help
-          apt-get remove -y ck-git-hosting ckgit
+          test -x /usr/bin/ckdocs
+          ckdocs --version
+          apt-get remove -y ck-git-hosting ckgit ckdocs
           test -f /etc/ck-git-hosting/server.ini
           test -d /srv/ck-git-hosting/repos/smoke.git
           apt-get purge -y ck-git-hosting
