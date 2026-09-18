@@ -21,6 +21,8 @@ namespace ckgit {
 // documents, or merge keys. Anything outside the subset is rejected rather
 // than guessed; a documented bound that is exceeded is reported as such.
 
+struct YamlEntry;
+
 // A node of the parsed tree. A mapping keeps insertion order and never holds a
 // duplicate key; a sequence keeps order; a scalar is already unquoted and
 // unescaped. `line` is the 1-based physical line the node started on, for
@@ -30,8 +32,19 @@ struct YamlNode {
   Kind kind = Kind::Scalar;
   std::string scalar;
   std::vector<YamlNode> items;
-  std::vector<std::pair<std::string, YamlNode>> entries;
+  std::vector<YamlEntry> entries;
   std::size_t line = 0;
+};
+
+// A mapping's one key/value pair. A plain aggregate, deliberately not
+// std::pair<std::string, YamlNode>: clang (unlike gcc) eagerly evaluates
+// std::pair's conditionally-explicit converting constructor against YamlNode
+// while YamlNode is still being defined (entries is its own member), and
+// rejects it as incomplete. Defining YamlEntry only after YamlNode is
+// complete sidesteps that entirely.
+struct YamlEntry {
+  std::string key;
+  YamlNode value;
 };
 
 // Every limit the parser enforces. Exceeding one throws std::length_error;

@@ -401,7 +401,7 @@ class Parser {
     }
     const std::string key_string(key);
     for (const auto& entry : node.entries) {
-      if (entry.first == key_string) malformed("duplicate key '" + key_string + "'", line);
+      if (entry.key == key_string) malformed("duplicate key '" + key_string + "'", line);
     }
     if (node.entries.size() >= dialect_.bounds.mapping_entries) tooLarge("a mapping has too many entries");
     node.entries.emplace_back(key_string, std::move(value));
@@ -464,7 +464,7 @@ const YamlNode& yamlRequireKind(const YamlDialect& dialect, const YamlNode& node
 
 const YamlNode* yamlFindEntry(const YamlNode& mapping, std::string_view key) {
   for (const auto& entry : mapping.entries) {
-    if (entry.first == key) return &entry.second;
+    if (entry.key == key) return &entry.value;
   }
   return nullptr;
 }
@@ -472,8 +472,8 @@ const YamlNode* yamlFindEntry(const YamlNode& mapping, std::string_view key) {
 void yamlRejectUnknownKeys(const YamlDialect& dialect, const YamlNode& mapping,
                            std::initializer_list<std::string_view> allowed) {
   for (const auto& entry : mapping.entries) {
-    if (std::find(allowed.begin(), allowed.end(), entry.first) == allowed.end()) {
-      yamlMalformed(dialect, "unknown key '" + entry.first + "'", mapping.line);
+    if (std::find(allowed.begin(), allowed.end(), entry.key) == allowed.end()) {
+      yamlMalformed(dialect, "unknown key '" + entry.key + "'", mapping.line);
     }
   }
 }

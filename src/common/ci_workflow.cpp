@@ -97,9 +97,9 @@ CiEnv interpretEnv(const Node& node) {
   if (node.entries.size() > kMaximumCiEnvEntries) tooLarge("env has too many entries");
   CiEnv env;
   for (const auto& entry : node.entries) {
-    if (!isValidEnvName(entry.first)) malformed("invalid environment name '" + entry.first + "'", node.line);
-    const Node& value = requireKind(entry.second, Node::Kind::Scalar, "an env value to be a scalar");
-    env.emplace_back(entry.first, value.scalar);
+    if (!isValidEnvName(entry.key)) malformed("invalid environment name '" + entry.key + "'", node.line);
+    const Node& value = requireKind(entry.value, Node::Kind::Scalar, "an env value to be a scalar");
+    env.emplace_back(entry.key, value.scalar);
   }
   return env;
 }
