@@ -143,9 +143,14 @@ std::optional<std::string> linkTarget(std::string_view original, bool image, con
     fragment = "#" + encodePathSegment(*decoded);
   }
   if (hash == 0 && !image) return fragment;
-  if (!isValidProjectName(context.project) || !isObjectId(context.commit_id)) return {};
   const auto decoded = decodeUrl(std::string_view(value).substr(0, hash));
   if (!decoded || decoded->empty()) return {};
+  if (context.resolver) {
+    const auto resolved = context.resolver(*decoded, image);
+    if (!resolved) return {};
+    return *resolved + fragment;
+  }
+  if (!isValidProjectName(context.project) || !isObjectId(context.commit_id)) return {};
   std::string path = decoded->front() == '/' ? decoded->substr(1) :
       (context.directory.empty() ? "" : context.directory + "/") + *decoded;
   std::vector<std::string> components;

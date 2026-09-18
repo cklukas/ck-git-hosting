@@ -8,9 +8,12 @@
 #include "ckgit/web_renderer.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -397,4 +400,39 @@ void testMarkdownExtensions() {
   check(splitFrontMatter("---\n- a\n- b\n---\n")->error == "front matter: a block mapping has no entries (line 2)",
         "a top-level list is an error, not body text");
   check(markdownBody("plain") == "plain", "a file without front matter is all body");
+
+  // A pluggable resolver takes over relative targets (a static site maps
+  // them itself); everything else is untouched.
+  std::vector<std::pair<std::string, bool>> seen;
+  LinkContext resolving{"example", std::string(40, 'a'), "docs"};
+  resolving.resolver = [&seen](std::string_view target, bool image) -> std::optional<std::string> {
+    seen.emplace_back(std::string(target), image);
+    if (target == "missing.md") return std::nullopt;
+    std::string upper(target);
+    for (auto& byte : upper) byte = static_cast<char>(std::toupper(static_cast<unsigned char>(byte)));
+    return upper;
+  };
+  const auto resolved = renderMarkdown(
+      "[x](a/b.md#sec) ![i](img/p%20q.png \"t\") [m](missing.md) [h](https://example.test/x) [f](#only) "
+      "[bad](a\\b) [q](a?b) [s](//x) ![g](#frag) <https://auto.test/> [e](mailto:a@example.test) [j](javascript:x)",
+      resolving);
+  check(contains(resolved, "href=\"A/B.MD#sec\""),
+        "the resolver receives the decoded path without its fragment, which is appended to its answer");
+  check(contains(resolved, "src=\"IMG/P Q.PNG\" title=\"t\" alt=\"i\""), "images reach the resolver decoded, flagged as images");
+  check(contains(resolved, "[m](missing.md)") && !contains(resolved, "MISSING"), "nullopt from the resolver leaves the link as text");
+  check(contains(resolved, "href=\"https://example.test/x\"") && contains(resolved, "href=\"#only\"") &&
+            contains(resolved, "href=\"https://auto.test/\"") && contains(resolved, "href=\"mailto:a@example.test\""),
+        "absolute URLs, pure fragments, autolinks and mail links bypass the resolver");
+  check(contains(resolved, "[bad](a\\b)") && contains(resolved, "[q](a?b)") && contains(resolved, "[s](//x)") &&
+            contains(resolved, "![g](#frag)") && contains(resolved, "[j](javascript:x)"),
+        "unsafe targets are rejected before the resolver sees them");
+  check(seen.size() == 3 && seen[0] == std::pair<std::string, bool>{"a/b.md", false} &&
+            seen[1] == std::pair<std::string, bool>{"img/p q.png", true} && seen[2] == std::pair<std::string, bool>{"missing.md", false},
+        "exactly the sanitised relative targets reach the resolver, in order");
+  LinkContext standalone{};
+  standalone.resolver = [](std::string_view target, bool) -> std::optional<std::string> { return std::string(target) + ".html"; };
+  check(renderMarkdown("[g](guide.md#top)", standalone) == "<p><a href=\"guide.md.html#top\">g</a></p>\n",
+        "a resolver needs no project or commit identity");
+  check(contains(renderMarkdown("[g](guide.md)", ctx), "href=\"/project/example/blob/" + std::string(40, 'a') + ":guide.md\""),
+        "without a resolver relative links are dashboard routes as before");
 }

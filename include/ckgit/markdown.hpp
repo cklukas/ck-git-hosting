@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,6 +17,11 @@ inline constexpr std::size_t kMaximumMarkdownInputBytes = 512 * 1024;
 inline constexpr std::size_t kMaximumMarkdownOutputBytes = 4 * 1024 * 1024;
 inline constexpr std::size_t kMaximumMarkdownDepth = 8;
 
+// Where a document's relative links point. Without a `resolver`, they become
+// dashboard routes inside `project` at `commit_id` (documents keep `ref`,
+// images pin the snapshot), relative to `directory`.
+using MarkdownLinkResolver = std::function<std::optional<std::string>(std::string_view target, bool image)>;
+
 struct LinkContext {
   std::string project;
   std::string commit_id;
@@ -23,6 +29,15 @@ struct LinkContext {
   // Ordinary document links retain the selected branch/tag; image URLs use
   // commit_id so all images belong to the snapshot read for this page.
   std::string ref{};
+  // When set, every relative target reaches it instead of the dashboard
+  // rules: not an absolute http(s)/mailto URL, not a pure `#fragment`, only
+  // after the usual sanitisation (no control bytes, backslashes, `//` or
+  // `?`), percent-decoded, with its fragment removed. The answer is the final
+  // href/src as it should appear (the renderer appends the fragment and
+  // HTML-escapes the attribute), or nullopt to leave the link as text — the
+  // same outcome an invalid target has. `image` says whether the target is
+  // an image source. `project` and `commit_id` may then be empty.
+  MarkdownLinkResolver resolver{};
 };
 
 // One heading of a rendered document, as a table of contents needs it: the
