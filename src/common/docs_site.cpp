@@ -21,8 +21,18 @@
 #include <utility>
 #include <vector>
 
+#include <cstdlib>
+#include <functional>
+#include <set>
+
+#include <unistd.h>
+
 #include "ckgit/ci_workflow.hpp"
+#include "ckgit/cli_help.hpp"
+#include "ckgit/docs_theme.hpp"
+#include "ckgit/http_router.hpp"
 #include "ckgit/markdown.hpp"
+#include "ckgit/pages_store.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
@@ -673,6 +683,550 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
     model.unlisted.push_back(index);
   }
   return model;
+}
+
+// ---- building ----------------------------------------------------------------
+
+namespace {
+
+std::string escapeHtml(std::string_view value) {
+  std::string out;
+  for (const char byte : value) {
+    switch (byte) {
+      case '&': out += "&amp;"; break;
+      case '<': out += "&lt;"; break;
+      case '>': out += "&gt;"; break;
+      case '"': out += "&quot;"; break;
+      case '\'': out += "&#39;"; break;
+      default: out += byte;
+    }
+  }
+  return out;
+}
+
+std::string unescapeHtml(std::string_view value) {
+  std::string out;
+  for (std::size_t index = 0; index < value.size();) {
+    const auto rest = value.substr(index);
+    bool decoded = false;
+    for (const auto& [entity, character] : {std::pair<std::string_view, char>{"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'},
+                                            {"&quot;", '"'}, {"&#39;", '\''}}) {
+      if (rest.starts_with(entity)) {
+        out += character;
+        index += entity.size();
+        decoded = true;
+        break;
+      }
+    }
+    if (!decoded) out += value[index++];
+  }
+  return out;
+}
+
+std::vector<std::string_view> splitPath(std::string_view path) {
+  std::vector<std::string_view> parts;
+  for (std::size_t start = 0; start <= path.size();) {
+    const auto slash = path.find('/', start);
+    const auto part = path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+    if (!part.empty()) parts.push_back(part);
+    if (slash == std::string_view::npos) break;
+    start = slash + 1;
+  }
+  return parts;
+}
+
+// `..` and `.` resolved; nullopt when the path would leave the root.
+std::optional<std::string> normalizePath(std::string_view path) {
+  std::vector<std::string_view> parts;
+  for (const auto part : splitPath(path)) {
+    if (part == ".") continue;
+    if (part == "..") {
+      if (parts.empty()) return std::nullopt;
+      parts.pop_back();
+      continue;
+    }
+    parts.push_back(part);
+  }
+  std::string result;
+  for (const auto part : parts) {
+    if (!result.empty()) result += '/';
+    result += part;
+  }
+  return result;
+}
+
+// The URL from a page in `from_dir` (site-relative directory, "" at the
+// root) to the site-relative file `target`, percent-encoded per component.
+std::string relativeUrl(std::string_view from_dir, std::string_view target) {
+  const auto from = splitPath(from_dir);
+  const auto to = splitPath(target);
+  std::size_t common = 0;
+  while (common < from.size() && common + 1 < to.size() && from[common] == to[common]) ++common;
+  std::string result;
+  for (std::size_t index = common; index < from.size(); ++index) result += "../";
+  for (std::size_t index = common; index < to.size(); ++index) {
+    if (index > common) result += '/';
+    result += encodePathSegment(std::string(to[index]));
+  }
+  return result;
+}
+
+std::optional<std::size_t> firstPageOf(const DocsNavItem& item) {
+  if (item.page) return item.page;
+  for (const auto& child : item.children) {
+    if (const auto found = firstPageOf(child)) return found;
+  }
+  return std::nullopt;
+}
+
+// The chain of nav items from a tab down to the item showing `page`.
+bool findTrail(const std::vector<DocsNavItem>& items, std::size_t page, std::vector<const DocsNavItem*>& trail) {
+  for (const auto& item : items) {
+    trail.push_back(&item);
+    if (item.page == page || findTrail(item.children, page, trail)) return true;
+    trail.pop_back();
+  }
+  return false;
+}
+
+// Everything the page shell needs that does not change per page.
+struct SiteContext {
+  const DocsSiteModel* model = nullptr;
+  std::string version;
+  std::string logo_output;        // site-relative path of the copied logo, or ""
+  std::string stylesheet_output;  // site-relative path of the copied stylesheet, or ""
+  std::vector<std::vector<MarkdownHeading>> outlines;  // per page, filled while rendering
+};
+
+void renderSidebarItems(std::string& out, const std::vector<DocsNavItem>& items, const DocsSiteModel& model,
+                        std::size_t current, std::string_view from_dir) {
+  out += "<ul>";
+  for (const auto& item : items) {
+    out += "<li>";
+    const auto link = [&](std::string_view title, std::optional<std::size_t> page) {
+      if (!page) return escapeHtml(title);
+      const bool active = *page == current;
+      return "<a href=\"" + escapeHtml(relativeUrl(from_dir, model.pages[*page].output)) + "\"" +
+             (active ? " aria-current=\"page\"" : "") + ">" + escapeHtml(title) + "</a>";
+    };
+    if (item.children.empty()) {
+      out += link(item.title, item.page);
+    } else {
+      out += "<details open><summary>" + link(item.title, item.page) + "</summary>";
+      renderSidebarItems(out, item.children, model, current, from_dir);
+      out += "</details>";
+    }
+    out += "</li>";
+  }
+  out += "</ul>";
+}
+
+std::string renderOutline(const std::vector<MarkdownHeading>& outline) {
+  std::string out;
+  bool open_h2 = false;
+  bool open_h3_list = false;
+  for (const auto& heading : outline) {
+    if (heading.level != 2 && heading.level != 3) continue;
+    if (heading.level == 2) {
+      if (open_h3_list) out += "</ul>";
+      if (open_h2) out += "</li>";
+      out += "<li><a href=\"#" + escapeHtml(encodePathSegment(heading.id)) + "\">" + escapeHtml(heading.text) + "</a>";
+      open_h2 = true;
+      open_h3_list = false;
+    } else {
+      if (!open_h2) {
+        out += "<li>";
+        open_h2 = true;
+      }
+      if (!open_h3_list) {
+        out += "<ul>";
+        open_h3_list = true;
+      }
+      out += "<li><a href=\"#" + escapeHtml(encodePathSegment(heading.id)) + "\">" + escapeHtml(heading.text) + "</a></li>";
+    }
+  }
+  if (open_h3_list) out += "</ul>";
+  if (open_h2) out += "</li>";
+  return out.empty() ? out : "<ul>" + out + "</ul>";
+}
+
+struct ShellInput {
+  std::string title;        // the page title
+  std::string description;  // meta description, may be empty
+  std::string output;       // the page's site-relative output path
+  std::string article;      // rendered body HTML
+  const std::vector<MarkdownHeading>* outline = nullptr;
+  std::optional<std::size_t> page;  // the model page, when this is one
+};
+
+std::string renderShell(const SiteContext& context, const ShellInput& in) {
+  const DocsSiteModel& model = *context.model;
+  const std::string from_dir(directoryOf(in.output));
+  const auto url = [&](std::string_view target) { return escapeHtml(relativeUrl(from_dir, target)); };
+  std::vector<const DocsNavItem*> trail;
+  if (in.page) findTrail(model.nav, *in.page, trail);
+  const DocsNavItem* tab = trail.empty() ? nullptr : trail.front();
+
+  std::string out = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+  out += "<title>" + escapeHtml(in.title == model.title ? in.title : in.title + " · " + model.title) + "</title>";
+  if (!in.description.empty()) out += "<meta name=\"description\" content=\"" + escapeHtml(in.description) + "\">";
+  out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(context.version) + "\">";
+  out += "<style>";
+  out += kDocsStyles;
+  out += "</style>";
+  if (!context.stylesheet_output.empty()) out += "<link rel=\"stylesheet\" href=\"" + url(context.stylesheet_output) + "\">";
+  out += "</head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a>";
+
+  // Header: brand, tabs, links.
+  out += "<header class=\"site\"><a class=\"brand\" href=\"" + url(model.pages[model.home].output) + "\">";
+  if (!context.logo_output.empty()) out += "<img src=\"" + url(context.logo_output) + "\" alt=\"\">";
+  out += escapeHtml(model.config.brand.empty() ? model.title : model.config.brand) + "</a>";
+  out += "<nav class=\"tabs\" aria-label=\"Sections\">";
+  for (const auto& item : model.nav) {
+    const auto first = firstPageOf(item);
+    if (!first) continue;
+    out += "<a href=\"" + url(model.pages[*first].output) + "\"" + (tab == &item ? " aria-current=\"page\"" : "") + ">" +
+           escapeHtml(item.title) + "</a>";
+  }
+  out += "</nav>";
+  if (!model.config.links.empty()) {
+    out += "<nav class=\"links\" aria-label=\"Links\">";
+    for (const auto& link : model.config.links) {
+      out += "<a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + escapeHtml(link.title) + "</a>";
+    }
+    out += "</nav>";
+  }
+  out += "</header>";
+
+  // Sidebar: the active tab's pages, then this page's outline.
+  out += "<div class=\"page\"><input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">"
+         "<label class=\"nav-toggle\" for=\"nav-toggle\">Menu</label><aside class=\"sidebar\">";
+  const auto current = in.page.value_or(model.pages.size());
+  if (tab != nullptr) {
+    out += "<nav aria-label=\"Pages\"><p class=\"side-title\">";
+    if (tab->page) {
+      out += "<a href=\"" + url(model.pages[*tab->page].output) + "\"" +
+             (*tab->page == current ? " aria-current=\"page\"" : "") + ">" + escapeHtml(tab->title) + "</a>";
+    } else {
+      out += escapeHtml(tab->title);
+    }
+    out += "</p>";
+    if (!tab->children.empty()) renderSidebarItems(out, tab->children, model, current, from_dir);
+    out += "</nav>";
+  }
+  const std::string outline = in.outline ? renderOutline(*in.outline) : std::string();
+  if (!outline.empty()) out += "<nav class=\"outline\" aria-label=\"On this page\"><p class=\"side-title\">On this page</p>" + outline + "</nav>";
+  out += "</aside><main id=\"main-content\">";
+
+  // Breadcrumbs, article, previous/next.
+  if (trail.size() > 1) {
+    out += "<nav class=\"crumbs\" aria-label=\"Breadcrumb\"><ol>";
+    for (std::size_t index = 0; index < trail.size(); ++index) {
+      const auto* item = trail[index];
+      const bool last = index + 1 == trail.size();
+      if (last) {
+        out += "<li aria-current=\"page\">" + escapeHtml(item->title) + "</li>";
+      } else if (const auto first = firstPageOf(*item)) {
+        out += "<li><a href=\"" + url(model.pages[*first].output) + "\">" + escapeHtml(item->title) + "</a></li>";
+      } else {
+        out += "<li>" + escapeHtml(item->title) + "</li>";
+      }
+    }
+    out += "</ol></nav>";
+  }
+  out += "<article>" + in.article + "</article>";
+  if (in.page) {
+    const auto& order = model.reading_order;
+    const auto position = std::find(order.begin(), order.end(), *in.page);
+    if (position != order.end()) {
+      std::string pager;
+      if (position != order.begin()) {
+        const auto& previous = model.pages[*(position - 1)];
+        pager += "<a class=\"previous\" rel=\"prev\" href=\"" + url(previous.output) + "\"><small>Previous</small>← " +
+                 escapeHtml(previous.title) + "</a>";
+      }
+      if (position + 1 != order.end()) {
+        const auto& next = model.pages[*(position + 1)];
+        pager += "<a class=\"next\" rel=\"next\" href=\"" + url(next.output) + "\"><small>Next</small>" +
+                 escapeHtml(next.title) + " →</a>";
+      }
+      if (!pager.empty()) out += "<nav class=\"pager\" aria-label=\"Previous and next page\">" + pager + "</nav>";
+    }
+  }
+  out += "</main></div>";
+
+  // Footer.
+  out += "<footer class=\"site\">";
+  if (!model.config.footer.empty()) out += "<span>" + escapeHtml(model.config.footer) + "</span>";
+  out += "<span>Built with ckdocs " + escapeHtml(context.version) + "</span>";
+  out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a>";
+  return out + "</footer></body></html>";
+}
+
+// Where an asset lands: like a page, relative to the source when inside it.
+std::string assetOutputPath(const DocsSiteModel& model, std::string_view root_relative) {
+  if (!model.source.empty() && root_relative.size() > model.source.size() && root_relative.starts_with(model.source) &&
+      root_relative[model.source.size()] == '/') {
+    return std::string(root_relative.substr(model.source.size() + 1));
+  }
+  return std::string(root_relative);
+}
+
+// Heading ids and the internal hrefs (with a fragment) of a rendered article.
+void scanArticle(std::string_view html, std::set<std::string>& ids, std::vector<std::pair<std::string, std::string>>& links) {
+  for (auto at = html.find(" id=\""); at != std::string_view::npos; at = html.find(" id=\"", at + 5)) {
+    const auto end = html.find('"', at + 5);
+    if (end == std::string_view::npos) break;
+    ids.insert(unescapeHtml(html.substr(at + 5, end - at - 5)));
+  }
+  for (auto at = html.find("href=\""); at != std::string_view::npos; at = html.find("href=\"", at + 6)) {
+    const auto end = html.find('"', at + 6);
+    if (end == std::string_view::npos) break;
+    const auto href = unescapeHtml(html.substr(at + 6, end - at - 6));
+    const auto lowered = lowerAscii(href.substr(0, 8));
+    if (lowered.starts_with("http://") || lowered.starts_with("https://") || lowered.starts_with("mailto:")) continue;
+    const auto hash = href.find('#');
+    if (hash == std::string::npos || hash + 1 == href.size()) continue;
+    links.emplace_back(href.substr(0, hash), href.substr(hash + 1));
+  }
+}
+
+// Removes the temporary directory unless the build succeeded.
+struct TemporaryDirectory {
+  fs::path path;
+  bool keep = false;
+  ~TemporaryDirectory() {
+    if (!keep && !path.empty()) {
+      std::error_code error;
+      fs::remove_all(path, error);
+    }
+  }
+};
+
+}  // namespace
+
+void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const DocsBuildOptions& options,
+                   DocsBuildReport* report) {
+  DocsBuildReport local_report;
+  DocsBuildReport& result = report != nullptr ? *report : local_report;
+  result = DocsBuildReport{};
+  if (model.pages.empty()) siteError("the site has no pages");
+  const fs::path out = fs::absolute(out_path).lexically_normal();
+  std::error_code error;
+
+  // Refuse early what the final swap would refuse, before any work.
+  if (fs::exists(out, error)) {
+    if (!fs::is_directory(out, error)) siteError("output path '" + out.string() + "' exists and is not a directory");
+    const bool empty = fs::is_empty(out, error);
+    const bool marked = fs::is_regular_file(out / kDocsSiteMarker, error);
+    if (!empty && !marked) siteError("output directory '" + out.string() + "' exists and was not written by ckdocs; refusing to touch it");
+    if (!empty && !options.clean) siteError("output directory '" + out.string() + "' already holds a site; use --clean to replace it");
+  }
+
+  SiteContext context;
+  context.model = &model;
+  context.version = buildVersion();
+  context.outlines.resize(model.pages.size());
+
+  // Site-relative outputs and their sources: pages, assets, the logo and stylesheet.
+  std::map<std::string, std::size_t> page_by_source;
+  std::map<std::string, std::size_t> page_by_output;
+  for (std::size_t index = 0; index < model.pages.size(); ++index) {
+    page_by_source.emplace(model.pages[index].source, index);
+    page_by_output.emplace(model.pages[index].output, index);
+  }
+  std::map<std::string, std::string> assets;  // output path -> root-relative source
+  const auto addAsset = [&](const std::string& root_relative, const char* what) {
+    const auto full = model.root / root_relative;
+    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) {
+      siteError(std::string(what) + " '" + root_relative + "' is not a regular file");
+    }
+    if (fs::file_size(full, error) > kMaximumPagesFileBytes) siteError(std::string(what) + " '" + root_relative + "' exceeds the file size limit");
+    const auto output = assetOutputPath(model, root_relative);
+    if (page_by_output.count(output) != 0) siteError(std::string(what) + " '" + root_relative + "' would overwrite the page '" + output + "'");
+    const auto [existing, inserted] = assets.try_emplace(output, root_relative);
+    if (!inserted && existing->second != root_relative) {
+      siteError("'" + existing->second + "' and '" + root_relative + "' would both be written to '" + output + "'");
+    }
+    return output;
+  };
+  if (!model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
+  if (!model.config.stylesheet.empty()) context.stylesheet_output = addAsset(model.config.stylesheet, "site.stylesheet");
+
+  // The temporary directory beside the output.
+  auto pattern = (out.parent_path() / (out.filename().string() + ".tmp-XXXXXX")).string();
+  std::vector<char> writable(pattern.begin(), pattern.end());
+  writable.push_back('\0');
+  if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory beside '" + out.string() + "'");
+  TemporaryDirectory temporary{fs::path(writable.data())};
+  std::set<std::string> directories;
+  const auto writeFile = [&](const std::string& site_path, const std::string& content) {
+    const auto target = temporary.path / site_path;
+    for (auto parent = fs::path(site_path).parent_path(); !parent.empty(); parent = parent.parent_path()) {
+      if (directories.insert(parent.generic_string()).second) fs::create_directories(temporary.path / parent);
+    }
+    std::ofstream stream(target, std::ios::binary | std::ios::trunc);
+    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!stream) siteError("cannot write '" + target.string() + "'");
+    result.bytes_written += content.size();
+    if (result.bytes_written > kMaximumPagesSiteBytes) siteError("the site exceeds the size limit for a Pages site");
+    if (directories.size() + result.pages_written + result.assets_copied + 2 > kMaximumPagesEntries) {
+      siteError("the site exceeds the entry limit for a Pages site");
+    }
+  };
+
+  // Render and write every page; remember ids and links for the anchor check.
+  std::vector<std::set<std::string>> ids(model.pages.size());
+  std::vector<std::vector<std::pair<std::string, std::string>>> links(model.pages.size());
+  for (std::size_t index = 0; index < model.pages.size(); ++index) {
+    const DocsPage& page = model.pages[index];
+    const auto content = readFile(model.root / page.source, kMaximumMarkdownInputBytes);
+    if (!content) siteError("cannot read '" + page.source + "', or it exceeds the 512 KiB page limit");
+    const std::string page_dir(directoryOf(page.source));
+    const std::string out_dir(directoryOf(page.output));
+    LinkContext link_context;
+    link_context.resolver = [&](std::string_view target, bool image) -> std::optional<std::string> {
+      const auto broken = [&](const std::string& reason) {
+        result.broken_links.push_back(page.source + ": " + (image ? "image" : "link") + " target '" + std::string(target) + "' " + reason);
+        return std::optional<std::string>{};
+      };
+      std::string joined;
+      if (target.starts_with('/')) joined = std::string(target.substr(1));
+      else joined = page_dir.empty() ? std::string(target) : page_dir + "/" + std::string(target);
+      const auto normalized = normalizePath(joined);
+      if (!normalized) return broken("leaves the repository");
+      const bool directory_target = target.ends_with('/') || target == "." || target == ".." || target.ends_with("/.") ||
+                                    target.ends_with("/..");
+      if (!directory_target) {
+        if (const auto found = page_by_source.find(*normalized); found != page_by_source.end()) {
+          return relativeUrl(out_dir, model.pages[found->second].output);
+        }
+      }
+      for (const auto* name : {"README.md", "index.md"}) {
+        const auto candidate = normalized->empty() ? std::string(name) : *normalized + "/" + name;
+        if (const auto found = page_by_source.find(candidate); found != page_by_source.end()) {
+          return relativeUrl(out_dir, model.pages[found->second].output);
+        }
+      }
+      if (directory_target || normalized->empty()) return broken("is a directory without an index page");
+      if (hasMarkdownExtension(*normalized)) return broken("is not a page of this site");
+      const auto full = model.root / *normalized;
+      if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
+      if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
+      return relativeUrl(out_dir, addAsset(*normalized, "file"));
+    };
+    std::string article;
+    try {
+      article = renderMarkdown(markdownBody(*content), link_context, &context.outlines[index]);
+    } catch (const std::length_error& bound) {
+      siteError("'" + page.source + "' exceeds a rendering bound: " + bound.what());
+    }
+    scanArticle(article, ids[index], links[index]);
+    ShellInput input;
+    input.title = page.title;
+    input.description = page.description.empty() && page.home ? model.config.description : page.description;
+    input.output = page.output;
+    input.article = std::move(article);
+    input.outline = &context.outlines[index];
+    input.page = index;
+    writeFile(page.output, renderShell(context, input));
+    ++result.pages_written;
+  }
+
+  // Fragments must name a heading on their target page.
+  for (std::size_t index = 0; index < model.pages.size(); ++index) {
+    const std::string out_dir(directoryOf(model.pages[index].output));
+    for (const auto& [path, fragment] : links[index]) {
+      std::size_t target = index;
+      if (!path.empty()) {
+        const auto decoded = decodePathSegment(path);
+        const auto normalized = decoded ? normalizePath(out_dir.empty() ? *decoded : out_dir + "/" + *decoded) : std::nullopt;
+        if (!normalized) continue;
+        const auto found = page_by_output.find(*normalized);
+        if (found == page_by_output.end()) continue;  // an asset, or already a broken link
+        target = found->second;
+      }
+      const auto anchor = decodePathSegment(fragment).value_or(fragment);
+      if (ids[target].count(anchor) == 0) {
+        result.broken_anchors.push_back(model.pages[index].source + ": '" + path + "#" + fragment + "' names no heading on " +
+                                        model.pages[target].source);
+      }
+    }
+  }
+
+  // The site index: every tab, page, and h2/h3, as plain nested lists.
+  {
+    std::string body = "<h1>Site index</h1>";
+    const std::string from_dir;  // the index page sits at the site root
+    const auto pageEntry = [&](std::size_t index) {
+      const auto& page = model.pages[index];
+      std::string entry = "<a href=\"" + escapeHtml(relativeUrl(from_dir, page.output)) + "\">" + escapeHtml(page.title) + "</a>";
+      std::string headings;
+      for (const auto& heading : context.outlines[index]) {
+        if (heading.level != 2 && heading.level != 3) continue;
+        headings += "<li><a href=\"" + escapeHtml(relativeUrl(from_dir, page.output)) + "#" + escapeHtml(encodePathSegment(heading.id)) + "\">" +
+                    escapeHtml(heading.text) + "</a></li>";
+      }
+      if (!headings.empty()) entry += "<ul class=\"index-headings\">" + headings + "</ul>";
+      return entry;
+    };
+    const std::function<void(const std::vector<DocsNavItem>&)> renderItems = [&](const std::vector<DocsNavItem>& items) {
+      body += "<ul>";
+      for (const auto& item : items) {
+        body += "<li>";
+        body += item.page ? pageEntry(*item.page) : escapeHtml(item.title);
+        if (!item.children.empty()) renderItems(item.children);
+        body += "</li>";
+      }
+      body += "</ul>";
+    };
+    for (const auto& tab : model.nav) {
+      body += "<h2>" + escapeHtml(tab.title) + "</h2>";
+      if (tab.page && tab.children.empty()) body += "<ul><li>" + pageEntry(*tab.page) + "</li></ul>";
+      else if (tab.page) body += "<ul><li>" + pageEntry(*tab.page) + "</li></ul>", renderItems(tab.children);
+      else renderItems(tab.children);
+    }
+    if (!model.unlisted.empty()) {
+      body += "<h2>Other pages</h2><ul>";
+      for (const auto index : model.unlisted) body += "<li>" + pageEntry(index) + "</li>";
+      body += "</ul>";
+    }
+    ShellInput input;
+    input.title = "Site index";
+    input.output = std::string(kDocsSiteIndexPage);
+    input.article = "<div class=\"site-index\">" + body + "</div>";
+    writeFile(input.output, renderShell(context, input));
+  }
+
+  // Assets, then the marker.
+  for (const auto& [output, source] : assets) {
+    const auto asset = readFile(model.root / source, kMaximumPagesFileBytes);
+    if (!asset) siteError("cannot read '" + source + "'");
+    writeFile(output, *asset);
+    ++result.assets_copied;
+  }
+  writeFile(std::string(kDocsSiteMarker), "version=1\ngenerator=ckdocs " + context.version + "\npages=" +
+                                              std::to_string(result.pages_written) + "\n");
+
+  // Swap into place; an existing site is kept until the new one is in.
+  if (fs::exists(out, error)) {
+    const fs::path old = fs::path(temporary.path.string() + ".old");
+    fs::rename(out, old, error);
+    if (error) siteError("cannot move the previous site aside: " + error.message());
+    fs::rename(temporary.path, out, error);
+    if (error) {
+      std::error_code restore;
+      fs::rename(old, out, restore);
+      siteError("cannot move the new site into place: " + error.message());
+    }
+    fs::remove_all(old, error);
+  } else {
+    fs::create_directories(out.parent_path(), error);
+    fs::rename(temporary.path, out, error);
+    if (error) siteError("cannot move the new site into place: " + error.message());
+  }
+  temporary.keep = true;
 }
 
 }  // namespace ckgit

@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -15,6 +17,7 @@
 
 #include <unistd.h>
 
+#include "ckgit/http_router.hpp"
 #include "ckgit/process.hpp"
 
 namespace {
@@ -369,11 +372,180 @@ void testThisRepository() {
   }
 }
 
+std::string slurp(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  require(bool(in), "read " + path.string());
+  return buffer.str();
+}
+
+std::size_t occurrences(std::string_view text, std::string_view needle) {
+  std::size_t count = 0;
+  for (auto at = text.find(needle); at != std::string_view::npos; at = text.find(needle, at + needle.size())) ++count;
+  return count;
+}
+
+std::string between(const std::string& html, const std::string& open, const std::string& close) {
+  const auto start = html.find(open);
+  require(start != std::string::npos, "markup present: " + open);
+  const auto end = html.find(close, start);
+  require(end != std::string::npos, "markup closed: " + close);
+  return html.substr(start, end - start);
+}
+
+// Every internal href/src of a written page resolves to a file of the site.
+void checkInternalReferences(const fs::path& site, const std::string& page, const std::string& html) {
+  const auto directory = fs::path(page).parent_path();
+  for (const char* attribute : {"href=\"", "src=\""}) {
+    for (auto at = html.find(attribute); at != std::string::npos; at = html.find(attribute, at + 1)) {
+      const auto start = at + std::strlen(attribute);
+      auto value = html.substr(start, html.find('"', start) - start);
+      if (value.starts_with("http") || value.starts_with("mailto:") || value.starts_with("#")) continue;
+      value = value.substr(0, value.find('#'));
+      const auto decoded = ckgit::decodePathSegment(value);
+      require(decoded.has_value(), "internal reference is canonically encoded: " + value);
+      require(fs::exists((site / directory / *decoded).lexically_normal()), "internal reference from " + page + " resolves: " + value);
+    }
+  }
+}
+
+bool hasTemporaryLeftovers(const fs::path& parent, std::string_view name) {
+  for (const auto& entry : fs::directory_iterator(parent)) {
+    if (entry.path().filename().string().starts_with(std::string(name) + ".tmp-")) return true;
+  }
+  return false;
+}
+
+void testBuild() {
+  Scratch scratch;
+  writeFixtureTree(scratch.root);
+  write(scratch.root / "docs/a/01-x.md",
+        "# X page\n\n[to y](02-y.md#y) [home](../../README.md) [missing](nope.md) [bad anchor](02-y.md#nope) "
+        "[dir](../b/) [abs](/docs/z.md) [pdf](../files/spec.pdf) [self](#install) [outside](../../CONTRIBUTING.md) "
+        "[sp](my%20page.md) [ext](https://example.test/x#frag)\n\n![flow](../img/flow.png)\n\n"
+        "## Install\n\nText.\n\n### Pair\n\nMore.\n\n## Use\n");
+  write(scratch.root / "docs/a/02-y.md", "---\ntitle: Why\nnav_order: 1\n---\n# Y\n\n> [!NOTE]\n> Noted.\n\n- [ ] task\n\n```cpp\nint x;\n```\n");
+  write(scratch.root / "docs/a/my page.md", "# My page\n");
+  write(scratch.root / "docs/img/flow.png", "PNGDATA");
+  write(scratch.root / "docs/img/unref.png", "UNREF");
+  write(scratch.root / "docs/files/spec.pdf", "%PDF");
+  write(scratch.root / "CONTRIBUTING.md", "# Contributing\n");
+  write(scratch.root / "docs/site.css", "body{}");
+  write(scratch.root / "ckdocs.yml",
+        "version: 1\nsite:\n  title: Fixture\n  logo: docs/img/flow.png\n  stylesheet: docs/site.css\n  footer: \"© Fixture\"\n"
+        "  links:\n    - title: Source\n      url: https://example.test/src\n");
+  const auto model = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
+  const auto site = scratch.root / "site";
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, &report);
+  require(report.pages_written == 8 && report.assets_copied == 3, "eight pages; the logo, the stylesheet and two referenced files");
+  for (const auto* file : {"index.html", "a/01-x.html", "a/02-y.html", "a/my page.html", "b/index.html", "b/deep/inner.html",
+                           "z.html", "hidden.html", "site-index.html", ".ckdocs", "img/flow.png", "files/spec.pdf", "site.css"}) {
+    require(fs::is_regular_file(site / file), std::string("written: ") + file);
+  }
+  require(!fs::exists(site / "img/unref.png"), "an unreferenced file is not copied");
+  require(!hasTemporaryLeftovers(scratch.root, "site"), "no temporary directory is left behind");
+
+  const auto x = slurp(site / "a/01-x.html");
+  checkInternalReferences(site, "a/01-x.html", x);
+  require(contains(x, "<title>X page · Fixture</title>") && contains(x, "<link rel=\"stylesheet\" href=\"../site.css\">"),
+          "title and the extra stylesheet, relative to the page");
+  require(contains(x, "href=\"02-y.html#y\"") && contains(x, "href=\"../index.html\"") && contains(x, "href=\"../b/index.html\"") &&
+              contains(x, "href=\"../z.html\"") && contains(x, "href=\"../files/spec.pdf\"") && contains(x, "href=\"#install\"") &&
+              contains(x, "href=\"my%20page.html\"") && contains(x, "src=\"../img/flow.png\" alt=\"flow\""),
+          "page, directory, absolute, file, fragment and encoded links resolve relative to the page");
+  require(contains(x, "[missing](nope.md)") && contains(x, "[outside](../../CONTRIBUTING.md)") && !contains(x, "nope.html"),
+          "links to nothing stay text");
+  require(report.broken_links.size() == 2 && contains(report.broken_links[0], "docs/a/01-x.md: link target 'nope.md' is not a page") &&
+              contains(report.broken_links[1], "'../../CONTRIBUTING.md' is not a page"),
+          "broken links are reported with their page");
+  require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "docs/a/01-x.md: '02-y.html#nope' names no heading on docs/a/02-y.md"),
+          "a fragment that names no heading is reported; #y and #install are fine");
+  const auto tabs = between(x, "<nav class=\"tabs\"", "</nav>");
+  require(contains(tabs, "<a href=\"../index.html\">Home</a>") && contains(tabs, "<a href=\"02-y.html\" aria-current=\"page\">A</a>") &&
+              contains(tabs, "<a href=\"../b/index.html\">Bee</a>") && contains(tabs, "<a href=\"../z.html\">Zed page</a>") &&
+              occurrences(tabs, "aria-current") == 1,
+          "tabs link to their first page and mark the active one");
+  const auto aside = between(x, "<aside class=\"sidebar\">", "</aside>");
+  require(contains(aside, "<p class=\"side-title\">A</p>") && contains(aside, "<a href=\"02-y.html\">Why</a>") &&
+              contains(aside, "<a href=\"01-x.html\" aria-current=\"page\">X page</a>") && occurrences(aside, "aria-current") == 1,
+          "the sidebar lists the active tab's pages and marks the current one");
+  require(contains(aside, "<li><a href=\"#install\">Install</a><ul><li><a href=\"#pair\">Pair</a></li></ul></li><li><a href=\"#use\">Use</a></li>"),
+          "the outline nests h3 under h2");
+  require(contains(x, "<nav class=\"crumbs\" aria-label=\"Breadcrumb\"><ol><li><a href=\"02-y.html\">A</a></li><li aria-current=\"page\">X page</li></ol></nav>"),
+          "breadcrumbs: tab, page");
+  require(contains(x, "rel=\"prev\" href=\"02-y.html\"") && contains(x, "rel=\"next\" href=\"my%20page.html\""), "previous and next follow reading order");
+  require(contains(x, "<img src=\"../img/flow.png\" alt=\"\">") && contains(x, "<a href=\"https://example.test/src\" rel=\"noopener\">Source</a>") &&
+              contains(x, "© Fixture") && contains(x, "Built with ckdocs") && contains(x, "<a href=\"../site-index.html\">Site index</a>"),
+          "logo, header links, footer, site index link");
+  require(contains(x, "<input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">") && !contains(x, "<script"),
+          "the sidebar toggle is a checkbox, and there is no script");
+
+  const auto home = slurp(site / "index.html");
+  checkInternalReferences(site, "index.html", home);
+  require(contains(home, "<title>Fixture home · Fixture</title>") && !contains(home, "class=\"crumbs\"") &&
+              !contains(home, "rel=\"prev\"") && contains(home, "rel=\"next\" href=\"a/02-y.html\"") &&
+              contains(home, "<a href=\"site-index.html\">Site index</a>") && contains(home, "<a href=\"a/02-y.html\">A</a>"),
+          "the home page: no breadcrumbs, no previous, links from the root");
+  const auto y = slurp(site / "a/02-y.html");
+  require(contains(y, "class=\"alert alert-note\"") && contains(y, "task-list-item") && contains(y, "<span class=\"hl-k\">int</span>"),
+          "alerts, task lists and highlighting reach the site");
+  const auto last = slurp(site / "z.html");
+  require(!contains(last, "rel=\"next\"") && contains(last, "rel=\"prev\""), "the last page has no next");
+  const auto index = slurp(site / "site-index.html");
+  checkInternalReferences(site, "site-index.html", index);
+  require(contains(index, "<title>Site index · Fixture</title>") && contains(index, "<h2>A</h2>") && contains(index, "<h2>Bee</h2>") &&
+              contains(index, "<h2>Other pages</h2>") && contains(index, "href=\"hidden.html\">Hidden</a>") &&
+              contains(index, "href=\"a/01-x.html#install\">Install</a>") && contains(index, "href=\"b/deep/inner.html\">Inner</a>"),
+          "the site index lists every tab, page, heading, and unlisted page");
+  const auto marker = slurp(site / ".ckdocs");
+  require(contains(marker, "version=1\n") && contains(marker, "pages=8\n"), "the marker records the site");
+
+  // Rebuilding: refused without --clean, replaced with it, never touching foreign directories.
+  bool refused = false;
+  try {
+    ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, nullptr);
+  } catch (const std::runtime_error& error) {
+    refused = contains(error.what(), "use --clean");
+  }
+  require(refused && fs::is_regular_file(site / "index.html") && !hasTemporaryLeftovers(scratch.root, "site"),
+          "a second build without --clean is refused and leaves the site");
+  write(site / "stale.html", "old");
+  ckgit::DocsBuildOptions clean;
+  clean.clean = true;
+  ckgit::buildDocsSite(model, site, clean, &report);
+  require(!fs::exists(site / "stale.html") && fs::is_regular_file(site / ".ckdocs") && report.pages_written == 8 &&
+              !hasTemporaryLeftovers(scratch.root, "site"),
+          "--clean replaces the previous site whole");
+  fs::create_directories(scratch.root / "other");
+  write(scratch.root / "other/x.txt", "keep");
+  bool foreign = false;
+  try {
+    ckgit::buildDocsSite(model, scratch.root / "other", clean, nullptr);
+  } catch (const std::runtime_error& error) {
+    foreign = contains(error.what(), "not written by ckdocs");
+  }
+  require(foreign && fs::is_regular_file(scratch.root / "other/x.txt") && !hasTemporaryLeftovers(scratch.root, "other"),
+          "a directory without the marker is refused untouched, even with --clean");
+  bool not_directory = false;
+  try {
+    ckgit::buildDocsSite(model, scratch.root / "other/x.txt", clean, nullptr);
+  } catch (const std::runtime_error& error) {
+    not_directory = contains(error.what(), "is not a directory");
+  }
+  require(not_directory, "a file in the way is an error");
+  fs::create_directories(scratch.root / "empty");
+  ckgit::buildDocsSite(model, scratch.root / "empty", ckgit::DocsBuildOptions{}, nullptr);
+  require(fs::is_regular_file(scratch.root / "empty/index.html"), "an empty directory is filled without --clean");
+}
+
 }  // namespace
 
 void testDocsSite() {
   testConfig();
   testDiscovery();
   testEdges();
+  testBuild();
   testThisRepository();
 }

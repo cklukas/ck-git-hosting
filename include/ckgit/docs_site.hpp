@@ -116,4 +116,38 @@ DocsSiteModel loadDocsSite(const std::filesystem::path& root, const DocsConfig& 
 // "01-getting-started.md" -> "Getting started".
 std::string docsTitleFromFilename(std::string_view name);
 
+// ---- building ----------------------------------------------------------------
+
+// The file every site carries at its root, so a later build can tell an
+// output directory it wrote from one it must not touch.
+inline constexpr std::string_view kDocsSiteMarker = ".ckdocs";
+inline constexpr std::string_view kDocsSiteIndexPage = "site-index.html";
+
+struct DocsBuildOptions {
+  bool clean = false;  // replace an existing output directory that carries the marker
+};
+
+struct DocsBuildReport {
+  std::size_t pages_written = 0;
+  std::size_t assets_copied = 0;
+  std::size_t bytes_written = 0;
+  std::vector<std::string> broken_links;    // "<page>: link target '<target>' <reason>"
+  std::vector<std::string> broken_anchors;  // "<page>: '<href>' names no heading on <target page>"
+};
+
+// Renders every page of the model into `out`: the site's HTML (each page
+// with the embedded stylesheet, header tabs, the active tab's sidebar,
+// "On this page", breadcrumbs, previous/next, footer), the site index page,
+// the marker, and every asset a page references (regular files only,
+// mirrored at their source-relative path — or root-relative outside the
+// source). Relative links between pages become relative links between their
+// output files, so the site works from `file://` as well as under any URL
+// prefix. Everything is written to a fresh sibling temporary directory and
+// swapped into place at the end: `out` may be absent, empty, or a site with
+// the marker when `clean` is set; anything else is refused and left alone,
+// and no failure ever leaves a partial `out`. Throws std::runtime_error
+// ("ckdocs: …") on failure; broken links and anchors are reported, not fatal.
+void buildDocsSite(const DocsSiteModel& model, const std::filesystem::path& out, const DocsBuildOptions& options,
+                   DocsBuildReport* report);
+
 }  // namespace ckgit
