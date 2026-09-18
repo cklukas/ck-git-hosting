@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+#include "ckgit/highlight.hpp"
 #include "ckgit/markdown.hpp"
 #include "ckgit/web_renderer.hpp"
 #include "tree.hpp"
@@ -31,14 +32,20 @@ std::string breadcrumbs(const ProjectSummary& p, const std::string& id, const st
   }
   return "<p>" + out + "</p>";
 }
-std::string sourceLines(const std::string& content) {
+// Highlighted text keeps one raw newline per source line and no span crosses
+// one, so its lines wrap exactly like the plain escaped lines do.
+std::string sourceLines(const std::string& content, Language language) {
   std::string out = "<input class=\"source-wrap\" id=\"wrap-lines\" type=\"checkbox\"><label for=\"wrap-lines\">Wrap lines</label><pre class=\"source\"><code>";
+  const bool highlighted = language != Language::None;
+  const std::string html = highlighted ? highlightHtml(content, language) : std::string();
+  const std::string_view text = highlighted ? std::string_view(html) : std::string_view(content);
   std::size_t line = 1;
-  for (std::size_t start = 0; start < content.size();) {
-    auto end = content.find('\n', start); if (end == std::string::npos) end = content.size();
+  for (std::size_t start = 0; start < text.size();) {
+    auto end = text.find('\n', start); if (end == std::string::npos) end = text.size();
     auto n = std::to_string(line++);
+    const auto segment = text.substr(start, end - start);
     out += "<span class=\"line\" id=\"L" + n + "\"><a href=\"#L" + n + "\" aria-label=\"Line " + n + "\">" + n +
-        "</a><span class=\"line-text\">" + escapePre(std::string_view(content).substr(start, end - start)) + "</span></span>";
+        "</a><span class=\"line-text\">" + (highlighted ? std::string(segment) : escapePre(segment)) + "</span></span>";
     bounded(out);
     start = end + 1;
   }
@@ -71,7 +78,7 @@ std::string filePreview(WebRepository& repo, const ProjectSummary& p, const std:
       }
       if (markdown && !source)
         out += "<section class=\"readme\">" + renderMarkdown(markdownBody(content), LinkContext{p.name, id, parentPath(path), ref}) + "</section>";
-      else out += sourceLines(content);
+      else out += sourceLines(content, e.mode == "120000" ? Language::None : detectLanguage(path, content));
     }
     else out += "<p class=\"muted\">Binary file; preview unavailable.</p>";
   } else out += "<p class=\"notice\">File exceeds the 512 KiB text preview limit.</p>";

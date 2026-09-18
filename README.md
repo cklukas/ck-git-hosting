@@ -418,8 +418,9 @@ render as on GitHub, and YAML front matter is kept out of the rendered view.
 Raw HTML is escaped, comments outside code are hidden, and relative document
 links retain the selected branch or tag. Directory links also work without a
 trailing slash. Images, including SVG, load through an immutable protected raw
-route. Source views have line numbers, highlighted line links, and optional
-wrapping. On narrow screens, file navigation is collapsed behind Show files,
+route. Source views have line numbers, highlighted line links, optional
+wrapping, and server-side syntax highlighting for C/C++, Python, shell, YAML,
+and JSON (fenced code blocks in Markdown get the same), with no JavaScript. On narrow screens, file navigation is collapsed behind Show files,
 and project/commit rows rearrange for reading. Empty projects explain how to
 start; missing files retain the project, revision picker, and parent links.
 Text and README source previews are limited to 512 KiB. The file preview

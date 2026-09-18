@@ -195,6 +195,15 @@ void testRouterMarkdown() {
 
   const auto code = renderMarkdown("```cpp\n<script>\n  two\n```\n\n~~~evil\"attr\n&hello\n~~~\n\n    a\n    b\n", root_context);
   check(contains(code, "<pre><code class=\"language-cpp\">&lt;script&gt;\n  two\n</code></pre>"), "fenced code keeps newlines and indentation");
+  check(renderMarkdown("```cpp\nint x = 1; // c\n```\n", root_context) ==
+            "<pre><code class=\"language-cpp\"><span class=\"hl-k\">int</span> x = <span class=\"hl-n\">1</span>; <span class=\"hl-c\">// c</span>\n</code></pre>\n",
+        "a fence whose info string names a language is highlighted");
+  check(renderMarkdown("```rust\nfn x() { let y = 1; }\n```\n", root_context) ==
+            "<pre><code class=\"language-rust\">fn x() { let y = 1; }\n</code></pre>\n",
+        "a fence naming an unknown language stays plain");
+  check(renderMarkdown("```yaml\n# c\nkey: \"v\"\n```\n", root_context) ==
+            "<pre><code class=\"language-yaml\"><span class=\"hl-c\"># c</span>\n<span class=\"hl-a\">key</span>: <span class=\"hl-s\">&quot;v&quot;</span>\n</code></pre>\n",
+        "YAML fences are highlighted with escaped quotes");
   check(!contains(code, "class=\"language-evil") && contains(code, "&amp;hello"), "unsafe fence info ignored");
   check(contains(code, "<pre><code>a\nb\n</code></pre>"), "indented code block");
   const auto quote = renderMarkdown("> quoted **word**  \n> next\n>\n> - a\n> - b\n", root_context);

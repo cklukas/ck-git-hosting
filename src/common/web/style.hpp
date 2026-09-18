@@ -23,6 +23,9 @@ a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(
 .alert-note{--alert:#0969da}.alert-tip{--alert:#1a7f37}.alert-important{--alert:#8250df}.alert-warning{--alert:#9a6700}.alert-caution{--alert:#cf222e}
 .contains-task-list{list-style:none;padding-left:.4rem}.task-list-item input{margin:0 .45rem 0 0;vertical-align:-.1rem}
 @media(prefers-color-scheme:dark){.alert-note{--alert:#4493f8}.alert-tip{--alert:#3fb950}.alert-important{--alert:#ab7df8}.alert-warning{--alert:#d29922}.alert-caution{--alert:#f85149}}
+/* Server-side syntax highlighting (highlight.hpp); the same classes serve ckdocs sites. */
+.hl-c{color:#59636e;font-style:italic}.hl-s{color:#0a3069}.hl-k{color:#cf222e}.hl-n{color:#0550ae}.hl-a{color:#116329}.hl-p{color:#8250df}.hl-v{color:#953800}
+@media(prefers-color-scheme:dark){.hl-c{color:#9198a1}.hl-s{color:#a5d6ff}.hl-k{color:#ff7b72}.hl-n{color:#79c0ff}.hl-a{color:#7ee787}.hl-p{color:#d2a8ff}.hl-v{color:#ffa657}}
 @media(max-width:700px){.project-checkout:before{content:'Checkout: '}.project-last-commit>.muted:only-child:before{content:'Last commit: '}}
 /* Native disclosures keep the repository tree usable without JavaScript. */
 .tree-pane{padding:.75rem;font-size:.9rem;align-self:start;min-width:0}

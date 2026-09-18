@@ -82,7 +82,8 @@ COMMON_SOURCES := \
 	src/common/text.cpp \
 	src/common/validation.cpp \
 	src/common/web_renderer.cpp \
-	src/common/yaml_subset.cpp
+	src/common/yaml_subset.cpp \
+	src/common/highlight.cpp
 COMMON_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR_ABS)/obj/%.o,$(COMMON_SOURCES))
 COMMON_HEADERS := $(wildcard include/ckgit/*.hpp)
 
@@ -93,7 +94,7 @@ RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
 PAGES_SERVER_SOURCES := src/pages-server/main.cpp
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin

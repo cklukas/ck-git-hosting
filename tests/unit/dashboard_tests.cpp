@@ -260,6 +260,11 @@ void testDashboard() {
           "a README's front matter is kept out of its rendered view");
   auto text = page("blob/" + resolved.id + ":" + ckgit::encodePathSegment("ü #%.txt")).body;
   require(text.find("id=\"L2\"") != std::string::npos && text.find("&lt;script&gt;second") != std::string::npos, "line numbers escape content");
+  require(text.find("class=\"hl-") == std::string::npos, "plain text files get no highlighting spans");
+  const auto highlighted = page("blob/" + resolved.id + ":src/internal/engine.cpp").body;
+  require(highlighted.find("<span class=\"line-text\"><span class=\"hl-k\">int</span> engine() { <span class=\"hl-k\">return</span> "
+                           "<span class=\"hl-n\">42</span>; }</span>") != std::string::npos,
+          "C++ sources are highlighted in the file view, inside the line structure");
   auto svg = page("blob/" + resolved.id + ":diagram.svg").body;
   require(svg.find("<img src=") != std::string::npos && svg.find("RAW_ONLY") == std::string::npos, "SVG isolated as image");
   auto raw = page("raw/" + resolved.id + ":diagram.svg");

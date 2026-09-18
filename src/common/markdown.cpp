@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "ckgit/highlight.hpp"
 #include "ckgit/http_router.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/yaml_subset.hpp"
@@ -369,17 +370,23 @@ class Renderer {
       if (trim(lines[index]).empty()) { ++index; continue; }
       if (const auto fence = fenceStart(lines[index])) {
         const auto indent = indentation(lines[index++]);
-        append(output, "<pre><code");
-        if (!fence->language.empty()) append(output, " class=\"language-" + fence->language + "\"");
-        append(output, ">");
+        std::string code;
         while (index < lines.size()) {
           const auto closing = trim(lines[index]);
           std::size_t count = 0;
           while (count < closing.size() && closing[count] == fence->marker) ++count;
           if (indentation(lines[index]) <= 3 && count >= fence->length && trim(closing.substr(count)).empty()) { ++index; break; }
-          escape(output, removeIndent(lines[index++], indent));
-          append(output, "\n");
+          append(code, removeIndent(lines[index++], indent));
+          append(code, "\n");
         }
+        append(output, "<pre><code");
+        if (!fence->language.empty()) append(output, " class=\"language-" + fence->language + "\"");
+        append(output, ">");
+        // The info string picks a highlighter; its markup is used only while
+        // it fits the output bound, else the block is plain as before.
+        const auto highlighted = highlightHtml(code, languageForName(fence->language));
+        if (highlighted.size() <= kMaximumMarkdownOutputBytes - output.size()) append(output, highlighted);
+        else escape(output, code);
         append(output, "</code></pre>\n");
       } else if (indentation(lines[index]) >= 4) {
         append(output, "<pre><code>");
