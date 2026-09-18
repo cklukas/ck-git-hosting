@@ -878,6 +878,7 @@ void testBulkPublishDiscovery();
 void testCliHelp();
 void testClientManagement();
 void testSetupConfig();
+void testYamlSubset();
 void testCiWorkflow();
 void testCiStore();
 void testCiRunner();
@@ -901,6 +902,7 @@ int main(int argc, char** argv) {
     testCliHelp();
     testClientManagement();
     testSetupConfig();
+    testYamlSubset();
     testCiWorkflow();
     testCiStore();
     testCiRunner();

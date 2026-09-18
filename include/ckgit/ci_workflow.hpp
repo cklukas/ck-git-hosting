@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "ckgit/yaml_subset.hpp"
+
 namespace ckgit {
 
 // A CI workflow parsed from a repository's `.ckgit/ci.yml`.
@@ -63,6 +65,25 @@ inline constexpr std::size_t kMaximumCiCacheEnv = 8;
 // A parser sanity bound on a workflow's retention_days; the runner clamps the
 // effective value to the server's configured maximum.
 inline constexpr unsigned kMaximumCiRetentionDaysCap = 3650;
+
+// How the shared YAML subset is bounded and named when it reads a workflow:
+// the limits above, applied by the parser, plus the "ci workflow: ..." wording
+// of every error. A block sequence may hold as many items as the larger of the
+// job and step limits; a mapping may hold the env limit plus the schema's own
+// keys; the tree may nest 16 deep, more than the schema ever needs.
+inline constexpr YamlBounds kCiWorkflowYamlBounds{
+    kMaximumCiWorkflowBytes,
+    kMaximumCiLineBytes,
+    kMaximumCiLines,
+    kMaximumCiKeyBytes,
+    kMaximumCiScalarBytes,
+    kMaximumCiScriptBytes,
+    kMaximumCiArgvItems,
+    kMaximumCiJobs > kMaximumCiStepsPerJob ? kMaximumCiJobs : kMaximumCiStepsPerJob,
+    kMaximumCiEnvEntries + 8,
+    16,
+};
+inline constexpr YamlDialect kCiWorkflowYamlDialect{kCiWorkflowYamlBounds, "ci workflow", "the workflow"};
 
 // One environment binding, kept in file order. Values are literal: the runner
 // never expands `$VAR` or any other reference when applying them.
