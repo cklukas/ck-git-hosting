@@ -8,7 +8,9 @@
 # reference resolves to a file relative to the page that carries it. Then, on
 # a small synthetic fixture, proves a broken link fails `ckdocs check` with a
 # report naming both the offending page and its target -- the CLI wiring
-# that unit tests, which call the library directly, cannot reach.
+# that unit tests, which call the library directly, cannot reach. Finally,
+# `ckdocs serve` is started on an OS-chosen loopback port and probed for the
+# index, a nested page, and a 404, then stopped.
 
 set -eu
 
@@ -23,7 +25,12 @@ case "${TMPDIR:-}" in
   *) echo "TMPDIR must be beneath $test_root_parent" >&2; exit 1 ;;
 esac
 test_root=$(mktemp -d "$test_root_parent/ckdocs-site.XXXXXX")
-trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+serve_pid=''
+cleanup() {
+  [ -z "$serve_pid" ] || { kill "$serve_pid" 2>/dev/null || true; wait "$serve_pid" 2>/dev/null || true; }
+  rm -rf "$test_root"
+}
+trap cleanup EXIT HUP INT TERM
 
 # ---- this repository's own site --------------------------------------------
 
@@ -134,5 +141,57 @@ case "$fixture_output" in
     ;;
 esac
 [ ! -e "$fixture/public" ] || { echo "check must never leave an output directory behind" >&2; exit 1; }
+
+# ---- serve: a loopback preview server --------------------------------------
+
+serve_log="$test_root/serve.log"
+"$CKDOCS" serve --root "$repo_root" --port 0 --quiet >"$serve_log" 2>&1 &
+serve_pid=$!
+
+serve_port=''
+attempt=0
+while [ -z "$serve_port" ]; do
+  if ! kill -0 "$serve_pid" 2>/dev/null; then
+    echo "ckdocs serve exited before it became ready:" >&2
+    cat "$serve_log" >&2
+    serve_pid=''
+    exit 1
+  fi
+  serve_port=$(sed -n 's/^ckdocs: serve ready on \([0-9][0-9]*\)$/\1/p' "$serve_log")
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 100 ]; then
+    echo "ckdocs serve never printed its ready banner:" >&2
+    cat "$serve_log" >&2
+    exit 1
+  fi
+  [ -n "$serve_port" ] || sleep .1
+done
+
+check_serve() {  # check_serve PATH 'HTTP STATUS LINE' [CONTENT-TYPE PATTERN]
+  headers="$test_root/serve-headers"
+  curl --max-time 4 --silent --show-error -D "$headers" -o "$test_root/serve-body" \
+    "http://127.0.0.1:$serve_port$1"
+  grep -qF "$2" "$headers" || {
+    echo "serving $1: expected '$2' in the response headers:" >&2
+    cat "$headers" >&2
+    exit 1
+  }
+  if [ $# -ge 3 ]; then
+    grep -qi "^Content-Type: $3" "$headers" || {
+      echo "serving $1: expected a Content-Type matching '$3':" >&2
+      cat "$headers" >&2
+      exit 1
+    }
+  fi
+}
+
+check_serve "/" "HTTP/1.1 200 OK" "text/html"
+check_serve "/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/nope.html" "HTTP/1.1 404 Not Found"
+
+kill "$serve_pid" 2>/dev/null || true
+wait "$serve_pid" 2>/dev/null || true
+serve_pid=''
+echo "docs_site serve check passed"
 
 echo "docs_site integration test passed"

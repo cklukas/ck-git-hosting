@@ -175,8 +175,10 @@ std::optional<PageFile> readCurrentPage(const fs::path& pages_root, std::string_
   const fs::path base = pages_root / std::string(project);
   const std::optional<std::string> version = readCurrent(base);
   if (!version.has_value()) return std::nullopt;
-  const fs::path site = base / "versions" / *version;
+  return readSiteFile(base / "versions" / *version, path, cap);
+}
 
+std::optional<PageFile> readSiteFile(const fs::path& site, std::string_view path, std::size_t cap) {
   // Split the request path into components; an empty path or a trailing slash
   // resolves to index.html.
   std::vector<std::string> components;
@@ -228,6 +230,36 @@ std::optional<PageFile> readCurrentPage(const fs::path& pages_root, std::string_
   }
   ::close(file);
   return PageFile{std::move(content), pagesContentType(components.back())};
+}
+
+namespace {
+
+int hexNibble(unsigned char character) {
+  if (character >= '0' && character <= '9') return character - '0';
+  if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+  if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+  return -1;
+}
+
+}  // namespace
+
+std::optional<std::string> decodeRequestPath(std::string_view target) {
+  std::string out;
+  for (std::size_t index = 0; index < target.size(); ++index) {
+    if (target[index] == '%') {
+      if (index + 2 >= target.size()) return std::nullopt;
+      const int high = hexNibble(static_cast<unsigned char>(target[index + 1]));
+      const int low = hexNibble(static_cast<unsigned char>(target[index + 2]));
+      if (high < 0 || low < 0) return std::nullopt;
+      const unsigned char byte = static_cast<unsigned char>((high << 4) | low);
+      if (byte < 0x20 || byte == 0x7f) return std::nullopt;
+      out.push_back(static_cast<char>(byte));
+      index += 2;
+    } else {
+      out.push_back(target[index]);
+    }
+  }
+  return out;
 }
 
 void removeProjectPages(const fs::path& pages_root, std::string_view project) {

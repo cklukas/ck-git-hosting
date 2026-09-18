@@ -14,7 +14,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
 #include <netinet/in.h>
@@ -78,32 +77,6 @@ bool writeAll(int fd, std::string_view data) {
   return true;
 }
 
-int hexNibble(unsigned char character) {
-  if (character >= '0' && character <= '9') return character - '0';
-  if (character >= 'a' && character <= 'f') return character - 'a' + 10;
-  if (character >= 'A' && character <= 'F') return character - 'A' + 10;
-  return -1;
-}
-
-// Decodes %XX escapes; returns false on a malformed or control-byte result.
-bool percentDecode(std::string_view input, std::string* out) {
-  for (std::size_t index = 0; index < input.size(); ++index) {
-    if (input[index] == '%') {
-      if (index + 2 >= input.size()) return false;
-      const int high = hexNibble(static_cast<unsigned char>(input[index + 1]));
-      const int low = hexNibble(static_cast<unsigned char>(input[index + 2]));
-      if (high < 0 || low < 0) return false;
-      const unsigned char byte = static_cast<unsigned char>((high << 4) | low);
-      if (byte < 0x20 || byte == 0x7f) return false;
-      out->push_back(static_cast<char>(byte));
-      index += 2;
-    } else {
-      out->push_back(input[index]);
-    }
-  }
-  return true;
-}
-
 void sendResponse(int fd, int status, std::string_view reason, std::string_view content_type,
                   std::string_view body, bool head_only) {
   std::string headers = "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason) +
@@ -137,12 +110,12 @@ void handle(int fd, const std::filesystem::path& pages_root) {
   const auto query = target.find_first_of("?#");
   if (query != std::string_view::npos) target = target.substr(0, query);
 
-  std::string decoded;
-  if (!percentDecode(target, &decoded) || decoded.empty() || decoded.front() != '/') {
+  const std::optional<std::string> decoded = ckgit::decodeRequestPath(target);
+  if (!decoded.has_value() || decoded->empty() || decoded->front() != '/') {
     sendError(fd, 404, "Not Found", head_only);
     return;
   }
-  std::string_view remainder = std::string_view(decoded).substr(1);  // drop leading '/'
+  std::string_view remainder = std::string_view(*decoded).substr(1);  // drop leading '/'
   const auto slash = remainder.find('/');
   const std::string_view project = remainder.substr(0, slash);
   const std::string_view path = slash == std::string_view::npos ? std::string_view{} : remainder.substr(slash + 1);

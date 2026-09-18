@@ -113,6 +113,45 @@ void testContentType() {
   require(ckgit::pagesContentType("a.unknownext") == "application/octet-stream", "unknown falls back");
 }
 
+// readCurrentPage delegates to this directly (WP9), so `ckdocs serve` reads
+// a plain build directory with the identical safety and index.html folding
+// a published Pages site gets, with no <pages_root>/<project>/current
+// indirection at all.
+void testReadSiteFile() {
+  PagesFixture fixture;
+  const std::filesystem::path site = fixture.root / "site";
+  writeFile(site / "index.html", "<h1>home</h1>");
+  writeFile(site / "docs/guide.html", "<p>guide</p>");
+  std::error_code error;
+  std::filesystem::create_symlink("/etc/hostname", site / "evil.html", error);
+  require(!error, "the fixture symlink was created");
+
+  const auto empty = ckgit::readSiteFile(site, "", 1u << 20);
+  require(empty.has_value() && empty->content == "<h1>home</h1>" && empty->content_type == "text/html; charset=utf-8",
+          "an empty path serves index.html");
+  const auto slash = ckgit::readSiteFile(site, "docs/", 1u << 20);
+  require(!slash.has_value(), "a trailing slash resolves to index.html, which docs/ does not have");
+  const auto nested = ckgit::readSiteFile(site, "docs/guide.html", 1u << 20);
+  require(nested.has_value() && nested->content == "<p>guide</p>", "a nested file serves directly");
+  require(!ckgit::readSiteFile(site, "missing.html", 1u << 20).has_value(), "an absent file yields nothing");
+  require(!ckgit::readSiteFile(site, "../secret", 1u << 20).has_value(), "a traversal path is rejected");
+  require(!ckgit::readSiteFile(site, "evil.html", 1u << 20).has_value(), "a symlink is never followed or served");
+  require(!ckgit::readSiteFile(site, "index.html", 1).has_value(), "a file over the cap is rejected");
+  require(!ckgit::readSiteFile(fixture.root / "absent", "", 1u << 20).has_value(), "a missing site directory yields nothing");
+}
+
+void testDecodeRequestPath() {
+  require(ckgit::decodeRequestPath("/a/b") == "/a/b", "an already-plain path is unchanged");
+  require(ckgit::decodeRequestPath("/a%20b") == "/a b", "a space escape decodes");
+  require(ckgit::decodeRequestPath("/a%2Fb") == "/a/b", "an encoded slash decodes like any other byte");
+  require(ckgit::decodeRequestPath("") == "", "an empty target decodes to empty");
+  require(!ckgit::decodeRequestPath("/a%").has_value(), "a truncated escape is rejected");
+  require(!ckgit::decodeRequestPath("/a%2").has_value(), "an incomplete escape is rejected");
+  require(!ckgit::decodeRequestPath("/a%zz").has_value(), "a non-hex escape is rejected");
+  require(!ckgit::decodeRequestPath("/a%00b").has_value(), "an escaped NUL is rejected");
+  require(!ckgit::decodeRequestPath("/a%7fb").has_value(), "an escaped DEL is rejected");
+}
+
 }  // namespace
 
 void testPagesStore() {
@@ -121,4 +160,6 @@ void testPagesStore() {
   testSymlinkSkipped();
   testRemoveProjectPages();
   testContentType();
+  testReadSiteFile();
+  testDecodeRequestPath();
 }

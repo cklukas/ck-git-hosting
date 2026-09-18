@@ -56,6 +56,22 @@ std::optional<PageFile> readCurrentPage(const std::filesystem::path& pages_root,
                                         std::string_view project, std::string_view path,
                                         std::size_t cap);
 
+// The traversal-safe half of readCurrentPage, taking the site directory
+// directly instead of a <pages_root>/<project>/current lookup: an already
+// percent-decoded request path, resolved the identical way (empty or a
+// trailing '/' maps to "index.html"; each component opened O_NOFOLLOW, so a
+// site file can never redirect the read outside `site`), capped at `cap`
+// bytes. Shared by readCurrentPage and by `ckdocs serve`'s own loopback
+// preview server, so a reader sees identical behaviour serving from a
+// published Pages site or from a plain build directory.
+std::optional<PageFile> readSiteFile(const std::filesystem::path& site, std::string_view path, std::size_t cap);
+
+// Percent-decodes an HTTP request target's path (the caller has already
+// split off any query string or fragment): %XX escapes only, rejecting a
+// malformed escape or one that would decode to a control byte. Shared by
+// ck-pagesd and `ckdocs serve`, so a fix to one applies to both.
+std::optional<std::string> decodeRequestPath(std::string_view target);
+
 // The run id a project's site currently points at, for tests and status.
 std::optional<std::string> currentPagesVersion(const std::filesystem::path& pages_root,
                                                std::string_view project);

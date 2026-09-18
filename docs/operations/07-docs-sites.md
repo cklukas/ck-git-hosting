@@ -25,6 +25,26 @@ warning as a failure — run it before you publish, and let a CI step run it
 on every push (see [Publishing](#publishing-on-ck-git-pages-and-github-pages)
 below).
 
+## Preview locally
+
+```text
+ckdocs serve --root .
+```
+
+Builds the same way `build` does — into `--out` when given, replacing a
+previous `ckdocs` site there the same way `--clean` would, or otherwise into
+a private directory removed when the command exits — and serves it on
+`127.0.0.1:8422` (`--port` to choose another; `127.0.0.1` only, deliberately
+never reachable from another machine, unlike `ck-pagesd`) until you press
+Ctrl+C, using the same directory-to-`index.html` folding and
+extension-to-content-type mapping a published Pages site uses. Since every
+page link is already relative, opening `index.html` straight from the
+filesystem looks the same in the ordinary case; `serve` is worth it for the
+cases that would not — testing what a real 404 or a file's actual served
+content type looks like — and for previewing from a browser's dev tools the
+way you would the published site. There is no rebuild on change in this
+version — edit a page, then rerun the command.
+
 ## How pages are found, named, and ordered
 
 - **Which files.** Every `.md`/`.markdown` file under the *source tree* —
