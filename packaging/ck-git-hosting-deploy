@@ -474,7 +474,11 @@ runtime_component_for() {  # the binary name recordRuntimeComponent() used, for 
   case "$1" in
     ck-git-hosting) echo ck-git-hostingd ;;
     ck-ci-runner) echo ck-ci-runnerd ;;
-    ck-pages) echo ck-pagesd ;;
+    # ck-pages.service runs under ProtectSystem=strict with no ReadWritePaths
+    # (see that unit): by design it has no write access anywhere, including
+    # to state_root, so it can never record a runtime version to compare --
+    # active-and-answering (checked above) is this service's health signal.
+    ck-pages) echo "" ;;
     *) echo "" ;;  # an unrecognised service: skip its version check
   esac
 }
