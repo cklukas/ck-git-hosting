@@ -43,6 +43,8 @@ become available once a release is tagged; see
 [docs/operations/02-packages-and-releases.md](docs/operations/02-packages-and-releases.md)
 for every install path, including the server.
 
+Online documentation: <https://cklukas.github.io/ck-git-hosting/>.
+
 ## Build and test
 
 The source tree is never used for build products; every build directory must

@@ -1,0 +1,31 @@
+# Configuration for this repository's own documentation site, built by
+# ckdocs (see docs/planning's ckdocs work packages) and published both on
+# ck-git Pages (.ckgit/ci.yml's `docs` step) and on GitHub Pages
+# (.github/workflows/pages.yml). No `source:` -- the default `docs/` tree is
+# already right. The zero-config derivation this file overrides is exercised
+# directly by tests/unit/docs_site_tests.cpp; this nav exists only to name
+# the tabs and group the Continuous delivery pages, not because the derived
+# tree would be wrong.
+version: 1
+site:
+  title: ck-git-hosting
+  description: ck-git-hosting is a small, private Git control plane for a trusted LAN.
+  footer: "© 2026 C. Klukas · MIT License"
+  links:
+    - title: GitHub
+      url: https://github.com/cklukas/ck-git-hosting
+nav:
+  - title: Home
+    page: README.md
+  - title: Operations
+    pages:
+      - docs/operations/01-installation.md
+      - docs/operations/02-packages-and-releases.md
+      - docs/operations/03-backup-and-recovery.md
+      - title: Continuous delivery
+        pages:
+          - docs/operations/04-ci-cd.md
+          - docs/operations/05-releases-and-deploy.md
+          - docs/operations/06-ci-yml-reference.md
+  - title: Protocol
+    page: docs/protocol/01-ssh-and-control-v1.md

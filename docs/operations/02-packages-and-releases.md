@@ -12,6 +12,7 @@
 | `ck-git-hosting-V-source.tar.gz` | `git archive` | Homebrew formula source |
 | `SHA256SUMS` | release job | verification |
 | `packages` (a `.tar` bundling the arm64/amd64 `.deb`s, a source tarball, and `build-version`) | this project's own self-hosted CI (`.ckgit/ci.yml`), stored as a release asset on the server | `ck-git-hosting-deploy` (the server package) and `ckgit release download` / `packaging/update-cli.sh` (the source tarball) |
+| this repository's documentation site (`ckdocs.yml`, README.md, `docs/`) | `ckdocs build` in both CI channels: `.ckgit/ci.yml`'s `docs` step (self-hosted) and `.github/workflows/pages.yml` (GitHub) | ck-git Pages on the server (the dashboard's **Docs** button) and <https://cklukas.github.io/ck-git-hosting/> |
 
 The version comes from the `VERSION` file. A release is created by pushing a
 tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.

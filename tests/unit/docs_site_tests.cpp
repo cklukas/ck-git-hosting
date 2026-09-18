@@ -357,18 +357,48 @@ void testThisRepository() {
   if (configured == nullptr || *configured == '\0') return;
   const fs::path root(configured);
   if (!fs::is_directory(root / "docs/operations") || !fs::is_regular_file(root / "README.md")) return;
-  std::vector<std::string> warnings;
-  const auto model = ckgit::loadDocsSite(root, ckgit::readDocsConfig(root), &warnings);
-  require(model.source == "docs" && model.pages[model.home].source == "README.md", "this repository's docs tree and README");
-  require(std::none_of(model.pages.begin(), model.pages.end(), [](const ckgit::DocsPage& page) { return contains(page.source, "planning"); }),
-          "gitignored planning documents are never pages");
-  require(model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" && model.nav[2].title == "Protocol",
-          "tabs Home, Operations, Protocol");
-  const auto& operations = model.nav[1].children;
-  require(operations.size() == 6, "six operations pages");
-  for (std::size_t index = 0; index < operations.size(); ++index) {
-    require(operations[index].page.has_value() && model.pages[*operations[index].page].source.starts_with("docs/operations/0" + std::to_string(index + 1) + "-"),
-            "operations pages follow their numeric prefixes");
+
+  // Zero-config derivation on this repository's real content (WP4's own
+  // acceptance case), independent of whatever ckdocs.yml the repository
+  // happens to carry -- this is the fallback every project without one gets.
+  {
+    std::vector<std::string> warnings;
+    const auto model = ckgit::loadDocsSite(root, ckgit::DocsConfig{}, &warnings);
+    require(model.source == "docs" && model.pages[model.home].source == "README.md", "this repository's docs tree and README");
+    require(std::none_of(model.pages.begin(), model.pages.end(), [](const ckgit::DocsPage& page) { return contains(page.source, "planning"); }),
+            "gitignored planning documents are never pages");
+    require(model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" && model.nav[2].title == "Protocol",
+            "derived tabs Home, Operations, Protocol");
+    const auto& operations = model.nav[1].children;
+    require(operations.size() == 6, "six operations pages, derived flat");
+    for (std::size_t index = 0; index < operations.size(); ++index) {
+      require(operations[index].page.has_value() && model.pages[*operations[index].page].source.starts_with("docs/operations/0" + std::to_string(index + 1) + "-"),
+              "operations pages follow their numeric prefixes");
+    }
+  }
+
+  // The repository's own committed ckdocs.yml (WP7): an explicit nav names
+  // the tabs and groups the continuous-delivery pages, so this exercises the
+  // config actually published on ck-git Pages and GitHub Pages.
+  {
+    const auto config = ckgit::readDocsConfig(root);
+    require(!config.title.empty(), "this repository ships its own ckdocs.yml");
+    std::vector<std::string> warnings;
+    const auto model = ckgit::loadDocsSite(root, config, &warnings);
+    require(model.title == "ck-git-hosting" && model.pages[model.home].source == "README.md" &&
+                model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" &&
+                model.nav[2].title == "Protocol" && model.nav[2].page.has_value() &&
+                model.pages[*model.nav[2].page].source == "docs/protocol/01-ssh-and-control-v1.md",
+            "the configured site: title, home, tabs, and Protocol as a one-page tab");
+    const auto& operations = model.nav[1].children;
+    require(operations.size() == 4 && operations[0].page.has_value() &&
+                model.pages[*operations[0].page].source == "docs/operations/01-installation.md" &&
+                operations[3].title == "Continuous delivery" && operations[3].children.size() == 3 &&
+                model.pages[*operations[3].children[0].page].source == "docs/operations/04-ci-cd.md" &&
+                model.pages[*operations[3].children[2].page].source == "docs/operations/06-ci-yml-reference.md",
+            "Operations: three flat pages, then a Continuous delivery group with 04-06");
+    require(config.links.size() == 1 && config.links[0].title == "GitHub" && !config.footer.empty(),
+            "the configured header link and footer");
   }
 }
 

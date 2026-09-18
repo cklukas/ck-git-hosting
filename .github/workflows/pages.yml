@@ -1,0 +1,61 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+#
+# Publishes this repository's documentation (ckdocs.yml, README.md, docs/) to
+# https://cklukas.github.io/ck-git-hosting/ -- the identical site .ckgit/ci.yml's
+# own `docs` step publishes on ck-git Pages, for readers who cannot reach the
+# LAN. ckdocs is compiled here from source (`make ... client`), not installed
+# from a package or downloaded, so this workflow has no dependency on any
+# release having been cut; ci.yml's own `make all check` (which runs
+# tests/integration/docs_site.sh) already fails a broken docs link before it
+# ever reaches this workflow.
+
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+      - name: Build ckdocs and the site
+        run: |
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" client
+          "$RUNNER_TEMP/build/bin/ckdocs" build --root "$PWD" --out "$RUNNER_TEMP/site" --strict
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -18,6 +18,14 @@
 # whoever can push a tag here with root on the deploying machine (see that
 # timer's own header comment). The CI step itself stays unprivileged: it
 # only builds, tests, and packages.
+#
+# A successful master push also builds this repository's own documentation
+# site (ckdocs.yml) and, because `pages:` below only ever publishes a
+# non-tag build of the repository's own default branch (see
+# docs/operations/06-ci-yml-reference.md §9), publishes it here on ck-git
+# Pages; the identical site is published to GitHub Pages by the separate
+# .github/workflows/pages.yml, which compiles its own ckdocs rather than
+# depending on anything built here.
 version: 1
 on:
   branches: [master]
@@ -52,6 +60,15 @@ jobs:
           # script's own TMPDIR internally; nothing extra is needed here.
           ver=$(cat "$TMPDIR/build-version")
           make BUILD_ROOT="$TMPDIR" BUILD_DIR="$TMPDIR/build" CKGIT_BUILD_VERSION="$ver" check
+      - name: docs
+        script: |
+          # ckdocs was just built by the build step above (`make ... all`
+          # builds every binary, ckdocs included). --strict fails this step
+          # -- and so the whole run, before `pages:` below ever sees
+          # "public" -- on a broken link or heading fragment, exactly as
+          # tests/integration/docs_site.sh already checks for this same
+          # repository on every push.
+          "$TMPDIR/build/bin/ckdocs" build --root "$PWD" --out "$PWD/public" --strict
       - name: package
         script: |
           # A tag build whose tag matches VERSION exactly publishes the
@@ -96,3 +113,5 @@ jobs:
       # release.ini record (an artifact of that name would overwrite it).
       name: packages
       paths: [dist]
+pages:
+  path: public
