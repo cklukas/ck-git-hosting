@@ -55,6 +55,10 @@ hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
 .hl-c{color:#59636e;font-style:italic}.hl-s{color:#0a3069}.hl-k{color:#cf222e}.hl-n{color:#0550ae}.hl-a{color:#116329}.hl-p{color:#8250df}.hl-v{color:#953800}
 @media(prefers-color-scheme:dark){.alert-note{--alert:#4493f8}.alert-tip{--alert:#3fb950}.alert-important{--alert:#ab7df8}.alert-warning{--alert:#d29922}.alert-caution{--alert:#f85149}.hl-c{color:#9198a1}.hl-s{color:#a5d6ff}.hl-k{color:#ff7b72}.hl-n{color:#79c0ff}.hl-a{color:#7ee787}.hl-p{color:#d2a8ff}.hl-v{color:#ffa657}}
 nav.pager{display:flex;justify-content:space-between;gap:1rem;margin:2.5rem 0 0;padding-top:1rem;border-top:1px solid var(--line);font-size:.95rem}nav.pager a{max-width:48%}nav.pager .next{margin-left:auto;text-align:right}nav.pager small{display:block;color:var(--muted);font-size:.8rem}
+.search{position:relative;margin-left:auto}.search input{font:inherit;padding:.35rem .8rem;border:1px solid var(--line);border-radius:1rem;background:var(--panel);color:var(--text);width:12rem;max-width:40vw}.search input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.search-results{position:absolute;right:0;top:calc(100% + .4rem);width:22rem;max-width:85vw;max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:.6rem;box-shadow:0 .6rem 1.8rem #0003;padding:.35rem;z-index:5;text-align:left}
+.search-result{display:block;padding:.5rem .6rem;border-radius:.4rem;color:var(--text)}.search-result:hover,.search-result:focus-visible{background:var(--tint);text-decoration:none}.search-result b{color:var(--accent)}.search-result span{display:block;margin-top:.15rem;font-size:.85rem;color:var(--muted);font-weight:400}
+@media(max-width:700px){.search input{width:9rem;max-width:60vw}.search-results{width:90vw;right:-1rem}}
 footer.site{border-top:1px solid var(--line);padding:1rem 2rem;font-size:.85rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;max-width:1440px;width:100%;margin:0 auto}
 .site-index ul{padding-left:1.2rem}.site-index li{margin:.2rem 0}.site-index .index-headings{color:var(--muted);font-size:.9rem}
 @media(max-width:700px){header.site{padding:.8rem 1rem;gap:.6rem 1rem}nav.links{margin-left:0}.page{display:block;padding:1rem}
@@ -62,5 +66,63 @@ footer.site{border-top:1px solid var(--line);padding:1rem 2rem;font-size:.85rem;
 aside.sidebar{display:none;position:static;max-height:none;margin-bottom:1.5rem;padding:1rem;border:1px solid var(--line);border-radius:.5rem;background:var(--panel)}.nav-switch:checked~aside.sidebar{display:block}footer.site{padding:1rem}}
 @media print{header.site,aside.sidebar,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
 )CSS";
+
+// The opt-in search box's own behaviour (site.search / `search: true`):
+// fetches the generated search-index.json lazily (on first focus or
+// keystroke, not on page load), filters it client-side, and lists matches
+// linking straight to their page and section. Inline, dependency-free, and
+// needs no nonce -- ckdocs pages carry no CSP that would require one. The
+// input itself starts `hidden`; this script is the only thing that reveals
+// it, so a visitor with scripting disabled never sees a non-functional box
+// (the page's own <noscript> link to the site index covers them instead).
+inline constexpr std::string_view kDocsSearchScript = R"JS(
+(function(){
+  var input=document.getElementById('ckdocs-search');
+  if(!input)return;
+  input.hidden=false;
+  var root=input.getAttribute('data-index').replace('search-index.json','');
+  var results=document.getElementById('ckdocs-search-results');
+  var data=null,loading=null;
+  function load(){
+    if(data||loading)return loading;
+    loading=fetch(input.getAttribute('data-index')).then(function(r){return r.json()})
+      .then(function(j){data=j.pages||[]})['catch'](function(){data=[]});
+    return loading;
+  }
+  function clear(){results.textContent='';results.hidden=true}
+  function render(query){
+    clear();
+    if(!query||!data)return;
+    var q=query.toLowerCase(),shown=0;
+    for(var i=0;i<data.length&&shown<20;i++){
+      var page=data[i],sections=page.sections||[];
+      for(var j=0;j<sections.length&&shown<20;j++){
+        var s=sections[j];
+        if((s.heading+' '+s.excerpt).toLowerCase().indexOf(q)===-1)continue;
+        var link=document.createElement('a');
+        link.className='search-result';
+        link.href=root+page.url+(s.anchor?'#'+s.anchor:'');
+        var title=document.createElement('b');
+        title.textContent=s.heading?page.title+' – '+s.heading:page.title;
+        var excerpt=document.createElement('span');
+        excerpt.textContent=s.excerpt;
+        link.appendChild(title);
+        link.appendChild(excerpt);
+        results.appendChild(link);
+        shown++;
+      }
+    }
+    results.hidden=shown===0;
+  }
+  input.addEventListener('focus',load);
+  input.addEventListener('input',function(){
+    var query=input.value;
+    load().then(function(){render(query)});
+  });
+  document.addEventListener('click',function(e){
+    if(e.target!==input&&!results.contains(e.target))clear();
+  });
+})();
+)JS";
 
 }  // namespace ckgit

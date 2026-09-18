@@ -399,6 +399,7 @@ int run(const std::string& command_name, int argc, char** argv) {
   ckgit::buildDocsSite(model, target, build_options, &report);
   for (const auto& broken : report.broken_links) problems.push_back(broken);
   for (const auto& broken : report.broken_anchors) problems.push_back(broken);
+  for (const auto& warning : report.warnings) problems.push_back(warning);
 
   if (!problems.empty() && strict) {
     for (const auto& problem : problems) std::cerr << "ckdocs: " << problem << "\n";

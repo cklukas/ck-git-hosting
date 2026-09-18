@@ -123,6 +123,17 @@ std::string docsTitleFromFilename(std::string_view name);
 inline constexpr std::string_view kDocsSiteMarker = ".ckdocs";
 inline constexpr std::string_view kDocsSiteIndexPage = "site-index.html";
 
+// Opt-in search (`search: true` in ckdocs.yml): a generated index, read by a
+// small inline script the theme embeds. `kMaximumDocsSearchIndexBytes` bounds
+// the whole file; a site whose full index would exceed it keeps entries for
+// as many pages as fit (dropped from the end) rather than failing the build,
+// reported as a build warning. `kMaximumDocsSearchExcerptChars` bounds each
+// section's plain-text excerpt (bytes, cut at a UTF-8 boundary, not a strict
+// codepoint count).
+inline constexpr std::string_view kDocsSearchIndexPage = "search-index.json";
+inline constexpr std::size_t kMaximumDocsSearchIndexBytes = 2 * 1024 * 1024;
+inline constexpr std::size_t kMaximumDocsSearchExcerptChars = 200;
+
 struct DocsBuildOptions {
   bool clean = false;  // replace an existing output directory that carries the marker
 };
@@ -133,6 +144,7 @@ struct DocsBuildReport {
   std::size_t bytes_written = 0;
   std::vector<std::string> broken_links;    // "<page>: link target '<target>' <reason>"
   std::vector<std::string> broken_anchors;  // "<page>: '<href>' names no heading on <target page>"
+  std::vector<std::string> warnings;        // other build-time findings, e.g. a truncated search index
 };
 
 // Renders every page of the model into `out`: the site's HTML (each page

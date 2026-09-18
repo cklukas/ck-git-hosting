@@ -571,6 +571,89 @@ void testBuild() {
   require(fs::is_regular_file(scratch.root / "empty/index.html"), "an empty directory is filled without --clean");
 }
 
+// Every JSON object this test expects, in the exact byte-for-byte shape
+// searchPageEntryJson/buildSearchIndexJson emit -- these tests intentionally
+// have no JSON parser available, so shape is checked as substrings, the same
+// way the rest of this file checks generated HTML.
+void testSearch() {
+  Scratch scratch;
+  std::string long_paragraph;
+  while (long_paragraph.size() < 260) long_paragraph += "lorem ipsum ";
+  write(scratch.root / "README.md",
+        "A lead paragraph before any heading, mentioning zephyrxyz uniquely here.\n\n"
+        "# Home\n\nIntro text for the first section.\n\n"
+        "## Alpha\n\nAlpha section body.\n\n"
+        "## Beta\n\n" + long_paragraph + "\n");
+  write(scratch.root / "hidden.md", "---\nnav_exclude: true\n---\n# Hidden page\n\nHidden body text.\n");
+  write(scratch.root / "notes/extra.md", "# Extra notes\n\nA nested page, for checking a relative data-index.\n");
+
+  ckgit::DocsConfig config;
+  config.title = "Fixture";
+  config.search = true;
+  const auto model = ckgit::loadDocsSite(scratch.root, config, nullptr);
+  const auto site = scratch.root / "site";
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, &report);
+  require(report.warnings.empty(), "no truncation warning for a small fixture");
+  require(fs::is_regular_file(site / "search-index.json"), "search: true writes the index");
+
+  const auto json = slurp(site / "search-index.json");
+  require(json.starts_with("{\"version\":1,\"pages\":[") && json.ends_with("]}"),
+          "the index has the documented envelope");
+  require(contains(json, "\"title\":\"Home\",\"url\":\"index.html\",\"sections\":["),
+          "each page entry carries its title, url, and a sections array");
+  require(contains(json, "{\"heading\":\"\",\"anchor\":\"\",\"excerpt\":\"A lead paragraph before any heading, mentioning zephyrxyz uniquely here.\"}"),
+          "text before the first heading becomes a lead section with no heading or anchor");
+  require(contains(json, "{\"heading\":\"Home\",\"anchor\":\"home\",\"excerpt\":\"Intro text for the first section.\"}"),
+          "the page's own h1 starts an ordinary section, keyed by its own slug");
+  require(contains(json, "{\"heading\":\"Alpha\",\"anchor\":\"alpha\",\"excerpt\":\"Alpha section body.\"}"),
+          "a heading section's excerpt is the text after that heading, not repeating the heading's own text");
+  require(contains(json, "\"title\":\"Hidden page\",\"url\":\"hidden.html\""),
+          "a page excluded from navigation (nav_exclude) still gets a search entry -- it is still part of the site");
+
+  const auto beta_at = json.find("\"heading\":\"Beta\"");
+  require(beta_at != std::string::npos, "the Beta section is present");
+  const auto excerpt_at = json.find("\"excerpt\":\"", beta_at);
+  require(excerpt_at != std::string::npos, "Beta has an excerpt");
+  const auto excerpt_start = excerpt_at + 11;
+  const auto excerpt_end = json.find("\"}", excerpt_start);
+  const auto excerpt = json.substr(excerpt_start, excerpt_end - excerpt_start);
+  require(excerpt.size() == ckgit::kMaximumDocsSearchExcerptChars, "an excerpt longer than the bound is cut to exactly that many bytes");
+  require(long_paragraph.rfind(excerpt, 0) == 0, "the cut excerpt is a verbatim prefix of the source text, not paraphrased or reordered");
+
+  // Disabled by default: no index, and no search markup on the page. A
+  // separate model, loaded without search: true -- model.config.search is
+  // fixed at load time, so building the *same* model twice would write the
+  // index into both output directories regardless of where it is built.
+  ckgit::DocsConfig plain_config;
+  plain_config.title = "Fixture";
+  const auto plain_model = ckgit::loadDocsSite(scratch.root, plain_config, nullptr);
+  ckgit::DocsBuildReport plain_report;
+  const auto plain_site = scratch.root / "plain";
+  ckgit::buildDocsSite(plain_model, plain_site, ckgit::DocsBuildOptions{}, &plain_report);
+  require(!fs::exists(plain_site / "search-index.json"), "search-index.json is only written when search: true");
+  const auto plain_home = slurp(plain_site / "index.html");
+  require(!contains(plain_home, "ckdocs-search") && !contains(plain_home, "kDocsSearchScript") && !contains(plain_home, "<script>"),
+          "no search input and no script are emitted when search is off");
+
+  // Enabled: the input, its noscript fallback, and the script are present;
+  // the input's data-index is relative to the page the same way any other
+  // page-to-root reference is.
+  const auto home = slurp(site / "index.html");
+  require(contains(home, "<input type=\"search\" id=\"ckdocs-search\"") && contains(home, " hidden data-index=\"search-index.json\">"),
+          "the root page's search input points at the index directly");
+  require(contains(home, "<noscript><a href=\"site-index.html\">Site index</a></noscript>"),
+          "the no-script fallback links to the site index");
+  require(contains(home, "<script>") && contains(home, "getElementById('ckdocs-search')"),
+          "the inline search script is embedded in the page");
+  const auto hidden_page = slurp(site / "hidden.html");
+  require(contains(hidden_page, "data-index=\"search-index.json\""),
+          "a root-level page's data-index points at the index directly, like any other page-relative reference");
+  const auto nested_page = slurp(site / "notes/extra.html");
+  require(contains(nested_page, "data-index=\"../search-index.json\""),
+          "a nested page's data-index climbs back to the site root, like any other page-relative reference");
+}
+
 }  // namespace
 
 void testDocsSite() {
@@ -578,5 +661,6 @@ void testDocsSite() {
   testDiscovery();
   testEdges();
   testBuild();
+  testSearch();
   testThisRepository();
 }

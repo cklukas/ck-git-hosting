@@ -890,6 +890,18 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
            escapeHtml(item.title) + "</a>";
   }
   out += "</nav>";
+  if (model.config.search) {
+    // The input starts hidden; kDocsSearchScript is the only thing that
+    // reveals it, so a visitor without scripting sees only the <noscript>
+    // link below, never a non-functional box.
+    out += "<form class=\"search\" role=\"search\" onsubmit=\"return false\">"
+           "<input type=\"search\" id=\"ckdocs-search\" name=\"q\" placeholder=\"Search\" "
+           "aria-label=\"Search this site\" autocomplete=\"off\" spellcheck=\"false\" hidden data-index=\"" +
+           url(std::string(kDocsSearchIndexPage)) + "\">"
+           "<div id=\"ckdocs-search-results\" class=\"search-results\" hidden></div>"
+           "<noscript><a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a></noscript>"
+           "</form><script>" + std::string(kDocsSearchScript) + "</script>";
+  }
   if (!model.config.links.empty()) {
     out += "<nav class=\"links\" aria-label=\"Links\">";
     for (const auto& link : model.config.links) {
@@ -992,6 +1004,172 @@ void scanArticle(std::string_view html, std::set<std::string>& ids, std::vector<
   }
 }
 
+// ---- opt-in search (site.search) -------------------------------------------
+
+std::string jsonEscape(std::string_view value) {
+  std::string escaped;
+  escaped.reserve(value.size() + 8);
+  for (const unsigned char character : value) {
+    switch (character) {
+      case '"': escaped += "\\\""; break;
+      case '\\': escaped += "\\\\"; break;
+      case '\b': escaped += "\\b"; break;
+      case '\f': escaped += "\\f"; break;
+      case '\n': escaped += "\\n"; break;
+      case '\r': escaped += "\\r"; break;
+      case '\t': escaped += "\\t"; break;
+      default:
+        if (character < 0x20) {
+          constexpr char kHex[] = "0123456789abcdef";
+          escaped += "\\u00";
+          escaped += kHex[character >> 4];
+          escaped += kHex[character & 0x0f];
+        } else {
+          escaped += static_cast<char>(character);
+        }
+    }
+  }
+  return escaped;
+}
+
+// Every `<hN id="...">` tag in a rendered article whose id is one of the
+// page's own top-level headings (`outline`, from renderMarkdown) -- a
+// heading nested inside a quote or a list item still gets an id in the
+// markup but starts no search section of its own; its words simply count
+// toward whichever enclosing section contains it.
+struct HeadingMark {
+  std::size_t begin = 0;       // the opening tag's own start, "<hN ..."
+  std::size_t content_end = 0;  // just past the matching closing "</hN>", so a
+                                // section's own excerpt never repeats its heading's text
+  std::string id;
+};
+
+std::vector<HeadingMark> findSectionHeadings(std::string_view html, const std::vector<MarkdownHeading>& outline) {
+  std::set<std::string> known;
+  for (const auto& heading : outline) known.insert(heading.id);
+  std::vector<HeadingMark> marks;
+  for (std::size_t at = html.find("<h"); at != std::string_view::npos; at = html.find("<h", at)) {
+    if (at + 2 >= html.size() || html[at + 2] < '1' || html[at + 2] > '6' || html.substr(at + 3, 5) != " id=\"") {
+      at += 2;
+      continue;
+    }
+    const char level = html[at + 2];
+    const auto id_start = at + 8;
+    const auto id_end = html.find('"', id_start);
+    if (id_end == std::string_view::npos) break;
+    const auto tag_end = html.find('>', id_end);
+    if (tag_end == std::string_view::npos) break;
+    const std::string closing = std::string("</h") + level + ">";
+    auto content_end = html.find(closing, tag_end + 1);
+    content_end = content_end == std::string_view::npos ? tag_end + 1 : content_end + closing.size();
+    auto id = unescapeHtml(html.substr(id_start, id_end - id_start));
+    if (known.count(id) != 0) marks.push_back({at, content_end, std::move(id)});
+    at = content_end;
+  }
+  return marks;
+}
+
+// Strips tags (each becomes a space, so "a</p><p>b" reads "a b" rather than
+// "ab"), decodes entities, collapses whitespace runs to single spaces, trims,
+// and caps at kMaximumDocsSearchExcerptChars bytes without splitting a UTF-8
+// sequence (a byte-based bound, not a strict codepoint count).
+std::string plainTextExcerpt(std::string_view html) {
+  std::string raw;
+  raw.reserve(html.size());
+  bool in_tag = false;
+  for (const char byte : html) {
+    if (byte == '<') { in_tag = true; continue; }
+    if (byte == '>') { in_tag = false; raw += ' '; continue; }
+    if (!in_tag) raw += byte;
+  }
+  const std::string text = unescapeHtml(raw);
+  std::string collapsed;
+  collapsed.reserve(text.size());
+  bool space = true;  // trims leading whitespace too
+  for (const unsigned char byte : text) {
+    if (byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r') {
+      if (!space) collapsed += ' ';
+      space = true;
+    } else {
+      collapsed += static_cast<char>(byte);
+      space = false;
+    }
+  }
+  while (!collapsed.empty() && collapsed.back() == ' ') collapsed.pop_back();
+  if (collapsed.size() > kMaximumDocsSearchExcerptChars) {
+    collapsed.resize(kMaximumDocsSearchExcerptChars);
+    while (!collapsed.empty() && (static_cast<unsigned char>(collapsed.back()) & 0xc0) == 0x80) collapsed.pop_back();
+  }
+  return collapsed;
+}
+
+struct SearchSection {
+  std::string heading;  // empty for the lead section (before the first heading)
+  std::string anchor;   // empty for the lead section
+  std::string excerpt;
+};
+
+// One page's sections: a lead section (the article's content before its
+// first top-level heading, omitted when it has no excerpt at all) plus one
+// section per top-level heading, in document order.
+std::vector<SearchSection> pageSearchSections(std::string_view article, const std::vector<MarkdownHeading>& outline) {
+  const auto marks = findSectionHeadings(article, outline);
+  std::vector<SearchSection> sections;
+  const auto headingText = [&](const std::string& id) -> std::string {
+    for (const auto& heading : outline) {
+      if (heading.id == id) return heading.text;
+    }
+    return {};
+  };
+  const std::size_t lead_end = marks.empty() ? article.size() : marks.front().begin;
+  if (auto excerpt = plainTextExcerpt(article.substr(0, lead_end)); !excerpt.empty()) {
+    sections.push_back({"", "", std::move(excerpt)});
+  }
+  for (std::size_t index = 0; index < marks.size(); ++index) {
+    const auto section_end = index + 1 < marks.size() ? marks[index + 1].begin : article.size();
+    sections.push_back({headingText(marks[index].id), marks[index].id,
+                        plainTextExcerpt(article.substr(marks[index].content_end, section_end - marks[index].content_end))});
+  }
+  return sections;
+}
+
+// One page's title/url/sections, serialized as one JSON object.
+std::string searchPageEntryJson(const std::string& title, const std::string& url,
+                                const std::vector<SearchSection>& sections) {
+  std::string entry = "{\"title\":\"" + jsonEscape(title) + "\",\"url\":\"" + jsonEscape(url) + "\",\"sections\":[";
+  for (std::size_t index = 0; index < sections.size(); ++index) {
+    if (index) entry += ',';
+    entry += "{\"heading\":\"" + jsonEscape(sections[index].heading) + "\",\"anchor\":\"" +
+             jsonEscape(sections[index].anchor) + "\",\"excerpt\":\"" + jsonEscape(sections[index].excerpt) + "\"}";
+  }
+  entry += "]}";
+  return entry;
+}
+
+// Joins pre-serialized per-page JSON objects into the final index,
+// {"version":1,"pages":[...]}, dropping whole entries from the end (never a
+// partial one) until the whole file fits kMaximumDocsSearchIndexBytes.
+// *kept is the number of entries actually kept.
+std::string buildSearchIndexJson(const std::vector<std::string>& page_entries, std::size_t* kept) {
+  const auto render = [&](std::size_t count) {
+    std::string json = "{\"version\":1,\"pages\":[";
+    for (std::size_t index = 0; index < count; ++index) {
+      if (index) json += ',';
+      json += page_entries[index];
+    }
+    json += "]}";
+    return json;
+  };
+  std::size_t count = page_entries.size();
+  std::string json = render(count);
+  while (json.size() > kMaximumDocsSearchIndexBytes && count > 0) {
+    --count;
+    json = render(count);
+  }
+  *kept = count;
+  return json;
+}
+
 // Removes the temporary directory unless the build succeeded.
 struct TemporaryDirectory {
   fs::path path;
@@ -1076,9 +1254,12 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     }
   };
 
-  // Render and write every page; remember ids and links for the anchor check.
+  // Render and write every page; remember ids and links for the anchor check,
+  // and, when search is on, each page's own sections for the index below.
   std::vector<std::set<std::string>> ids(model.pages.size());
   std::vector<std::vector<std::pair<std::string, std::string>>> links(model.pages.size());
+  std::vector<std::string> search_entries;
+  if (model.config.search) search_entries.reserve(model.pages.size());
   for (std::size_t index = 0; index < model.pages.size(); ++index) {
     const DocsPage& page = model.pages[index];
     const auto content = readFile(model.root / page.source, kMaximumMarkdownInputBytes);
@@ -1123,6 +1304,9 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
       siteError("'" + page.source + "' exceeds a rendering bound: " + bound.what());
     }
     scanArticle(article, ids[index], links[index]);
+    if (model.config.search) {
+      search_entries.push_back(searchPageEntryJson(page.title, page.output, pageSearchSections(article, context.outlines[index])));
+    }
     ShellInput input;
     input.title = page.title;
     input.description = page.description.empty() && page.home ? model.config.description : page.description;
@@ -1132,6 +1316,17 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     input.page = index;
     writeFile(page.output, renderShell(context, input));
     ++result.pages_written;
+  }
+
+  if (model.config.search) {
+    std::size_t kept = 0;
+    const std::string json = buildSearchIndexJson(search_entries, &kept);
+    if (kept < search_entries.size()) {
+      result.warnings.push_back("search-index.json would exceed its 2 MiB bound with all " +
+                                std::to_string(search_entries.size()) + " page(s); kept the first " +
+                                std::to_string(kept) + " and dropped the rest");
+    }
+    writeFile(std::string(kDocsSearchIndexPage), json);
   }
 
   // Fragments must name a heading on their target page.

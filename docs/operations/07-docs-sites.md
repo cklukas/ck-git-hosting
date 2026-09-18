@@ -5,9 +5,11 @@ self-contained static documentation site — a logo and site title, top-level
 tabs, a sidebar with the current tab's pages and the current page's own
 sections, breadcrumbs, previous/next, and a footer. It is a separate,
 dependency-free binary (see [Packages, continuous integration, and
-releases](02-packages-and-releases.md)): no JavaScript, no network access,
-and no assumptions about what else is installed. This repository publishes
-its own documentation with it; every example below is this repository.
+releases](02-packages-and-releases.md)): no JavaScript by default, no
+network access, and no assumptions about what else is installed. The one
+opt-in exception is [search](#search): a single small, first-party script,
+never arbitrary or user-supplied. This repository publishes its own
+documentation with it; every example below is this repository.
 
 ## Your first site in three commands
 
@@ -152,7 +154,7 @@ elsewhere.
 | `home` | path to a Markdown page | see [above](#how-pages-are-found-named-and-ordered) | Overrides which page becomes the site's `index.html`. |
 | `exclude` | list of patterns | none | Each entry is a path (a whole subtree) or a prefix ending in one `*`; matched against both the repository-relative and the source-relative form of every candidate, so `docs/drafts` and, with `source: docs`, plain `drafts` both work. Up to 64 entries. |
 | `nav` | list of entries (below) | derived, see above | Names the tabs and groups explicitly. Nesting is bounded to 4 levels; every path named must be a page the site would otherwise build. |
-| `search` | `true`/`false` | `false` | Reserved for opt-in search (a later addition); accepted and validated today but has no effect yet. |
+| `search` | `true`/`false` | `false` | Adds client-side search — see [Search](#search). |
 
 A `nav:` entry is one of:
 
@@ -196,9 +198,10 @@ text — an inline comment is simply removed, but a `<div>` never becomes a
 live element), footnotes, definition lists, emoji shortcodes, and math.
 Supporting raw HTML in a tool meant to be pointed at arbitrary Markdown
 would mean either sandboxing a site's own markup — defeating the point of a
-generator that ships no script of its own — or trusting it outright, which
-this product does not do anywhere else either. A small, entirely
-predictable renderer is the design point, not an oversight.
+generator whose only script is its own fixed, opt-in one, never anything a
+page's author supplies — or trusting page content outright, which this
+product does not do anywhere else either. A small, entirely predictable
+renderer is the design point, not an oversight.
 
 ## Links and assets
 
@@ -233,6 +236,28 @@ an aborted build — and exits `3`. `--strict` (and `check`, which always
 implies it) turns the same reports into a build failure, exit `1`, printing
 each one naming the page and the target, so an editor's "next error"
 shortcut goes straight to it.
+
+## Search
+
+Without `search: true`, the [generated site index](#how-pages-are-found-named-and-ordered)
+is the answer to "how do I find something" — every page and heading, one
+plain list, no script needed. `search: true` adds a proper search box to
+the header, backed by a generated `search-index.json` (each page's title,
+URL, and one entry per top-level heading with a plain-text excerpt of that
+section, up to 200 bytes) and a small inline script — under 2 KiB, part of
+the site itself, never fetched from anywhere else — that fetches the index
+on first use, filters it client-side as you type, and lists matching
+sections linking straight to their heading. It runs only on the page it
+ships with, the Pages origin, never the dashboard.
+
+The box starts hidden and only that script reveals it, so a visitor with
+scripting disabled never sees a non-functional input — they get the
+`<noscript>` fallback instead, a plain link back to the site index, exactly
+the no-script answer that already exists. The index itself is capped at
+2 MiB; a site large enough to exceed that keeps as many complete pages as
+fit and drops the rest from the end, reported as a build warning rather
+than failing the build — in practice, thousands of pages would be needed
+to get there.
 
 ## Publishing on ck-git Pages and GitHub Pages
 
