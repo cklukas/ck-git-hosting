@@ -25,6 +25,9 @@ The format is a small, strict, hand-rolled subset of YAML — not a full YAML
 parser, and not GitHub Actions: there is no `uses:`, no marketplace, no
 `${{ }}` expression language, and no implicit type coercion. Anything the
 parser does not explicitly understand is rejected, not guessed at.
+`ckdocs.yml`, the documentation-site generator's own configuration (see
+[Documentation sites from Markdown](07-docs-sites.md)), is written in this
+exact same subset — one syntax, two schemas.
 
 **Accepted:**
 
@@ -455,19 +458,21 @@ on: { branches: [main], tags: [v*] }
 jobs:
   - name: docs
     steps:
-      - run: [make, site]
+      - run: [ckdocs, build, --root, ., --out, public, --strict]
     artifacts:
       name: packages
       paths: [dist]
 pages:
-  path: site/public
+  path: public
 ```
 
-Every push to `main` builds and, on success, publishes `site/public` as the
-project's Pages site. A tag push instead produces a durable release from the
-same `packages` artifact, and does **not** touch Pages at all — the two
-outcomes are mutually exclusive per run, driven entirely by whether the
-triggering ref was a tag.
+Every push to `main` builds and, on success, publishes `public` as the
+project's Pages site — `--strict` fails the build, before publishing ever
+sees it, on a broken link or heading fragment (see [Documentation sites
+from Markdown](07-docs-sites.md)). A tag push instead produces a durable
+release from the same `packages` artifact, and does **not** touch Pages at
+all — the two outcomes are mutually exclusive per run, driven entirely by
+whether the triggering ref was a tag.
 
 **This project's own workflow, annotated** — the real, in-repository
 `.ckgit/ci.yml` this project builds, tests, and releases itself with:
@@ -487,6 +492,10 @@ jobs:
       - name: check
         script: |
           # make ... check -- the unit binary plus every tests/integration/*.sh
+      - name: docs
+        script: |
+          # ckdocs, just built by the build step, into ./public --strict
+          # (see Documentation sites from Markdown)
       - name: package
         script: |
           # refuses a tag that does not match VERSION, builds .debs and a
@@ -496,12 +505,16 @@ jobs:
       # release record
       name: packages
       paths: [dist]
+pages:
+  path: public
 ```
 
 Read the full file in the repository root for the exact shell; the shape
-above is what matters for a reference — one job, three steps that share
-state through `$TMPDIR` (set by the runner, not the workflow), and one
-artifact whose name was deliberately chosen to avoid the reserved `release`.
+above is what matters for a reference — one job, four steps that share
+state through `$TMPDIR` (set by the runner, not the workflow), one artifact
+whose name was deliberately chosen to avoid the reserved `release`, and a
+top-level `pages:` block that publishes the `docs` step's own output on
+every successful push to this repository's default branch.
 
 ## 12. Troubleshooting
 

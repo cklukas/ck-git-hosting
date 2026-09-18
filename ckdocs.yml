@@ -27,5 +27,6 @@ nav:
           - docs/operations/04-ci-cd.md
           - docs/operations/05-releases-and-deploy.md
           - docs/operations/06-ci-yml-reference.md
+      - docs/operations/07-docs-sites.md
   - title: Protocol
     page: docs/protocol/01-ssh-and-control-v1.md

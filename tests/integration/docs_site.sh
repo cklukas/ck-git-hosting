@@ -42,9 +42,12 @@ for tab in Home Operations Protocol; do
   grep -q ">$tab</a>" "$site/index.html" || { echo "index.html is missing the $tab tab" >&2; exit 1; }
 done
 
-if grep -rl 'href="/[^/]\|src="/[^/]' "$site" >/dev/null 2>&1; then
+# Restricted to *.html: the site legitimately carries copied non-HTML
+# assets (this guide links to this very script, which is why it is one),
+# and this check must not flag literal shell text in a copied source file.
+if find "$site" -name '*.html' -exec grep -l 'href="/[^/]\|src="/[^/]' {} + >/dev/null 2>&1; then
   echo "an absolute href or src leaked into the built site:" >&2
-  grep -rn 'href="/[^/]\|src="/[^/]' "$site" >&2
+  find "$site" -name '*.html' -exec grep -n 'href="/[^/]\|src="/[^/]' {} + >&2
   exit 1
 fi
 

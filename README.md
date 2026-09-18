@@ -138,6 +138,9 @@ ck-git-shell --client-id ID --repo-root ROOT --control-socket PATH [--state-root
 ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini [--once]
 ck-pagesd serve --config /etc/ck-git-hosting/server.ini
 ck-pagesd check --config /etc/ck-git-hosting/server.ini
+
+ckdocs build [--root DIR] [--source DIR] [--config FILE] [--out DIR] [--clean] [--strict] [--quiet]
+ckdocs check [--root DIR] [--source DIR] [--config FILE] [--quiet]
 ```
 
 `--config` defaults to `~/.config/ck-git-hosting/client.ini` (or the

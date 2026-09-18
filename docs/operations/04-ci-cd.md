@@ -422,6 +422,13 @@ detail) rather than reporting success while the live site silently stays on the
 previous version. Keep generated caches (a Sphinx `.doctrees` directory, say)
 out of the published directory so they do not count against the size limit.
 
+Any tool that writes a plain directory of files works here. For a
+Markdown-only project, `ckdocs` — this project's own dependency-free
+documentation-site generator, which is what publishes this very site — needs
+nothing beyond that directory and a `--strict` flag; see [Documentation sites
+from Markdown](07-docs-sites.md) for the full guide and this repository's own
+`.ckgit/ci.yml` for a complete worked step.
+
 ### Serving it on the intranet
 
 Sites are served by a **separate process, `ck-pagesd`, on its own port** — a

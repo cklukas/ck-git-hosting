@@ -43,6 +43,11 @@ code{background:var(--tint);padding:.1rem .3rem;border-radius:.25rem}pre code{ba
 blockquote{border-left:3px solid var(--line);margin:1rem 0;padding-left:1rem;color:var(--muted)}
 img{max-width:100%;height:auto}
 .table-wrap,article table{display:block;overflow:auto;max-width:100%}article table{border-collapse:collapse}th,td{text-align:left;padding:.5rem .7rem;border:1px solid var(--line);vertical-align:top}th{background:var(--tint)}
+/* article's own overflow-wrap:anywhere (below) exists for long unbroken
+   strings such as URLs and paths; inside a table cell it instead fractures
+   ordinary short code words like "version" once a narrow column squeezes
+   them, so cells opt back out -- the table already scrolls horizontally. */
+article th,article td{overflow-wrap:normal;word-break:normal}
 hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
 .alert{--alert:var(--accent);margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--alert);border-radius:.25rem;background:var(--tint)}.alert>:last-child{margin-bottom:0}.alert-title{margin:0 0 .35rem;font-weight:600;color:var(--alert)}
 .alert-note{--alert:#0969da}.alert-tip{--alert:#1a7f37}.alert-important{--alert:#8250df}.alert-warning{--alert:#9a6700}.alert-caution{--alert:#cf222e}

@@ -370,7 +370,7 @@ void testThisRepository() {
     require(model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" && model.nav[2].title == "Protocol",
             "derived tabs Home, Operations, Protocol");
     const auto& operations = model.nav[1].children;
-    require(operations.size() == 6, "six operations pages, derived flat");
+    require(operations.size() == 7, "seven operations pages, derived flat");
     for (std::size_t index = 0; index < operations.size(); ++index) {
       require(operations[index].page.has_value() && model.pages[*operations[index].page].source.starts_with("docs/operations/0" + std::to_string(index + 1) + "-"),
               "operations pages follow their numeric prefixes");
@@ -391,12 +391,13 @@ void testThisRepository() {
                 model.pages[*model.nav[2].page].source == "docs/protocol/01-ssh-and-control-v1.md",
             "the configured site: title, home, tabs, and Protocol as a one-page tab");
     const auto& operations = model.nav[1].children;
-    require(operations.size() == 4 && operations[0].page.has_value() &&
+    require(operations.size() == 5 && operations[0].page.has_value() &&
                 model.pages[*operations[0].page].source == "docs/operations/01-installation.md" &&
                 operations[3].title == "Continuous delivery" && operations[3].children.size() == 3 &&
                 model.pages[*operations[3].children[0].page].source == "docs/operations/04-ci-cd.md" &&
-                model.pages[*operations[3].children[2].page].source == "docs/operations/06-ci-yml-reference.md",
-            "Operations: three flat pages, then a Continuous delivery group with 04-06");
+                model.pages[*operations[3].children[2].page].source == "docs/operations/06-ci-yml-reference.md" &&
+                operations[4].page.has_value() && model.pages[*operations[4].page].source == "docs/operations/07-docs-sites.md",
+            "Operations: three flat pages, a Continuous delivery group with 04-06, then the docs-sites guide");
     require(config.links.size() == 1 && config.links[0].title == "GitHub" && !config.footer.empty(),
             "the configured header link and footer");
   }
