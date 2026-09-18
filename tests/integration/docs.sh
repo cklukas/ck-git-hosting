@@ -18,7 +18,15 @@ tracked=$(mktemp "${TMPDIR:-/tmp}/ckdocs-tracked.XXXXXX")
 links=$(mktemp "${TMPDIR:-/tmp}/ckdocs-links.XXXXXX")
 cleanup() { rm -f "$tracked" "$links"; }
 trap cleanup EXIT HUP INT TERM
-git ls-files >"$tracked"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git ls-files >"$tracked"
+else
+  # This project's own self-hosted CI runs each step against a checkout
+  # materialised by `git archive` (see checkoutCommit in ci_runner.cpp), with
+  # no .git directory at all: every file already on disk was tracked at the
+  # built commit, or archive would never have written it here.
+  find . -type f | sed 's#^\./##' >"$tracked"
+fi
 
 fail=0
 
