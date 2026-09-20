@@ -164,12 +164,23 @@ jobs:
         run: |
           version=${{ needs.verify-version.outputs.version }}
           {
-            echo "ck-git-hosting $version"
+            echo "# ck-git-hosting $version"
             echo
-            echo "Debian 13 (including Raspberry Pi arm64): install the .deb files with apt."
-            echo "Other systemd Linux distributions: unpack the linux tarball and run packaging/install.sh."
-            echo "macOS client: brew install ckgit from this repository's tap, or unpack the macos tarball."
-            echo "See docs/operations for installation, pairing, and release details."
+            echo "This release contains the Git hosting server, ckgit client, and ckdocs site generator."
+            echo
+            echo "## Included packages"
+            echo
+            echo "- Debian 13 packages for amd64 and arm64 (including Raspberry Pi): \`ck-git-hosting_*.deb\`, \`ckgit_*.deb\`, and \`ckdocs_*.deb\`."
+            echo "- Linux tarballs for amd64 and arm64: \`ck-git-hosting-$version-linux-*.tar.gz\`."
+            echo "- macOS client tarballs for Apple Silicon and Intel: \`ckgit-$version-macos-*.tar.gz\`."
+            echo "- Source archive: \`ck-git-hosting-$version-source.tar.gz\`."
+            echo "- \`SHA256SUMS\` with checksums for every published artifact."
+            echo
+            echo "## Install"
+            echo
+            echo "Install Debian packages with apt. On other systemd Linux distributions, unpack the matching Linux tarball and run \`packaging/install.sh\`. On macOS, install from this repository's Homebrew tap or unpack the matching client tarball."
+            echo
+            echo "See \`docs/operations\` for installation, pairing, and release details."
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/artifacts/* \
             --title "ck-git-hosting $version" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
