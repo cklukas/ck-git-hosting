@@ -41,10 +41,10 @@ jobs:
           make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" client
           "$RUNNER_TEMP/build/bin/ckdocs" build --root "$PWD" --out "$RUNNER_TEMP/site" --strict
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: ${{ runner.temp }}/site
 
@@ -58,4 +58,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
