@@ -61,10 +61,16 @@ jobs:
       - name: Install build and test dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates
+          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates openssh-client
       - name: Build and test
         run: |
-          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
+          # The suite exercises real permission failures; root ignores
+          # permission bits, so run it as an ordinary user as CI does.
+          # Keep the checkout root-owned for the packaging steps that follow.
+          useradd -m ci
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          chmod 1777 "$RUNNER_TEMP"
+          su ci -c "make BUILD_ROOT=\"$RUNNER_TEMP\" BUILD_DIR=\"$RUNNER_TEMP/build\" all check"
       - name: Package
         run: |
           version=${{ needs.verify-version.outputs.version }}
