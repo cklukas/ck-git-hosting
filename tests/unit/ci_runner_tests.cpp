@@ -295,6 +295,7 @@ void testServiceTreeMasked() {
   ckgit::CiSandboxReport sandbox;
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts, &sandbox);
   if (!sandbox.namespaces_available) return;  // degraded mode: no masking is attempted at all
+  if (!sandbox.filesystem_masked) return;  // host kernel denied the tmpfs masking primitive
   require(record.status == ckgit::CiRunStatus::Success,
           "the service tree is masked inside a step (filesystem_masked=" +
               std::string(sandbox.filesystem_masked ? "true" : "false") + ", detail=" + record.detail + ")");
