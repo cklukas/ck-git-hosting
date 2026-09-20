@@ -146,7 +146,8 @@ void testSuccess() {
       "        run: echo hello-from-ci\n"
       "      - run: [true]\n");
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id));
-  require(record.status == ckgit::CiRunStatus::Success, "a passing workflow succeeds");
+  require(record.status == ckgit::CiRunStatus::Success,
+          "a passing workflow succeeds (detail=" + record.detail + ")");
   require(record.steps.size() == 2, "both steps recorded");
   require(record.steps[0].name == "greet" && record.steps[0].exit_code == 0, "first step ok");
   require(readFile(fixture.stepLog(record, 0)).find("hello-from-ci") != std::string::npos,
