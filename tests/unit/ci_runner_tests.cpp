@@ -277,7 +277,7 @@ void testServiceTreeMasked() {
                              "test ! -e \"" +
                              other_cache_marker.string() +
                              "\"\n"
-                             "test -d /mnt/src\n"
+                             "test -f .ckgit/ci.yml\n"
                              "echo mask-ok\n";
   const std::string id = fixture.commit(
       "version: 1\n"

@@ -397,11 +397,38 @@ bool probeFilesystemMask() {
   std::filesystem::remove_all(probe_dir, error);
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
+
+// A user/mount namespace alone is not enough to promise the canonical /mnt
+// workspace: some hardened Linux hosts (including GitHub-hosted runners) let
+// an unprivileged user create the namespace and mount tmpfs, but reject a bind
+// of the runner-owned checkout.  Probe the exact operation after the scratch
+// exists, so a step can fall back to that physical scratch rather than dying
+// at chdir(/mnt/src) with exit 126.  The namespace and service-tree masks stay
+// active in that fallback; only the cosmetic fixed workspace path is absent.
+bool probeSandboxWorkspace(const std::filesystem::path& source) {
+  const pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    if (::unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) _exit(1);
+    writeProcFile("/proc/self/setgroups", "deny");
+    writeProcFile("/proc/self/uid_map", "0 " + std::to_string(::getuid()) + " 1\n");
+    writeProcFile("/proc/self/gid_map", "0 " + std::to_string(::getgid()) + " 1\n");
+    if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) _exit(1);
+    if (::mount(source.c_str(), kSandboxRoot.c_str(), nullptr, MS_BIND | MS_REC, nullptr) != 0) _exit(1);
+    struct stat info {};
+    _exit(::stat((kSandboxRoot / "src").c_str(), &info) == 0 && S_ISDIR(info.st_mode) ? 0 : 1);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 #else
 bool enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return false; }
 bool probeUserNamespaces(bool) { return false; }
 bool probeLoopback() { return false; }
 bool probeFilesystemMask() { return false; }
+bool probeSandboxWorkspace(const std::filesystem::path&) { return false; }
 #endif
 
 void applyRlimits() {
@@ -968,7 +995,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // so cwd, HOME, TMPDIR and every sister look identical on every run; without
   // the sandbox the step uses the physical scratch directly. Holding this
   // constant is what keeps a build's rendered paths reproducible.
-  const bool sandbox_active = report.namespaces_available;
+  const bool sandbox_active = report.namespaces_available && probeSandboxWorkspace(scratch);
   const std::filesystem::path visible_root = sandbox_active ? kSandboxRoot : scratch;
   const std::filesystem::path bind_source = sandbox_active ? scratch : std::filesystem::path{};
   const std::filesystem::path work_visible = visible_root / "src";
