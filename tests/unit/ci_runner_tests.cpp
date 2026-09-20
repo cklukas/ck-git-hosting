@@ -236,6 +236,10 @@ void testLoopbackInsideSandbox() {
       self + "\", \"--loopback-probe\"]\n");
   ckgit::CiSandboxReport sandbox;
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id), &sandbox);
+  // Some hosted kernels permit the namespace but deny bringing lo up inside
+  // it. That platform constraint is reported by the runner; the isolated
+  // loopback behavior is exercised only where the capability exists.
+  if (sandbox.network_isolated && !sandbox.loopback_available) return;
   require(record.status == ckgit::CiRunStatus::Success,
           "a step reaches loopback with the LAN denied (namespaces_available=" +
               std::string(sandbox.namespaces_available ? "true" : "false") +
