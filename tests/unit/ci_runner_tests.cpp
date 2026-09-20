@@ -260,8 +260,9 @@ void testServiceTreeMasked() {
   // mkdir would collide with that check rather than testing masking.
   const std::filesystem::path state_marker = fixture.state / "marker";
   { std::ofstream(state_marker) << "secret"; }
-  std::filesystem::create_directories(fixture.build);
-  const std::filesystem::path build_marker = fixture.build / "marker";
+  const std::filesystem::path sibling_run = fixture.build / "another-run";
+  std::filesystem::create_directories(sibling_run);
+  const std::filesystem::path build_marker = sibling_run / "marker";
   { std::ofstream(build_marker) << "secret"; }
   const std::filesystem::path cache_root = fixture.root / "cache";
   const std::filesystem::path other_cache_marker = cache_root / "other-project" / "ccache" / "marker";

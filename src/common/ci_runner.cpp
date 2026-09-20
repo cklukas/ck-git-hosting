@@ -1009,11 +1009,34 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // rest.
   SandboxMounts sandbox_mounts;
   sandbox_mounts.cache_binds = cache_provision.mounts;
-  for (const std::filesystem::path* candidate :
-       {&options.state_root, &options.build_root, &options.cache_root, &options.pages_root}) {
+  for (const std::filesystem::path* candidate : {&options.state_root, &options.pages_root}) {
     if (!candidate->empty()) sandbox_mounts.hide.push_back(*candidate);
   }
   if (!options.repository.empty()) sandbox_mounts.hide.push_back(options.repository.parent_path());
+
+  // Do not mount over the whole build root: the active scratch lives beneath
+  // it and is already bound at /mnt for the step.  On GitHub-hosted Linux
+  // runners, covering that parent invalidates the descendant bind, leaving
+  // /mnt/src unreachable (and every otherwise-valid step exits 126).  Cover
+  // each sibling run instead.  They remain inaccessible while the current
+  // run's source, HOME, and TMPDIR stay available through the sanctioned bind.
+  const auto hideSiblings = [&](const std::filesystem::path& root,
+                                const std::filesystem::path& keep) {
+    if (root.empty()) return;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(root, error);
+    const std::filesystem::directory_iterator end;
+    while (!error && iterator != end) {
+      const std::filesystem::path child = iterator->path();
+      if (child != keep) sandbox_mounts.hide.push_back(child);
+      iterator.increment(error);
+    }
+  };
+  hideSiblings(options.build_root, scratch);
+  // A project can use only the caches it declares, but it must never access
+  // another project's cache tree.  Leave its own parent reachable so a
+  // declared cache bind is not obscured by the sibling masking.
+  hideSiblings(options.cache_root, options.cache_root / options.project_name);
 
   // Liveness and cancellation share one small surface. writeProgress republishes
   // the run.ini (Running plus the steps finished so far) with a fresh heartbeat,
