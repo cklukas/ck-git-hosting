@@ -29,7 +29,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, arch: arm64, compiler: g++ }
           - { runner: ubuntu-24.04-arm, arch: arm64, compiler: clang++ }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
@@ -48,7 +48,7 @@ jobs:
           - { runner: macos-15, arch: arm64 }
           - { runner: macos-15-intel, arch: x86_64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build and test
         run: |
           make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all check
@@ -64,7 +64,7 @@ jobs:
           - { runner: ubuntu-24.04, arch: amd64 }
           - { runner: ubuntu-24.04-arm, arch: arm64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install build and test dependencies
         run: |
           apt-get update
