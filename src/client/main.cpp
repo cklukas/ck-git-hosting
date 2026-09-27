@@ -28,10 +28,14 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
+#include <tuple>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
+#include "ckgit/ci_control.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_workflow.hpp"
 #include "ckgit/client_config.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/client_state.hpp"
@@ -42,6 +46,7 @@
 #include "ckgit/process.hpp"
 #include "ckgit/ref_status.hpp"
 #include "ckgit/server_identity.hpp"
+#include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/web_renderer.hpp"
 
@@ -50,6 +55,11 @@ namespace {
 constexpr int kUsage = 2;
 constexpr int kPartial = 3;
 constexpr int kBusy = 4;
+// `ckgit ci watch`: the watched run ended in any state other than success.
+constexpr int kRunUnsuccessful = 5;
+// Internal to bulk clone: a project managed meanwhile was skipped. Never an
+// exit status, so it lies outside the documented codes.
+constexpr int kCloneSkipped = -1;
 constexpr unsigned short kDefaultDashboardPort = 8420;
 // Control round trips are short SSH sessions; transfers are bounded only by a
 // generous wall-clock limit, because a first push of a large history can take
@@ -135,11 +145,19 @@ std::vector<std::string> pushCommand(const std::filesystem::path& repository, co
   return command;
 }
 
-// Runs one control operation over SSH and returns its bounded reply.
-ckgit::ProcessResult controlRpc(const ckgit::ClientConfig& config, const std::string& request) {
+// Runs one control operation over SSH and returns its bounded reply. The
+// request is checked against the same operation table the server applies, so
+// a malformed request fails here instead of as an opaque remote denial.
+ckgit::ProcessResult controlRpc(const ckgit::ClientConfig& config, std::string_view operation,
+                                const std::vector<std::string>& arguments = {}) {
+  if (!ckgit::isValidControlOperation(operation, arguments)) {
+    throw std::invalid_argument("invalid control request for " + std::string(operation));
+  }
+  std::string request = "ckgit-rpc 1 " + std::string(operation);
+  for (const auto& argument : arguments) request += " " + argument;
   return ckgit::runProcess(
       {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
-       "-o", "ClearAllForwardings=yes", config.server, "ckgit-rpc 1 " + request},
+       "-o", "ClearAllForwardings=yes", config.server, request},
       kControlTimeout, ckgit::kMaximumControlResponseBytes + 4096);
 }
 
@@ -826,10 +844,7 @@ std::vector<ckgit::RefTip> localRefTips(const ckgit::RepositoryAudit& audit) {
 
 std::vector<ckgit::RefTip> fetchServerRefs(const ckgit::ClientConfig& config,
                                            const std::string& project) {
-  const ckgit::ProcessResult result = ckgit::runProcess(
-      {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
-       "-o", "ClearAllForwardings=yes", config.server, "ckgit-rpc 1 refs " + project},
-      kControlTimeout, ckgit::kMaximumControlResponseBytes + 4096);
+  const ckgit::ProcessResult result = controlRpc(config, "refs", {project});
   if (result.exit_code != 0 || result.timed_out || result.output_truncated) {
     throw std::runtime_error("could not query paired server refs (" +
                              describeProcessFailure(result, kControlTimeout) + ")");
@@ -839,10 +854,7 @@ std::vector<ckgit::RefTip> fetchServerRefs(const ckgit::ClientConfig& config,
 
 std::vector<ckgit::CiReleaseRecord> fetchReleases(const ckgit::ClientConfig& config,
                                                   const std::string& project) {
-  const ckgit::ProcessResult result = ckgit::runProcess(
-      {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
-       "-o", "ClearAllForwardings=yes", config.server, "ckgit-rpc 1 releases " + project},
-      kControlTimeout, ckgit::kMaximumControlResponseBytes + 4096);
+  const ckgit::ProcessResult result = controlRpc(config, "releases", {project});
   if (result.exit_code != 0 || result.timed_out || result.output_truncated) {
     throw std::runtime_error("could not query paired server releases (" +
                              describeProcessFailure(result, kControlTimeout) + ")");
@@ -1021,7 +1033,7 @@ int cloneCommand(const std::vector<std::string>& arguments, bool only_unmanaged 
   const auto existing_remote = registered.find(positional.front());
   if (only_unmanaged && (existing_local != local.end() || existing_remote != registered.end())) {
     std::cout << "Skipped " << positional.front() << ": already managed on this device.\n";
-    return 5;  // Internal bulk-clone skip, never exposed as an exit status.
+    return kCloneSkipped;
   }
   const std::string remote_url = ckgit::hostedRepositoryUrl(config.server, positional.front());
   std::vector<std::string> clone_command{"git", "clone", "--origin", config.remote_name, "--no-recurse-submodules"};
@@ -1098,11 +1110,7 @@ int createCommand(const std::vector<std::string>& arguments) {
     return kUsage;
   }
   const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
-  const auto result = ckgit::runProcess(
-      {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
-       "-o", "ClearAllForwardings=yes", config.server,
-       "ckgit-rpc 1 create " + *project_name + " " + branch},
-      kControlTimeout);
+  const auto result = controlRpc(config, "create", {*project_name, branch});
   if (result.exit_code != 0 || result.timed_out || result.output_truncated || result.output != "ok created\n") {
     std::cerr << "ckgit: remote project creation failed (" << describeProcessFailure(result, kControlTimeout)
               << ")\n";
@@ -1187,11 +1195,7 @@ int publishRepository(const ckgit::ClientConfig& config, const ckgit::Repository
     return 1;
   }
   if (!remote_exists) {
-    const auto create_result = ckgit::runProcess(
-        {"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "RequestTTY=no",
-         "-o", "ClearAllForwardings=yes", config.server,
-         "ckgit-rpc 1 create " + project + " " + default_branch},
-        kControlTimeout);
+    const auto create_result = controlRpc(config, "create", {project, default_branch});
     if (create_result.exit_code != 0 || create_result.timed_out || create_result.output_truncated ||
         create_result.output != "ok created\n") {
       std::cerr << "ckgit: " << audit.path.string() << ": remote project creation failed ("
@@ -1503,8 +1507,8 @@ bool registerRemoteCheckout(const ckgit::RepositoryAudit& audit, const ckgit::Cl
       return false;
     }
     const std::string encoded_path = ckgit::encodeCheckoutPath(reportedPathForRegistration(audit, config));
-    const auto result = controlRpc(config, std::string(replace ? "replace-checkout " : "register ") +
-                                               std::string(project) + " " + encoded_path);
+    const auto result = controlRpc(config, replace ? "replace-checkout" : "register",
+                                   {std::string(project), encoded_path});
     if (result.exit_code == 0 && !result.timed_out && !result.output_truncated &&
         result.output == "ok registered\n") {
       try {
@@ -2427,6 +2431,65 @@ std::string fetchHttpBody(const std::string& host, unsigned short port, const st
   return body;
 }
 
+// Fetches one dashboard download of exactly `bytes` bytes: from the hidden
+// --dashboard-url test seam when given, otherwise through a short-lived tunnel
+// over the administrator's ordinary SSH login, as `ckgit web` opens it.
+std::string fetchDashboardDownload(const ckgit::ClientConfig& config, const std::optional<std::string>& dashboard_url,
+                                   const std::string& target, std::uint64_t bytes) {
+  if (dashboard_url.has_value()) {
+    const auto url_target = parseDashboardUrl(*dashboard_url);
+    return fetchHttpBody(url_target.host, url_target.port, target, bytes);
+  }
+  std::string body;
+  withDashboardTunnel(config, [&](unsigned short port) { body = fetchHttpBody("127.0.0.1", port, target, bytes); });
+  return body;
+}
+
+// Checks a downloaded bundle against the sha256 its listing recorded, then
+// installs it as into_dir/file_name through a staged rename, so a failed or
+// tampered transfer never replaces anything. An empty expected digest (a
+// bundle recorded before checksums) installs with a warning. Returns the
+// installed path, or std::nullopt after reporting why nothing was written.
+std::optional<std::filesystem::path> installVerifiedDownload(const std::filesystem::path& into_dir,
+                                                             const std::string& file_name, const std::string& body,
+                                                             const std::string& expected_sha256,
+                                                             const std::string& label) {
+  const std::string digest = ckgit::sha256Hex(body);
+  if (!expected_sha256.empty() && digest != expected_sha256) {
+    std::cerr << "ckgit: downloaded " << label << " sha256 mismatch (expected " << expected_sha256 << ", got "
+              << digest << "); refusing to write it\n";
+    return std::nullopt;
+  }
+  if (expected_sha256.empty()) {
+    std::cerr << "ckgit: warning: " << label << " has no recorded sha256; downloaded content was not verified\n";
+  }
+  const std::filesystem::path destination = into_dir / file_name;
+  const std::filesystem::path staging = into_dir / ("." + file_name + ".partial");
+  {
+    std::ofstream out(staging, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      std::cerr << "ckgit: could not create " << staging.string() << "\n";
+      return std::nullopt;
+    }
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    if (!out) {
+      std::error_code ignore;
+      std::filesystem::remove(staging, ignore);
+      std::cerr << "ckgit: could not write " << staging.string() << "\n";
+      return std::nullopt;
+    }
+  }
+  std::error_code rename_error;
+  std::filesystem::rename(staging, destination, rename_error);
+  if (rename_error) {
+    std::error_code ignore;
+    std::filesystem::remove(staging, ignore);
+    std::cerr << "ckgit: could not install " << destination.string() << ": " << rename_error.message() << "\n";
+    return std::nullopt;
+  }
+  return destination;
+}
+
 // `ckgit release list PROJECT`: the releases control response as text or,
 // with --json, a versioned report like `projects --json`.
 int releaseListCommand(const std::vector<std::string>& arguments) {
@@ -2563,52 +2626,15 @@ int releaseDownloadCommand(const std::vector<std::string>& arguments) {
   const std::string target = "/project/" + project + "/releases/" + release->tag + "/" + asset->name;
   std::string body;
   try {
-    if (dashboard_url.has_value()) {
-      const auto url_target = parseDashboardUrl(*dashboard_url);
-      body = fetchHttpBody(url_target.host, url_target.port, target, asset->bytes);
-    } else {
-      withDashboardTunnel(config,
-                          [&](unsigned short port) { body = fetchHttpBody("127.0.0.1", port, target, asset->bytes); });
-    }
+    body = fetchDashboardDownload(config, dashboard_url, target, asset->bytes);
   } catch (const std::exception& error) {
     std::cerr << "ckgit: " << error.what() << "\n";
     return 1;
   }
-  const std::string digest = ckgit::sha256Hex(body);
-  if (!asset->sha256.empty() && digest != asset->sha256) {
-    std::cerr << "ckgit: downloaded asset sha256 mismatch (expected " << asset->sha256 << ", got " << digest
-              << "); refusing to write it\n";
-    return 1;
-  }
-  if (asset->sha256.empty()) {
-    std::cerr << "ckgit: warning: release " << release->tag << " asset " << asset->name
-              << " has no recorded sha256; downloaded content was not verified\n";
-  }
-  const std::filesystem::path destination = into_dir / (asset->name + ".tar");
-  const std::filesystem::path staging = into_dir / ("." + asset->name + ".tar.partial");
-  {
-    std::ofstream out(staging, std::ios::binary | std::ios::trunc);
-    if (!out) {
-      std::cerr << "ckgit: could not create " << staging.string() << "\n";
-      return 1;
-    }
-    out.write(body.data(), static_cast<std::streamsize>(body.size()));
-    if (!out) {
-      std::error_code ignore;
-      std::filesystem::remove(staging, ignore);
-      std::cerr << "ckgit: could not write " << staging.string() << "\n";
-      return 1;
-    }
-  }
-  std::error_code rename_error;
-  std::filesystem::rename(staging, destination, rename_error);
-  if (rename_error) {
-    std::error_code ignore;
-    std::filesystem::remove(staging, ignore);
-    std::cerr << "ckgit: could not install " << destination.string() << ": " << rename_error.message() << "\n";
-    return 1;
-  }
-  std::cout << "Downloaded " << release->tag << "/" << asset->name << " to " << destination.string() << " ("
+  const auto destination = installVerifiedDownload(into_dir, asset->name + ".tar", body, asset->sha256,
+                                                   "release " + release->tag + " asset " + asset->name);
+  if (!destination.has_value()) return 1;
+  std::cout << "Downloaded " << release->tag << "/" << asset->name << " to " << destination->string() << " ("
             << body.size() << " bytes, sha256 " << (asset->sha256.empty() ? "unverified" : "verified") << ").\n";
   return 0;
 }
@@ -2616,6 +2642,7 @@ int releaseDownloadCommand(const std::vector<std::string>& arguments) {
 #include "discovery.inc"
 #include "setup_doctor.inc"
 #include "incoming.inc"
+#include "ci.inc"
 
 // `ckgit version`: the local build plus the versions running on the server, so
 // the operator sees all four suite versions at once and can spot a service left
@@ -2739,6 +2766,9 @@ int main(int argc, char* argv[]) {
       }
       printUsage(std::cerr);
       return kUsage;
+    }
+    if (command == "ci") {
+      return ciCommand(arguments);
     }
     if (command == "version") {
       return versionCommand(arguments);

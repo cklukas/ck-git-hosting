@@ -118,19 +118,15 @@ int dispatch(const Options& options) {
   if (command->kind == ckgit::SshCommandKind::kRpc) {
     if (options.dry_run) {
       std::cout << "rpc " << command->rpc_operation;
-      if (!command->rpc_argument.empty()) {
-        std::cout << " " << command->rpc_argument;
-      }
-      if (!command->rpc_second_argument.empty()) {
-        std::cout << " " << command->rpc_second_argument;
+      for (const auto& argument : command->rpc_arguments) {
+        std::cout << " " << argument;
       }
       std::cout << " for " << options.client_id << "\n";
       return 0;
     }
     std::string response;
     const bool success = ckgit::forwardControlRpc(options.control_socket, options.client_id,
-                                                  command->rpc_operation, command->rpc_argument,
-                                                  command->rpc_second_argument,
+                                                  command->rpc_operation, command->rpc_arguments,
                                                   &response);
     std::cout << response;
     return success ? 0 : 1;

@@ -19,6 +19,7 @@
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/client_config.hpp"
 #include "ckgit/client_state.hpp"
+#include "ckgit/control_rpc.hpp"
 #include "ckgit/git_repository.hpp"
 #include "ckgit/server_config.hpp"
 #include "ckgit/http_request.hpp"
@@ -30,6 +31,7 @@
 #include "ckgit/runtime_status.hpp"
 #include "ckgit/server_identity.hpp"
 #include "ckgit/ssh_command.hpp"
+#include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/web_renderer.hpp"
 
@@ -598,34 +600,34 @@ void testSshCommandGrammar() {
          "documented version-1 RPC is accepted");
   const auto refs = ckgit::parseSshOriginalCommand("ckgit-rpc 1 refs cworks", &reason);
   expect(refs.has_value() && refs->kind == ckgit::SshCommandKind::kRpc &&
-             refs->rpc_operation == "refs" && refs->rpc_argument == "cworks",
+             refs->rpc_operation == "refs" && refs->rpc_arguments == std::vector<std::string>{"cworks"},
          "project ref RPC is accepted with a validated project name");
   const auto create = ckgit::parseSshOriginalCommand("ckgit-rpc 1 create new-project main", &reason);
   expect(create.has_value() && create->rpc_operation == "create" &&
-             create->rpc_argument == "new-project" && create->rpc_second_argument == "main",
+             create->rpc_arguments == std::vector<std::string>{"new-project", "main"},
          "project create RPC is accepted with validated inputs");
   const auto registration = ckgit::parseSshOriginalCommand(
       "ckgit-rpc 1 register cworks 776f726b", &reason);
   expect(registration.has_value() && registration->rpc_operation == "register" &&
-             registration->rpc_argument == "cworks" && registration->rpc_second_argument == "776f726b",
+             registration->rpc_arguments == std::vector<std::string>{"cworks", "776f726b"},
          "checkout registration RPC accepts a validated encoded path");
 
   const auto checkouts = ckgit::parseSshOriginalCommand("ckgit-rpc 1 checkouts", &reason);
-  expect(checkouts.has_value() && checkouts->rpc_operation == "checkouts" && checkouts->rpc_argument.empty(),
+  expect(checkouts.has_value() && checkouts->rpc_operation == "checkouts" && checkouts->rpc_arguments.empty(),
          "checkout listing RPC is accepted without arguments");
   const auto version = ckgit::parseSshOriginalCommand("ckgit-rpc 1 version", &reason);
-  expect(version.has_value() && version->rpc_operation == "version" && version->rpc_argument.empty(),
+  expect(version.has_value() && version->rpc_operation == "version" && version->rpc_arguments.empty(),
          "version RPC is accepted without arguments");
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 version cworks", &reason).has_value(),
          "version RPC rejects an argument");
   const auto versions = ckgit::parseSshOriginalCommand("ckgit-rpc 1 versions", &reason);
-  expect(versions.has_value() && versions->rpc_operation == "versions" && versions->rpc_argument.empty(),
+  expect(versions.has_value() && versions->rpc_operation == "versions" && versions->rpc_arguments.empty(),
          "versions RPC is accepted without arguments");
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 versions cworks", &reason).has_value(),
          "versions RPC rejects an argument");
   const auto replacement = ckgit::parseSshOriginalCommand("ckgit-rpc 1 replace-checkout cworks 776f726b", &reason);
   expect(replacement.has_value() && replacement->rpc_operation == "replace-checkout" &&
-             replacement->rpc_argument == "cworks" && replacement->rpc_second_argument == "776f726b",
+             replacement->rpc_arguments == std::vector<std::string>{"cworks", "776f726b"},
          "checkout replacement RPC accepts a validated encoded path");
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 checkouts cworks", &reason).has_value(),
          "checkout listing RPC rejects an argument");
@@ -645,6 +647,116 @@ void testSshCommandGrammar() {
          "registration RPC rejects unsafe metadata tokens");
   expect(!ckgit::parseSshOriginalCommand("sh -c id", &reason).has_value(),
          "arbitrary commands are rejected");
+
+  // The CI operations behind `ckgit ci`, each with its exact argument shape.
+  const std::string run = "00000000001727000000-abcd1234";
+  const auto overview = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-overview", &reason);
+  expect(overview.has_value() && overview->rpc_operation == "ci-overview" && overview->rpc_arguments.empty(),
+         "ci-overview RPC is accepted without arguments");
+  const auto ci_status = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-status cworks", &reason);
+  expect(ci_status.has_value() && ci_status->rpc_arguments == std::vector<std::string>{"cworks"},
+         "ci-status RPC is accepted with a project");
+  const auto ci_run = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-run cworks " + run, &reason);
+  expect(ci_run.has_value() && ci_run->rpc_arguments == std::vector<std::string>{"cworks", run},
+         "ci-run RPC is accepted with a project and run id");
+  const auto ci_cancel = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-cancel cworks " + run, &reason);
+  expect(ci_cancel.has_value() && ci_cancel->rpc_operation == "ci-cancel",
+         "ci-cancel RPC is accepted with a project and run id");
+  const auto ci_log = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-log cworks " + run + " 3 18446744073709551615",
+                                                     &reason);
+  expect(ci_log.has_value() &&
+             ci_log->rpc_arguments == std::vector<std::string>{"cworks", run, "3", "18446744073709551615"},
+         "ci-log RPC is accepted with a step index and the largest byte offset");
+  expect(ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-log cworks " + run + " 4096 0", &reason).has_value(),
+         "ci-log accepts the largest step index");
+  const std::vector<std::string> rejected_commands{
+           "ckgit-rpc 1 ci-overview cworks",
+           "ckgit-rpc 1 ci-status",
+           "ckgit-rpc 1 ci-status cworks extra",
+           "ckgit-rpc 1 ci-status ../cworks",
+           "ckgit-rpc 1 ci-run cworks",
+           "ckgit-rpc 1 ci-run cworks run/../x",
+           "ckgit-rpc 1 ci-run cworks " + run + " extra",
+           "ckgit-rpc 1 ci-cancel cworks " + std::string(65, 'a'),
+           "ckgit-rpc 1 ci-log cworks " + run + " 1",
+           "ckgit-rpc 1 ci-log cworks " + run + " 1 0 extra",
+           "ckgit-rpc 1 ci-log cworks " + run + " 4097 0",
+           "ckgit-rpc 1 ci-log cworks " + run + " 01 0",
+           "ckgit-rpc 1 ci-log cworks " + run + " -1 0",
+           "ckgit-rpc 1 ci-log cworks " + run + " 1 18446744073709551616",
+           "ckgit-rpc 1 ci-log cworks " + run + " 1 007",
+           "ckgit-rpc 1 ci-log cworks " + run + " 1 '0'",
+           "ckgit-rpc 1 cancel cworks " + run,
+           "ckgit-rpc 1 ci-enable cworks",
+           "ckgit-rpc 1 ci-log cworks " + run + " 1 0 0 0",
+  };
+  for (const auto& rejected : rejected_commands) {
+    expect(!ckgit::parseSshOriginalCommand(rejected, &reason).has_value(), "SSH layer rejects: " + rejected);
+  }
+}
+
+// The daemon's request parser and the forwarding client apply the same
+// operation table as the SSH dispatcher, each with its own framing checks.
+void testControlRequestGrammar() {
+  const std::string run = "00000000001727000000-abcd1234";
+  const auto parsed = ckgit::parseControlRequest("CKGIT-CONTROL/1 mac-studio ci-log cworks " + run + " 2 4096\n");
+  expect(parsed.has_value() && parsed->client_id == "mac-studio" && parsed->operation == "ci-log" &&
+             parsed->arguments == std::vector<std::string>{"cworks", run, "2", "4096"},
+         "daemon accepts a four-argument ci-log request");
+  const auto ping = ckgit::parseControlRequest("CKGIT-CONTROL/1 mac-studio ping\n");
+  expect(ping.has_value() && ping->arguments.empty(), "daemon accepts an argument-less request");
+  const std::vector<std::string> rejected_requests{
+           std::string("CKGIT-CONTROL/1 mac-studio ci-log cworks ") + run + " 2 4096 extra\n",
+           std::string("CKGIT-CONTROL/1 mac-studio ci-log cworks ") + run + " 2\n",
+           std::string("CKGIT-CONTROL/1 mac-studio ci-cancel cworks bad/id\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio ci-status\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio cancel cworks ") + run + "\n",
+           std::string("CKGIT-CONTROL/1 mac-studio ci-overview extra\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio  ping\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio ping \n"),
+           std::string("CKGIT-CONTROL/1 mac-studio ping"),
+           std::string("CKGIT-CONTROL/1 mac-studio ping\nping\n"),
+           std::string("CKGIT-CONTROL/1 -bad ping\n"),
+           std::string("CKGIT-CONTROL/2 mac-studio ping\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio ci-status cw\x01rks\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio ci-status ") + std::string(800, 'a') + "\n",
+  };
+  for (const auto& rejected : rejected_requests) {
+    expect(!ckgit::parseControlRequest(rejected).has_value(), "daemon rejects: " + rejected);
+  }
+  const auto refuses = [](const std::string& operation, const std::vector<std::string>& arguments) {
+    try {
+      ckgit::forwardControlRpc("/nonexistent/control.sock", "mac-studio", operation, arguments, nullptr);
+    } catch (const std::invalid_argument&) {
+      return true;
+    } catch (const std::exception&) {
+      return false;
+    }
+    return false;
+  };
+  expect(refuses("ci-log", {"cworks", run, "1"}), "forwarding client refuses a short ci-log request");
+  expect(refuses("ci-cancel", {"cworks", "bad/id"}), "forwarding client refuses an unsafe run id");
+  expect(refuses("cancel", {"cworks", run}), "forwarding client refuses an undocumented operation");
+  expect(refuses("ci-status", {}), "forwarding client refuses a missing project");
+  expect(!refuses("ci-log", {"cworks", run, "1", "0"}),
+         "forwarding client accepts a valid request and fails only on the transport");
+}
+
+// Hex text fields and object ids, shared by the CI store and its control
+// responses.
+void testTextEncoding() {
+  expectEqual(ckgit::hexEncode(std::string("a\n\xff", 3)), "610aff", "hex encoding is lowercase, two digits per byte");
+  const auto decoded = ckgit::hexDecode("610aff", 3);
+  expect(decoded.has_value() && *decoded == std::string("a\n\xff", 3), "hex decoding inverts the encoding");
+  expect(!ckgit::hexDecode("610AFF", 3).has_value(), "hex decoding rejects uppercase digits");
+  expect(!ckgit::hexDecode("610", 3).has_value(), "hex decoding rejects an odd length");
+  expect(!ckgit::hexDecode("610aff", 2).has_value(), "hex decoding enforces its byte bound");
+  expect(ckgit::isValidObjectId(std::string(40, 'a')) && ckgit::isValidObjectId(std::string(64, '0')),
+         "SHA-1 and SHA-256 object ids are valid");
+  expect(!ckgit::isValidObjectId(std::string(40, 'A')) && !ckgit::isValidObjectId(std::string(41, 'a')),
+         "uppercase or odd-length object ids are rejected");
+  expect(ckgit::isValidSha256Hex(std::string(64, 'f')) && !ckgit::isValidSha256Hex(std::string(40, 'f')),
+         "a sha256 digest has exactly 64 hex digits");
 }
 
 void testBareRepositoryCreation() {
@@ -886,6 +998,7 @@ void testCiWorkflow();
 void testCiStore();
 void testCiRunner();
 void testCiWeb();
+void testCiControl();
 void testPagesStore();
 int testRecovery();
 
@@ -928,6 +1041,9 @@ int main(int argc, char** argv) {
     testProcessTimeoutKillsTree();
     testRuntimeStatus();
     testSshCommandGrammar();
+    testControlRequestGrammar();
+    testTextEncoding();
+    testCiControl();
     testBareRepositoryCreation();
     testDiscoveryAndAudit();
   } catch (const std::exception& error) {

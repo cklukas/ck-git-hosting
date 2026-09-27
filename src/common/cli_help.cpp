@@ -3,12 +3,15 @@
 
 #include "ckgit/cli_help.hpp"
 
+#include "ckgit/ci_store.hpp"
+#include "ckgit/control_rpc.hpp"
 #include "ckgit/validation.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <set>
 #include <sstream>
 #include <string_view>
@@ -21,7 +24,19 @@
 namespace ckgit {
 namespace {
 
-enum class ValueKind { kFlag, kText, kPath, kProject, kBranch, kPort, kHost, kShell };
+enum class ValueKind {
+  kFlag, kText, kPath, kProject, kBranch, kPort, kHost, kShell,
+  kNumber,    // a decimal within the option's or argument's NumberRange
+  kRunId,     // a CI run id, as `ckgit ci list` prints it
+  kArtifact,  // a CI artifact name
+  kRevision,  // a Git revision expression for the local repository
+};
+
+// The inclusive bounds of a kNumber value.
+struct NumberRange {
+  std::uint64_t minimum{0};
+  std::uint64_t maximum{0};
+};
 
 struct Option {
   std::string name;
@@ -33,6 +48,7 @@ struct Option {
   // synopsis, the detailed help block, and shell completion. For test-only
   // seams that a normal user has no reason to discover.
   bool hidden{false};
+  NumberRange range{};
 };
 
 struct Argument {
@@ -41,6 +57,7 @@ struct Argument {
   ValueKind kind{ValueKind::kText};
   bool required{false};
   bool repeatable{false};
+  NumberRange range{};
 };
 
 struct Command {
@@ -63,6 +80,11 @@ const Option kDryRun{"--dry-run", "", "Show the concrete plan without changing f
 const Option kReplace{"--replace-checkout", "",
                       "Make the selected folder this device's main checkout, replacing its previous selection."};
 const Option kVerbose{"--verbose", "", "Expand the plan to show every affected, unchanged, and excluded ref."};
+const Option kCiProject{"--project", "NAME",
+                        "Hosted project (default: the project paired with the current repository).",
+                        ValueKind::kProject};
+const Option kJson{"--json", "", "Print a versioned JSON report instead of text."};
+const Argument kRun{"RUN", "CI run id, as ckgit ci list prints it.", ValueKind::kRunId, true};
 
 const std::vector<Command>& commands() {
   static const std::vector<Command> definitions{
@@ -176,6 +198,59 @@ const std::vector<Command>& commands() {
          ValueKind::kText, false, true}},
        {{"PROJECT", "Hosted project to download a release asset from.", ValueKind::kProject, true}},
        {"ckgit release download my-project --asset packages", "ckgit release download my-project --tag v1.2.0 --asset packages --into /tmp"}},
+      {{"ci"}, "Inspect, follow, and cancel a hosted project's CI runs.",
+       "Every command but lint queries the configured server over the restricted SSH control channel. The project defaults to the hosted project paired with the current repository; --project NAME selects another. lint checks a workflow locally without the server.",
+       "Read-only, except cancel, which previews the run and asks before it requests a stop. Enabling or disabling CI, rerunning or triggering runs, and secrets stay administrator-only: ckgit-admin on the server. download fetches through a short-lived dashboard tunnel like release download.",
+       {}, {}, {"ckgit ci status", "ckgit ci list --limit 5", "ckgit ci watch", "ckgit ci log RUN --follow", "ckgit ci lint"}},
+      {{"ci", "status"}, "Show whether CI is enabled and a project's latest and active runs.",
+       "One project, or every hosted project with --all.",
+       "Read-only. Times and states are judged by the server's clock with the dashboard's rules: a running run whose runner has not reported for 90 seconds shows as interrupted, a queued run as pending.",
+       {kCiProject, {"--all", "", "Report every hosted project."}, kJson}, {},
+       {"ckgit ci status", "ckgit ci status --project my-project", "ckgit ci status --all --json"}},
+      {{"ci", "list"}, "List a project's CI runs, newest first.",
+       "The project's newest runs, at most 64.",
+       "Read-only. Shows each run's status, ref, short commit, start time, duration, and run id.",
+       {kCiProject, {"--limit", "N", "Show at most N runs, 1-64 (default: 20).", ValueKind::kNumber, false, false, {1, kMaximumControlCiRuns}}, kJson}, {},
+       {"ckgit ci list", "ckgit ci list --limit 5", "ckgit ci list --project my-project --json"}},
+      {{"ci", "show"}, "Show one CI run with its steps and artifacts.",
+       "RUN of the selected project.",
+       "Read-only. Shows the status, ref, commit, timestamps, detail, every completed step (exit code, timeout, truncated log), the running step, and the run's artifacts.",
+       {kCiProject, kJson}, {kRun}, {"ckgit ci show RUN", "ckgit ci show RUN --json"}},
+      {{"ci", "log"}, "Print a CI step's log.",
+       "STEP of RUN, counted from 0 (default: the running step, otherwise the last one).",
+       "Read-only. Writes the step's raw log to standard output. --follow keeps reading while the step runs and, without STEP, continues with each following step until the run finishes; step headings go to standard error.",
+       {kCiProject, {"--follow", "", "Keep reading until the step, and without STEP the run, finishes."}},
+       {kRun, {"STEP", "Step index, as ckgit ci show lists it.", ValueKind::kNumber, false, false, {0, kMaximumCiSteps}}},
+       {"ckgit ci log RUN", "ckgit ci log RUN 2", "ckgit ci log RUN --follow"}},
+      {{"ci", "watch"}, "Wait for a CI run to finish and report its steps.",
+       "RUN, or the project's newest active run, otherwise its newest run.",
+       "Read-only. Polls the run, prints each step as it completes, and exits 0 when the run succeeded or 5 when it finished otherwise (failure, timeout, error, skipped, cancelled, or interrupted). Ctrl+C stops watching without affecting the run.",
+       {kCiProject, {"--interval", "SECONDS", "Seconds between polls, 1-3600 (default: 5).", ValueKind::kNumber, false, false, {1, 3600}}},
+       {{"RUN", "CI run id (default: the newest active run, otherwise the newest run).", ValueKind::kRunId}},
+       {"ckgit ci watch", "ckgit ci watch RUN", "ckgit ci watch --project my-project --interval 10"}},
+      {{"ci", "artifacts"}, "List a CI run's artifacts.",
+       "RUN of the selected project.",
+       "Read-only. Shows each artifact's name, size, sha256, and expiry, or the note that says why it was not stored.",
+       {kCiProject, kJson}, {kRun}, {"ckgit ci artifacts RUN", "ckgit ci artifacts RUN --json"}},
+      {{"ci", "download"}, "Download one CI artifact.",
+       "Artifact NAME of RUN, listed over SSH like artifacts.",
+       "Opens a short-lived loopback tunnel like release download (the ordinary SSH login; the restricted ckgit account cannot forward ports), downloads the bundle into --into (default: the current directory) as NAME.tar, verifies its size and sha256 against the listing, then closes the tunnel. Requires http_port configured and the dashboard reachable on the server.",
+       {kCiProject, {"--into", "DIR", "Directory to write NAME.tar into (default: the current directory).", ValueKind::kPath},
+        {"--dashboard-url", "URL", "Test seam: fetch from this base URL instead of opening an SSH tunnel.",
+         ValueKind::kText, false, true}},
+       {kRun, {"NAME", "Artifact name, as ckgit ci artifacts lists it.", ValueKind::kArtifact, true}},
+       {"ckgit ci download RUN build", "ckgit ci download RUN build --into /tmp"}},
+      {{"ci", "lint"}, "Check a .ckgit/ci.yml workflow locally.",
+       "PATH is a workflow file, or a repository whose .ckgit/ci.yml is checked (default: the current repository). --rev reads the workflow committed at REV instead of the working tree.",
+       "Offline and read-only: parses the workflow exactly as the runner does and summarizes its triggers and jobs, or reports the first error with its line. It cannot resolve the server's default branch for workflows without on:, check that sister projects exist, or apply the server's limits (step timeout, log and artifact sizes, retention caps, network policy).",
+       {{"--rev", "REV", "Check the workflow committed at this revision.", ValueKind::kRevision}},
+       {{"PATH", "Workflow file or repository (default: the current repository).", ValueKind::kPath}},
+       {"ckgit ci lint", "ckgit ci lint --rev HEAD", "ckgit ci lint path/to/ci.yml"}, false},
+      {{"ci", "cancel"}, "Cancel a pending or running CI run.",
+       "RUN of the selected project.",
+       "Previews the run, then asks for confirmation on a terminal; --yes confirms without prompting and --dry-run only previews. The server writes a cancel marker that the runner honours at its next check, killing the current step. A finished run is left unchanged. Any device paired with the server may cancel any project's run.",
+       {kCiProject, {"--yes", "", "Cancel without a confirmation prompt."}, kDryRun}, {kRun},
+       {"ckgit ci cancel RUN --dry-run", "ckgit ci cancel RUN", "ckgit ci cancel RUN --yes"}},
       {{"checkout"}, "Inspect and select this device's managed checkouts.",
        "One main checkout is used per project and device. Full local paths are stored privately; the server receives only the path information allowed by public_path_mode.",
        "Use list to inspect the inventory, set-canonical to select the main folder, migrate to resolve legacy server-only registrations, or forget to stop managing a checkout while retaining its files.",
@@ -271,9 +346,25 @@ bool looksLikeOption(const std::string& value) {
   return value.size() > 1 && value.front() == '-';
 }
 
-std::string valueError(ValueKind kind, const std::string& value) {
+std::string valueError(ValueKind kind, const std::string& value, NumberRange range = {}) {
   if (value.empty()) return "must not be empty";
   if (kind == ValueKind::kProject) return projectNameError(value);
+  if (kind == ValueKind::kNumber) {
+    std::uint64_t number = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), number);
+    if (error != std::errc{} || end != value.data() + value.size() || number < range.minimum ||
+        number > range.maximum)
+      return "must be a number from " + std::to_string(range.minimum) + " to " + std::to_string(range.maximum);
+  }
+  if (kind == ValueKind::kRunId && !isValidCiId(value)) return "must be a CI run id as ckgit ci list prints it";
+  if (kind == ValueKind::kArtifact && !isValidCiArtifactName(value))
+    return "must be an artifact name of letters, digits, '.', '_', or '-'";
+  if (kind == ValueKind::kRevision &&
+      (value.front() == '-' || value.size() > 255 ||
+       std::any_of(value.begin(), value.end(), [](unsigned char character) {
+         return character <= 0x20 || character == 0x7f;
+       })))
+    return "must be a Git revision without a leading '-', spaces, or control characters";
   if (kind == ValueKind::kBranch && !isValidBranchName(value)) return "must be a valid local Git branch name";
   if (kind == ValueKind::kPort) {
     unsigned int port = 0;
@@ -456,6 +547,7 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
               "  ckgit publish --yes         Publish the displayed scope.\n"
               "  ckgit status                Inspect managed projects on this device.\n"
               "  ckgit sync --dry-run        Preview uploading committed branches and tags.\n"
+              "  ckgit ci status             Check CI for this repository's hosted project.\n"
               "  ckgit web                   Open the dashboard.\n\n"
               "Defaults and scope:\n"
               "  Configuration: ~/.config/ck-git-hosting/client.ini; override with --config PATH.\n"
@@ -502,7 +594,8 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
             "  1  Operation failed; read the reported cause before retrying.\n"
             "  2  Invalid arguments; use the command's help.\n"
             "  3  Partial result or attention needed; inspect skipped/failed projects.\n"
-            "  4  Another operation holds this configuration's lock; retry after it finishes.\n";
+            "  4  Another operation holds this configuration's lock; retry after it finishes.\n"
+            "  5  The watched CI run finished without success; its status is reported (ci watch).\n";
   return output.str();
 }
 
@@ -595,7 +688,7 @@ CliInvocation prepareClientInvocation(const std::vector<std::string>& input) {
       if (attached) value = *attached;
       else if (index + 1 < arguments.size() && !looksLikeOption(arguments[index + 1])) value = arguments[++index];
       else return failure(path, name + " requires " + option->value_name + " (use " + name + "=VALUE for a value beginning with '-')");
-      const auto error = valueError(option->kind, value);
+      const auto error = valueError(option->kind, value, option->range);
       if (!error.empty()) return failure(path, name + " " + error + ": '" + value + "'");
       if (!option->repeatable || repeated_values.emplace(name, value).second)
         result.arguments.insert(result.arguments.end(), {name, value});
@@ -605,6 +698,9 @@ CliInvocation prepareClientInvocation(const std::vector<std::string>& input) {
   }
   if (help) return success(clientHelp(path));
   if (!children(path).empty()) return failure(path, "a " + first + " subcommand is required");
+  if (path == std::vector<std::string>{"ci", "status"} && present_options.contains("--project") &&
+      present_options.contains("--all"))
+    return failure(path, "choose --project NAME or --all");
   if (present_options.contains("--repo") && present_options.contains("--scan"))
     return failure(path, "--repo and --scan select different scopes; choose one");
   if (first == "sync" && present_options.contains("--replace-checkout") && !present_options.contains("--repo"))
@@ -627,6 +723,11 @@ CliInvocation prepareClientInvocation(const std::vector<std::string>& input) {
   if ((first == "clone" || path == std::vector<std::string>{"checkout", "forget"}) &&
       !positionals.empty() && !positionals.front().empty() && positionals.front().front() == '-')
     result.arguments.push_back("--");
+  // CI run ids and artifact names may begin with '-' as well.
+  if (first == "ci" && std::any_of(positionals.begin(), positionals.end(), [](const std::string& value) {
+        return !value.empty() && value.front() == '-';
+      }))
+    result.arguments.push_back("--");
   std::size_t positional_index = 0;
   for (const auto& argument : command->arguments) {
     if (positional_index == positionals.size()) {
@@ -635,7 +736,7 @@ CliInvocation prepareClientInvocation(const std::vector<std::string>& input) {
     }
     do {
       auto value = positionals[positional_index++];
-      const auto error = valueError(argument.kind, value);
+      const auto error = valueError(argument.kind, value, argument.range);
       if (!error.empty()) return failure(path, argument.name + " " + error + ": '" + value + "'");
       // Handlers accept normalized options and positionals. Prefixing a relative
       // path preserves its meaning while preventing old handlers or Git from

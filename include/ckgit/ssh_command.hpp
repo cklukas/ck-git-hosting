@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ckgit {
 
@@ -15,11 +16,13 @@ struct SshCommand {
   SshCommandKind kind;
   std::string project_name;
   std::string rpc_operation;
-  std::string rpc_argument;
-  std::string rpc_second_argument;
+  std::vector<std::string> rpc_arguments;
 };
 
-// Parses the complete SSH_ORIGINAL_COMMAND grammar without shell expansion.
+// Parses the complete SSH_ORIGINAL_COMMAND grammar without shell expansion:
+// a Git service with one quoted repository, or `ckgit-rpc 1 <operation>
+// [argument ...]` with unquoted tokens that the shared control operation table
+// (see control_rpc.hpp) accepts.
 // An empty optional means rejection; when supplied, `reason` is safe text for
 // an audit log or an SSH client error message.
 std::optional<SshCommand> parseSshOriginalCommand(std::string_view command,

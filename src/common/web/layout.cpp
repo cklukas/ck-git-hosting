@@ -54,7 +54,9 @@ std::string formatUtcTimestamp(std::uint64_t epoch) {
   return buffer;
 }
 std::string relativeTime(std::uint64_t epoch) {
-  auto now = static_cast<std::uint64_t>(std::time(nullptr));
+  return relativeTimeAt(epoch, static_cast<std::uint64_t>(std::time(nullptr)));
+}
+std::string relativeTimeAt(std::uint64_t epoch, std::uint64_t now) {
   if (epoch > now) return "in the future";
   auto delta = now - epoch;
   if (delta < 60) return "just now";

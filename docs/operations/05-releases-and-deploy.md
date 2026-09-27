@@ -34,7 +34,7 @@ through the self-hosted channel described below; that is precisely the
    project deploys itself, so the project is `ck-git-hosting`):
 
    ```text
-   sudo ckgit-admin ci enable ck-git-hosting --config /etc/ck-git-hosting/server.ini
+   sudo -u ckgit ckgit-admin ci enable ck-git-hosting --config /etc/ck-git-hosting/server.ini
    ```
 
 2. **Commit a workflow** at `.ckgit/ci.yml` with a job that declares
@@ -54,9 +54,10 @@ through the self-hosted channel described below; that is precisely the
    git push ckgit v0.1.0
    ```
 
-   The tag build runs like any other CI run (watch it with
-   `ckgit-admin ci runs ck-git-hosting --config ...` or the dashboard's CI
-   tab), and on success its declared artifact becomes a durable release under
+   The tag build runs like any other CI run (watch it from the tagged
+   checkout with `ckgit ci watch`, which exits 0 only on success, or on the
+   dashboard's CI tab), and on success its declared artifact becomes a
+   durable release under
    `<state_root>/releases/ck-git-hosting/v0.1.0/` -- kept until the tag is
    deleted, never swept by the ordinary artifact-retention sweep. A failed tag
    build publishes nothing.

@@ -44,7 +44,9 @@ void testCliHelp() {
       {"release"}, {"release", "list"}, {"release", "download"},
       {"checkout"}, {"checkout", "list"}, {"checkout", "set-canonical"},
       {"checkout", "migrate"}, {"register"}, {"create"}, {"config"},
-      {"config", "show"}, {"completion"}};
+      {"config", "show"}, {"completion"}, {"version"},
+      {"ci"}, {"ci", "status"}, {"ci", "list"}, {"ci", "show"}, {"ci", "log"}, {"ci", "watch"},
+      {"ci", "artifacts"}, {"ci", "download"}, {"ci", "lint"}, {"ci", "cancel"}};
   for (const auto& path : command_paths) {
     const auto topic = path.front();
     auto long_help = path;
@@ -141,6 +143,38 @@ void testCliHelp() {
                                             "http://127.0.0.1:9", "--into", ".",       "demo"},
           "release download accepts its hidden test option alongside its documented ones");
 
+  const std::string run = "00000000001727000000-abcd1234";
+  expectError({"ci"}, "a ci subcommand is required", " ci");
+  expectError({"ci", "rerun", run}, "unknown ci command 'rerun'", " ci");
+  expectError({"ci", "enable"}, "unknown ci command 'enable'", " ci");
+  expectError({"ci", "show"}, "missing required argument RUN", " ci show");
+  expectError({"ci", "show", "bad/run"}, "RUN must be a CI run id", " ci show");
+  expectError({"ci", "log", run, "4097"}, "STEP must be a number from 0 to 4096", " ci log");
+  expectError({"ci", "log", run, "two"}, "STEP must be a number", " ci log");
+  expectError({"ci", "list", "--limit", "65"}, "--limit must be a number from 1 to 64", " ci list");
+  expectError({"ci", "watch", "--interval", "0"}, "--interval must be a number from 1 to 3600", " ci watch");
+  expectError({"ci", "status", "--project", "one", "--all"}, "choose --project NAME or --all", " ci status");
+  expectError({"ci", "download", run}, "missing required argument NAME", " ci download");
+  expectError({"ci", "download", run, "bad/name"}, "NAME must be an artifact name", " ci download");
+  expectError({"ci", "lint", "--rev", "--all"}, "--rev requires REV", " ci lint");
+  expectError({"ci", "lint", "--rev=-x"}, "--rev must be a Git revision", " ci lint");
+  expectError({"ci", "cancel", run, "--force"}, "unknown option '--force'", " ci cancel");
+  expectError({"ci", "list", "extra"}, "unexpected argument 'extra'", " ci list");
+  const auto ci_log = ckgit::prepareClientInvocation(
+      {"ci", "--project", "demo", "log", "--follow", run, "2", "--config", "/path/to/client.ini"});
+  require(!ci_log.exit_code && ci_log.command == "ci" &&
+              ci_log.arguments == std::vector<std::string>{"log", "--project", "demo", "--follow", "--config",
+                                                           "/path/to/client.ini", run, "2"},
+          "ci subcommands accept options before and after the subcommand");
+  const auto dash_run = ckgit::prepareClientInvocation({"ci", "download", "--", "-run", "-name"});
+  require(!dash_run.exit_code && dash_run.arguments == std::vector<std::string>{"download", "--", "-run", "-name"},
+          "ci keeps the positional boundary for run ids and names that begin with '-'");
+  require(!ckgit::prepareClientInvocation({"ci", "lint", "--rev", "HEAD~1"}).exit_code,
+          "ci lint takes a revision expression");
+  require(ckgit::clientHelp({"ci", "watch"}).find("  5  The watched CI run finished without success") !=
+              std::string::npos,
+          "the exit-code help documents the unsuccessful-run code");
+
   const auto normalized = ckgit::prepareClientInvocation(
       {"--config=/path/to/client.ini", "publish", "--branch=main", "--branch", "main", "--branch", "topic", "--yes", "--yes", "--", "-folder"});
   require(!normalized.exit_code && normalized.command == "publish", "valid arguments should continue to dispatch");
@@ -173,7 +207,8 @@ void testCliHelp() {
       require(completion.standard_output.find(path.back()) != std::string::npos,
               "completion should include all declared commands");
     }
-    for (const auto* option : {"--verbose", "--dry-run", "--remote-port", "--no-tags", "--replace-checkout"})
+    for (const auto* option : {"--verbose", "--dry-run", "--remote-port", "--no-tags", "--replace-checkout",
+                               "--follow", "--interval", "--limit", "--rev"})
       require(completion.standard_output.find(option) != std::string::npos,
               "completion should share current option definitions");
     require(completion.standard_output.find("--dashboard-url") == std::string::npos,

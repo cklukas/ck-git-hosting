@@ -40,7 +40,10 @@ std::string_view stepIcon(const CiStepResult& step) {
 }  // namespace
 
 CiRunDisplay ciRunDisplay(const CiRunRecord& run) {
-  const std::uint64_t now = static_cast<std::uint64_t>(std::time(nullptr));
+  return ciRunDisplayAt(run, static_cast<std::uint64_t>(std::time(nullptr)));
+}
+
+CiRunDisplay ciRunDisplayAt(const CiRunRecord& run, std::uint64_t now) {
   CiRunDisplay display;
   display.icon = ciRunStatusIcon(run.status);
   display.name = ciRunStatusName(run.status);
@@ -167,7 +170,8 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
   out += "</dl>";
 
   // Cancel affordances, mirrored across channels: a loopback POST button and the
-  // equivalent CLI command (which drives the same cancel marker via the socket).
+  // equivalent client command (which drops the same cancel marker through the
+  // restricted SSH control channel).
   // The marker is honored by the runner even before it claims the job (see
   // runCiWorkflow), so this same button also cancels a run still Pending.
   if (display.active) {
@@ -178,7 +182,7 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
            htmlEscape(run.run_id) + "/cancel\"><button type=\"submit\" class=\"ci-cancel-button\">\xe2\x9b\x94 "
            "Cancel run</button></form>";
     out += "<details class=\"ci-cancel-cli\"><summary>Cancel from the command line</summary><pre><code>"
-           "ckgit-admin ci cancel " + htmlEscape(project.name) + " " + htmlEscape(run.run_id) +
+           "ckgit ci cancel " + htmlEscape(run.run_id) + " --project " + htmlEscape(project.name) +
            "</code></pre></details></div>";
   } else if (display.name == "interrupted") {
     out += "<p class=\"notice\">This run stopped reporting progress; its runner may have been interrupted. "

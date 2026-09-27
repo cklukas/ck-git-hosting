@@ -109,6 +109,13 @@ for nested in list set-canonical migrate; do
 done
 help_ok checkout --help
 help_ok checkout -h
+for nested in status list show log watch artifacts download lint cancel; do
+  help_ok ci "$nested" --help
+  help_ok ci "$nested" -h
+  help_ok help ci "$nested"
+done
+help_ok ci --help
+help_ok help version
 help_ok config --help
 help_ok config -h
 help_ok config show --help

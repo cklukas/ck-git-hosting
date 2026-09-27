@@ -6,8 +6,8 @@
 #include <cctype>
 #include <vector>
 
+#include "ckgit/control_rpc.hpp"
 #include "ckgit/validation.hpp"
-#include "ckgit/metadata_store.hpp"
 
 namespace ckgit {
 namespace {
@@ -16,6 +16,9 @@ struct Token {
   std::string value;
   bool quoted{false};
 };
+
+// `ckgit-rpc`, the protocol version, the operation, and its arguments.
+constexpr std::size_t kMaximumCommandTokens = 3 + kMaximumControlArguments;
 
 bool allowedBareTokenCharacter(unsigned char character) {
   return std::isalnum(character) != 0 || character == '-' || character == '_' || character == '.';
@@ -89,7 +92,7 @@ std::optional<std::vector<Token>> tokenize(std::string_view command, std::string
     }
     tokens.push_back(std::move(token));
     first_token = false;
-    if (tokens.size() > 5) {
+    if (tokens.size() > kMaximumCommandTokens) {
       reject("command has too many arguments", reason);
       return std::nullopt;
     }
@@ -133,36 +136,26 @@ std::optional<SshCommand> parseSshOriginalCommand(std::string_view command,
     }
     return SshCommand{(*tokens)[0].value == "git-upload-pack" ? SshCommandKind::kUploadPack
                                                                  : SshCommandKind::kReceivePack,
-                      *project, {}, {}, {}};
+                      *project, {}, {}};
   }
-  if (tokens->size() == 3 && (*tokens)[0].value == "ckgit-rpc" &&
-      (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      ((*tokens)[2].value == "ping" || (*tokens)[2].value == "list-projects" ||
-       (*tokens)[2].value == "checkouts" || (*tokens)[2].value == "version" ||
-       (*tokens)[2].value == "versions")) {
-    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, {}, {}};
-  }
-  if (tokens->size() == 4 && (*tokens)[0].value == "ckgit-rpc" &&
-      (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      !(*tokens)[3].quoted && ((*tokens)[2].value == "refs" || (*tokens)[2].value == "refresh" ||
-       (*tokens)[2].value == "forget-checkout" || (*tokens)[2].value == "releases") &&
-      isValidProjectName((*tokens)[3].value)) {
-    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, (*tokens)[3].value, {}};
-  }
-  if (tokens->size() == 5 && (*tokens)[0].value == "ckgit-rpc" &&
-      (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      !(*tokens)[3].quoted && !(*tokens)[4].quoted && (*tokens)[2].value == "create" &&
-      isValidProjectName((*tokens)[3].value) && isValidBranchName((*tokens)[4].value)) {
-    return SshCommand{SshCommandKind::kRpc, {}, "create", (*tokens)[3].value,
-                      (*tokens)[4].value};
-  }
-  if (tokens->size() == 5 && (*tokens)[0].value == "ckgit-rpc" &&
-      (*tokens)[1].value == "1" && !(*tokens)[1].quoted && !(*tokens)[2].quoted &&
-      !(*tokens)[3].quoted && !(*tokens)[4].quoted &&
-      ((*tokens)[2].value == "register" || (*tokens)[2].value == "replace-checkout") &&
-      isValidProjectName((*tokens)[3].value) && isValidCheckoutPathToken((*tokens)[4].value)) {
-    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, (*tokens)[3].value,
-                      (*tokens)[4].value};
+  if (tokens->size() >= 3 && (*tokens)[0].value == "ckgit-rpc" && !(*tokens)[0].quoted) {
+    if ((*tokens)[1].quoted || (*tokens)[1].value != "1") {
+      reject("unsupported ckgit-rpc protocol version", reason);
+      return std::nullopt;
+    }
+    std::vector<std::string> arguments;
+    for (std::size_t index = 2; index < tokens->size(); ++index) {
+      if ((*tokens)[index].quoted) {
+        reject("ckgit-rpc operations take only unquoted tokens", reason);
+        return std::nullopt;
+      }
+      if (index > 2) arguments.push_back((*tokens)[index].value);
+    }
+    if (!isValidControlOperation((*tokens)[2].value, arguments)) {
+      reject("command is not an allowed ckgit-rpc operation", reason);
+      return std::nullopt;
+    }
+    return SshCommand{SshCommandKind::kRpc, {}, (*tokens)[2].value, std::move(arguments)};
   }
   reject("command is not an allowed Git or ckgit-rpc operation", reason);
   return std::nullopt;

@@ -19,7 +19,7 @@ The current implementation includes:
   and clears its metadata, plus cleanup for repositories deleted by hand;
 - opt-in per-project continuous integration that runs a repository's own
   `.ckgit/ci.yml` in a sandboxed runner on push, with read-only status and
-  step logs in the dashboard.
+  step logs in the dashboard and on every paired device through `ckgit ci`.
 
 It now also ships as a service installation: a strict `server.ini`, a
 hardened systemd unit, an installer and uninstaller that print every change
@@ -117,6 +117,15 @@ ckgit checkout forget NAME [--dry-run] [--yes]
 ckgit web [--config PATH] [--port PORT] [--remote-port PORT] [--project NAME] [--no-open] [ADMIN-HOST]
 ckgit release list PROJECT [--json]
 ckgit release download PROJECT [--tag TAG] [--asset NAME] [--into DIR]
+ckgit ci status [--project NAME | --all] [--json]
+ckgit ci list [--project NAME] [--limit N] [--json]
+ckgit ci show RUN [--project NAME] [--json]
+ckgit ci log RUN [STEP] [--project NAME] [--follow]
+ckgit ci watch [RUN] [--project NAME] [--interval SECONDS]
+ckgit ci artifacts RUN [--project NAME] [--json]
+ckgit ci download RUN NAME [--project NAME] [--into DIR]
+ckgit ci cancel RUN [--project NAME] [--dry-run] [--yes]
+ckgit ci lint [PATH] [--rev REV]
 ckgit completion bash
 ckgit completion zsh
 
@@ -343,6 +352,21 @@ verifies its size and checksum against the listing, and writes
 verification passes. See [Releases](docs/operations/04-ci-cd.md#releases) for
 how a release is produced and `packaging/update-cli.sh` for a scripted
 example that updates this same CLI from one.
+
+`ckgit ci` follows a project's CI from any paired device over the same
+restricted SSH control channel. Inside a checkout it selects the paired
+project; `--project NAME` selects another. `ci status` shows whether CI is
+enabled with the latest and active runs (`--all` for every project), `ci list`
+the newest runs, `ci show RUN` one run's steps and artifacts, `ci log RUN`
+a step's raw log (`--follow` tails the running step and the ones after it),
+and `ci watch` waits for a run and exits 0 on success or 5 when it finished
+otherwise. `ci artifacts` and `ci download` list and fetch a run's bundles
+exactly like `release list` and `release download`. `ci cancel RUN` previews
+the run and asks before it requests a stop (`--dry-run`, `--yes`), and
+`ci lint` checks `.ckgit/ci.yml` offline with the runner's own parser.
+Enabling or disabling CI, rerunning or triggering runs, and secrets stay
+administrator-only (`sudo -u ckgit ckgit-admin ci ...` on the server). See
+[Watch and cancel a run](docs/operations/04-ci-cd.md#watch-and-cancel-a-run).
 
 Git and SSH children of the client run in their own session with standard
 input from `/dev/null`: they can never wait on a terminal prompt, so the

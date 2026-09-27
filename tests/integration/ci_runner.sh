@@ -69,6 +69,10 @@ state_root=$state
 ci_build_root=$build
 INI
 
+# ckgit-admin names the service account its ci commands must run as.
+"$CKGIT_ADMIN" --help | grep -q 'sudo -u ckgit ckgit-admin ci enable NAME' ||
+  fail "ckgit-admin help does not show how to run ci commands as the service account"
+
 # Opt the project in, and confirm the status reads back.
 "$CKGIT_ADMIN" ci enable demo --config "$test_root/server.ini" >/dev/null || fail "ci enable failed"
 "$CKGIT_ADMIN" ci status demo --state-root "$state" | grep -q "CI enabled" || fail "ci status not enabled"
@@ -245,6 +249,122 @@ listed_sha=$(printf '%s\n' "$json_output" | sed -n 's/.*"sha256":"\([0-9a-f]*\)"
 [ "$downloaded_sha" = "$listed_sha" ] || fail "downloaded asset sha256 does not match the listing"
 tar -tf "$test_root/dl/build.tar" | grep -q 'out/artifact.txt' || fail "downloaded release asset is not the expected bundle"
 
+# --- ckgit ci: inspection over the restricted control channel ---------------
+# The same stub ssh and live daemon; every read-only ci command against the two
+# finished demo runs (the branch build and the tag build).
+ci() {
+  PATH="$test_root/ssh-bin:$PATH" CK_GIT_SHELL="$CK_GIT_SHELL" REPOS="$repos" STATE="$state" \
+    CONTROL_SOCKET="$test_root/control.sock" "$CKGIT" ci "$@" --config "$test_root/client.ini"
+}
+tag_run=$(basename "$(dirname "$(ls "$state"/ci/runs/demo/*/run.ini | sort | tail -n1)")")
+[ "$tag_run" != "$run_id" ] || fail "the tag build did not record its own run"
+
+status_output=$(ci status --project demo) || fail "ckgit ci status failed"
+case "$status_output" in
+  *'demo: CI enabled'*'latest'*success*"$tag_run"*) ;;
+  *) echo "$status_output" >&2; fail "ci status did not report the latest run" ;;
+esac
+overview=$(ci status --all --json) || fail "ckgit ci status --all failed"
+case "$overview" in
+  *'"schema_version":1'*'"name":"demo","ci_enabled":true'*"\"run_id\":\"$tag_run\""*'"name":"other","ci_enabled":false,"latest":null'*) ;;
+  *) echo "$overview" >&2; fail "ci status --all did not report every hosted project" ;;
+esac
+
+# Inside the paired checkout the project needs no --project.
+git -C "$work" remote add ckgit ckgit@rpi4:demo.git
+list_output=$(cd "$work" && ci list) || fail "ckgit ci list from the paired checkout failed"
+case "$list_output" in
+  *STATUS*REF*COMMIT*v1.0.0*"$tag_run"*main*"$run_id"*) ;;
+  *) echo "$list_output" >&2; fail "ci list did not show the newest run first" ;;
+esac
+[ "$(cd "$work" && ci list --limit 1 | grep -c '[0-9]-[0-9a-f]\{8\}')" = 1 ] || fail "ci list --limit 1 listed more"
+list_json=$(cd "$work" && ci list --json) || fail "ckgit ci list --json failed"
+case "$list_json" in
+  *'"project":"demo"'*"\"run_id\":\"$tag_run\""*'"display_status":"success"'*"\"run_id\":\"$run_id\""*) ;;
+  *) echo "$list_json" >&2; fail "ci list --json did not report both runs" ;;
+esac
+
+show_output=$(ci show "$run_id" --project demo) || fail "ckgit ci show failed"
+case "$show_output" in
+  *"Run $run_id of demo"*'status:'*success*"commit:    $commit"*'Steps:'*'0 '*build*'exit 0'*'Artifacts:'*build*sha256*) ;;
+  *) echo "$show_output" >&2; fail "ci show did not describe the run, its step, and its artifact" ;;
+esac
+show_json=$(ci show "$run_id" --project demo --json) || fail "ckgit ci show --json failed"
+case "$show_json" in
+  *'"steps":['*'"index":0,"name":"build","exit_code":0'*'"artifacts":[{"name":"build"'*) ;;
+  *) echo "$show_json" >&2; fail "ci show --json did not report steps and artifacts" ;;
+esac
+
+log_output=$(ci log "$run_id" --project demo) || fail "ckgit ci log failed"
+[ "$log_output" = "$(cat "$run_dir/steps/0.log")" ] || fail "ci log did not print the raw step log"
+follow_output=$(ci log "$run_id" 0 --project demo --follow) || fail "ckgit ci log --follow of a finished step failed"
+[ "$follow_output" = "$log_output" ] || fail "ci log --follow of a finished step differs from the log"
+
+artifacts_output=$(ci artifacts "$run_id" --project demo) || fail "ckgit ci artifacts failed"
+case "$artifacts_output" in
+  *build*sha256*expires*) ;;
+  *) echo "$artifacts_output" >&2; fail "ci artifacts did not list the build bundle" ;;
+esac
+mkdir -p "$test_root/ci-dl"
+download_output=$(ci download "$run_id" build --project demo --dashboard-url "$base" --into "$test_root/ci-dl") \
+  || fail "ckgit ci download failed"
+case "$download_output" in
+  *verified*) ;;
+  *) echo "$download_output" >&2; fail "ci download did not verify the artifact" ;;
+esac
+cmp -s "$test_root/ci-dl/build.tar" "$run_dir/artifacts/build.tar" || fail "ci download did not write the stored bundle"
+if ci download "$run_id" missing --project demo --dashboard-url "$base" --into "$test_root/ci-dl" 2>/dev/null; then
+  fail "ci download accepted an artifact the run does not have"
+fi
+
+watch_output=$(ci watch --project demo --interval 1) || fail "ckgit ci watch of a successful run did not exit 0"
+case "$watch_output" in
+  *"Watching run $tag_run"*'step 0 build: exit 0'*success*) ;;
+  *) echo "$watch_output" >&2; fail "ci watch did not report the newest run's steps and result" ;;
+esac
+
+set +e
+ci show 00000000000000000000-deadbeef --project demo >/dev/null 2>"$test_root/ci.err"; unknown_run=$?
+ci list --project nosuch >/dev/null 2>"$test_root/ci-project.err"; unknown_project=$?
+set -e
+[ "$unknown_run" = 1 ] && grep -q 'has no CI run' "$test_root/ci.err" || fail "an unknown run was not reported"
+[ "$unknown_project" = 1 ] && grep -q 'is not a hosted project' "$test_root/ci-project.err" ||
+  fail "an unknown project was not reported"
+
+# The dashboard's cancel POST above targeted this finished run; its marker is
+# harmless, but removed so the checks below see what the client does.
+rm -f "$run_dir/cancel"
+finished_cancel=$(ci cancel "$run_id" --project demo --yes) || fail "cancelling a finished run should not fail"
+case "$finished_cancel" in
+  *'already finished'*) ;;
+  *) echo "$finished_cancel" >&2; fail "ci cancel did not leave a finished run alone" ;;
+esac
+[ ! -e "$run_dir/cancel" ] || fail "cancelling a finished run wrote a cancel marker"
+# The daemon itself refuses to cancel a finished run, and has no log for a
+# step the finished run never reached.
+rpc() {
+  SSH_ORIGINAL_COMMAND="$1" "$CK_GIT_SHELL" --client-id mac-studio --repo-root "$repos" \
+    --control-socket "$test_root/control.sock" --state-root "$state"
+}
+reply=$(rpc "ckgit-rpc 1 ci-cancel demo $run_id") && fail "the daemon cancelled a finished run"
+[ "$reply" = 'error finished the CI run already finished' ] || fail "unexpected finished-run cancel reply: $reply"
+[ ! -e "$run_dir/cancel" ] || fail "the daemon wrote a cancel marker for a finished run"
+reply=$(rpc "ckgit-rpc 1 ci-log demo $run_id 1 0") && fail "the daemon served a log for a step never run"
+[ "$reply" = 'error nolog no log for this CI step' ] || fail "unexpected missing-log reply: $reply"
+reply=$(rpc "ckgit-rpc 1 ci-log demo $run_id 0 0") || fail "the daemon did not serve a finished step's log"
+case "$reply" in 'ok end 0 '[1-9]*) ;; *) fail "a finished step's whole log should end in one chunk: $reply" ;; esac
+
+# lint is offline: the committed workflow, the working tree, and a broken file.
+lint_output=$(cd "$work" && "$CKGIT" ci lint --rev HEAD) || fail "ckgit ci lint --rev HEAD failed"
+case "$lint_output" in
+  *'valid (version 1)'*'jobs: 1'*'build: 1 step; artifact build (out)'*'Not checked locally:'*) ;;
+  *) echo "$lint_output" >&2; fail "ci lint did not summarize the committed workflow" ;;
+esac
+printf 'version: 1\njobs:\n  - name: build\n    stepz: []\n' >"$test_root/broken.yml"
+if "$CKGIT" ci lint "$test_root/broken.yml" 2>"$test_root/lint.err"; then fail "ci lint accepted a broken workflow"; fi
+grep -q "unknown key 'stepz' (line 3)" "$test_root/lint.err" || { cat "$test_root/lint.err" >&2; fail "ci lint did not name the error"; }
+grep -q '^> 3 ' "$test_root/lint.err" || fail "ci lint did not show the failing line"
+
 # Deleting the tag drops its release and every asset.
 printf '%s %s refs/tags/v1.0.0\n' "$tag_id" "$(printf '0%.0s' $(seq 1 40))" | \
   env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
@@ -303,10 +423,36 @@ curl --path-as-is --max-time 4 --silent -o "$test_root/queued-run.html" "$base/p
 grep -q "Queued" "$test_root/queued-run.html" || fail "the queued run's own page does not explain it is waiting"
 grep -q "$queued_run/cancel" "$test_root/queued-run.html" || fail "the queued run's page has no cancel form"
 
-# Cancel it while it is still sitting in the spool, then let a runner claim it.
-"$CKGIT_ADMIN" ci cancel queued "$queued_run" --state-root "$state" >/dev/null || fail "ci cancel (queued) failed"
+# Cancel it from a paired device while it is still sitting in the spool: the
+# client previews first and only a confirmed request drops the marker.
+preview=$(ci cancel "$queued_run" --project queued --dry-run) || fail "ckgit ci cancel --dry-run failed"
+case "$preview" in
+  *"Cancel run $queued_run of queued"*pending*'Preview only; nothing was cancelled.'*) ;;
+  *) echo "$preview" >&2; fail "ci cancel --dry-run did not preview the queued run" ;;
+esac
+[ ! -e "$state/ci/runs/queued/$queued_run/cancel" ] || fail "a cancel preview wrote the marker"
+unconfirmed=$(ci cancel "$queued_run" --project queued </dev/null) || fail "an unconfirmed ci cancel failed"
+case "$unconfirmed" in *'Preview only'*) ;; *) fail "ci cancel without a terminal or --yes did not stop at the preview" ;; esac
+[ ! -e "$state/ci/runs/queued/$queued_run/cancel" ] || fail "an unconfirmed cancel wrote the marker"
+confirmed=$(ci cancel "$queued_run" --project queued --yes) || fail "ckgit ci cancel --yes failed"
+case "$confirmed" in *'Requested cancellation'*) ;; *) echo "$confirmed" >&2; fail "ci cancel --yes did not request it" ;; esac
+[ -e "$state/ci/runs/queued/$queued_run/cancel" ] || fail "a confirmed cancel wrote no marker"
+attempt=0
+while :; do
+  curl --path-as-is --max-time 4 --silent -o "$test_root/queued-project.html" "$base/project/queued" || fail "curl queued project"
+  grep -q 'CI cancel requested' "$test_root/queued-project.html" && break
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail "the project events did not record who cancelled"
+  sleep .1
+done
+grep -q 'CI cancel requested · <strong>mac-studio</strong>' "$test_root/queued-project.html" ||
+  fail "the cancel event does not name the requesting device"
 "$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once >/dev/null 2>&1 || fail "serve (queued) failed"
 grep -q "status=cancelled" "$queued_ini" || { cat "$queued_ini"; fail "the pre-cancelled job did not record Cancelled"; }
+set +e
+queued_watch=$(ci watch "$queued_run" --project queued --interval 1); queued_watch_status=$?
+set -e
+[ "$queued_watch_status" = 5 ] || { echo "$queued_watch" >&2; fail "ci watch of a cancelled run should exit 5 (got $queued_watch_status)"; }
+case "$queued_watch" in *cancelled*) ;; *) fail "ci watch did not report the cancelled result" ;; esac
 [ -z "$(ls -A "$state/ci/runs/queued/$queued_run/steps" 2>/dev/null || true)" ] || \
   fail "a step ran even though the job was cancelled before any runner claimed it"
 [ -z "$(ls -A "$state/ci/spool" 2>/dev/null || true)" ] || fail "the spool was not drained after the queued run was claimed"
@@ -354,6 +500,23 @@ grep -q "^heartbeat_epoch=" "$slow_ini" || fail "the running record carries no h
   && fail "cancelling an unknown run should fail" || true
 "$CKGIT_ADMIN" ci runs slow --state-root "$state" | grep -q "$slow_run" || fail "ci runs did not list the run"
 
+# Follow the live step and watch the run from a paired device, then cancel it
+# on the server; both clients must end on their own once the run is cancelled.
+ci log "$slow_run" --project slow --follow >"$test_root/follow.out" 2>"$test_root/follow.err" &
+follow_pid=$!
+ci watch "$slow_run" --project slow --interval 1 >"$test_root/watch.out" 2>&1 &
+watch_pid=$!
+attempt=0
+until grep -q integ-cancel-start "$test_root/follow.out" 2>/dev/null; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 200 ] || { cat "$test_root/follow.err" >&2; fail "ci log --follow never showed the live step"; }
+  sleep .1
+done
+live_status=$(ci status --project slow) || fail "ckgit ci status of a running run failed"
+case "$live_status" in
+  *latest*running*"$slow_run"*'(step 0 running)'*) ;;
+  *) echo "$live_status" >&2; fail "ci status did not show the live run" ;;
+esac
+
 # Request cancellation via the CLI; the runner stops the build promptly.
 "$CKGIT_ADMIN" ci cancel slow "$slow_run" --state-root "$state" >/dev/null || fail "ci cancel failed"
 attempt=0
@@ -363,6 +526,19 @@ while :; do
   sleep .1
 done
 grep -rq "integ-cancel-END" "$state"/ci/runs/slow/*/steps/ && fail "the cancelled step ran to completion" || true
+attempt=0
+while kill -0 "$follow_pid" 2>/dev/null || kill -0 "$watch_pid" 2>/dev/null; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 300 ] || fail "ci log --follow or ci watch did not end with the run"
+  sleep .1
+done
+wait "$follow_pid" || fail "ci log --follow of a cancelled run failed"
+set +e
+wait "$watch_pid"; slow_watch_status=$?
+set -e
+[ "$slow_watch_status" = 5 ] || { cat "$test_root/watch.out" >&2; fail "ci watch of a cancelled run should exit 5"; }
+grep -q 'running step 0' "$test_root/watch.out" || fail "ci watch did not report the running step"
+grep -q "Run $slow_run cancelled" "$test_root/watch.out" || fail "ci watch did not report the cancellation"
+grep -q integ-cancel-END "$test_root/follow.out" && fail "ci log --follow printed output the cancelled step never wrote"
 
 kill -TERM "$runner_pid" 2>/dev/null || true
 wait "$runner_pid" 2>/dev/null || true

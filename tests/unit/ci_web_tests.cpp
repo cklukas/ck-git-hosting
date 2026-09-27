@@ -185,6 +185,22 @@ void testRunDetailAndDisplay() {
   require(!stale_display.active && stale_display.name == "interrupted",
           "a running run with a dead heartbeat is interrupted, not live");
 
+  // An explicit clock decides staleness, so the CLI can judge a run with the
+  // server's time: the same record is live at its heartbeat and interrupted
+  // once that clock passes the staleness bound.
+  ckgit::CiRunRecord pinned = live;
+  pinned.started_epoch_seconds = 1700000000;
+  pinned.heartbeat_epoch_seconds = 1700000030;
+  const auto pinned_live = ckgit::ciRunDisplayAt(pinned, 1700000030 + ckgit::kCiRunStaleSeconds);
+  require(pinned_live.active && pinned_live.seconds == 30 + ckgit::kCiRunStaleSeconds,
+          "a run is live up to the staleness bound on the given clock");
+  const auto pinned_stale = ckgit::ciRunDisplayAt(pinned, 1700000031 + ckgit::kCiRunStaleSeconds);
+  require(!pinned_stale.active && pinned_stale.name == "interrupted" && pinned_stale.seconds == 30,
+          "a run is interrupted past the staleness bound on the given clock");
+  require(ckgit::relativeTimeAt(1700000000, 1700000000 + 7200) == "2 hours ago" &&
+              ckgit::relativeTimeAt(1700000100, 1700000000) == "in the future",
+          "relative times can be measured against an explicit clock");
+
   require(ckgit::ciAnyActiveRun({done, live}), "ciAnyActiveRun sees a live run");
   require(!ckgit::ciAnyActiveRun({done, stale}), "ciAnyActiveRun ignores interrupted runs");
 
@@ -195,8 +211,8 @@ void testRunDetailAndDisplay() {
   require(detail.find("/project/demo/ci/00000000000000000002-abcdabcd/cancel") != std::string::npos,
           "the live run page posts to the cancel endpoint");
   require(detail.find("method=\"post\"") != std::string::npos, "cancel is a POST form");
-  require(detail.find("ckgit-admin ci cancel demo 00000000000000000002-abcdabcd") != std::string::npos,
-          "the live run page shows the CLI cancel command");
+  require(detail.find("ckgit ci cancel 00000000000000000002-abcdabcd --project demo") != std::string::npos,
+          "the live run page shows the client's cancel command");
   require(detail.find("integ-live-output") != std::string::npos,
           "the live run page shows the running step's output");
   require(detail.find("script nonce=\"test-nonce\"") != std::string::npos,

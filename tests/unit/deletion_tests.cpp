@@ -80,7 +80,7 @@ void checkBoundedControlRpc(const std::filesystem::path& directory) {
   const auto start = std::chrono::steady_clock::now();
   bool failed = false;
   try {
-    ckgit::forwardControlRpc(socket_path, "client", "refresh", "project", {}, nullptr,
+    ckgit::forwardControlRpc(socket_path, "client", "refresh", {"project"}, nullptr,
                               std::chrono::milliseconds(70));
   } catch (const std::exception&) { failed = true; }
   const auto elapsed = std::chrono::steady_clock::now() - start;

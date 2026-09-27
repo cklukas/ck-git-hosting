@@ -7,7 +7,8 @@
 # what catches a link into the gitignored docs/planning/ (never shipped, so
 # never followable by a reader of a release tarball or GitHub) and an
 # ordinary typo or stale path left behind by a rename -- a doc reads as
-# trustworthy only if every link in it actually goes somewhere.
+# trustworthy only if every link in it actually goes somewhere. The same
+# pages must not document a command form known not to work.
 
 set -eu
 
@@ -81,6 +82,14 @@ for file in README.md docs/operations/*.md docs/protocol/*.md; do
   [ -f "$file" ] || continue
   check_file "$file"
 done
+
+# ckgit-admin's ci commands need the service account that owns the private
+# state root; plain `sudo` runs them as root, which that ownership check
+# refuses. Every documented invocation must use the form that works.
+if grep -n 'sudo ckgit-admin ci' README.md docs/operations/*.md docs/protocol/*.md >&2; then
+  echo "documentation shows 'sudo ckgit-admin ci'; use 'sudo -u ckgit ckgit-admin ci'" >&2
+  fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
   echo "docs link check failed" >&2

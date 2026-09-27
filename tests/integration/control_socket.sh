@@ -701,6 +701,53 @@ if SSH_ORIGINAL_COMMAND='ckgit-rpc 1 releases alpha extra' "$CK_GIT_SHELL" \
   exit 1
 fi
 
+# CI operations behind `ckgit ci`: the daemon's replies for a project without
+# runs and for unknown projects and runs, then the exact argument grammar at
+# the SSH dispatcher (tests/integration/ci_runner.sh covers real runs).
+rpc() {
+  SSH_ORIGINAL_COMMAND="$1" "$CK_GIT_SHELL" --client-id mac-studio --repo-root "$test_root" \
+    --control-socket "$test_root/control.sock"
+}
+ci_run_id='00000000001727000000-abcd1234'
+ci_status=$(rpc 'ckgit-rpc 1 ci-status alpha')
+case "$ci_status" in
+  'ok '[1-9]*' 1
+project alpha disabled 0') ;;
+  *) echo "ci-status did not report a project without runs: $ci_status" >&2; exit 1 ;;
+esac
+ci_overview=$(rpc 'ckgit-rpc 1 ci-overview')
+printf '%s\n' "$ci_overview" | grep -qx 'project alpha disabled 0' &&
+  printf '%s\n' "$ci_overview" | grep -qx 'project beta disabled 0' ||
+  { echo "ci-overview did not list every hosted project: $ci_overview" >&2; exit 1; }
+for request in "ci-status nosuch" "ci-run nosuch $ci_run_id" "ci-log nosuch $ci_run_id 0 0" \
+               "ci-cancel nosuch $ci_run_id"; do
+  if reply=$(rpc "ckgit-rpc 1 $request"); then
+    echo "an unknown project was accepted: $request" >&2; exit 1
+  fi
+  [ "$reply" = 'error noproject no such project' ] || { echo "unexpected reply to $request: $reply" >&2; exit 1; }
+done
+for request in "ci-run alpha $ci_run_id" "ci-log alpha $ci_run_id 0 0" "ci-cancel alpha $ci_run_id"; do
+  if reply=$(rpc "ckgit-rpc 1 $request"); then
+    echo "an unknown run was accepted: $request" >&2; exit 1
+  fi
+  [ "$reply" = 'error norun no such CI run' ] || { echo "unexpected reply to $request: $reply" >&2; exit 1; }
+done
+[ ! -e "$test_root/state/ci/runs/alpha" ] || { echo "a CI query created run state" >&2; exit 1; }
+dry_log=$(SSH_ORIGINAL_COMMAND="ckgit-rpc 1 ci-log alpha $ci_run_id 4096 18446744073709551615" "$CK_GIT_SHELL" \
+  --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock" --dry-run)
+[ "$dry_log" = "rpc ci-log alpha $ci_run_id 4096 18446744073709551615 for mac-studio" ] ||
+  { echo "dispatcher did not forward the four ci-log arguments: $dry_log" >&2; exit 1; }
+for request in "ci-overview alpha" "ci-status" "ci-status alpha extra" "ci-run alpha" \
+               "ci-run alpha $ci_run_id extra" "ci-log alpha $ci_run_id 0" "ci-log alpha $ci_run_id 0 0 extra" \
+               "ci-log alpha $ci_run_id 01 0" "ci-log alpha $ci_run_id 4097 0" \
+               "ci-log alpha $ci_run_id 0 18446744073709551616" "ci-cancel alpha bad.id" \
+               "cancel alpha $ci_run_id" "ci-enable alpha"; do
+  if SSH_ORIGINAL_COMMAND="ckgit-rpc 1 $request" "$CK_GIT_SHELL" --client-id mac-studio --repo-root "$test_root" \
+    --control-socket "$test_root/control.sock" --dry-run >/dev/null 2>&1; then
+    echo "dispatcher accepted a malformed CI request: $request" >&2; exit 1
+  fi
+done
+
 if SSH_ORIGINAL_COMMAND="git-upload-pack '../alpha.git'" "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock" \
   --dry-run >/dev/null 2>&1; then

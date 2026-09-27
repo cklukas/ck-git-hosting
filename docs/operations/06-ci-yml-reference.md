@@ -19,6 +19,16 @@ A commit that has no `.ckgit/ci.yml` at all records the run as **skipped**,
 with no error. This is normal for a project that has not opted into CI, and
 for a commit that predates the file being added.
 
+Check a workflow before pushing it with `ckgit ci lint`, which parses it with
+the runner's own parser -- from the working tree, a file, or a commit
+(`ckgit ci lint --rev HEAD`, read the same way the runner reads it) -- and
+prints either a summary of its triggers and jobs or the first error with the
+offending line. Only the server can decide what depends on it: which branch
+is the repository's default branch (for a workflow without `on:`, and for
+Pages), whether the sister projects exist, and the limits in
+[§10](#10-bounds-table) that the server configures (step timeout, log and
+artifact sizes, retention cap, network policy).
+
 ## 2. Syntax
 
 The format is a small, strict, hand-rolled subset of YAML — not a full YAML
@@ -520,10 +530,10 @@ every successful push to this repository's default branch.
 
 | Symptom | Likely cause and fix |
 |---|---|
-| No run appears after a push | CI is not enabled for the project (`ckgit-admin ci status`), or the runner is not running (`systemctl status ck-ci-runner.service`). |
+| No run appears after a push | CI is not enabled for the project (`ckgit ci status` shows it, `sudo -u ckgit ckgit-admin ci enable NAME --config /etc/ck-git-hosting/server.ini` turns it on), or the runner is not running (`systemctl status ck-ci-runner.service`). |
 | Every run is `skipped` | The branch is not a trigger under [§4](#4-trigger-matrix); add it to `on: { branches: [...] }`, or push the default branch. A commit with no `.ckgit/ci.yml` is also skipped. |
-| Run is `error` before any step | The workflow is malformed, or over one of the bounds in [§10](#10-bounds-table); the run's own detail names the reason. |
+| Run is `error` before any step | The workflow is malformed, or over one of the bounds in [§10](#10-bounds-table); the run's own detail names the reason (`ckgit ci show RUN`). `ckgit ci lint` finds the same parse errors before a push. |
 | A step cannot reach the network | Expected: the sandbox denies the network beyond loopback by default. Set `ci_allow_network=true` and restart the runner if a build genuinely needs it — see the networking note in [§7](#7-filesystem) for exactly what that changes. |
 | A `sisters:`/`cache:` entry with extra fields is rejected as an unsupported key | The single-line `- { name: ..., ref: ... }` form does not parse — see the syntax note in [§2](#2-syntax); use the two-line block form instead. |
 | Log warns about missing isolation, or that filesystem masking could not be confirmed | Unprivileged user namespaces are disabled or unavailable on this host — see degraded mode in [§7](#7-filesystem). A step still ran, but without network or filesystem isolation from the rest of the server. |
-| `ckgit-admin ci ...` errors about state | Pass `--config /etc/ck-git-hosting/server.ini` (or `--state-root`) so it can find the state root, and run it as root or the `ckgit` account. |
+| `ckgit-admin ci ...` errors about state, or reports that the metadata state directory is not private and daemon-owned | Pass `--config /etc/ck-git-hosting/server.ini` (or `--state-root`) so it can find the state root, and run it as the `ckgit` service account that owns that directory: `sudo -u ckgit ckgit-admin ci ...`. Plain `sudo` runs it as root, which the private-state check refuses. |

@@ -178,7 +178,7 @@ int run() {
       try {
         // After enqueueCiJobs above, so a freshly queued job's Pending record
         // is already on disk for this same refresh to pick up.
-        ckgit::forwardControlRpc(control_socket, client_id, "refresh", project_name, {}, nullptr,
+        ckgit::forwardControlRpc(control_socket, client_id, "refresh", {project_name}, nullptr,
                                  std::chrono::seconds(2));
       } catch (const std::exception&) {
         // Index availability must never delay or fail an already accepted push.

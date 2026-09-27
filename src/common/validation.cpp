@@ -65,6 +65,24 @@ bool isValidClientId(std::string_view client_id) {
   });
 }
 
+namespace {
+
+bool isLowercaseHex(std::string_view value) {
+  return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+    return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+  });
+}
+
+}  // namespace
+
+bool isValidObjectId(std::string_view object_id) {
+  return (object_id.size() == 40 || object_id.size() == 64) && isLowercaseHex(object_id);
+}
+
+bool isValidSha256Hex(std::string_view digest) {
+  return digest.size() == 64 && isLowercaseHex(digest);
+}
+
 bool isValidBranchName(std::string_view branch) {
   if (branch.empty() || branch.size() > 255 || branch.front() == '-' || branch.front() == '/' ||
       branch.back() == '/' || branch.back() == '.' || branch.find("..") != std::string_view::npos ||

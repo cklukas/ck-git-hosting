@@ -16,6 +16,10 @@ std::string projectNameError(std::string_view name);
 bool isValidProjectName(std::string_view name);
 bool isValidClientId(std::string_view client_id);
 bool isValidBranchName(std::string_view branch);
+// A full Git object name: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits.
+bool isValidObjectId(std::string_view object_id);
+// A SHA-256 digest as 64 lowercase hex digits.
+bool isValidSha256Hex(std::string_view digest);
 
 // A path that is safe to resolve inside a checkout or a site: relative,
 // within the tree, no control bytes or backslashes. A single trailing '/'

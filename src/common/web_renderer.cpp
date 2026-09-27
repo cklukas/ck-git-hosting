@@ -94,6 +94,7 @@ std::string renderEventList(const ckgit::ProjectSummary& project) {
     const std::string label = event.kind == "project-created" ? "Project created"
                             : event.kind == "checkout-registered" ? "Checkout registered"
                             : event.kind == "git-push" ? "Git push"
+                            : event.kind == "ci-cancel-requested" ? "CI cancel requested"
                                                                       : ckgit::htmlEscape(event.kind);
     rendered += "<li>" + label + " · <strong>" + ckgit::htmlEscape(event.client_id) + "</strong>";
     const std::string timestamp = formatTimestamp(event.epoch_seconds);

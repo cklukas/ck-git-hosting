@@ -29,6 +29,7 @@
 
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/metadata_store.hpp"
+#include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
 
 namespace ckgit {
@@ -177,40 +178,10 @@ std::vector<std::string> listNames(int descriptor) {
   return names;
 }
 
-std::string toHex(std::string_view value) {
-  static const char* const digits = "0123456789abcdef";
-  std::string out;
-  out.reserve(value.size() * 2);
-  for (const unsigned char byte : value) {
-    out.push_back(digits[byte >> 4]);
-    out.push_back(digits[byte & 0x0f]);
-  }
-  return out;
-}
-
-int hexNibble(unsigned char character) {
-  if (character >= '0' && character <= '9') return character - '0';
-  if (character >= 'a' && character <= 'f') return character - 'a' + 10;
-  return -1;
-}
-
 std::string fromHex(std::string_view token, std::size_t byte_cap) {
-  if (token.size() % 2 != 0 || token.size() / 2 > byte_cap) fail("a CI field is not valid hex");
-  std::string out;
-  out.reserve(token.size() / 2);
-  for (std::size_t index = 0; index < token.size(); index += 2) {
-    const int high = hexNibble(static_cast<unsigned char>(token[index]));
-    const int low = hexNibble(static_cast<unsigned char>(token[index + 1]));
-    if (high < 0 || low < 0) fail("a CI field is not valid hex");
-    out.push_back(static_cast<char>((high << 4) | low));
-  }
-  return out;
-}
-
-bool isHexObjectId(std::string_view value) {
-  return (value.size() == 40 || value.size() == 64) &&
-         std::all_of(value.begin(), value.end(),
-                     [](unsigned char c) { return hexNibble(c) >= 0; });
+  std::optional<std::string> decoded = hexDecode(token, byte_cap);
+  if (!decoded.has_value()) fail("a CI field is not valid hex");
+  return std::move(*decoded);
 }
 
 std::uint64_t parseEpoch(std::string_view text) {
@@ -241,7 +212,7 @@ std::string serializeJob(const CiJobRequest& job) {
   return "schema_version=1\n"
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
-         "ref_hex=" + toHex(job.ref) + "\n"
+         "ref_hex=" + hexEncode(job.ref) + "\n"
          "commit=" + job.commit_id + "\n"
          "client_id=" + job.client_id + "\n"
          "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n";
@@ -258,7 +229,7 @@ CiJobRequest parseJob(std::string_view content) {
   job.client_id = std::string(expectField(lines[5], "client_id="));
   job.queued_epoch_seconds = parseEpoch(expectField(lines[6], "queued_epoch="));
   if (!isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
-      !isValidClientId(job.client_id) || !isHexObjectId(job.commit_id)) {
+      !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
     fail("a CI job record contains invalid data");
   }
   return job;
@@ -272,17 +243,17 @@ std::string serializeRun(const CiRunRecord& run) {
       "schema_version=2\n"
       "run_id=" + run.run_id + "\n"
       "project=" + run.project_name + "\n"
-      "ref_hex=" + toHex(run.ref) + "\n"
+      "ref_hex=" + hexEncode(run.ref) + "\n"
       "commit=" + run.commit_id + "\n"
       "status=" + std::string(ciRunStatusName(run.status)) + "\n"
       "started_epoch=" + std::to_string(run.started_epoch_seconds) + "\n"
       "finished_epoch=" + std::to_string(run.finished_epoch_seconds) + "\n"
       "heartbeat_epoch=" + std::to_string(run.heartbeat_epoch_seconds) + "\n"
-      "detail_hex=" + toHex(run.detail) + "\n"
+      "detail_hex=" + hexEncode(run.detail) + "\n"
       "step_count=" + std::to_string(run.steps.size()) + "\n";
   for (const CiStepResult& step : run.steps) {
     out += "step=" + std::to_string(step.exit_code) + "," + (step.timed_out ? "1" : "0") + "," +
-           (step.output_truncated ? "1" : "0") + "," + toHex(step.name) + "\n";
+           (step.output_truncated ? "1" : "0") + "," + hexEncode(step.name) + "\n";
   }
   return out;
 }
@@ -313,7 +284,7 @@ CiRunRecord parseRun(std::string_view content) {
   std::size_t count = 0;
   const auto [end, error] = std::from_chars(count_text.data(), count_text.data() + count_text.size(), count);
   if (error != std::errc{} || end != count_text.data() + count_text.size()) fail("a CI step count is malformed");
-  if (count > 4096 || lines.size() != header + count) fail("a CI run record has a mismatched step count");
+  if (count > kMaximumCiSteps || lines.size() != header + count) fail("a CI run record has a mismatched step count");
   for (std::size_t index = 0; index < count; ++index) {
     const std::string_view step_line = expectField(lines[header + index], "step=");
     CiStepResult step;
@@ -332,21 +303,10 @@ CiRunRecord parseRun(std::string_view content) {
     step.name = fromHex(step_line.substr(c3 + 1), 256);
     run.steps.push_back(std::move(step));
   }
-  if (!isValidCiId(run.run_id) || !isValidProjectName(run.project_name) || !isHexObjectId(run.commit_id)) {
+  if (!isValidCiId(run.run_id) || !isValidProjectName(run.project_name) || !isValidObjectId(run.commit_id)) {
     fail("a CI run record contains invalid data");
   }
   return run;
-}
-
-constexpr std::size_t kArtifactNameBytes = 64;
-
-bool isValidArtifactName(std::string_view name) {
-  return !name.empty() && name.size() <= kArtifactNameBytes &&
-         std::all_of(name.begin(), name.end(), [](unsigned char character) {
-           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
-                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
-                  character == '-';
-         });
 }
 
 bool endsWith(std::string_view text, std::string_view suffix) {
@@ -360,7 +320,7 @@ std::string serializeArtifact(const CiArtifactRecord& artifact) {
          "sha256=" + artifact.sha256 + "\n"
          "created_epoch=" + std::to_string(artifact.created_epoch_seconds) + "\n"
          "expires_epoch=" + std::to_string(artifact.expires_epoch_seconds) + "\n"
-         "note_hex=" + toHex(artifact.note) + "\n";
+         "note_hex=" + hexEncode(artifact.note) + "\n";
 }
 
 CiArtifactRecord parseArtifact(std::string_view content) {
@@ -370,16 +330,12 @@ CiArtifactRecord parseArtifact(std::string_view content) {
   artifact.name = std::string(expectField(lines[1], "name="));
   artifact.bytes = parseEpoch(expectField(lines[2], "bytes="));
   const std::string_view sha = expectField(lines[3], "sha256=");
-  if (!sha.empty() && (sha.size() != 64 || !std::all_of(sha.begin(), sha.end(), [](unsigned char c) {
-        return hexNibble(c) >= 0;
-      }))) {
-    fail("a CI artifact sha256 is malformed");
-  }
+  if (!sha.empty() && !isValidSha256Hex(sha)) fail("a CI artifact sha256 is malformed");
   artifact.sha256 = std::string(sha);
   artifact.created_epoch_seconds = parseEpoch(expectField(lines[4], "created_epoch="));
   artifact.expires_epoch_seconds = parseEpoch(expectField(lines[5], "expires_epoch="));
   artifact.note = fromHex(expectField(lines[6], "note_hex="), 256);
-  if (!isValidArtifactName(artifact.name)) fail("a CI artifact record has an invalid name");
+  if (!isValidCiArtifactName(artifact.name)) fail("a CI artifact record has an invalid name");
   return artifact;
 }
 
@@ -388,7 +344,7 @@ std::string serializeRelease(const CiReleaseRecord& release) {
          "tag=" + release.tag + "\n"
          "commit=" + release.commit_id + "\n"
          "created_epoch=" + std::to_string(release.created_epoch_seconds) + "\n"
-         "notes_hex=" + toHex(release.notes) + "\n";
+         "notes_hex=" + hexEncode(release.notes) + "\n";
 }
 
 CiReleaseRecord parseRelease(std::string_view content) {
@@ -399,7 +355,7 @@ CiReleaseRecord parseRelease(std::string_view content) {
   release.commit_id = std::string(expectField(lines[2], "commit="));
   release.created_epoch_seconds = parseEpoch(expectField(lines[3], "created_epoch="));
   release.notes = fromHex(expectField(lines[4], "notes_hex="), kMaximumReleaseNotesBytes);
-  if (!isValidReleaseTag(release.tag) || !isHexObjectId(release.commit_id)) {
+  if (!isValidReleaseTag(release.tag) || !isValidObjectId(release.commit_id)) {
     fail("a release record contains invalid data");
   }
   return release;
@@ -451,6 +407,15 @@ std::string_view ciRunStatusIcon(CiRunStatus status) {
   return "\xe2\x9a\xa0\xef\xb8\x8f";
 }
 
+bool isValidCiArtifactName(std::string_view name) {
+  return !name.empty() && name.size() <= kMaximumCiArtifactNameBytes &&
+         std::all_of(name.begin(), name.end(), [](unsigned char character) {
+           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+                  character == '-';
+         });
+}
+
 bool isValidCiId(std::string_view id) {
   return !id.empty() && id.size() <= kMaximumCiIdBytes &&
          std::all_of(id.begin(), id.end(), [](unsigned char character) {
@@ -472,7 +437,7 @@ std::string generateCiId() {
 
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request) {
   if (!isValidCiId(request.job_id) || !isValidProjectName(request.project_name) ||
-      !isValidClientId(request.client_id) || !isHexObjectId(request.commit_id)) {
+      !isValidClientId(request.client_id) || !isValidObjectId(request.commit_id)) {
     fail("refusing to queue an invalid CI job");
   }
   const std::filesystem::path root = validatedMetadataRoot(state_root);
@@ -565,7 +530,7 @@ std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_r
 
 void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord& record) {
   if (!isValidCiId(record.run_id) || !isValidProjectName(record.project_name) ||
-      !isHexObjectId(record.commit_id)) {
+      !isValidObjectId(record.commit_id)) {
     fail("refusing to write an invalid CI run record");
   }
   if (record.detail.size() > kMaximumCiDetailBytes) fail("a CI run detail exceeds its size limit");
@@ -596,7 +561,7 @@ std::filesystem::path prepareCiArtifactDirectory(const std::filesystem::path& st
 
 void writeCiArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
                            std::string_view run_id, const CiArtifactRecord& record) {
-  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidArtifactName(record.name)) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidCiArtifactName(record.name)) {
     fail("refusing to write an invalid CI artifact record");
   }
   const std::string content = serializeArtifact(record);
@@ -781,7 +746,7 @@ std::optional<std::string> readCiRunLogChunk(const std::filesystem::path& state_
 std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::string_view run_id,
                                           std::string_view artifact_name, std::size_t cap) {
-  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidArtifactName(artifact_name)) {
+  if (!isValidProjectName(project_name) || !isValidCiId(run_id) || !isValidCiArtifactName(artifact_name)) {
     return std::nullopt;
   }
   try {
@@ -1080,7 +1045,7 @@ std::filesystem::path prepareCiReleaseDirectory(const std::filesystem::path& sta
 
 void writeCiReleaseArtifactRecord(const std::filesystem::path& state_root, std::string_view project_name,
                                   std::string_view tag, const CiArtifactRecord& record) {
-  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidArtifactName(record.name)) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidCiArtifactName(record.name)) {
     fail("refusing to write an invalid release asset record");
   }
   // "release" is reserved for release.ini itself (written by
@@ -1101,7 +1066,7 @@ void writeCiReleaseArtifactRecord(const std::filesystem::path& state_root, std::
 void writeCiReleaseRecord(const std::filesystem::path& state_root, std::string_view project_name,
                           const CiReleaseRecord& record) {
   if (!isValidProjectName(project_name) || !isValidReleaseTag(record.tag) ||
-      !isHexObjectId(record.commit_id)) {
+      !isValidObjectId(record.commit_id)) {
     fail("refusing to write an invalid release record");
   }
   if (record.notes.size() > kMaximumReleaseNotesBytes) fail("release notes exceed the size limit");
@@ -1225,7 +1190,7 @@ std::vector<CiReleaseRecord> parseReleasesControlResponse(std::string_view respo
       const auto fields = splitReleaseFields(line, 4);
       const std::string_view tag = fields[1];
       const std::string_view commit = fields[2];
-      if (!isValidReleaseTag(tag) || !isHexObjectId(commit)) {
+      if (!isValidReleaseTag(tag) || !isValidObjectId(commit)) {
         throw std::invalid_argument("releases response has an invalid release record");
       }
       if (std::any_of(releases.begin(), releases.end(),
@@ -1244,16 +1209,14 @@ std::vector<CiReleaseRecord> parseReleasesControlResponse(std::string_view respo
         throw std::invalid_argument("releases response asset tag does not match its release");
       }
       const std::string_view name = fields[2];
-      if (!isValidArtifactName(name)) {
+      if (!isValidCiArtifactName(name)) {
         throw std::invalid_argument("releases response has an invalid asset name");
       }
       const std::uint64_t bytes = parseReleaseCounter(fields[3], "asset size");
       const std::string_view sha_field = fields[4];
       std::string sha256;
       if (sha_field != "-") {
-        if (sha_field.size() != 64 || !std::all_of(sha_field.begin(), sha_field.end(), [](unsigned char c) {
-              return hexNibble(c) >= 0;
-            })) {
+        if (!isValidSha256Hex(sha_field)) {
           throw std::invalid_argument("releases response has an invalid asset checksum");
         }
         sha256 = std::string(sha_field);
@@ -1272,7 +1235,7 @@ std::vector<CiReleaseRecord> parseReleasesControlResponse(std::string_view respo
 std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,
                                               std::string_view project_name, std::string_view tag,
                                               std::string_view asset_name, std::size_t cap) {
-  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidArtifactName(asset_name)) {
+  if (!isValidProjectName(project_name) || !isValidReleaseTag(tag) || !isValidCiArtifactName(asset_name)) {
     return std::nullopt;
   }
   try {

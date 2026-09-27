@@ -56,6 +56,9 @@ void usage(std::ostream& output) {
          << "verify-backup checks the SHA-256 inventory, Git objects, and metadata without restoring.\n"
          << "restore-backup requires empty destination metadata; fresh hosting settings replace original Git config.\n"
          << "restore-project recovers Git from a retained trash entry, keeps that copy, and recreates no metadata.\n"
+         << "ci commands read and write the private state root, so run them as the service account that owns\n"
+         << "it, for example: sudo -u ckgit ckgit-admin ci enable NAME --config /etc/ck-git-hosting/server.ini\n"
+         << "Paired devices inspect runs and cancel them with ckgit ci; enabling CI stays here.\n"
          << "Reflogs, unreachable objects, server OS settings, credentials, and SSH keys need separate backups.\n\n"
          << "authorized-key prints one restricted OpenSSH authorized_keys line for a device key.\n"
          << "It never edits a file; append the line to the installed authorized_keys yourself.\n";
@@ -174,7 +177,7 @@ int recoveryCommand(int argc, char* argv[]) {
   }
   if (verb != "backup" && control_socket.has_value()) {
     for (const auto& project : affected) {
-      try { ckgit::forwardControlRpc(*control_socket, "admin", "refresh", project, {}, nullptr, std::chrono::seconds(2)); }
+      try { ckgit::forwardControlRpc(*control_socket, "admin", "refresh", {project}, nullptr, std::chrono::seconds(2)); }
       catch (const std::exception&) { /* The index sweep also discovers restored repositories. */ }
     }
   }
@@ -313,7 +316,7 @@ int removeProject(int argc, char* argv[]) {
   }
   if (control_socket.has_value()) {
     try {
-      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", name, {}, nullptr,
+      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", {name}, nullptr,
                                std::chrono::seconds(2));
     } catch (const std::exception&) {
       // The periodic index sweep also discovers the removed repository.
@@ -387,7 +390,7 @@ int ciCancelRun(const std::filesystem::path& state_root, const std::string& name
   }
   if (control_socket.has_value()) {
     try {
-      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", name, {}, nullptr, std::chrono::seconds(2));
+      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", {name}, nullptr, std::chrono::seconds(2));
     } catch (const std::exception&) {
       // The runner acts on the marker regardless; the nudge only speeds the dashboard.
     }

@@ -59,6 +59,10 @@ struct CiRunDisplay {
   bool active;             // still live: a running run with a fresh heartbeat
 };
 CiRunDisplay ciRunDisplay(const CiRunRecord& run);
+// The same view evaluated at an explicit time: the CLI judges a run with the
+// server's clock (reported in each CI control response), so a skewed client
+// clock can neither hide an interrupted run nor invent one.
+CiRunDisplay ciRunDisplayAt(const CiRunRecord& run, std::uint64_t now_epoch_seconds);
 // True when any run is still live (drives whether a page auto-refreshes).
 bool ciAnyActiveRun(const std::vector<CiRunRecord>& runs);
 // A run's elapsed/total time rendered as "M:SS min" (or "H:MM:SS" past an
@@ -78,6 +82,9 @@ std::string pageLayout(std::string_view title, std::string_view body, const Proj
                        const PageContext* context = nullptr, unsigned refresh_seconds = 0);
 std::string formatUtcTimestamp(std::uint64_t epoch);
 std::string relativeTime(std::uint64_t epoch);
+// relativeTime measured against an explicit clock, for a caller that renders
+// server timestamps against the server's own time rather than the local one.
+std::string relativeTimeAt(std::uint64_t epoch, std::uint64_t now);
 std::string formatBytes(std::uint64_t bytes);
 std::string escapePre(std::string_view value);
 std::string sourceUrl(const std::string& project, const std::string& kind,

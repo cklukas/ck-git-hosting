@@ -13,6 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <condition_variable>
+#include <ctime>
 #include <deque>
 #include <mutex>
 #include <random>
@@ -36,6 +37,7 @@
 #include <sys/ucred.h>
 #endif
 
+#include "ckgit/ci_control.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/dashboard.hpp"
@@ -53,7 +55,6 @@
 
 namespace {
 
-constexpr std::size_t kMaximumRequestBytes = 768;
 constexpr std::size_t kMaximumResponseBytes = ckgit::kMaximumControlResponseBytes;
 // A repository with many tags produces far more than the process helper's
 // default capture; refs are listed from a bounded but generous buffer.
@@ -77,13 +78,6 @@ struct Options {
   std::optional<std::filesystem::path> pages_root;
   std::optional<unsigned short> pages_http_port;
   std::optional<std::string> pages_public_url;
-};
-
-struct ControlRequest {
-  std::string client_id;
-  std::string operation;
-  std::string argument;
-  std::string second_argument;
 };
 
 void requestStop(int) {
@@ -228,62 +222,6 @@ bool sameUserPeer(int descriptor) {
 #endif
 }
 
-std::optional<ControlRequest> parseRequest(std::string_view request) {
-  if (request.empty() || request.size() > kMaximumRequestBytes || request.back() != '\n' ||
-      request.find('\n') != request.size() - 1 || request.find('\r') != std::string_view::npos ||
-      request.find('\0') != std::string_view::npos) {
-    return std::nullopt;
-  }
-  for (const unsigned char character : request) {
-    if (character != '\n' && (character < 0x20 || character > 0x7e)) {
-      return std::nullopt;
-    }
-  }
-  const std::string_view content = request.substr(0, request.size() - 1);
-  constexpr std::string_view prefix{"CKGIT-CONTROL/1 "};
-  if (content.rfind(prefix, 0) != 0) {
-    return std::nullopt;
-  }
-  std::vector<std::string> tokens;
-  const std::string_view arguments = content.substr(prefix.size());
-  std::size_t start = 0;
-  while (start < arguments.size()) {
-    const std::size_t end = arguments.find(' ', start);
-    const std::string_view token = arguments.substr(start,
-        end == std::string_view::npos ? std::string_view::npos : end - start);
-    if (token.empty() || tokens.size() == 4) {
-      return std::nullopt;
-    }
-    tokens.emplace_back(token);
-    if (end == std::string_view::npos) {
-      break;
-    }
-    start = end + 1;
-  }
-  if (tokens.size() < 2 || !ckgit::isValidClientId(tokens[0])) {
-    return std::nullopt;
-  }
-  const std::string argument = tokens.size() >= 3 ? tokens[2] : "";
-  const std::string second_argument = tokens.size() == 4 ? tokens[3] : "";
-  const std::string& operation = tokens[1];
-  const bool no_arguments = argument.empty() && second_argument.empty();
-  if (!((operation == "ping" || operation == "list-projects" || operation == "checkouts" ||
-         operation == "version" || operation == "versions") && no_arguments) &&
-      !((operation == "refs" || operation == "refresh" || operation == "forget-checkout" ||
-         operation == "ci-status" || operation == "releases") && !argument.empty() &&
-        second_argument.empty() && ckgit::isValidProjectName(argument)) &&
-      !(operation == "create" && !argument.empty() && !second_argument.empty() &&
-        ckgit::isValidProjectName(argument) && ckgit::isValidBranchName(second_argument)) &&
-      !((operation == "register" || operation == "replace-checkout") && !argument.empty() &&
-        !second_argument.empty() && ckgit::isValidProjectName(argument) &&
-        ckgit::isValidCheckoutPathToken(second_argument)) &&
-      !(operation == "cancel" && !argument.empty() && !second_argument.empty() &&
-        ckgit::isValidProjectName(argument) && ckgit::isValidCiId(second_argument))) {
-    return std::nullopt;
-  }
-  return ControlRequest{tokens[0], operation, argument, second_argument};
-}
-
 std::vector<std::string> listProjects(const std::filesystem::path& root) {
   std::vector<std::string> projects;
   std::error_code error;
@@ -400,22 +338,89 @@ std::string checkoutsResponse(const std::filesystem::path& state_root, std::stri
   return response;
 }
 
-// The newest CI runs for a project as `run_id status started heartbeat finished steps`
-// lines, so a script can watch progress over the same control socket the cancel
-// operation uses. Bounded to a handful of runs, well within the response limit.
+std::uint64_t currentEpochSeconds() {
+  return static_cast<std::uint64_t>(std::time(nullptr));
+}
+
+// True when `project` names an existing, non-symlink hosted repository, so a
+// CI query about a mistyped or removed project is refused rather than
+// answered as an empty history.
+bool isHostedProject(const std::filesystem::path& root, std::string_view project) {
+  std::error_code error;
+  const auto status = std::filesystem::symlink_status(ckgit::bareRepositoryPath(root, project), error);
+  return !error && std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status);
+}
+
+// `ci-status`: one project's opt-in and its newest runs, newest first.
 std::string ciStatusResponse(const std::filesystem::path& state_root, std::string_view project) {
-  const auto runs = ckgit::loadCiRuns(state_root, project, 8);
-  std::string response = "ok " + std::to_string(runs.size()) + "\n";
-  for (const auto& run : runs) {
-    const std::string line = run.run_id + " " + std::string(ckgit::ciRunStatusName(run.status)) + " " +
-        std::to_string(run.started_epoch_seconds) + " " + std::to_string(run.heartbeat_epoch_seconds) + " " +
-        std::to_string(run.finished_epoch_seconds) + " " + std::to_string(run.steps.size()) + "\n";
-    if (response.size() + line.size() > kMaximumResponseBytes) {
-      throw std::runtime_error("CI status exceeds control response limit");
-    }
-    response += line;
+  ckgit::CiStatusReport report;
+  report.server_epoch_seconds = currentEpochSeconds();
+  ckgit::CiProjectStatus status{std::string(project), ckgit::isProjectCiEnabled(state_root, project), {}};
+  for (const auto& run : ckgit::loadCiRuns(state_root, project, ckgit::kMaximumControlCiRuns)) {
+    status.runs.push_back(ckgit::summarizeCiRun(run));
   }
-  return response;
+  report.projects.push_back(std::move(status));
+  return ckgit::formatCiStatusControlResponse(report);
+}
+
+// `ci-overview`: every hosted project's opt-in, its newest run, and -- when
+// that run is no longer active -- the newest run still pending or running
+// among its kControlCiOverviewScanRuns newest.
+std::string ciOverviewResponse(const std::filesystem::path& root, const std::filesystem::path& state_root) {
+  ckgit::CiStatusReport report;
+  report.server_epoch_seconds = currentEpochSeconds();
+  for (const auto& project : listProjects(root)) {
+    ckgit::CiProjectStatus status{project, ckgit::isProjectCiEnabled(state_root, project), {}};
+    const auto runs = ckgit::loadCiRuns(state_root, project, ckgit::kControlCiOverviewScanRuns);
+    if (!runs.empty()) {
+      status.runs.push_back(ckgit::summarizeCiRun(runs.front()));
+      if (!ckgit::ciRunStatusIsActive(runs.front().status)) {
+        const auto active = std::find_if(runs.begin(), runs.end(), [](const ckgit::CiRunRecord& run) {
+          return ckgit::ciRunStatusIsActive(run.status);
+        });
+        if (active != runs.end()) status.runs.push_back(ckgit::summarizeCiRun(*active));
+      }
+    }
+    report.projects.push_back(std::move(status));
+  }
+  return ckgit::formatCiStatusControlResponse(report);
+}
+
+// Parses a step index or byte offset the shared request grammar has already
+// validated as a canonical decimal in range.
+std::uint64_t validatedNumber(const std::string& token) {
+  std::uint64_t value = 0;
+  const auto [end, error] = std::from_chars(token.data(), token.data() + token.size(), value);
+  if (error != std::errc{} || end != token.data() + token.size()) {
+    throw std::invalid_argument("a validated control number did not parse");
+  }
+  return value;
+}
+
+// `ci-log`: the next chunk of one step's log. The run record is read before
+// the log: the runner writes a step's whole log before recording its result,
+// so a step the record shows finished (or a run that is no longer live) has
+// nothing left to append once the chunk reaches the end of the file.
+void answerCiLog(int client, const std::filesystem::path& state_root, const std::string& project,
+                 const std::string& run_id, std::size_t step, std::uint64_t offset) {
+  const auto run = ckgit::loadCiRun(state_root, project, run_id);
+  if (!run.has_value()) {
+    sendError(client, "norun", "no such CI run");
+    return;
+  }
+  const bool live = ckgit::ciRunDisplayAt(*run, currentEpochSeconds()).active;
+  const bool may_still_write = live && step >= run->steps.size();
+  const auto bytes = ckgit::readCiRunLogChunk(state_root, project, run_id, step, offset,
+                                              ckgit::kMaximumControlLogChunkBytes);
+  if (!bytes.has_value() && !may_still_write) {
+    sendError(client, "nolog", "no log for this CI step");
+    return;
+  }
+  ckgit::CiLogChunk chunk;
+  chunk.offset = offset;
+  chunk.bytes = bytes.value_or(std::string{});
+  chunk.complete = !may_still_write && chunk.bytes.size() < ckgit::kMaximumControlLogChunkBytes;
+  sendAll(client, ckgit::formatCiLogControlResponse(chunk));
 }
 
 // A project's durable releases (see ckgit::loadReleases), newest first, as one
@@ -477,6 +482,102 @@ std::string versionsResponse(const std::optional<std::filesystem::path>& state_r
   return response;
 }
 
+// `ci-run` and `ci-cancel` for a hosted project: the run's full record, or a
+// cancel request for a run that is still pending or running. A cancel only
+// writes the marker the runner polls; it is attributed in the event log.
+void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const std::filesystem::path& repository_root,
+                        const std::filesystem::path& state_root, ckgit::ProjectIndex& index) {
+  const std::string& project = request.arguments[0];
+  const auto run = ckgit::loadCiRun(state_root, project, request.arguments[1]);
+  if (!run.has_value()) {
+    sendError(client, "norun", "no such CI run");
+  } else if (request.operation == "ci-run") {
+    sendAll(client, ckgit::formatCiRunControlResponse({currentEpochSeconds(), *run}));
+  } else if (!ckgit::ciRunStatusIsActive(run->status)) {
+    sendError(client, "finished", "the CI run already finished");
+  } else if (!ckgit::requestCiCancel(state_root, project, run->run_id)) {
+    sendError(client, "norun", "no such CI run");
+  } else {
+    recordStateEvent(repository_root, state_root, "ci-cancel-requested", project, request.client_id);
+    index.refresh(project);
+    index.refreshMetadata(project);
+    sendAll(client, "ok cancelling\n");
+  }
+}
+
+// Answers one request the shared operation table accepted. Every operation has
+// its own branch; one this daemon does not implement is refused explicitly
+// rather than falling through to another operation.
+void answerControlRequest(int client, const ckgit::ControlRequest& request,
+                          const std::filesystem::path& repository_root,
+                          const std::optional<std::filesystem::path>& state_root,
+                          const std::optional<std::filesystem::path>& hook_directory, ckgit::ProjectIndex& index) {
+  const std::string& operation = request.operation;
+  const auto& arguments = request.arguments;
+  const auto requireState = [&]() -> const std::filesystem::path& {
+    if (!state_root.has_value()) throw std::runtime_error("the state root is not configured");
+    return *state_root;
+  };
+  if (operation == "ping") {
+    sendAll(client, "ok\n");
+  } else if (operation == "version") {
+    sendAll(client, "ok " + ckgit::buildVersion() + "\n");
+  } else if (operation == "versions") {
+    sendAll(client, versionsResponse(state_root));
+  } else if (operation == "list-projects") {
+    sendAll(client, listResponse(repository_root));
+  } else if (operation == "refs") {
+    sendAll(client, refsResponse(repository_root, arguments[0]));
+  } else if (operation == "refresh") {
+    index.refresh(arguments[0]);
+    sendAll(client, "ok refreshed\n");
+  } else if (operation == "create") {
+    static_cast<void>(ckgit::createBareRepository(repository_root, arguments[0], arguments[1], false, hook_directory));
+    recordStateEvent(repository_root, state_root, "project-created", arguments[0], request.client_id);
+    index.refresh(arguments[0]);
+    index.refreshMetadata(arguments[0]);
+    sendAll(client, "ok created\n");
+  } else if (operation == "register" || operation == "replace-checkout") {
+    const auto& state = requireState();
+    if (!isHostedProject(repository_root, arguments[0])) throw std::runtime_error("cannot register a missing project");
+    try {
+      ckgit::registerHostedCheckout(repository_root, state, arguments[0], request.client_id, arguments[1],
+                                    operation == "replace-checkout");
+    } catch (const ckgit::CheckoutConflict&) {
+      sendError(client, "conflict", "this host already registered a different checkout; use replace-checkout");
+      return;
+    }
+    index.refreshMetadata(arguments[0]);
+    index.refresh(arguments[0]);
+    sendAll(client, "ok registered\n");
+  } else if (operation == "forget-checkout") {
+    ckgit::forgetHostedCheckout(repository_root, requireState(), arguments[0], request.client_id);
+    index.refreshMetadata(arguments[0]);
+    sendAll(client, "ok forgotten\n");
+  } else if (operation == "checkouts") {
+    sendAll(client, checkoutsResponse(requireState(), request.client_id));
+  } else if (operation == "releases") {
+    sendAll(client, releasesResponse(requireState(), arguments[0]));
+  } else if (operation == "ci-overview") {
+    sendAll(client, ciOverviewResponse(repository_root, requireState()));
+  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-log" || operation == "ci-cancel") {
+    const auto& state = requireState();
+    const std::string& project = arguments[0];
+    if (!isHostedProject(repository_root, project)) {
+      sendError(client, "noproject", "no such project");
+    } else if (operation == "ci-status") {
+      sendAll(client, ciStatusResponse(state, project));
+    } else if (operation == "ci-log") {
+      answerCiLog(client, state, project, arguments[1], static_cast<std::size_t>(validatedNumber(arguments[2])),
+                  validatedNumber(arguments[3]));
+    } else {
+      answerCiRunRequest(client, request, repository_root, state, index);
+    }
+  } else {
+    sendError(client, "request", "unsupported control operation");
+  }
+}
+
 std::string readRequest(int descriptor) {
   std::array<char, 128> buffer{};
   std::string request;
@@ -491,7 +592,7 @@ std::string readRequest(int descriptor) {
       }
       throw std::runtime_error("could not read control request");
     }
-    if (request.size() + static_cast<std::size_t>(received) > kMaximumRequestBytes) {
+    if (request.size() + static_cast<std::size_t>(received) > ckgit::kMaximumControlRequestBytes) {
       throw std::runtime_error("control request exceeds limit");
     }
     request.append(buffer.data(), static_cast<std::size_t>(received));
@@ -1075,72 +1176,11 @@ int serve(const Options& options) {
       if (!sameUserPeer(client)) {
         sendError(client, "peer", "untrusted local peer");
       } else {
-        const auto request = parseRequest(readRequest(client));
+        const auto request = ckgit::parseControlRequest(readRequest(client));
         if (!request.has_value()) {
           sendError(client, "request", "invalid control request");
-        } else if (request->operation == "ping") {
-          sendAll(client, "ok\n");
-        } else if (request->operation == "version") {
-          sendAll(client, "ok " + ckgit::buildVersion() + "\n");
-        } else if (request->operation == "versions") {
-          sendAll(client, versionsResponse(state_root));
-        } else if (request->operation == "list-projects") {
-          sendAll(client, listResponse(repository_root));
-        } else if (request->operation == "refresh") {
-          index.refresh(request->argument);
-          sendAll(client, "ok refreshed\n");
-        } else if (request->operation == "create") {
-          static_cast<void>(ckgit::createBareRepository(repository_root, request->argument,
-                                                         request->second_argument, false,
-                                                         options.hook_directory));
-          recordStateEvent(repository_root, state_root, "project-created", request->argument, request->client_id);
-          index.refresh(request->argument);
-          index.refreshMetadata(request->argument);
-          sendAll(client, "ok created\n");
-        } else if (request->operation == "register" || request->operation == "replace-checkout") {
-          if (!state_root.has_value()) {
-            throw std::runtime_error("checkout metadata is not configured");
-          }
-          const auto repository_status = std::filesystem::symlink_status(ckgit::bareRepositoryPath(repository_root, request->argument));
-          if (!std::filesystem::is_directory(repository_status) || std::filesystem::is_symlink(repository_status))
-            throw std::runtime_error("cannot register a missing project");
-          try {
-            ckgit::registerHostedCheckout(repository_root, *state_root, request->argument, request->client_id,
-                                    request->second_argument, request->operation == "replace-checkout");
-          } catch (const ckgit::CheckoutConflict&) {
-            sendError(client, "conflict", "this host already registered a different checkout; use replace-checkout");
-            close(client);
-            continue;
-          }
-          index.refreshMetadata(request->argument);
-          index.refresh(request->argument);
-          sendAll(client, "ok registered\n");
-        } else if (request->operation == "forget-checkout") {
-          if (!state_root.has_value()) throw std::runtime_error("checkout metadata is not configured");
-          ckgit::forgetHostedCheckout(repository_root, *state_root, request->argument, request->client_id);
-          index.refreshMetadata(request->argument);
-          sendAll(client, "ok forgotten\n");
-        } else if (request->operation == "checkouts") {
-          if (!state_root.has_value()) {
-            throw std::runtime_error("checkout metadata is not configured");
-          }
-          sendAll(client, checkoutsResponse(*state_root, request->client_id));
-        } else if (request->operation == "cancel") {
-          if (!state_root.has_value()) throw std::runtime_error("CI state is not configured");
-          if (ckgit::requestCiCancel(*state_root, request->argument, request->second_argument)) {
-            index.refresh(request->argument);
-            sendAll(client, "ok cancelling\n");
-          } else {
-            sendError(client, "norun", "no such CI run");
-          }
-        } else if (request->operation == "ci-status") {
-          if (!state_root.has_value()) throw std::runtime_error("CI state is not configured");
-          sendAll(client, ciStatusResponse(*state_root, request->argument));
-        } else if (request->operation == "releases") {
-          if (!state_root.has_value()) throw std::runtime_error("CI state is not configured");
-          sendAll(client, releasesResponse(*state_root, request->argument));
         } else {
-          sendAll(client, refsResponse(repository_root, request->argument));
+          answerControlRequest(client, *request, repository_root, state_root, options.hook_directory, index);
         }
       }
     } catch (const std::exception& error) {

@@ -113,17 +113,21 @@ combined output would otherwise be truncated; this server runs with
 
 ## Enable CI for a project
 
-Opt in per project with `ckgit-admin`. Point it at the configuration file so it
-finds the state root:
+Opt in per project with `ckgit-admin` on the server. It must run as the `ckgit`
+service account, which owns the private state root (plain `sudo` runs it as
+root, which the state root's ownership check refuses), and it needs the
+configuration file to find that state root:
 
 ```text
-sudo ckgit-admin ci enable myproject --config /etc/ck-git-hosting/server.ini
-sudo ckgit-admin ci status myproject --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin ci enable myproject --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin ci status myproject --config /etc/ck-git-hosting/server.ini
 ```
 
 `ci status` prints `myproject: CI enabled` or `myproject: CI disabled`. Use
 `ci disable` to turn it off again; disabling stops new runs but keeps existing
 run history. Removing the project also clears its CI opt-in and records.
+Enabling and disabling CI are administrator actions: a paired device can see
+whether CI is on (`ckgit ci status`) but cannot change it.
 
 ## Write `.ckgit/ci.yml`
 
@@ -183,6 +187,12 @@ The format is a strict, bounded subset of YAML — not GitHub Actions. Unknown
 keys, tabs for indentation, wrong types, or anything past the documented size
 limits are rejected, and the run is recorded `error` with the reason. Keep a
 workflow well under 64 KiB, 64 jobs, and 128 steps per job.
+
+Check a workflow before pushing it: `ckgit ci lint` parses `.ckgit/ci.yml`
+from the working tree (or a file, or a commit with `--rev REV`) with the
+runner's own parser, and prints a summary of its triggers and jobs or the
+first error with its line. It works offline, so it cannot know the server's
+default branch, whether sister projects exist, or the server's limits.
 
 ## Sister projects and build caches
 
@@ -255,6 +265,11 @@ always downloadable. The runner enforces all of this in a sweep every
 curl -O http://<server>:<http_port>/project/myproject/ci/<run-id>/artifacts/<name>
 ```
 
+From a paired device, `ckgit ci artifacts RUN` lists a run's bundles and
+`ckgit ci download RUN NAME` fetches one exactly like `ckgit release download`
+(see Releases below): through a short-lived tunnel over your ordinary SSH
+login, verified against the listed size and checksum before it is written.
+
 Durable release assets, attached to a tag, never expire; see Releases below.
 
 ## Push and read results
@@ -294,28 +309,52 @@ reporting is shown as **interrupted** until the next runner sweep settles it.
 Progress and cancellation are available three ways, all reading the same run
 records and, for a stop, dropping one cooperative cancel marker that the runner
 honours between and within steps — it kills the current step's process group and
-records the run `cancelled`, well before a long step would finish on its own:
+records the run `cancelled`, well before a long step would finish on its own.
+A run still queued is cancelled before it starts.
 
 - **Dashboard** — the live run page has a **Cancel run** button. It is the read-
   only dashboard's one mutating action: a loopback-only, same-origin `POST` to
-  `/project/<id>/ci/<run-id>/cancel`.
-- **CLI** — `ckgit-admin`, on the server, reads and cancels directly:
+  `/project/<id>/ci/<run-id>/cancel`, which the daemon answers by writing the
+  marker directly.
+- **Any paired device** — `ckgit ci` works from a checkout of the project (or
+  with `--project NAME` anywhere) over the same restricted SSH account as
+  `ckgit sync`; no server login is needed:
 
   ```text
-  sudo ckgit-admin ci runs   myproject --config /etc/ck-git-hosting/server.ini
-  sudo ckgit-admin ci log    myproject <run-id> --follow --config /etc/ck-git-hosting/server.ini
-  sudo ckgit-admin ci cancel myproject <run-id> --config /etc/ck-git-hosting/server.ini
+  ckgit ci status                  # CI on or off, latest and active run
+  ckgit ci status --all            # the same for every hosted project
+  ckgit ci list --limit 10         # runs, newest first, with their ids
+  ckgit ci show RUN                # steps, exit codes, detail, artifacts
+  ckgit ci log RUN --follow        # the running step's raw log, live, then the next
+  ckgit ci watch                   # wait for the newest active run; exit 0 on success, 5 otherwise
+  ckgit ci cancel RUN              # preview, confirm, then request the stop
+  ```
+
+  Statuses follow the dashboard's rules, judged by the server's clock: a
+  running run whose runner has not reported for 90 seconds is shown as
+  **interrupted**. `ci cancel` previews the run and asks before it acts
+  (`--dry-run` only previews, `--yes` confirms without asking); any paired
+  device may cancel any project's run, which is weaker than the push access
+  every device already has, and the project page records which device asked.
+  `status`, `list`, `show`, and `artifacts` take `--json` for scripts.
+  Enabling or disabling CI, rerunning or triggering runs, and secrets stay
+  with the administrator on the server.
+- **Server** — `ckgit-admin`, as the `ckgit` service account, reads and
+  cancels the records directly:
+
+  ```text
+  sudo -u ckgit ckgit-admin ci runs   myproject --config /etc/ck-git-hosting/server.ini
+  sudo -u ckgit ckgit-admin ci log    myproject <run-id> --follow --config /etc/ck-git-hosting/server.ini
+  sudo -u ckgit ckgit-admin ci cancel myproject <run-id> --config /etc/ck-git-hosting/server.ini
   ```
 
   `ci runs` lists recent runs with status and timing; `ci log` prints a step's
   output and, with `--follow`, streams the running step live; `ci cancel`
   requests cancellation.
-- **Control socket** — the daemon's same-user socket answers `ci-status
-  <project>` (the newest runs as `run_id status started heartbeat finished steps`
-  lines) and `cancel <project> <run-id>`. The dashboard's button drives this
-  path; it is also scriptable locally.
 
-On the command line, the records are also plain files under the state root:
+`ckgit ci` uses the five `ci-*` control operations documented in the
+[SSH and control protocol](../protocol/01-ssh-and-control-v1.md#ci-operations).
+On the server, the records are also plain files under the state root:
 
 ```text
 sudo ls /var/lib/ck-git-hosting/state/ci/runs/myproject

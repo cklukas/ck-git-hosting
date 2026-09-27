@@ -134,7 +134,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
       const std::string project = job->project_name;
       options.on_run_started = [socket, project]() {
         try {
-          ckgit::forwardControlRpc(socket, "ci-runner", "refresh", project, {}, nullptr,
+          ckgit::forwardControlRpc(socket, "ci-runner", "refresh", {project}, nullptr,
                                    std::chrono::seconds(2));
         } catch (const std::exception&) {
         }
@@ -173,7 +173,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
       // Nudge the dashboard to pick up the new run record now, rather than at
       // the next periodic sweep. Best-effort: the sweep is the fallback.
       try {
-        ckgit::forwardControlRpc(config.control_socket, "ci-runner", "refresh", job->project_name, {},
+        ckgit::forwardControlRpc(config.control_socket, "ci-runner", "refresh", {job->project_name},
                                  nullptr, std::chrono::seconds(2));
       } catch (const std::exception&) {
       }

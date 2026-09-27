@@ -166,7 +166,7 @@ int cloneEntryCommand(const std::vector<std::string>& arguments) {
       // selection cannot silently be replaced between preview and execution.
       const int result = cloneCommand({"--config", resolved_config.string(), "--", name, (parent / name).string()}, true);
       if (result == 0) ++cloned;
-      else if (result == 5) ++skipped;
+      else if (result == kCloneSkipped) ++skipped;
       else { ++failed; attention = true; }
     } catch (const std::exception& failure) {
       std::cerr << "ckgit: " << name << ": " << failure.what() << '\n';
@@ -209,7 +209,7 @@ int forgetCommand(const std::vector<std::string>& arguments) {
   if (dry_run || !confirmManagementPlan(yes, "Stop managing this checkout?")) return 0;
   // Remove the remote report first: a failed connection must not leave a
   // legacy registration that could silently rediscover the forgotten checkout.
-  const auto result = controlRpc(config, "forget-checkout " + project);
+  const auto result = controlRpc(config, "forget-checkout", {project});
   if (result.exit_code != 0 || result.timed_out || result.output_truncated || result.output != "ok forgotten\n") {
     std::cerr << "ckgit: could not forget server registration; local selection retained. Retry when connected.\n";
     return 1;

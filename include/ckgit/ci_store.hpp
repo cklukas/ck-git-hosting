@@ -124,10 +124,20 @@ inline constexpr std::size_t kMaximumCiDetailBytes = 512;
 inline constexpr std::size_t kMaximumCiRunRecordBytes = 64 * 1024;
 inline constexpr std::size_t kMaximumCiSpoolJobs = 4096;
 inline constexpr std::size_t kMaximumCiArtifactRecordBytes = 4096;
+inline constexpr std::size_t kMaximumCiArtifactNameBytes = 64;
+// The most step results one run record holds. The running step's index is the
+// number of completed steps, so a valid step index is at most this value.
+inline constexpr std::size_t kMaximumCiSteps = 4096;
 
 // True for a syntactically valid job/run id: a sortable, filesystem-safe token
-// this module generates. Ids are never taken from client input.
+// this module generates. A run id a client names (a `ci-*` control request)
+// must pass this before it selects a run directory.
 bool isValidCiId(std::string_view id);
+
+// True for a valid artifact or release asset name: non-empty, at most
+// kMaximumCiArtifactNameBytes, and [A-Za-z0-9._-]. The name is also the bundle's
+// file stem (<name>.tar) and its download path segment.
+bool isValidCiArtifactName(std::string_view name);
 
 // Generates a fresh, chronologically sortable id (zero-padded microseconds plus
 // a random suffix) suitable for a job or a run.

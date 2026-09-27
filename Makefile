@@ -48,6 +48,7 @@ CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKG
 
 COMMON_SOURCES := \
 	src/common/authorized_keys.cpp \
+	src/common/ci_control.cpp \
 	src/common/ci_runner.cpp \
 	src/common/ci_store.cpp \
 	src/common/ci_workflow.cpp \
@@ -96,7 +97,7 @@ SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
 PAGES_SERVER_SOURCES := src/pages-server/main.cpp
 CKDOCS_SOURCES := src/ckdocs/main.cpp
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin
