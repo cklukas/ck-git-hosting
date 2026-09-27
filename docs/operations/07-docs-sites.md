@@ -225,6 +225,7 @@ files, so a page looks the same wherever it is read.
 | Headings, paragraphs, emphasis, inline code, links, images, autolinks | as in CommonMark | Every heading gets a GitHub-style slug `id`, deduplicated (`install`, `install-1`, …). |
 | Blockquotes, lists | as in CommonMark | Ordered, unordered, nested, loose or tight. |
 | Fenced and indented code | ` ``` ` / four-space indent | A fence's info string (` ```cpp `) also selects syntax highlighting for C/C++, Python, shell, YAML, and JSON; an unrecognized name renders as plain code, never an error. |
+| Mermaid diagrams | ` ```mermaid ` | Native SVG rendering; see the [complete gallery](#mermaid-diagrams). |
 | Tables | GFM pipe tables | With `:---`/`---:`/`:---:` alignment. |
 | Alerts | a blockquote whose first line is exactly `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, or `[!CAUTION]` | Renders as a titled, coloured callout; a marker with trailing text, in lowercase, or with nothing below it stays an ordinary blockquote. |
 | Task lists | `- [ ] text` / `- [x] text` | A disabled checkbox; the list gets a distinct class for styling. |
@@ -239,6 +240,677 @@ generator whose only script is its own fixed, opt-in one, never anything a
 page's author supplies — or trusting page content outright, which this
 product does not do anywhere else either. A small, entirely predictable
 renderer is the design point, not an oversight.
+
+## Mermaid diagrams
+
+A fenced code block with the language `mermaid` becomes a standalone SVG
+image during `build`, `check`, and `serve`. Rendering is built into ckdocs;
+there is no browser script, network request, or external rendering tool.
+The HTML selects a light or dark SVG to match the reader's colour scheme.
+Repeated diagrams share their generated assets under `_ckdocs-mermaid/`,
+a reserved output directory. The site works offline and under URL prefixes.
+
+Write a diagram like this:
+
+````markdown
+```mermaid
+flowchart LR
+    Markdown --> ckdocs --> SVG
+```
+````
+
+The gallery below shows the **23 Mermaid diagram types supported by ckdocs**.
+Not every Mermaid.js directive is supported. Unsupported
+constructs produce diagnostics instead of disappearing silently. A fatal
+rendering error leaves the escaped source visible. Reports name the page,
+diagram number, and parser line where available. A normal build exits `3`
+with warnings; `check` and `--strict` exit `1`.
+
+Each diagram is limited to 64 KiB of source, 1024 lines, and 4 MiB per SVG.
+A page can contain 128 diagrams; a site can contain 1024 distinct diagrams.
+SVG text uses the reader's installed fonts. Images are static: JavaScript
+callbacks and interactive links inside the image are unavailable.
+
+### Gallery of all supported types
+
+Use these examples as starting points for diagrams in your own Markdown.
+Each diagram is preceded by its complete Markdown source.
+
+#### Flowchart
+
+**Source**
+
+````markdown
+```mermaid
+flowchart TD
+    A([Start]) --> B[Collect input]
+    B --> C{Valid?}
+    C -->|yes| D[Process]
+    C -->|no| E[Report error]
+    D --> F([Done])
+    E --> B
+```
+````
+
+**Diagram**
+
+```mermaid
+flowchart TD
+    A([Start]) --> B[Collect input]
+    B --> C{Valid?}
+    C -->|yes| D[Process]
+    C -->|no| E[Report error]
+    D --> F([Done])
+    E --> B
+```
+
+#### Class diagram
+
+**Source**
+
+````markdown
+```mermaid
+classDiagram
+    Animal <|-- Dog
+    Animal <|-- Cat
+    Animal : +String name
+    Animal : +int age
+    Animal : +makeSound() void
+    Dog : +fetch() void
+```
+````
+
+**Diagram**
+
+```mermaid
+classDiagram
+    Animal <|-- Dog
+    Animal <|-- Cat
+    Animal : +String name
+    Animal : +int age
+    Animal : +makeSound() void
+    Dog : +fetch() void
+```
+
+#### State diagram
+
+**Source**
+
+````markdown
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Running : start
+    Running --> Idle : stop
+    Running --> [*] : shutdown
+```
+````
+
+**Diagram**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Running : start
+    Running --> Idle : stop
+    Running --> [*] : shutdown
+```
+
+#### Entity-relationship
+
+**Source**
+
+````markdown
+```mermaid
+erDiagram
+    CUSTOMER ||--o{ ORDER : places
+    ORDER ||--|{ LINE_ITEM : contains
+    CUSTOMER {
+        string name
+        string email
+    }
+```
+````
+
+**Diagram**
+
+```mermaid
+erDiagram
+    CUSTOMER ||--o{ ORDER : places
+    ORDER ||--|{ LINE_ITEM : contains
+    CUSTOMER {
+        string name
+        string email
+    }
+```
+
+#### Requirement diagram
+
+**Source**
+
+````markdown
+```mermaid
+requirementDiagram
+    requirement test_req {
+        id: 1
+        risk: high
+    }
+    element test_entity {
+        type: simulation
+    }
+    test_entity - satisfies -> test_req
+```
+````
+
+**Diagram**
+
+```mermaid
+requirementDiagram
+    requirement test_req {
+        id: 1
+        risk: high
+    }
+    element test_entity {
+        type: simulation
+    }
+    test_entity - satisfies -> test_req
+```
+
+#### C4 diagram
+
+**Source**
+
+````markdown
+```mermaid
+C4Context
+    Person(user, "Customer", "A user of the site")
+    System(web, "Web App", "Serves pages")
+    System(pay, "Payments", "Stripe")
+    Rel(user, web, "uses")
+    Rel(web, pay, "charges via")
+```
+````
+
+**Diagram**
+
+```mermaid
+C4Context
+    Person(user, "Customer", "A user of the site")
+    System(web, "Web App", "Serves pages")
+    System(pay, "Payments", "Stripe")
+    Rel(user, web, "uses")
+    Rel(web, pay, "charges via")
+```
+
+#### Mindmap
+
+**Source**
+
+````markdown
+```mermaid
+mindmap
+    root((Project))
+    Goals
+        Ship v1
+        Write docs
+    Team
+        Design
+        Engineering
+```
+````
+
+**Diagram**
+
+```mermaid
+mindmap
+    root((Project))
+    Goals
+        Ship v1
+        Write docs
+    Team
+        Design
+        Engineering
+```
+
+#### Sequence diagram
+
+**Source**
+
+````markdown
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Server
+    participant DB as Database
+    U->>S: POST /login
+    S->>DB: lookup user
+    DB-->>S: user record
+    S-->>U: 200 OK + token
+    Note over U,S: session established
+```
+````
+
+**Diagram**
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Server
+    participant DB as Database
+    U->>S: POST /login
+    S->>DB: lookup user
+    DB-->>S: user record
+    S-->>U: 200 OK + token
+    Note over U,S: session established
+```
+
+#### ZenUML sequence
+
+**Source**
+
+````markdown
+```mermaid
+zenuml
+    title Order flow
+    User->Web: place order
+    Web->API.createOrder()
+    API->DB: insert
+    API->Web: 201
+    Web->User: confirmation
+```
+````
+
+**Diagram**
+
+```mermaid
+zenuml
+    title Order flow
+    User->Web: place order
+    Web->API.createOrder()
+    API->DB: insert
+    API->Web: 201
+    Web->User: confirmation
+```
+
+#### Pie chart
+
+**Source**
+
+````markdown
+```mermaid
+pie showData title The Turkish Empire, as Playfair drew it in 1801
+    "European" : 25
+    "Asiatic" : 60
+    "African" : 15
+```
+````
+
+**Diagram**
+
+```mermaid
+pie showData title The Turkish Empire, as Playfair drew it in 1801
+    "European" : 25
+    "Asiatic" : 60
+    "African" : 15
+```
+
+#### XY chart
+
+**Source**
+
+````markdown
+```mermaid
+xychart-beta
+    title "Monthly revenue"
+    x-axis [Jan, Feb, Mar, Apr]
+    y-axis "Revenue (k)" 0 --> 100
+    bar [30, 55, 45, 80]
+    line [20, 40, 38, 70]
+```
+````
+
+**Diagram**
+
+```mermaid
+xychart-beta
+    title "Monthly revenue"
+    x-axis [Jan, Feb, Mar, Apr]
+    y-axis "Revenue (k)" 0 --> 100
+    bar [30, 55, 45, 80]
+    line [20, 40, 38, 70]
+```
+
+#### Radar chart
+
+**Source**
+
+````markdown
+```mermaid
+radar-beta
+    title Skills
+    axis m["Math"], p["Physics"], c["Chemistry"], b["Biology"]
+    curve a["Alice"]{85, 90, 80, 70}
+    curve o["Bob"]{70, 85, 95, 90}
+```
+````
+
+**Diagram**
+
+```mermaid
+radar-beta
+    title Skills
+    axis m["Math"], p["Physics"], c["Chemistry"], b["Biology"]
+    curve a["Alice"]{85, 90, 80, 70}
+    curve o["Bob"]{70, 85, 95, 90}
+```
+
+#### Quadrant chart
+
+**Source**
+
+````markdown
+```mermaid
+quadrantChart
+    title Reach vs Engagement
+    x-axis Low Reach --> High Reach
+    y-axis Low Engagement --> High Engagement
+    quadrant-1 Expand
+    quadrant-2 Promote
+    quadrant-3 Re-evaluate
+    quadrant-4 Improve
+    Campaign A: [0.3, 0.6]
+    Campaign B: [0.7, 0.8]
+```
+````
+
+**Diagram**
+
+```mermaid
+quadrantChart
+    title Reach vs Engagement
+    x-axis Low Reach --> High Reach
+    y-axis Low Engagement --> High Engagement
+    quadrant-1 Expand
+    quadrant-2 Promote
+    quadrant-3 Re-evaluate
+    quadrant-4 Improve
+    Campaign A: [0.3, 0.6]
+    Campaign B: [0.7, 0.8]
+```
+
+#### Gantt chart
+
+**Source**
+
+````markdown
+```mermaid
+gantt
+    title Project plan
+    dateFormat YYYY-MM-DD
+    section Design
+    Research :a1, 2024-01-01, 7d
+    Mockups :a2, after a1, 5d
+    section Build
+    Backend :2024-01-10, 10d
+    Frontend :after a2, 8d
+```
+````
+
+**Diagram**
+
+```mermaid
+gantt
+    title Project plan
+    dateFormat YYYY-MM-DD
+    section Design
+    Research :a1, 2024-01-01, 7d
+    Mockups :a2, after a1, 5d
+    section Build
+    Backend :2024-01-10, 10d
+    Frontend :after a2, 8d
+```
+
+#### Timeline
+
+**Source**
+
+````markdown
+```mermaid
+timeline
+    title Company history
+    2019 : Founded
+    2021 : Series A : First hire
+    2023 : IPO
+```
+````
+
+**Diagram**
+
+```mermaid
+timeline
+    title Company history
+    2019 : Founded
+    2021 : Series A : First hire
+    2023 : IPO
+```
+
+#### User journey
+
+**Source**
+
+````markdown
+```mermaid
+journey
+    title Shopping trip
+    section Browse
+    Search: 4: Me
+    Compare: 3: Me
+    section Buy
+    Checkout: 2: Me
+    Confirm: 5: Me
+```
+````
+
+**Diagram**
+
+```mermaid
+journey
+    title Shopping trip
+    section Browse
+    Search: 4: Me
+    Compare: 3: Me
+    section Buy
+    Checkout: 2: Me
+    Confirm: 5: Me
+```
+
+#### Kanban board
+
+**Source**
+
+````markdown
+```mermaid
+kanban
+    todo[To Do]
+        t1[Design API]
+        t2[Write specs]
+    doing[In Progress]
+        t3[Build engine]
+    done[Done]
+        t4[Kickoff]
+```
+````
+
+**Diagram**
+
+```mermaid
+kanban
+    todo[To Do]
+        t1[Design API]
+        t2[Write specs]
+    doing[In Progress]
+        t3[Build engine]
+    done[Done]
+        t4[Kickoff]
+```
+
+#### Sankey diagram
+
+**Source**
+
+````markdown
+```mermaid
+sankey-beta
+Coal,Electricity,25
+Gas,Electricity,15
+Electricity,Homes,20
+Electricity,Industry,20
+```
+````
+
+**Diagram**
+
+```mermaid
+sankey-beta
+Coal,Electricity,25
+Gas,Electricity,15
+Electricity,Homes,20
+Electricity,Industry,20
+```
+
+#### Treemap
+
+**Source**
+
+````markdown
+```mermaid
+treemap-beta
+"Products"
+    "Hardware"
+        "Laptops": 40
+        "Phones": 30
+    "Software"
+        "Apps": 20
+        "Cloud": 50
+```
+````
+
+**Diagram**
+
+```mermaid
+treemap-beta
+"Products"
+    "Hardware"
+        "Laptops": 40
+        "Phones": 30
+    "Software"
+        "Apps": 20
+        "Cloud": 50
+```
+
+#### Packet diagram
+
+**Source**
+
+````markdown
+```mermaid
+packet-beta
+    0-15: "Source Port"
+    16-31: "Destination Port"
+    32-63: "Sequence Number"
+    64-95: "Acknowledgment Number"
+```
+````
+
+**Diagram**
+
+```mermaid
+packet-beta
+    0-15: "Source Port"
+    16-31: "Destination Port"
+    32-63: "Sequence Number"
+    64-95: "Acknowledgment Number"
+```
+
+#### Block diagram
+
+**Source**
+
+````markdown
+```mermaid
+block-beta
+    columns 3
+    a["Frontend"] b["API"] c["Cache"]
+    d["Auth"]:2 e["DB"]
+```
+````
+
+**Diagram**
+
+```mermaid
+block-beta
+    columns 3
+    a["Frontend"] b["API"] c["Cache"]
+    d["Auth"]:2 e["DB"]
+```
+
+#### Architecture
+
+**Source**
+
+````markdown
+```mermaid
+architecture-beta
+    group api[API]
+    service db[Database] in api
+    service server[Server] in api
+    service gateway[Gateway]
+    db:R -- L:server
+    gateway:B --> T:server
+```
+````
+
+**Diagram**
+
+```mermaid
+architecture-beta
+    group api[API]
+    service db[Database] in api
+    service server[Server] in api
+    service gateway[Gateway]
+    db:R -- L:server
+    gateway:B --> T:server
+```
+
+#### Git graph
+
+**Source**
+
+````markdown
+```mermaid
+gitGraph
+    commit
+    commit tag: "v0.1"
+    branch develop
+    commit
+    checkout main
+    commit
+    merge develop tag: "v1.0"
+```
+````
+
+**Diagram**
+
+```mermaid
+gitGraph
+    commit
+    commit tag: "v0.1"
+    branch develop
+    commit
+    checkout main
+    commit
+    merge develop tag: "v1.0"
+```
 
 ## Links and assets
 

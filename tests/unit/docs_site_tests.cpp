@@ -812,6 +812,54 @@ void testFrontMatter() {
           "the byline adds nothing to the search index");
 }
 
+void testMermaidArtifacts() {
+  Scratch scratch;
+  const auto root = scratch.root / "repo";
+  const auto out = scratch.root / "site";
+  write(root / "docs/README.md", "# Home\n\n```mermaid\nflowchart TD\nA --> B\n```\n");
+  write(root / "docs/nested/guide.md", "# Guide\n\n> ```mermaid\n> flowchart TD\n> A --> B\n> ```\n\n"
+        "~~~mermaid\nflowchart TD\nA --> B\n~~~\n\n```mermaid\nbad diagram\n```\n");
+  const auto model = ckgit::loadDocsSite(root, {}, nullptr);
+  ckgit::DocsBuildOptions options;
+  ckgit::DocsBuildReport report;
+  int renders = 0;
+  options.mermaid_renderer = [&](std::string_view source) {
+    ++renders;
+    if (source == "bad diagram\n") throw std::runtime_error("unknown diagram type");
+    require(source == "flowchart TD\nA --> B\n", "nested Mermaid fences are deindented");
+    return ckgit::DocsDiagram{"<svg>light</svg>", "<svg>dark</svg>", "A < B & \"quoted\"", {"line 2: test warning"}};
+  };
+  ckgit::buildDocsSite(model, out, options, &report);
+  require(renders == 2 && report.diagrams_rendered == 3 && report.assets_generated == 2, "diagrams are rendered once and SVGs deduplicated across pages");
+  require(report.warnings.size() == 4, "cached warnings reach every occurrence; fatal errors are reported");
+  require(contains(report.warnings.back(), "docs/nested/guide.md: Mermaid diagram 3: unknown diagram type"), "error identifies page and diagram");
+  const auto home = slurp(out / "index.html");
+  const auto nested = slurp(out / "nested/guide.html");
+  require(contains(home, "src=\"_ckdocs-mermaid/") && contains(nested, "src=\"../_ckdocs-mermaid/"), "generated URLs are relative to each page");
+  require(contains(nested, "media=\"(prefers-color-scheme: dark)\"") && contains(nested, "srcset=\"../_ckdocs-mermaid/"), "dark SVG has a relative source");
+  require(contains(home, "alt=\"A &lt; B &amp; &quot;quoted&quot;\""), "diagram alt text is escaped");
+  require(contains(nested, "<pre><code class=\"language-mermaid\">bad diagram"), "failed diagrams retain their source");
+  for (const auto& entry : fs::directory_iterator(out / "_ckdocs-mermaid")) {
+    const auto bytes = slurp(entry.path());
+    require(bytes == "<svg>light</svg>" || bytes == "<svg>dark</svg>", "SVG bytes are copied exactly");
+  }
+  options.clean = true;
+  options.mermaid_renderer = {};
+  ckgit::buildDocsSite(model, out, options, &report);
+  require(contains(slurp(out / "index.html"), "<pre><code class=\"language-mermaid\">") &&
+          !fs::exists(out / "_ckdocs-mermaid"), "without renderer fences remain code, and clean removes obsolete generated assets");
+  const auto previous = slurp(out / "index.html");
+  options.mermaid_renderer = [](std::string_view) { return ckgit::DocsDiagram{}; };
+  bool refused = false;
+  try { ckgit::buildDocsSite(model, out, options, &report); } catch (const std::exception&) { refused = true; }
+  require(refused && slurp(out / "index.html") == previous, "an invalid SVG result aborts without replacing the existing site");
+  write(root / "docs/_ckdocs-mermaid/custom.svg", "<svg/>");
+  write(root / "docs/README.md", "# Home\n\n![collision](_ckdocs-mermaid/custom.svg)\n");
+  refused = false;
+  try { ckgit::buildDocsSite(model, out, options, &report); } catch (const std::exception&) { refused = true; }
+  require(refused && slurp(out / "index.html") == previous, "user assets cannot overwrite generated SVGs");
+}
+
 }  // namespace
 
 void testDocsSite() {
@@ -821,6 +869,7 @@ void testDocsSite() {
   testDiscovery();
   testEdges();
   testBuild();
+  testMermaidArtifacts();
   testSearch();
   testThisRepository();
 }

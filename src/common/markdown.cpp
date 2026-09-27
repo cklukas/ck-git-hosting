@@ -344,8 +344,9 @@ std::optional<TaskMarker> taskMarker(std::string_view line) {
 
 class Renderer {
  public:
-  Renderer(const LinkContext& context, std::size_t input_size, std::vector<MarkdownHeading>* outline)
-      : context_(context), work_(input_size * 64 + 4096), outline_(outline) {}
+  Renderer(const LinkContext& context, std::size_t input_size, std::vector<MarkdownHeading>* outline,
+           const MarkdownCodeRenderer& code_renderer)
+      : context_(context), work_(input_size * 64 + 4096), outline_(outline), code_renderer_(code_renderer) {}
 
   // `lead` is HTML placed at the start of the first paragraph (a task item's
   // checkbox); it is dropped if the first block is not a paragraph.
@@ -378,6 +379,12 @@ class Renderer {
           if (indentation(lines[index]) <= 3 && count >= fence->length && trim(closing.substr(count)).empty()) { ++index; break; }
           append(code, removeIndent(lines[index++], indent));
           append(code, "\n");
+        }
+        if (code_renderer_) {
+          if (const auto rendered = code_renderer_(fence->language, code)) {
+            append(output, *rendered);
+            continue;
+          }
         }
         append(output, "<pre><code");
         if (!fence->language.empty()) append(output, " class=\"language-" + fence->language + "\"");
@@ -522,6 +529,7 @@ class Renderer {
   const LinkContext& context_;
   std::size_t work_;
   std::vector<MarkdownHeading>* outline_;
+  const MarkdownCodeRenderer& code_renderer_;
   std::map<std::string, std::size_t> heading_counts_;
   std::set<std::string> heading_ids_;
   bool comment_open_{false};
@@ -876,7 +884,7 @@ std::string_view frontMatterKey(std::string_view line, std::string_view& rest) {
 }  // namespace
 
 std::string renderMarkdown(std::string_view source, const LinkContext& context,
-                           std::vector<MarkdownHeading>* outline) {
+                           std::vector<MarkdownHeading>* outline, const MarkdownCodeRenderer& code_renderer) {
   if (source.size() > kMaximumMarkdownInputBytes) throw std::length_error("Markdown input exceeds 512 KiB");
   if (outline != nullptr) outline->clear();
   Lines lines;
@@ -888,7 +896,7 @@ std::string renderMarkdown(std::string_view source, const LinkContext& context,
     if (newline == std::string_view::npos) break;
     start = newline + 1;
   }
-  return Renderer(context, source.size(), outline).blocks(lines);
+  return Renderer(context, source.size(), outline, code_renderer).blocks(lines);
 }
 
 bool isValidFrontMatterKey(std::string_view key) {

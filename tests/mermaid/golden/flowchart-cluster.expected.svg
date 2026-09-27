@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="349.36" height="296.6" viewBox="0 0 349.36 296.6">
+  <metadata>cdiagram</metadata>
+  <path d="M 28 110.2 L 214.7 110.2 C 218.01 110.2 220.7 112.89 220.7 116.2 L 220.7 180.4 C 220.7 183.71 218.01 186.4 214.7 186.4 L 28 186.4 C 24.69 186.4 22 183.71 22 180.4 L 22 116.2 C 22 112.89 24.69 110.2 28 110.2 Z" fill="#000000" fill-opacity="0.06" stroke="#66668A" stroke-width="1.2"/>
+  <text x="34" y="122.08" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959">Core Pipeline</text>
+  <polyline points="160.25,56.2 87.82,133.63" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="81.67,140.2 85.58,130.16 91.42,135.63" fill="#33333A"/>
+  <polyline points="192.99,56.2 268.98,133.77" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="275.28,140.2 265.43,135.86 271.14,130.26" fill="#33333A"/>
+  <polyline points="175.49,56.2 172.17,131.21" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="171.78,140.2 168.22,130.03 176.21,130.39" fill="#33333A"/>
+  <polyline points="84.54,174.4 150.7,234.36" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="157.37,240.4 147.28,236.65 152.65,230.72" fill="#33333A"/>
+  <polyline points="171.91,174.4 174.88,231.41" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="175.35,240.4 170.84,230.62 178.83,230.21" fill="#33333A"/>
+  <polyline points="272.27,174.4 202.81,234.51" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="196,240.4 200.95,230.83 206.18,236.88" fill="#33333A"/>
+  <rect x="143.9" y="22" width="64.69" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="176.24" y="41.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Ingest</text>
+  <rect x="34" y="140.2" width="63.34" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="65.67" y="160.18" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Parse</text>
+  <rect x="256.7" y="140.2" width="70.66" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="292.03" y="160.18" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Metrics</text>
+  <rect x="133.34" y="140.2" width="75.36" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="171.02" y="160.18" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Validate</text>
+  <rect x="142.24" y="240.4" width="68.01" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="176.24" y="260.38" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Report</text>
+</svg>

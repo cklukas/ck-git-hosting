@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -152,13 +153,27 @@ inline constexpr std::string_view kDocsSearchIndexPage = "search-index.json";
 inline constexpr std::size_t kMaximumDocsSearchIndexBytes = 2 * 1024 * 1024;
 inline constexpr std::size_t kMaximumDocsSearchExcerptChars = 200;
 
+struct DocsDiagram {
+  std::string light_svg;
+  std::string dark_svg;
+  std::string alternative_text;
+  std::vector<std::string> warnings;
+};
+
+// Internal application callback: SVG bytes must come from a trusted renderer.
+// Keeping the callback here lets the other binaries omit the diagram engine.
+using DocsDiagramRenderer = std::function<DocsDiagram(std::string_view source)>;
+
 struct DocsBuildOptions {
   bool clean = false;  // replace an existing output directory that carries the marker
+  DocsDiagramRenderer mermaid_renderer{};
 };
 
 struct DocsBuildReport {
   std::size_t pages_written = 0;
   std::size_t assets_copied = 0;
+  std::size_t diagrams_rendered = 0;
+  std::size_t assets_generated = 0;
   std::size_t bytes_written = 0;
   std::vector<std::string> broken_links;    // "<page>: link target '<target>' <reason>"
   std::vector<std::string> broken_anchors;  // "<page>: '<href>' names no heading on <target page>"

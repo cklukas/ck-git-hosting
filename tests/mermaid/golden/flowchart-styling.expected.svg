@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="648.57" height="178.2" viewBox="0 0 648.57 178.2">
+  <metadata>cdiagram</metadata>
+  <path d="M 28 22 L 359.9 22 C 363.22 22 365.9 24.69 365.9 28 L 365.9 133.75 C 365.9 137.06 363.22 139.75 359.9 139.75 L 28 139.75 C 24.69 139.75 22 137.06 22 133.75 L 22 28 C 22 24.69 24.69 22 28 22 Z" fill="#EEF7EE" stroke="#55AA55" stroke-width="1.2"/>
+  <text x="34" y="33.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959">Pipeline</text>
+  <polyline points="105.95,101.06 151.25,88.98" fill="none" stroke="#E45756" stroke-width="1.5"/>
+  <polygon points="159.95,86.67 151.32,93.11 149.26,85.38" fill="#E45756"/>
+  <polyline points="239.22,76.1 285.22,76.1" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <circle cx="289.22" cy="76.1" r="4" fill="#33333A"/>
+  <polyline points="362.9,76.1 410.9,76.1" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <line x1="410.9" y1="72.1" x2="418.9" y2="80.1" fill="none" stroke="#33333A" stroke-width="1.8"/>
+  <line x1="410.9" y1="80.1" x2="418.9" y2="72.1" fill="none" stroke="#33333A" stroke-width="1.8"/>
+  <line x1="354.9" y1="72.1" x2="362.9" y2="80.1" fill="none" stroke="#33333A" stroke-width="1.8"/>
+  <line x1="354.9" y1="80.1" x2="362.9" y2="72.1" fill="none" stroke="#33333A" stroke-width="1.8"/>
+  <polyline points="512.03,87.15 549.25,95.31" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="558.04,97.23 547.42,99 549.13,91.19" fill="#33333A"/>
+  <polygon points="503.24,85.23 513.86,83.46 512.15,91.27" fill="#33333A"/>
+  <polygon points="48,93.55 105.95,93.55 91.95,127.75 34,127.75" fill="#FF9966" stroke="#333333" stroke-width="1.2"/>
+  <text x="69.98" y="113.53" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Input</text>
+  <polygon points="173.95,59 225.22,59 239.22,76.1 225.22,93.2 173.95,93.2 159.95,76.1" fill="#ECECFF" stroke="#9370DB" stroke-width="1.2"/>
+  <text x="199.59" y="78.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Check</text>
+  <rect x="293.22" y="59" width="60.68" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1.2"/>
+  <path d="M 353.9 59 C 353.9 62.87 340.32 66 323.56 66 C 306.81 66 293.22 62.87 293.22 59 C 293.22 55.13 306.81 52 323.56 52 C 340.32 52 353.9 55.13 353.9 59 Z" fill="#ECECFF" stroke="#9370DB" stroke-width="1.2"/>
+  <text x="323.56" y="78.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Store</text>
+  <polygon points="419.9,59 503.24,59 503.24,93.2 419.9,93.2 431.9,76.1" fill="#BBBBFF" stroke="#9370DB" stroke-width="3"/>
+  <text x="461.57" y="78.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Review</text>
+  <circle cx="591.9" cy="104.65" r="34.66" fill="#ECECFF" stroke="#9370DB" stroke-width="1.2"/>
+  <circle cx="591.9" cy="104.65" r="30.66" fill="none" stroke="#9370DB" stroke-width="1.2"/>
+  <text x="591.9" y="107.53" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Hub</text>
+  <rect x="121.47" y="95.59" width="28.68" height="18" fill="#FFFFFF" fill-opacity="0.75"/>
+  <text x="135.81" y="107.47" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#E45756" text-anchor="middle">load</text>
+</svg>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="228" height="200" viewBox="0 0 228 200">
+  <metadata>cdiagram</metadata>
+  <line x1="52" y1="54" x2="52" y2="180" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="176" y1="54" x2="176" y2="180" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1" stroke-dasharray="3,3"/>
+  <path d="M 24 20 L 80 20 C 82.21 20 84 21.79 84 24 L 84 50 C 84 52.21 82.21 54 80 54 L 24 54 C 21.79 54 20 52.21 20 50 L 20 24 C 20 21.79 21.79 20 24 20 Z" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="52" y="39.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Alice</text>
+  <path d="M 148 20 L 204 20 C 206.21 20 208 21.79 208 24 L 208 50 C 208 52.21 206.21 54 204 54 L 148 54 C 145.79 54 144 52.21 144 50 L 144 24 C 144 21.79 145.79 20 148 20 Z" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="176" y="39.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Bob</text>
+  <line x1="52" y1="82" x2="167" y2="82" fill="none" stroke="#33333A" stroke-width="1.4"/>
+  <polygon points="176,82 166,86 166,78" fill="#33333A"/>
+  <rect x="97.33" y="61" width="33.34" height="18" fill="#FFFFFF" fill-opacity="0.75"/>
+  <text x="114" y="72.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Hello</text>
+  <line x1="176" y1="128" x2="61" y2="128" fill="none" stroke="#33333A" stroke-width="1.4" stroke-dasharray="5,3"/>
+  <polygon points="52,128 62,124 62,132" fill="#33333A"/>
+  <rect x="105.34" y="107" width="17.33" height="18" fill="#FFFFFF" fill-opacity="0.75"/>
+  <text x="114" y="118.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Hi</text>
+</svg>

@@ -22,6 +22,10 @@ inline constexpr std::size_t kMaximumMarkdownDepth = 8;
 // images pin the snapshot), relative to `directory`.
 using MarkdownLinkResolver = std::function<std::optional<std::string>(std::string_view target, bool image)>;
 
+// An application-owned renderer for fenced code. Its result is trusted HTML;
+// nullopt keeps the ordinary escaped code block. Never supplied by Markdown.
+using MarkdownCodeRenderer = std::function<std::optional<std::string>(std::string_view language, std::string_view source)>;
+
 struct LinkContext {
   std::string project;
   std::string commit_id;
@@ -61,7 +65,8 @@ struct MarkdownHeading {
 // top-level headings (those inside quotes, alerts or list items are left out),
 // in order, with the same ids the HTML carries.
 std::string renderMarkdown(std::string_view source, const LinkContext& context,
-                           std::vector<MarkdownHeading>* outline = nullptr);
+                           std::vector<MarkdownHeading>* outline = nullptr,
+                           const MarkdownCodeRenderer& code_renderer = {});
 
 // YAML front matter: bounds on the block at the start of a file.
 inline constexpr std::size_t kMaximumFrontMatterLines = 64;       // lines between the fences

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="440" viewBox="0 0 680 440">
+  <title>Pets</title>
+  <metadata>cdiagram</metadata>
+  <defs>
+    <clipPath id="clip-0"><rect x="12" y="37" width="656" height="391"/></clipPath>
+  </defs>
+  <rect x="12" y="37" width="656" height="391" fill="#FFFFFF"/>
+  <g clip-path="url(#clip-0)">
+  <path d="M 340 232.5 L 340 43 A 189.5 189.5 0 1 1 206 366.5 Z" fill="#4C78A8" stroke="#FFFFFF" stroke-width="1.5"/>
+  <text x="448.55" y="279.98" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#FFFFFF" text-anchor="middle">62.5%</text>
+  <path d="M 340 232.5 L 206 366.5 A 189.5 189.5 0 0 1 340 43 Z" fill="#F58518" stroke="#FFFFFF" stroke-width="1.5"/>
+  <text x="231.45" y="190.06" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">37.5%</text>
+  </g>
+  <text x="340" y="23.1" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#262626" text-anchor="middle">Pets</text>
+  <rect x="584.33" y="47" width="73.67" height="48" fill="#FFFFFF" fill-opacity="0.85" stroke="#000000" stroke-opacity="0.15" stroke-width="1"/>
+  <rect x="598.33" y="56.5" width="12" height="12" fill="#4C78A8"/>
+  <text x="623.33" y="65.14" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#262626">Dogs</text>
+  <rect x="598.33" y="73.5" width="12" height="12" fill="#F58518"/>
+  <text x="623.33" y="82.14" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#262626">Cats</text>
+</svg>

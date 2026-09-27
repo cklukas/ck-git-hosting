@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="143.7" height="197.2" viewBox="0 0 143.7 197.2">
+  <metadata>cdiagram</metadata>
+  <polyline points="71.85,71.6 71.85,125.6" fill="none" stroke="#66668A" stroke-width="1.3"/>
+  <polygon points="71.85,71.6 63.85,85.6 79.85,85.6" fill="#FFFFFF" stroke="#66668A" stroke-width="1.2"/>
+  <rect x="24" y="24" width="95.7" height="47.6" fill="#FFFFFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="71.85" y="38.28" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#262626" text-anchor="middle">Animal</text>
+  <line x1="24" y1="46.8" x2="119.7" y2="46.8" fill="none" stroke="#9370DB" stroke-width="1"/>
+  <text x="32" y="58.08" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626">+String name</text>
+  <line x1="24" y1="67.6" x2="119.7" y2="67.6" fill="none" stroke="#9370DB" stroke-width="1"/>
+  <rect x="26.67" y="125.6" width="90.36" height="47.6" fill="#FFFFFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="71.85" y="139.88" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#262626" text-anchor="middle">Dog</text>
+  <line x1="26.67" y1="148.4" x2="117.03" y2="148.4" fill="none" stroke="#9370DB" stroke-width="1"/>
+  <line x1="26.67" y1="152.4" x2="117.03" y2="152.4" fill="none" stroke="#9370DB" stroke-width="1"/>
+  <text x="34.67" y="167.68" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626">+fetch() void</text>
+</svg>

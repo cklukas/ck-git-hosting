@@ -96,7 +96,14 @@ RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
 PAGES_SERVER_SOURCES := src/pages-server/main.cpp
-CKDOCS_SOURCES := src/ckdocs/main.cpp
+CKDOCS_SOURCES := src/ckdocs/main.cpp src/ckdocs/mermaid.cpp
+MERMAID_ROOT := src/ckdocs/mermaid
+MERMAID_CPPFLAGS := -I$(MERMAID_ROOT)/cdiagram/include -I$(MERMAID_ROOT)/cplot/include -I$(MERMAID_ROOT)/libcworks/include
+MERMAID_SOURCES := $(wildcard $(MERMAID_ROOT)/cdiagram/src/*.cpp $(MERMAID_ROOT)/cplot/src/*.cpp $(MERMAID_ROOT)/libcworks/src/*.cpp)
+MERMAID_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR_ABS)/obj/%.o,$(MERMAID_SOURCES))
+MERMAID_TEST_SOURCES := $(wildcard tests/mermaid/*.cpp)
+MERMAID_TEST_BIN := $(BUILD_DIR_ABS)/bin/ckdocs-mermaid-tests
+$(MERMAID_OBJECTS): CPPFLAGS += $(MERMAID_CPPFLAGS)
 TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
@@ -147,8 +154,15 @@ $(CK_CI_RUNNER): $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(COMMON_HEADERS) | $(BU
 $(CK_PAGES): $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(LDFLAGS) -o $@
 
-$(CKDOCS): $(COMMON_OBJECTS) $(CKDOCS_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CKDOCS_SOURCES) $(LDFLAGS) -o $@
+$(CKDOCS): $(COMMON_OBJECTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) src/ckdocs/mermaid.hpp $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(MERMAID_CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) $(LDFLAGS) -o $@
+
+$(MERMAID_TEST_BIN): $(MERMAID_OBJECTS) $(MERMAID_TEST_SOURCES) src/ckdocs/mermaid.cpp src/ckdocs/mermaid.hpp tests/mermaid/cworks/microtest.hpp $(wildcard tests/mermaid/*.hpp) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(MERMAID_CPPFLAGS) -Itests/mermaid -Isrc/ckdocs -I$(MERMAID_ROOT)/cdiagram/src $(CXXFLAGS) $(MERMAID_OBJECTS) src/ckdocs/mermaid.cpp $(MERMAID_TEST_SOURCES) $(LDFLAGS) -o $@
+
+.PHONY: test-mermaid
+test-mermaid: $(MERMAID_TEST_BIN)
+	$(MERMAID_TEST_BIN)
 
 $(TEST_BIN): $(COMMON_OBJECTS) $(TEST_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(TEST_SOURCES) $(LDFLAGS) -o $@
@@ -158,6 +172,7 @@ $(BUILD_DIR_ABS)/obj/%.o: %.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 -include $(COMMON_OBJECTS:.o=.d)
+-include $(MERMAID_OBJECTS:.o=.d)
 
 $(BUILD_DIR_ABS)/bin:
 	mkdir -p $@
@@ -165,7 +180,7 @@ $(BUILD_DIR_ABS)/bin:
 $(BUILD_DIR_ABS)/hooks:
 	mkdir -p $@
 
-test: $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES) $(CKDOCS)
+test: test-mermaid $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES) $(CKDOCS)
 	mkdir -p $(BUILD_DIR_ABS)/test-tmp
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_SOURCE_ROOT=$(CURDIR) TMPDIR=$(BUILD_DIR_ABS)/test-tmp $(TEST_BIN)
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT=$(CKGIT) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_GIT_SHELL=$(CK_GIT_SHELL) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/control_socket.sh

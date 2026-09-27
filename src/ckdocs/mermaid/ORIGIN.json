@@ -1,0 +1,585 @@
+{
+  "project": "CWorks",
+  "revision": "044e9a38d52534703b8b3b64d10792205e1c801e",
+  "license": "MIT, relicensed by copyright owner for ckdocs",
+  "files": {
+    "cdiagram/include/cdiagram/diagram.hpp": {
+      "sha256": "4047f43ddd83e7b926c044a906d899e26e4ce911c453bca12188b1bdfcbea62b",
+      "adapted": true
+    },
+    "cdiagram/include/cdiagram/error.hpp": {
+      "sha256": "007ca6c704db9ffc34aa3e8abaa164d113ae83f95446941838c0bb9864051ee7",
+      "adapted": false
+    },
+    "cdiagram/include/cdiagram/placement.hpp": {
+      "sha256": "9f3d979b1266551c55c658d36587c21ac8e3919b69fbda8f6675a016845712e8",
+      "adapted": false
+    },
+    "cdiagram/include/cdiagram/render.hpp": {
+      "sha256": "e2f86f6203a8b7f9b46b1ef10826655c8fbe83afb7a912328f930c50a46f91c9",
+      "adapted": false
+    },
+    "cdiagram/src/architecture.cpp": {
+      "sha256": "4ae862eb168abd057ebcf7c08522e391da06328db9217ba9e0a60a916703c297",
+      "adapted": false
+    },
+    "cdiagram/src/block.cpp": {
+      "sha256": "9f26afd7366f23d7a47ec48fefa475dd6b493052b363b06a9290cac1580104e1",
+      "adapted": true
+    },
+    "cdiagram/src/builders.hpp": {
+      "sha256": "4b7ce18fe80a93acd6f2327f1bedd473a21b12b5d2b7852d86d565aac5253e9e",
+      "adapted": true
+    },
+    "cdiagram/src/c4.cpp": {
+      "sha256": "a77bc55ebee298ebcaebf2171018a28a4a85813b50a377b50ff842700b738e8a",
+      "adapted": false
+    },
+    "cdiagram/src/canvas.cpp": {
+      "sha256": "44f8e9b148fcf70d3ad67ae146d77d0c7a61b4931a7cc474fd427e814db46da2",
+      "adapted": false
+    },
+    "cdiagram/src/canvas.hpp": {
+      "sha256": "c8b55d2adf3bf42a9eb4dd3ac49f6b8187e539f45cc448fdf23b983e6256b8fa",
+      "adapted": false
+    },
+    "cdiagram/src/catalogue.cpp": {
+      "sha256": "217fa5e04638b1822665412a618afdd14ea0b5f0b941e2881b0d88ccf38cbb2f",
+      "adapted": true
+    },
+    "cdiagram/src/chart_adapter.cpp": {
+      "sha256": "7b9f89287ea3ff660c8627220984a737e9593df2f783a4c24078ccb210455846",
+      "adapted": false
+    },
+    "cdiagram/src/chart_adapter.hpp": {
+      "sha256": "2d3fbf6779c8db8af7c20f38597030b2081b80c2d076cf6c4477d8f0f29db266",
+      "adapted": false
+    },
+    "cdiagram/src/class.cpp": {
+      "sha256": "1bfad995978db47d9c946971658dc81be5575fb1ef4e3a53d1a9b06a634b3c53",
+      "adapted": false
+    },
+    "cdiagram/src/dag_layout.cpp": {
+      "sha256": "a2bcce66bc3803a2a22c6d1b14b45ff2ef2276715f91984f9922899239cd9c12",
+      "adapted": true
+    },
+    "cdiagram/src/dag_layout.hpp": {
+      "sha256": "5c848279f21112e3993507e5cb2897fb30179520c606084901ccd3de9522874a",
+      "adapted": false
+    },
+    "cdiagram/src/detect.cpp": {
+      "sha256": "41e21bd73c0e43955c451f48e06f9ff598f2cd327caca964c15e4d152d20f6c4",
+      "adapted": true
+    },
+    "cdiagram/src/diagnostics.hpp": {
+      "sha256": "6bcbe7121db5e5fd33223d9a4f51e35368de3a6a6c2c03cf730264a03e088bda",
+      "adapted": false
+    },
+    "cdiagram/src/er.cpp": {
+      "sha256": "f316b8b68b9d382454ee1361ab6744c87b2eca8631193c360b2b724ae30a501a",
+      "adapted": false
+    },
+    "cdiagram/src/flowchart.cpp": {
+      "sha256": "e5ecf36e0f4860b73f5826101624d96ae091a0d5cf38bdfa99ce8615da5c4c13",
+      "adapted": false
+    },
+    "cdiagram/src/frontmatter.cpp": {
+      "sha256": "8d2db25d0301d57e6030b179509f824e6d887c827fea8508010d352a65ab4db0",
+      "adapted": false
+    },
+    "cdiagram/src/frontmatter.hpp": {
+      "sha256": "42fb78358869d80ee92dde2f8b9db24427946e41ee123673a214e2e4afbe4869",
+      "adapted": false
+    },
+    "cdiagram/src/gantt.cpp": {
+      "sha256": "930c17576d7d363ba614a439e0de735c8eb221719a612989fedf4b3a933f93d1",
+      "adapted": true
+    },
+    "cdiagram/src/gitgraph.cpp": {
+      "sha256": "823f43137e8abc89fc614fb4925f6f3d8f968cc43f2d8558d07772b19bf845ce",
+      "adapted": false
+    },
+    "cdiagram/src/journey.cpp": {
+      "sha256": "e9053e689dee8323afaba34f15381243f45b930e344645c51bfa17b79188efea",
+      "adapted": false
+    },
+    "cdiagram/src/kanban.cpp": {
+      "sha256": "7699d47efc13ef6aa084ce1fc4aa539e125ed07604b81eb5e6a55d75112270e7",
+      "adapted": false
+    },
+    "cdiagram/src/links.cpp": {
+      "sha256": "b47c00c8cd763cf1af16886c74112669c0be4ed5c2e88baa478fc37fd6b39b52",
+      "adapted": false
+    },
+    "cdiagram/src/links.hpp": {
+      "sha256": "91947c1caaf7eef622ef704203ef4fe910b995713fe12455cbb59882af3bf68f",
+      "adapted": false
+    },
+    "cdiagram/src/mindmap.cpp": {
+      "sha256": "51675695f5ff94b3e54477ed28d6cc46e6a3a4b80748228ce9272471fa579466",
+      "adapted": false
+    },
+    "cdiagram/src/packet.cpp": {
+      "sha256": "1f07d31a62afbd1805f10126cf3bc7f776936377ffe3999dfc27054af65a4159",
+      "adapted": true
+    },
+    "cdiagram/src/pie.cpp": {
+      "sha256": "7f9d515b091f8b1b49ba680d535055d4aa6621f59dadafcd395416475ce8b526",
+      "adapted": false
+    },
+    "cdiagram/src/placement.cpp": {
+      "sha256": "066f3296d514180f2a7d0958e8817116ce7bcbca190e0e9aa21cfa218ccd4776",
+      "adapted": false
+    },
+    "cdiagram/src/placement_layout.cpp": {
+      "sha256": "3cd705a61a0a8628deaa67296ecf5026c9cf0e86c7dd01af41e5f0f5c75f9ee1",
+      "adapted": false
+    },
+    "cdiagram/src/placement_layout.hpp": {
+      "sha256": "b697c8678ae6cbcaf1cecd34be0f12fdef49ec79c1d9e84cedd60c64641325e1",
+      "adapted": false
+    },
+    "cdiagram/src/quadrant.cpp": {
+      "sha256": "d02950842df360abe16f023501e6df36d1a83913bafa9e3caeb7c0822cb17320",
+      "adapted": false
+    },
+    "cdiagram/src/radar.cpp": {
+      "sha256": "25c639b310d5d7fb53e6d24ef80469ea80c332226082c156afa342981014997d",
+      "adapted": false
+    },
+    "cdiagram/src/render.cpp": {
+      "sha256": "2bee1fcb09e4c54a92b16ff4adb877b35e0b60ff32185ba0d94715c79b28cb60",
+      "adapted": true
+    },
+    "cdiagram/src/requirement.cpp": {
+      "sha256": "bf7f6bc2f9bd2983847d65ba7be4906bfcf09aa2e27bd1658c6f589904b0413f",
+      "adapted": false
+    },
+    "cdiagram/src/sankey.cpp": {
+      "sha256": "4b1f9dc5e5aa4c96a7cc65b71d4d38975293b60291c0997269e97a9910edc530",
+      "adapted": false
+    },
+    "cdiagram/src/sequence.cpp": {
+      "sha256": "234e5e9d546c4e72ed6e52742b60fa4c3e396a95810d8be06427eba4d712f0e5",
+      "adapted": false
+    },
+    "cdiagram/src/source.cpp": {
+      "sha256": "b9554ec4df9eb95809121a9cc0686c0099085544ec78ae64c0b3aac1d88fb619",
+      "adapted": false
+    },
+    "cdiagram/src/source.hpp": {
+      "sha256": "8ff22ec1e03967496a4674400b17e65fae30f2ddebe0ec97497156c47046f207",
+      "adapted": false
+    },
+    "cdiagram/src/state.cpp": {
+      "sha256": "1635038197aaa97d50dc438b9293d7e9bfa1f7623482f9420f0200238f262a19",
+      "adapted": false
+    },
+    "cdiagram/src/style.cpp": {
+      "sha256": "297f049ec6be63f20ad6ebd906f17b83711025d0d4cd36a49c23bbb092aa4ff2",
+      "adapted": false
+    },
+    "cdiagram/src/style.hpp": {
+      "sha256": "dc38559105249083710378bcad31fc7ccf964b73daa7e892b0c9bb76af91c564",
+      "adapted": false
+    },
+    "cdiagram/src/styleprops.cpp": {
+      "sha256": "43cd1a697aaf5657098f4cb05387ba427cf4eea862956da7cb669f78f7463b72",
+      "adapted": false
+    },
+    "cdiagram/src/styleprops.hpp": {
+      "sha256": "7a24b0138a1a69e172e12ef36076f47d9a376571101036498bd12b1bc54561a1",
+      "adapted": false
+    },
+    "cdiagram/src/timeline.cpp": {
+      "sha256": "9421d2d1f8bd9e3b15ef5ac1257ea4cb35d00cfc339efba9245b7150c840997e",
+      "adapted": false
+    },
+    "cdiagram/src/treemap.cpp": {
+      "sha256": "c4865bcd422b531b2696f9448a3200ccf1dec73ccace352df3ac856294adb177",
+      "adapted": false
+    },
+    "cdiagram/src/xychart.cpp": {
+      "sha256": "74d083fbd13d2996761c2600c0d73e5f0bfae994b0b9b7ad2995080768384f52",
+      "adapted": false
+    },
+    "cdiagram/src/zenuml.cpp": {
+      "sha256": "0398644dc021e1ff175a2aeab838c6a803c8b50abfd25dda77fd1f8913535c00",
+      "adapted": false
+    },
+    "cplot/include/cplot/axes.hpp": {
+      "sha256": "53966ad8c49c43f8ef2d10b326cc398fc9705ed852cb510b9d2e2e572309a4c0",
+      "adapted": true
+    },
+    "cplot/include/cplot/axis.hpp": {
+      "sha256": "628c1586aa7ffc2cf8fc45166442e9e7c6e337e3856c154d8b6033ac7f9124a6",
+      "adapted": false
+    },
+    "cplot/include/cplot/color.hpp": {
+      "sha256": "bca400952d7652013cce7e1ae0aeb54fdd60b42f4a2f1beaeae95761154b680a",
+      "adapted": false
+    },
+    "cplot/include/cplot/colormap.hpp": {
+      "sha256": "65a54dc81a2cac81e0f35a2bc1e0e98c9d3bcfdce890fa8ddf2c5daa31996176",
+      "adapted": false
+    },
+    "cplot/include/cplot/error.hpp": {
+      "sha256": "eadab922fa07e073c974fd281e7539756fc3ab5bac093b7be61613d49757948b",
+      "adapted": false
+    },
+    "cplot/include/cplot/extent_policy.hpp": {
+      "sha256": "aa8c1d0e5dbe44e6c2754f2d5f8d8a5bb0a8f146c0b7a27e045427ed74a97f7c",
+      "adapted": false
+    },
+    "cplot/include/cplot/figure.hpp": {
+      "sha256": "5e79ec9730ee91e429a7d21c82beb3c4cf3be67469fe7986a6d348ca8e30fbc0",
+      "adapted": true
+    },
+    "cplot/include/cplot/jpeg.hpp": {
+      "sha256": "49ecad1498a98ce15ca6a6d736c0eb9ddd98ae06eda0f6b9ba2b6ac04c6b3741",
+      "adapted": false
+    },
+    "cplot/include/cplot/limits.hpp": {
+      "sha256": "c53ec8addf8048ebd7405a55aa65f9a17ae7911c4342cf0b1420cd22df63f932",
+      "adapted": false
+    },
+    "cplot/include/cplot/raster_image.hpp": {
+      "sha256": "6bccb1b9eab5348ea370b7677b9567c4c3dc5a2a8cea48b7551ad56bfd8e1e3a",
+      "adapted": false
+    },
+    "cplot/include/cplot/scale.hpp": {
+      "sha256": "0a82641354a78880510ccfd0c7767837efe3d16bc5f96b3ebe86493703c248d0",
+      "adapted": false
+    },
+    "cplot/include/cplot/scene.hpp": {
+      "sha256": "3bc14fb6b615c0ba5c7d83c55261e87f0af3af7121fb861b8ac08aa01b9c8ef7",
+      "adapted": true
+    },
+    "cplot/include/cplot/series.hpp": {
+      "sha256": "f31aaf4e1f278949861c7cd5739aae9baf60a3715a7e3f9b81ca36a5073183bd",
+      "adapted": false
+    },
+    "cplot/include/cplot/stats.hpp": {
+      "sha256": "7d0006301aa396f099f70a2e4d9bdc7d0160e6d20381608fdb6002144b2ed01d",
+      "adapted": false
+    },
+    "cplot/include/cplot/structured_charts.hpp": {
+      "sha256": "ce02a84ab46f2e4525eccc802738e522d95c60be678d4cd70f36b87e470aaa36",
+      "adapted": true
+    },
+    "cplot/include/cplot/svg.hpp": {
+      "sha256": "ed3124c51e3e5fe5c5652366e4f8a1be0c03ad1865462fafc32cea6a17d7ec25",
+      "adapted": true
+    },
+    "cplot/include/cplot/text.hpp": {
+      "sha256": "f7359c73314c0f5fbda60f48639989861628d2096992cac21d52a78c66c9de30",
+      "adapted": true
+    },
+    "cplot/include/cplot/theme.hpp": {
+      "sha256": "12bbe09d688470b8539c7ec7d9b8fb72b9607b3d031f29ccb88d6fff0675b7ca",
+      "adapted": false
+    },
+    "cplot/include/cplot/ticks.hpp": {
+      "sha256": "7a65d7def20d1ca917522c9a0ba2049e6f687a84d3dd006934acabbfcd9c8cd0",
+      "adapted": false
+    },
+    "cplot/include/cplot/units.hpp": {
+      "sha256": "1e181c56f790b19822b49891f70430fb2f0fcf92c216b6d70a592fb78f0654bc",
+      "adapted": false
+    },
+    "cplot/src/axes.cpp": {
+      "sha256": "f816fdf07231d9354433c22b023d03f6a32f00f48f2fb7fa7fa29ed88b379727",
+      "adapted": false
+    },
+    "cplot/src/color.cpp": {
+      "sha256": "9d64f7af605667b5271a960ba79c5687ec0f3ae0017ac5c528ee3bdd903c28ac",
+      "adapted": false
+    },
+    "cplot/src/colormap.cpp": {
+      "sha256": "9fbcb0ec724117fc4229d2529aa69e9a0b5ec22fabec5cbae8329ca14fedf8ce",
+      "adapted": false
+    },
+    "cplot/src/decade.hpp": {
+      "sha256": "ae80cba6306e49edc6225cd0906b433bcfeec0bb6bebeffe174bf2e5e07b68ff",
+      "adapted": false
+    },
+    "cplot/src/extent_policy.cpp": {
+      "sha256": "2cc4a529945bd603798b2b61f68f7847f1cd804345a4e48dbb06e7f5f2e30d9d",
+      "adapted": false
+    },
+    "cplot/src/figure.cpp": {
+      "sha256": "16d21f95b6a55ee284c07e1f126ce677e319016a8f3cd744f0b8f53bc1ec760d",
+      "adapted": true
+    },
+    "cplot/src/font_metrics.cpp": {
+      "sha256": "9f9a3a2951232739a692c88f7d3990b7ea1db6b9d2c550133539db01f96bc388",
+      "adapted": false
+    },
+    "cplot/src/font_metrics.hpp": {
+      "sha256": "67caf48ccc1aee12f87955078bd0925bbe11451b40450e54ae829a9096cefaaf",
+      "adapted": false
+    },
+    "cplot/src/format_c.cpp": {
+      "sha256": "86104996448d27cb3cd7f1d36cec446e2ea7678a593c1b18cb5f003aaedaf79c",
+      "adapted": false
+    },
+    "cplot/src/format_c.hpp": {
+      "sha256": "5fca512d99de33f796fd84f0c055321bffde91e6db35defa0c200c8149bad08e",
+      "adapted": false
+    },
+    "cplot/src/internal.hpp": {
+      "sha256": "9a4c25f68751a1ea68a2234a5450405b1f5efe6a41fc71bd47fab08c39921600",
+      "adapted": false
+    },
+    "cplot/src/layout.cpp": {
+      "sha256": "fa4ae5b9ff4e6a5b754ab2e7ec104d2fff0e05b5514fa0d4e9c7a090d31d9a0a",
+      "adapted": false
+    },
+    "cplot/src/renderer_svg.cpp": {
+      "sha256": "840cc07d932f2537e0b5bf5b06d0b22629ca354103345ba4e4800c831824b28f",
+      "adapted": true
+    },
+    "cplot/src/scale.cpp": {
+      "sha256": "a10ad49f985c692cc39bb6f1d85f8acd2fc793b96380b52e8a0ca3244e3eea79",
+      "adapted": true
+    },
+    "cplot/src/scene.cpp": {
+      "sha256": "b023caecfbd73c4c3c9ac07eee0d815fa3868539e7c2c245cbff0bddbdcbea3b",
+      "adapted": true
+    },
+    "cplot/src/scene_internal.hpp": {
+      "sha256": "36d0300042cd63e1ddef527a52ddade7392a51c55dd21edf39d9fae4cf7e79c3",
+      "adapted": false
+    },
+    "cplot/src/scientific.cpp": {
+      "sha256": "d406de9db87d86c2320ef2d23eba76b284d7b7f3bf78749923b86d4edeb7b0d4",
+      "adapted": false
+    },
+    "cplot/src/series.cpp": {
+      "sha256": "3f6fef9f8dfd64592fcde32a58993d5586d4189efbc72e6d830437b90347056a",
+      "adapted": false
+    },
+    "cplot/src/stats.cpp": {
+      "sha256": "6d15ed6fc5c460a00b55334d33dee47df06ade70e15609c6e57f618b0e4b0299",
+      "adapted": false
+    },
+    "cplot/src/structured_chart_layout.cpp": {
+      "sha256": "edb18b8e6370411d77a4671c97d934733213c905946aec0bf4b886a7512d97df",
+      "adapted": false
+    },
+    "cplot/src/structured_charts.cpp": {
+      "sha256": "a3c1f291b151d16ca9e5dfabd67a8db5e342ed12cbad20f29764d925925f5e43",
+      "adapted": true
+    },
+    "cplot/src/text.cpp": {
+      "sha256": "08f6a01a2d497840c2336974511fc73bd42d1ebbb4955bd93380a5b051b5eb56",
+      "adapted": true
+    },
+    "cplot/src/theme.cpp": {
+      "sha256": "c43b7517753eb975b92ed748d4e52de1be0cc065d26965e404b82de9dc6b1d70",
+      "adapted": false
+    },
+    "cplot/src/ticks.cpp": {
+      "sha256": "cdd6067d6425dc3cd2ca7a2765964f7127bb724e63e040466a12f1c8bd1c9f35",
+      "adapted": false
+    },
+    "cplot/src/units.cpp": {
+      "sha256": "28cb02c8ad1daf289488a175d0e3602a2d0fea2eaa027f73affac7235758a819",
+      "adapted": false
+    },
+    "libcworks/include/cworks/app_error.hpp": {
+      "sha256": "84e3efd34f0fefe2d2695e8bcf2c2f25e182f6cdee8696e4e5186b771748931c",
+      "adapted": false
+    },
+    "libcworks/include/cworks/base64.hpp": {
+      "sha256": "a023b6f41681edb9a278736d5d6f152aa325ed31a298858a11de14dbbf289930",
+      "adapted": false
+    },
+    "libcworks/include/cworks/error.hpp": {
+      "sha256": "d2b16a177b912ea5db07b884d4d5974d968d34b4874d90b0fb68e638e33503bc",
+      "adapted": false
+    },
+    "libcworks/include/cworks/executor.hpp": {
+      "sha256": "0a5c0aa776f13bd53674af05bd45e083c0d0f518c755e21c29d83cbc3249e8f2",
+      "adapted": false
+    },
+    "libcworks/include/cworks/format.hpp": {
+      "sha256": "33eca184af2bfb26c9f9292fcace733b556d010e0eb67c67d1d63f22dfa7ece4",
+      "adapted": false
+    },
+    "libcworks/include/cworks/limits.hpp": {
+      "sha256": "75901cf1d0ff67a310753f12a7339fdcd4a99c07106099fbea1885789b00203f",
+      "adapted": false
+    },
+    "libcworks/include/cworks/math.hpp": {
+      "sha256": "40631e9df2f21a11a5bee2e78e7837a80d9a9e156016b9909f2956c57feefba0",
+      "adapted": false
+    },
+    "libcworks/include/cworks/source_span.hpp": {
+      "sha256": "f8f4671fc2e0aa4754d0c4ff8145f629342e09273303c5b2a1b8328aa3022e4a",
+      "adapted": false
+    },
+    "libcworks/include/cworks/task.hpp": {
+      "sha256": "8587b732f7ade652950bec83c828c07250aa5988ad7d1f516831851b198d765a",
+      "adapted": false
+    },
+    "libcworks/include/cworks/text.hpp": {
+      "sha256": "9e757064274fbecfb110fb1d4f3a38a04ce05a99ebb18a0d28b6b14ac5fc044d",
+      "adapted": false
+    },
+    "libcworks/include/cworks/trig.hpp": {
+      "sha256": "0787f2fc524a878a38282de9b9ed9446c35572d84f442ea42c0265ad2691c8ea",
+      "adapted": false
+    },
+    "libcworks/include/cworks/yaml.hpp": {
+      "sha256": "ea18a3b817bced6c79a0cfcc129a5470983452179b06f8ab4e76a3801ab08db0",
+      "adapted": false
+    },
+    "libcworks/src/app_error.cpp": {
+      "sha256": "012b851e01ff188ceda784cdb9be10fde4279f65f88cb24fa045a483d31e72f0",
+      "adapted": false
+    },
+    "libcworks/src/base64.cpp": {
+      "sha256": "91f6ac6fc67dbfd2edb7b57ff48206859a7ed8d79b649d3227785e2b033b854b",
+      "adapted": false
+    },
+    "libcworks/src/binary64.hpp": {
+      "sha256": "e9e4b8093c5cb61eecc601bf23dd6c4989e680a0422de4e750f579e98d3cdce5",
+      "adapted": false
+    },
+    "libcworks/src/dd.hpp": {
+      "sha256": "6bd5d41399e7e2ebf4c4bd28b8c861b2bef226ad28a3275700aa916bd2a9a728",
+      "adapted": false
+    },
+    "libcworks/src/format.cpp": {
+      "sha256": "d7e73354193e8dbf8cd533c321ec0e98291b4a357665aed8f3d36216d7aa58a6",
+      "adapted": false
+    },
+    "libcworks/src/limits.cpp": {
+      "sha256": "a287ca909f033d4af37ce8d2c1ec5e5bfa6164dabf279877606e9946adddf85a",
+      "adapted": true
+    },
+    "libcworks/src/math.cpp": {
+      "sha256": "655810a2008df3c93f41a3c065b925bcea359d6253db0b79c67f5e0155238b37",
+      "adapted": false
+    },
+    "libcworks/src/math_tables.inc": {
+      "sha256": "783f840adb0746a9c02cc83fab0799b26c99cc9547e2dd54a20fec463a3123ee",
+      "adapted": false
+    },
+    "libcworks/src/text.cpp": {
+      "sha256": "8da337e22d2e99402322ac874f25653711ecdfcb1e12be0516a4ce37f752f38d",
+      "adapted": false
+    },
+    "libcworks/src/trig.cpp": {
+      "sha256": "0c34cae7e523045eeb4e7cfed9253f2b18c19d215981e6d462c65d5a43c3ffde",
+      "adapted": false
+    },
+    "libcworks/src/trig_tables.inc": {
+      "sha256": "e97b76d7aa1d9db141a8619ec08258e194bca0e920c6f3765a2ba5f55439656d",
+      "adapted": false
+    },
+    "libcworks/src/yaml.cpp": {
+      "sha256": "5caa553bb025b08b1b596b7e08571cff6fdfcff95257b294feb9d17d09a4150e",
+      "adapted": false
+    }
+  },
+  "tests": {
+    "tests/mermaid/cworks/microtest.hpp": {
+      "origin": "libcworks/include/cworks/microtest.hpp",
+      "sha256": "1f70cf2ff556c55b3984770dbe6f627aa27a293e4b3f7ea0144c87084bada2be"
+    },
+    "tests/mermaid/golden/class.expected.svg": {
+      "origin": "cdiagram/tests/golden/class.expected.svg",
+      "sha256": "0af2436d62745dcfa73cade85b8fa2cd9ce977724a8bf8d2c18493f99c8eb634"
+    },
+    "tests/mermaid/golden/flowchart-cluster-edge.expected.svg": {
+      "origin": "cdiagram/tests/golden/flowchart-cluster-edge.expected.svg",
+      "sha256": "302b8748c12c8dc0f35ff81302edcbc05c4cba0aeb63ab73d8371ef756060a14"
+    },
+    "tests/mermaid/golden/flowchart-cluster-nested.expected.svg": {
+      "origin": "cdiagram/tests/golden/flowchart-cluster-nested.expected.svg",
+      "sha256": "0121ec7b56b32c300b75e83c6aba42f24e9c2b4d67165a8fb8be21363d44733e"
+    },
+    "tests/mermaid/golden/flowchart-cluster.expected.svg": {
+      "origin": "cdiagram/tests/golden/flowchart-cluster.expected.svg",
+      "sha256": "beed51c0117558d3022a711e3b25517ec82d8654996f63493e9c36bbc0124cc9"
+    },
+    "tests/mermaid/golden/flowchart-styling.expected.svg": {
+      "origin": "cdiagram/tests/golden/flowchart-styling.expected.svg",
+      "sha256": "21032e79050c0f89e0cb75487349618a17c1e5ffa99fc9003748e219e9fc81d1"
+    },
+    "tests/mermaid/golden/flowchart.expected.svg": {
+      "origin": "cdiagram/tests/golden/flowchart.expected.svg",
+      "sha256": "1136aa9b0010b0ac77f2b8d1614f8d7590a3f2798787d19f23172028fc5795bc"
+    },
+    "tests/mermaid/golden/pie.expected.svg": {
+      "origin": "cdiagram/tests/golden/pie.expected.svg",
+      "sha256": "5d8b833c41f35811081d6bcb269c5d14fcbec44cdef33ba62afec529c18b994f"
+    },
+    "tests/mermaid/golden/sankey-energy.expected.svg": {
+      "origin": "cdiagram/tests/golden/sankey-energy.expected.svg",
+      "sha256": "d25fa96fc1d9b78e2b81eb6b0256fec82bc9b0b26c692783a9aa287b5417e5cc"
+    },
+    "tests/mermaid/golden/sequence.expected.svg": {
+      "origin": "cdiagram/tests/golden/sequence.expected.svg",
+      "sha256": "c94418b821f890467e808663545ca65e29328738179db22a5341d592e9f9084c"
+    },
+    "tests/mermaid/golden_check.hpp": {
+      "origin": "cdiagram/tests/golden_check.hpp",
+      "sha256": "b523ccbb94d6763190f852ea9f245360d79d27f769b455d7acb3cb1a10fbc875"
+    },
+    "tests/mermaid/test_dag_layout.cpp": {
+      "origin": "cdiagram/tests/test_dag_layout.cpp",
+      "sha256": "54cbc778ff817b35e68188e18a8bff842002cc859ffc6440fa6f42e5933ded33"
+    },
+    "tests/mermaid/test_diagnostics.cpp": {
+      "origin": "cdiagram/tests/test_diagnostics.cpp",
+      "sha256": "999741516a1d9290280ae7a3a1dddb4ac0c98e6ae47775507334a947e8e03d60"
+    },
+    "tests/mermaid/test_exotic_types.cpp": {
+      "origin": "cdiagram/tests/test_exotic_types.cpp",
+      "sha256": "d983cd359d510fc1dbd1258ca543e19eafbbd6f0a2f87e12b930c7d99d8c9310"
+    },
+    "tests/mermaid/test_final_types.cpp": {
+      "origin": "cdiagram/tests/test_final_types.cpp",
+      "sha256": "13491085c494c21eee7f0d8dfc98ee9d2eec78c6235b7249a9818bead0b537b3"
+    },
+    "tests/mermaid/test_flowchart.cpp": {
+      "origin": "cdiagram/tests/test_flowchart.cpp",
+      "sha256": "41365e7938898105c1dd10c769bab80a94984cfb7469e5925e6d2d24418298bb"
+    },
+    "tests/mermaid/test_frontmatter.cpp": {
+      "origin": "cdiagram/tests/test_frontmatter.cpp",
+      "sha256": "17c13bed556d8acff440591ed9e577a18a239e7e324bed3f15ab5db151a2c170"
+    },
+    "tests/mermaid/test_geometry.cpp": {
+      "origin": "cdiagram/tests/test_geometry.cpp",
+      "sha256": "e2bf72a04538364ce5f2918d71eaf67c4107eb3cc693dcdb9a49fc768834a83a"
+    },
+    "tests/mermaid/test_golden_svg.cpp": {
+      "origin": "cdiagram/tests/test_golden_svg.cpp",
+      "sha256": "1f5bb0176897a16ce76206b0aee09674e4dc013742339dbc265a6c3a879aebab"
+    },
+    "tests/mermaid/test_graph_types.cpp": {
+      "origin": "cdiagram/tests/test_graph_types.cpp",
+      "sha256": "607855dd34e394705e45ea58e5c022c4477d7ff9926de0b43f3337116b88bb5a"
+    },
+    "tests/mermaid/test_main.cpp": {
+      "origin": "cdiagram/tests/test_main.cpp",
+      "sha256": "6bdfb4b52c4f289134072dbd2b12238cedf3e6835b59f92a8768c1976b8c5210"
+    },
+    "tests/mermaid/test_more_types.cpp": {
+      "origin": "cdiagram/tests/test_more_types.cpp",
+      "sha256": "d1aad3c8c134f5b224a8fab4d951fe614b41538e7d352f5528c9e5ccbf3ed668"
+    },
+    "tests/mermaid/test_pie.cpp": {
+      "origin": "cdiagram/tests/test_pie.cpp",
+      "sha256": "c63441ca09b57c19e0cbb4fa889155b0d9a57742bf897aa787855483dd34b9ed"
+    },
+    "tests/mermaid/test_sequence.cpp": {
+      "origin": "cdiagram/tests/test_sequence.cpp",
+      "sha256": "8871a641e191d7070316c59b7e32b18793ccac9886de52d281540756a77b5e95"
+    }
+  }
+}

@@ -38,6 +38,7 @@
 #include "ckgit/docs_site.hpp"
 #include "ckgit/http_request.hpp"
 #include "ckgit/pages_store.hpp"
+#include "mermaid.hpp"
 
 namespace {
 
@@ -66,6 +67,7 @@ void usage(std::ostream& out) {
          "  defaults to a private directory removed when it exits, and its --port to 8422.\n"
          "\n"
          "Effects:\n"
+         "  Mermaid fences render to local SVG images, with light and dark variants.\n"
          "  build renders every Markdown page under the source tree into a self-contained\n"
          "  static site at --out. Pages come only from what Git tracks in a work tree (a\n"
          "  gitignored planning directory, for example, is never read) or, outside a work\n"
@@ -380,6 +382,7 @@ int run(const std::string& command_name, int argc, char** argv) {
   std::optional<ScopedTempDirectory> scratch;
   fs::path target;
   ckgit::DocsBuildOptions build_options;
+  build_options.mermaid_renderer = ckgit::renderMermaid;
   if (command == Command::kCheck) {
     scratch.emplace("ckdocs-check");
     target = scratch->path;
@@ -413,7 +416,7 @@ int run(const std::string& command_name, int argc, char** argv) {
     if (command == Command::kCheck) {
       std::cout << "Checked " << report.pages_written << " page(s): nothing to report.\n";
     } else {
-      std::cout << "Built " << report.pages_written << " page(s), " << report.assets_copied << " asset(s), "
+      std::cout << "Built " << report.pages_written << " page(s), " << report.assets_copied + report.assets_generated << " asset(s), "
                 << report.bytes_written << " byte(s) to " << target.string() << ".\n";
     }
   }

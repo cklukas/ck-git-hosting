@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="184.69" height="291.94" viewBox="0 0 184.69 291.94">
+  <metadata>cdiagram</metadata>
+  <polyline points="90.08,56.2 90.11,101.22" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="90.12,110.22 86.11,100.22 94.11,100.22" fill="#33333A"/>
+  <polyline points="79.16,172.56 56.5,227.43" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="53.07,235.74 53.19,224.97 60.58,228.03" fill="#33333A"/>
+  <polyline points="101.14,172.55 123.84,227.43" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="127.28,235.74 119.76,228.03 127.15,224.97" fill="#33333A"/>
+  <rect x="61.4" y="22" width="57.34" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="90.07" y="41.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Start</text>
+  <polygon points="90.14,110.2 132.91,145.97 90.14,181.74 47.37,145.97" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="90.14" y="148.85" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Choice</text>
+  <rect x="22" y="235.74" width="48.01" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="46" y="255.72" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Go</text>
+  <rect x="106.01" y="235.74" width="56.68" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="134.35" y="255.72" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Stop</text>
+  <rect x="39.6" y="189.3" width="24.67" height="18" fill="#FFFFFF" fill-opacity="0.75"/>
+  <text x="51.94" y="201.18" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959" text-anchor="middle">yes</text>
+  <rect x="92.82" y="199.99" width="19.34" height="18" fill="#FFFFFF" fill-opacity="0.75"/>
+  <text x="102.5" y="211.87" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959" text-anchor="middle">no</text>
+</svg>

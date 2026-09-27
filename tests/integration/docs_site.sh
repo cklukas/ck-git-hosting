@@ -70,7 +70,7 @@ find "$site" -name '*.html' >"$pages_list"
 while IFS= read -r page; do
   page_rel=${page#"$site"/}
   page_dir=$(dirname "$page_rel")
-  grep -oE '(href|src)="[^"]+"' "$page" >"$refs_list" || true
+  grep -oE '(href|src|srcset)="[^"]+"' "$page" >"$refs_list" || true
   while IFS= read -r raw; do
     [ -n "$raw" ] || continue
     target=${raw#*=\"}
@@ -98,6 +98,18 @@ while IFS= read -r page; do
   done <"$refs_list"
 done <"$pages_list"
 [ "$fail" -eq 0 ] || { echo "docs_site link check failed" >&2; exit 1; }
+
+# The project's ckdocs guide is also the live gallery for every native type.
+gallery="$site/operations/07-docs-sites.html"
+diagram_count=$(grep -o 'class="mermaid"' "$gallery" | wc -l | tr -d ' ')
+[ "$diagram_count" -eq 23 ] || { echo "expected all 23 Mermaid types in the guide, got $diagram_count" >&2; exit 1; }
+if grep -q 'class="language-mermaid"' "$gallery"; then
+  echo "a Mermaid example fell back to a code block" >&2
+  exit 1
+fi
+for svg in "$site"/_ckdocs-mermaid/*.svg; do
+  grep -q '<svg ' "$svg" || { echo "invalid generated SVG: $svg" >&2; exit 1; }
+done
 
 # check builds into its own removed-afterward directory and agrees with build.
 "$CKDOCS" check --root "$repo_root" >"$test_root/check.log" 2>&1 ||
@@ -205,6 +217,44 @@ case "$tagged_output" in
     ;;
 esac
 
+# ---- Mermaid warnings use the normal build/check exit contract ------------
+
+mermaid_fixture="$test_root/mermaid-errors"
+mkdir -p "$mermaid_fixture"
+cat >"$mermaid_fixture/README.md" <<'EOF'
+# Mermaid errors
+
+```mermaid
+flowchart LR
+A[Safe] --> B[Output]
+```
+
+```mermaid
+unknownDiagram
+<script>alert(1)</script>
+```
+
+```text
+flowchart LR
+A --> B
+```
+EOF
+set +e
+"$CKDOCS" build --root "$mermaid_fixture" --out "$test_root/mermaid-errors-site" >"$test_root/mermaid-errors.log" 2>&1
+mermaid_status=$?
+set -e
+[ "$mermaid_status" -eq 3 ] || { echo "Mermaid warnings should return 3, got $mermaid_status" >&2; exit 1; }
+grep -q 'README.md: Mermaid diagram 2: unknown diagram type' "$test_root/mermaid-errors.log"
+grep -q 'class="mermaid"' "$test_root/mermaid-errors-site/index.html"
+grep -q 'class="language-mermaid"' "$test_root/mermaid-errors-site/index.html"
+grep -q '&lt;script&gt;alert(1)&lt;/script&gt;' "$test_root/mermaid-errors-site/index.html"
+grep -q 'class="language-text"' "$test_root/mermaid-errors-site/index.html"
+set +e
+"$CKDOCS" check --root "$mermaid_fixture" >"$test_root/mermaid-check.log" 2>&1
+mermaid_status=$?
+set -e
+[ "$mermaid_status" -eq 1 ] || { echo "Mermaid warnings should fail check, got $mermaid_status" >&2; exit 1; }
+
 # ---- serve: a loopback preview server --------------------------------------
 
 serve_log="$test_root/serve.log"
@@ -252,6 +302,8 @@ check_serve "/" "HTTP/1.1 200 OK" "text/html"
 check_serve "/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
 check_serve "/operations/08-web-dashboard.html" "HTTP/1.1 200 OK" "text/html"
 check_serve "/images/web-files.png" "HTTP/1.1 200 OK" "image/png"
+diagram_asset=$(basename "$(find "$site/_ckdocs-mermaid" -name '*.svg' | head -n 1)")
+check_serve "/_ckdocs-mermaid/$diagram_asset" "HTTP/1.1 200 OK" "image/svg+xml"
 check_serve "/nope.html" "HTTP/1.1 404 Not Found"
 
 kill "$serve_pid" 2>/dev/null || true

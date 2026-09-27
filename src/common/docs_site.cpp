@@ -31,6 +31,7 @@
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/docs_theme.hpp"
+#include "ckgit/hash.hpp"
 #include "ckgit/http_router.hpp"
 #include "ckgit/markdown.hpp"
 #include "ckgit/pages_store.hpp"
@@ -1311,6 +1312,12 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     page_by_output.emplace(model.pages[index].output, index);
   }
   std::map<std::string, std::string> assets;  // output path -> root-relative source
+  const auto diagramPath = [](std::string_view path) { return path == "_ckdocs-mermaid" || path.starts_with("_ckdocs-mermaid/"); };
+  if (options.mermaid_renderer) {
+    for (const auto& [output, index] : page_by_output) {
+      if (diagramPath(output)) siteError("page '" + model.pages[index].source + "' uses the reserved _ckdocs-mermaid output directory");
+    }
+  }
   const auto addAsset = [&](const std::string& root_relative, const char* what) {
     const auto full = model.root / root_relative;
     if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) {
@@ -1318,6 +1325,7 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     }
     if (fs::file_size(full, error) > kMaximumPagesFileBytes) siteError(std::string(what) + " '" + root_relative + "' exceeds the file size limit");
     const auto output = assetOutputPath(model, root_relative);
+    if (options.mermaid_renderer && diagramPath(output)) siteError(std::string(what) + " '" + root_relative + "' uses the reserved _ckdocs-mermaid output directory");
     if (page_by_output.count(output) != 0) siteError(std::string(what) + " '" + root_relative + "' would overwrite the page '" + output + "'");
     const auto [existing, inserted] = assets.try_emplace(output, root_relative);
     if (!inserted && existing->second != root_relative) {
@@ -1345,7 +1353,7 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     if (!stream) siteError("cannot write '" + target.string() + "'");
     result.bytes_written += content.size();
     if (result.bytes_written > kMaximumPagesSiteBytes) siteError("the site exceeds the size limit for a Pages site");
-    if (directories.size() + result.pages_written + result.assets_copied + 2 > kMaximumPagesEntries) {
+    if (directories.size() + result.pages_written + result.assets_copied + result.assets_generated + 2 > kMaximumPagesEntries) {
       siteError("the site exceeds the entry limit for a Pages site");
     }
   };
@@ -1355,6 +1363,21 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
   std::vector<std::set<std::string>> ids(model.pages.size());
   std::vector<std::vector<std::pair<std::string, std::string>>> links(model.pages.size());
   std::vector<std::string> search_entries;
+  struct RenderedDiagram {
+    std::string light_path, dark_path, alternative_text, error;
+    std::vector<std::string> warnings;
+  };
+  std::map<std::string, RenderedDiagram> diagram_cache;
+  std::set<std::string> diagram_assets;
+  const auto writeDiagram = [&](const std::string& svg) {
+    if (svg.empty() || svg.size() > kMaximumPagesFileBytes) siteError("Mermaid SVG exceeds the file size limit or is empty");
+    const std::string path = "_ckdocs-mermaid/" + sha256Hex(svg) + ".svg";
+    if (diagram_assets.insert(path).second) {
+      ++result.assets_generated;
+      writeFile(path, svg);
+    }
+    return path;
+  };
   if (model.config.search) search_entries.reserve(model.pages.size());
   for (std::size_t index = 0; index < model.pages.size(); ++index) {
     const DocsPage& page = model.pages[index];
@@ -1393,9 +1416,54 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
       if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
       return relativeUrl(out_dir, addAsset(*normalized, "file"));
     };
+    std::size_t diagram_number = 0;
+    const MarkdownCodeRenderer code_renderer = [&](std::string_view language, std::string_view source) -> std::optional<std::string> {
+      if (!options.mermaid_renderer || language != "mermaid") return std::nullopt;
+      const std::string location = page.source + ": Mermaid diagram " + std::to_string(++diagram_number) + ": ";
+      if (diagram_number > 128) {
+        result.warnings.push_back(location + "exceeds the limit of 128 diagrams per page");
+        return std::nullopt;
+      }
+      const std::string key = sha256Hex(source);
+      auto found = diagram_cache.find(key);
+      if (found == diagram_cache.end()) {
+        if (diagram_cache.size() >= 1024) {
+          result.warnings.push_back(location + "exceeds the limit of 1024 distinct diagrams per site");
+          return std::nullopt;
+        }
+        RenderedDiagram rendered;
+        std::optional<DocsDiagram> diagram;
+        try {
+          diagram = options.mermaid_renderer(source);
+        } catch (const std::exception& failure) {
+          rendered.error = failure.what();
+        }
+        // Filesystem/output-limit failures must abort the atomic build, never
+        // masquerade as a source error and publish a partially written SVG.
+        if (diagram) {
+          rendered.light_path = writeDiagram(diagram->light_svg);
+          rendered.dark_path = writeDiagram(diagram->dark_svg);
+          rendered.alternative_text = std::move(diagram->alternative_text);
+          rendered.warnings = std::move(diagram->warnings);
+        }
+        found = diagram_cache.emplace(key, std::move(rendered)).first;
+      }
+      const auto& rendered = found->second;
+      if (!rendered.error.empty()) {
+        result.warnings.push_back(location + rendered.error);
+        return std::nullopt;
+      }
+      for (const auto& warning : rendered.warnings) result.warnings.push_back(location + warning);
+      ++result.diagrams_rendered;
+      const std::string light = escapeHtml(relativeUrl(out_dir, rendered.light_path));
+      const std::string dark = escapeHtml(relativeUrl(out_dir, rendered.dark_path));
+      return "<figure class=\"mermaid\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"" + dark +
+             "\"><img src=\"" + light + "\" alt=\"" + escapeHtml(rendered.alternative_text) +
+             "\" loading=\"lazy\"></picture></figure>\n";
+    };
     std::string article;
     try {
-      article = renderMarkdown(markdownBody(*content), link_context, &context.outlines[index]);
+      article = renderMarkdown(markdownBody(*content), link_context, &context.outlines[index], code_renderer);
     } catch (const std::length_error& bound) {
       siteError("'" + page.source + "' exceeds a rendering bound: " + bound.what());
     }

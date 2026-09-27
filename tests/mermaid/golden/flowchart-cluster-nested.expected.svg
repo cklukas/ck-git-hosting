@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="164.68" height="529" viewBox="0 0 164.68 529">
+  <metadata>cdiagram</metadata>
+  <path d="M 28 110.2 L 136.68 110.2 C 140 110.2 142.68 112.89 142.68 116.2 L 142.68 412.8 C 142.68 416.11 140 418.8 136.68 418.8 L 28 418.8 C 24.69 418.8 22 416.11 22 412.8 L 22 116.2 C 22 112.89 24.69 110.2 28 110.2 Z" fill="#000000" fill-opacity="0.06" stroke="#66668A" stroke-width="1.2"/>
+  <text x="34" y="122.08" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959">Platform</text>
+  <path d="M 40 140.2 L 124.68 140.2 C 128 140.2 130.68 142.89 130.68 146.2 L 130.68 298.6 C 130.68 301.91 128 304.6 124.68 304.6 L 40 304.6 C 36.69 304.6 34 301.91 34 298.6 L 34 146.2 C 34 142.89 36.69 140.2 40 140.2 Z" fill="#000000" fill-opacity="0.06" stroke="#66668A" stroke-width="1.2"/>
+  <text x="46" y="152.08" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959">Service Mesh</text>
+  <polyline points="81.78,56.2 81.93,131.2" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="81.95,140.2 77.93,130.21 85.93,130.19" fill="#33333A"/>
+  <polyline points="82.1,204.4 82.25,249.4" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="82.28,258.4 78.25,248.41 86.25,248.39" fill="#33333A"/>
+  <polyline points="82.37,292.6 82.44,349.6" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="82.46,358.6 78.44,348.61 86.44,348.59" fill="#33333A"/>
+  <polyline points="82.49,418.8 82.49,463.8" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="82.49,472.8 78.49,462.8 86.49,462.8" fill="#33333A"/>
+  <rect x="32.06" y="22" width="99.37" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="81.75" y="41.98" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Edge Router</text>
+  <rect x="50.71" y="170.2" width="62.67" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="82.05" y="190.18" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Proxy</text>
+  <rect x="50.33" y="258.4" width="64.02" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="82.34" y="278.38" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Route</text>
+  <rect x="49.15" y="365.6" width="66.68" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <path d="M 115.83 365.6 C 115.83 369.47 100.9 372.6 82.49 372.6 C 64.08 372.6 49.15 369.47 49.15 365.6 C 49.15 361.73 64.08 358.6 82.49 358.6 C 100.9 358.6 115.83 361.73 115.83 365.6 Z" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="82.49" y="385.58" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Cache</text>
+  <rect x="31.82" y="472.8" width="101.35" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="82.49" y="492.78" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Observability</text>
+</svg>

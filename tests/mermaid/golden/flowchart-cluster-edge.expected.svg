@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="511.58" height="162.21" viewBox="0 0 511.58 162.21">
+  <metadata>cdiagram</metadata>
+  <path d="M 144.67 22 L 368.9 22 C 372.21 22 374.9 24.69 374.9 28 L 374.9 134.21 C 374.9 137.53 372.21 140.21 368.9 140.21 L 144.67 140.21 C 141.36 140.21 138.67 137.53 138.67 134.21 L 138.67 28 C 138.67 24.69 141.36 22 144.67 22 Z" fill="#EEF7EE" stroke="#55AA55" stroke-width="1.2"/>
+  <text x="150.67" y="33.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#595959">API Tier</text>
+  <polyline points="84.67,90.11 129.67,90.11" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="138.67,90.11 128.67,94.11 128.67,86.11" fill="#33333A"/>
+  <polyline points="218.68,90.11 263.68,90.11" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="272.68,90.11 262.68,94.11 262.68,86.11" fill="#33333A"/>
+  <polyline points="374.9,90.11 419.9,90.11" fill="none" stroke="#33333A" stroke-width="1.5"/>
+  <polygon points="428.9,90.11 418.9,94.11 418.9,86.11" fill="#33333A"/>
+  <rect x="22" y="73.01" width="62.67" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="53.34" y="92.99" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Client</text>
+  <rect x="150.67" y="73.01" width="68.01" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="184.68" y="92.99" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Router</text>
+  <polygon points="317.79,52 362.9,90.11 317.79,128.21 272.68,90.11" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="317.79" y="92.99" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Handler</text>
+  <rect x="428.9" y="73.01" width="60.68" height="34.2" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <path d="M 489.58 73.01 C 489.58 76.87 475.99 80.01 459.24 80.01 C 442.48 80.01 428.9 76.87 428.9 73.01 C 428.9 69.14 442.48 66.01 459.24 66.01 C 475.99 66.01 489.58 69.14 489.58 73.01 Z" fill="#ECECFF" stroke="#9370DB" stroke-width="1"/>
+  <text x="459.24" y="92.99" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Store</text>
+</svg>
