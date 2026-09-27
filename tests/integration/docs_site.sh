@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 #
 # Builds this repository's own documentation with the ckdocs binary and
-# checks the result the way a reader's browser would: the three top-level
+# checks the result the way a reader's browser would: the task-based top-level
 # tabs are present, no absolute href/src leaked in, and every internal
 # reference resolves to a file relative to the page that carries it. Then, on
 # a small synthetic fixture, proves a broken link fails `ckdocs check` with a
@@ -47,7 +47,7 @@ for page in index.html operations/01-installation.html protocol/01-ssh-and-contr
   [ -f "$site/$page" ] || { echo "expected $page in the built site" >&2; exit 1; }
 done
 
-for tab in Home Operations Protocol; do
+for tab in Home Guides Server CI ckdocs Reference; do
   grep -q ">$tab</a>" "$site/index.html" || { echo "index.html is missing the $tab tab" >&2; exit 1; }
 done
 
@@ -99,14 +99,19 @@ while IFS= read -r page; do
 done <"$pages_list"
 [ "$fail" -eq 0 ] || { echo "docs_site link check failed" >&2; exit 1; }
 
-# The project's ckdocs guide is also the live gallery for every native type.
-gallery="$site/operations/07-docs-sites.html"
-diagram_count=$(grep -o 'class="mermaid"' "$gallery" | wc -l | tr -d ' ')
-[ "$diagram_count" -eq 23 ] || { echo "expected all 23 Mermaid types in the guide, got $diagram_count" >&2; exit 1; }
-if grep -q 'class="language-mermaid"' "$gallery"; then
-  echo "a Mermaid example fell back to a code block" >&2
-  exit 1
-fi
+# Each diagram type has a focused example page with its copyable source.
+diagram_count=0
+for gallery in "$site"/ckdocs/diagrams/*.html; do
+  count=$(grep -o 'class="mermaid"' "$gallery" | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || { echo "$gallery: expected one rendered diagram, got $count" >&2; exit 1; }
+  grep -q 'class="language-markdown"' "$gallery" || { echo "$gallery: missing diagram source" >&2; exit 1; }
+  if grep -q 'class="language-mermaid"' "$gallery"; then
+    echo "$gallery: Mermaid example fell back to a code block" >&2
+    exit 1
+  fi
+  diagram_count=$((diagram_count + count))
+done
+[ "$diagram_count" -eq 23 ] || { echo "expected all 23 Mermaid example pages, got $diagram_count" >&2; exit 1; }
 for svg in "$site"/_ckdocs-mermaid/*.svg; do
   grep -q '<svg ' "$svg" || { echo "invalid generated SVG: $svg" >&2; exit 1; }
 done

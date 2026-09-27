@@ -249,7 +249,7 @@ it to your existing file automatically -- `--force-confold` keeps the old file
 byte for byte, new key and all its documentation included. To pick up a new
 feature that a release introduces through a new key, add that key to
 `server.ini` yourself (see the key tables in
-[Configure the runner](04-ci-cd.md#configure-the-runner) and
+[Configure the runner](ci-runner.md#configure-the-runner) and
 [installation](01-installation.md)) and restart the affected service.
 
 No release has shipped yet as of this writing, so there is no key-addition
@@ -261,7 +261,7 @@ one-line check rather than a full config diff.
 
 `packaging/update-cli.sh` updates a device's own `ckgit` from this project's
 own self-hosted release, using `ckgit release download` (see
-[Releases](04-ci-cd.md#releases)) -- no SSH login or sudo access on the server
+[Releases](releases.md#releases)) -- no SSH login or sudo access on the server
 at all, only an existing `ckgit` already paired through `client.ini`:
 
 ```text

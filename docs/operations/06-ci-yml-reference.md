@@ -1,13 +1,11 @@
 # `.ckgit/ci.yml` reference
 
-This is the complete reference for the workflow file self-hosted CI reads:
-every accepted and rejected syntax construct, every key, every bound, the
-exact sandbox and environment a step runs in, and how a build becomes an
-artifact, a release, or a published Pages site. [Continuous
-integration](04-ci-cd.md) is the tutorial that gets a first workflow running;
-come here for what it does not spell out.
+Workflow syntax, triggers, outputs, and limits. For a first workflow, see
+[Run your first CI workflow](04-ci-cd.md). See also the
+[execution environment](../reference/ci-runtime.md) and
+[worked examples](../reference/ci-examples.md).
 
-## 1. File location and reading rules
+## File location and reading rules
 
 The workflow is read from the **pushed commit object** —
 `git cat-file -p <commit>:.ckgit/ci.yml` — never from a working tree and
@@ -26,10 +24,10 @@ prints either a summary of its triggers and jobs or the first error with the
 offending line. Only the server can decide what depends on it: which branch
 is the repository's default branch (for a workflow without `on:`, and for
 Pages), whether the sister projects exist, and the limits in
-[§10](#10-bounds-table) that the server configures (step timeout, log and
+[§10](#bounds-table) that the server configures (step timeout, log and
 artifact sizes, retention cap, network policy).
 
-## 2. Syntax
+## Syntax
 
 The format is a small, strict, hand-rolled subset of YAML — not a full YAML
 parser, and not GitHub Actions: there is no `uses:`, no marketplace, no
@@ -102,14 +100,14 @@ exact same subset — one syntax, two schemas.
   fine: there the real key comes before the brace, so the scan finds the
   genuine key/value colon correctly. The failure is specific to a flow
   mapping opening immediately after a sequence dash.)
-- Anything over the size and count bounds in [§10](#10-bounds-table) below.
+- Anything over the size and count bounds in [§10](#bounds-table) below.
 
-## 3. Schema table
+## Schema table
 
 | Key | Type | Required | Default | Validation |
 |---|---|---|---|---|
 | `version` | integer | yes | — | must be exactly `1` |
-| `on.branches` | list of strings | no | none | valid branch name each; see [trigger matrix](#4-trigger-matrix) |
+| `on.branches` | list of strings | no | none | valid branch name each; see [trigger matrix](#trigger-matrix) |
 | `on.tags` | list of strings | no | none | a tag pattern: an exact name, or a name ending in a single trailing `*` wildcard |
 | `env` (top level) | mapping | no | empty | keys: `[A-Za-z_][A-Za-z0-9_]*`; values: any scalar |
 | `sisters[]` | list of a bare name or a `{name, ref}` mapping | no | empty | `name`: a valid project name (same rule as a hosted project's own name); `ref` (optional): a branch, tag, or commit-like ref, not starting with `-`/`/`, no `..` |
@@ -139,7 +137,7 @@ exact same subset — one syntax, two schemas.
   check of a workflow cannot catch this; only a real run can. The same is
   true of a sister that names the project it belongs to.
 
-## 4. Trigger matrix
+## Trigger matrix
 
 | `on:` in the file | Branch push | Tag push |
 |---|---|---|
@@ -171,174 +169,7 @@ stated reason.
 
 Jobs are claimed from the spool **oldest first**.
 
-## 5. Execution
-
-Jobs run in the order they are listed in the file; within a job, steps run
-in the order listed. The first step that fails — non-zero exit, a timeout,
-or a cancellation — stops the **entire run**, not just the current job; jobs
-after it never start.
-
-A step is exactly one of two execution forms:
-
-- **`run:` as a list** is an exact argument vector, executed with
-  `execvp` and **no shell at all** — no globbing, no `$VAR` expansion, no
-  pipelines. `run: [make, all]` runs the `make` binary found on `PATH` with
-  the single argument `all`.
-- **`run:` as a scalar, or `script:`** (almost always a `|` block for
-  anything beyond one line) is executed as `sh -ec '<text>'` inside the
-  sandbox. The shell is deliberate here — the sandbox is the isolation
-  boundary, not the absence of a shell — and this is the only place `$VAR`
-  expansion, pipelines, or multiple commands are available.
-
-A step's stdin is always `/dev/null`; it never waits on input. Its stdout
-and stderr are combined into one interleaved stream, captured up to
-`ci_max_log_bytes` (default 1 MiB / 1048576 bytes) — output past the cap is
-discarded, not buffered, and the run record notes that the log was
-truncated. Each step has its own wall-clock budget, `ci_timeout_seconds`
-(default 1800 seconds / 30 minutes); on expiry the step's whole process
-group is killed.
-
-Exit-code and status mapping, checked in this order per step:
-
-1. The run was cancelled (an administrator requested it) → status
-   `cancelled`.
-2. The step could not even be started (e.g. the interpreter is missing) →
-   status `error`.
-3. The step exceeded its timeout → status `timeout`.
-4. The step exited non-zero → status `failure`, with the exact exit code
-   recorded (a signal-terminated step is recorded as `128 + signal number`,
-   matching the ordinary shell convention).
-5. Otherwise the step succeeded and the run continues to the next one.
-
-A timed-out or cancelled step's own exit code is not meaningful (it was
-killed, not exited) and is recorded as `-1`. When every job's every step
-succeeds, the run's overall status is `success`.
-
-## 6. Environment
-
-Every step runs with exactly these variables, before anything the workflow
-itself adds:
-
-| Variable | Value |
-|---|---|
-| `PATH` | `/usr/local/bin:/usr/bin:/bin` |
-| `HOME` | the sandbox home directory (`/mnt/home`; see [§7](#7-filesystem)) |
-| `TMPDIR` | the sandbox temp directory (`/mnt/tmp`) |
-| `LANG` | `C` |
-| `LC_ALL` | `C` |
-| `CI` | `true` |
-| `CKGIT_CI` | `1` |
-| `CKGIT_COMMIT` | the full commit id under build |
-| `CKGIT_REF` | the pushed ref, e.g. `refs/heads/master` or `refs/tags/v1.0.0` |
-
-`CKGIT_CI` (not the generic `CI`) is the one to test for "am I running
-inside this project's own sandbox" specifically — a test that needs to skip
-a check only when self-hosted CI is running it nested inside itself, for
-example, should check `CKGIT_CI`, since a GitHub Actions runner also sets
-`CI=true` but never sets `CKGIT_CI`.
-
-**Precedence, lowest to highest** — a later layer overwrites a same-named
-variable from an earlier one:
-
-1. The defaults above.
-2. The workflow's top-level `env:`.
-3. The running job's `env:`, merged over the top-level `env:`.
-4. Server/operator-level variables configured outside the workflow file
-   (not something `.ckgit/ci.yml` itself controls).
-5. Sister and cache exports (below) — **last, and unshadowable**: nothing
-   in the workflow's own `env:` can override a `CKGIT_SISTER_<NAME>` or
-   `CKGIT_CACHE_<NAME>` export, or a cache's own bound variable names.
-
-A workflow's `env:`/job `env:` *can* override any of the five built-in
-defaults, including `PATH` and even `CKGIT_COMMIT`/`CKGIT_REF` themselves —
-there is no protection against that. Values are always taken literally; the
-runner never expands `$VAR` or any other reference inside an `env:` value.
-
-**Sister and cache variable names** follow one name-mangling rule: the
-fixed prefix (`CKGIT_SISTER_` or `CKGIT_CACHE_`), then every byte of the
-declared name is uppercased if it is alphanumeric, or replaced with `_`
-otherwise. A sister named `ck-vision.core` is exported as
-`CKGIT_SISTER_CK_VISION_CORE`; a cache named `ccache` is exported as
-`CKGIT_CACHE_CCACHE`. A `cache[].env` entry binds that same path under its
-own literal name too, unmangled — `env: [CCACHE_DIR]` additionally exports
-`CCACHE_DIR` pointing at the same directory as `CKGIT_CACHE_CCACHE`.
-
-## 7. Filesystem
-
-On Linux, with unprivileged user namespaces available, each step runs
-inside its own user, mount, and (unless `ci_allow_network=true`) network
-namespace, on a throwaway checkout under `/mnt`:
-
-| Path | Contents |
-|---|---|
-| `/mnt/src` | the checkout — also the step's working directory |
-| `/mnt/home` | `HOME`; always created, sandboxed or not |
-| `/mnt/tmp` | `TMPDIR`; always created, sandboxed or not |
-| `/mnt/<sister-name>` | each declared sister's read-only source, sibling of `src` — reachable from inside the checkout as `../<sister-name>` |
-| `/mnt/.cache/<cache-name>` | each declared cache, whether persisted across runs (`ci_cache_root` configured) or ephemeral (this run only) |
-
-**What gets masked.** The step's mount namespace also covers every one of
-the following, when configured, with an empty, private, mode-0700 tmpfs
-capped at 64 KiB (65536 bytes) — the step cannot see into them at all, not
-even to confirm they exist: the private state root (other projects' CI
-records, run spool, and release metadata), the CI build root (other runs'
-scratch trees), the cache root (other projects' persistent caches — this
-project's own is exempted, since it is bound in before the mask is applied),
-the Pages storage root, and the directory containing every hosted project's
-bare repository. A path that does not exist is silently skipped rather than
-failing the step.
-
-**Networking.** Unless `ci_allow_network=true`, the step gets its own
-network namespace with only loopback (`127.0.0.1`/`::1`) brought up — no
-LAN, no outbound internet, nothing else reachable. `ci_allow_network=true`
-does not hand the step an isolated network namespace with its own
-interfaces; it **skips creating a network namespace at all**, so the step
-sees the host's real interfaces and the LAN directly, exactly like any other
-process on the machine. Only turn it on for a project whose steps you would
-already trust with ordinary host network access.
-
-**Resource limits.** Exactly two `setrlimit` calls, nothing else: no core
-dumps (`RLIMIT_CORE=0`), and no single file over 4 GiB (`RLIMIT_FSIZE`).
-There is no memory limit and no CPU-time limit beyond the step's wall-clock
-timeout — the timeout and the output-byte cap are the operative bounds on
-runaway CPU and memory use, not a `setrlimit` on either directly.
-
-**Degraded mode.** On macOS, or on a Linux host where unprivileged user
-namespaces are unavailable, none of the above isolation is possible; steps
-run directly against the real scratch tree at its real physical path
-instead of `/mnt/...`, with full host network access and no masking. The
-dashboard and the daemon log make this visibility gap explicit rather than
-silently pretending the isolation happened; see
-[Troubleshooting](#12-troubleshooting).
-
-## 8. Version-stamping recipe
-
-The sandbox checkout comes from `git archive`, so it has no `.git`
-directory and no way to run `git describe` inside a step. Two things work
-around that, and this project's own `.ckgit/ci.yml` uses both:
-
-- **`CKGIT_COMMIT`** ([§6](#6-environment)) is the exact commit id, supplied
-  by the runner directly — no git command needed inside the sandbox at all.
-- **`.ckgit/build-commit`**, a one-line file containing the `git archive`
-  `export-subst` placeholder `$Format:%H$`, with the matching
-  `.gitattributes` line `/.ckgit/build-commit export-subst`. Because the
-  runner materializes every checkout with `git archive`, that placeholder is
-  substituted with the real archived commit hash in the tree a step actually
-  sees — a fallback that also works for an older runner build that predates
-  the `CKGIT_COMMIT` export, or for a source tarball built entirely by hand
-  outside any CI system.
-
-This project's own Makefile (`CKGIT_BUILD_VERSION`) is the worked example: it
-prefers a real `.git` checkout's `git describe`, falls back to
-`.ckgit/build-commit` when there is no `.git` at all, and falls back again to
-a plain `+source` suffix if neither is available; an exact
-`CKGIT_BUILD_VERSION=` passed on the command line always wins outright. This
-project's own `.ckgit/ci.yml` `build` step implements the same fallback
-chain explicitly in shell (preferring `CKGIT_COMMIT`, then
-`.ckgit/build-commit`), so it works even against an older runner, and stamps
-a release build's version with its tag name too when `CKGIT_REF` names one.
-
-## 9. Artifacts, releases, and Pages
+## Artifacts, releases, and Pages
 
 **Packing.** An `artifacts:` block is packed only after **every** step in
 its job has succeeded — a job with any failed step never has its artifact
@@ -381,7 +212,7 @@ Pages size or file-count cap), the run's outcome is overwritten to `error`
 even though every step passed — a build that silently kept the previous
 live site is worse than a failed run, so that failure is never hidden.
 
-## 10. Bounds table
+## Bounds table
 
 Every one of these throws before a step ever runs — either during parsing
 (a `std::length_error` naming which bound, or `std::runtime_error` for any
@@ -414,126 +245,19 @@ Two further, server-configured bounds are not part of the workflow schema
 itself but shape what a step and its artifact can do in practice: the
 per-step log cap (`ci_max_log_bytes`, default 1 MiB) and the per-artifact
 bundle cap (`ci_artifact_max_bytes`, default 256 MiB) — see
-[Configure the runner](04-ci-cd.md#configure-the-runner) for the full,
+[Configure the runner](ci-runner.md#configure-the-runner) for the full,
 current key table. A published Pages site has its own separate caps, entirely
 unrelated to the workflow file: 8 GiB total, 1 GiB per file, and 100000
 entries.
 
-## 11. Worked examples
-
-**A plain `make` project:**
-
-```yaml
-version: 1
-on: { branches: [main], tags: [v*] }
-jobs:
-  - name: build-and-test
-    steps:
-      - run: [make, all]
-      - name: tests
-        run: make check
-    artifacts:
-      name: build
-      paths: [dist]
-```
-
-**CMake, ccache, and one pinned sister:**
-
-```yaml
-version: 1
-sisters:
-  - name: ckvision
-    ref: v0.5.0
-cache:
-  - name: ccache
-    env: [CCACHE_DIR]
-jobs:
-  - name: build
-    env: { CCACHE_MAXSIZE: "8G" }
-    steps:
-      - script: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build
-      - name: tests
-        run: [ctest, --test-dir, build, --output-on-failure]
-```
-
-**A docs site published from the default branch, with releases on tags:**
-
-```yaml
-version: 1
-on: { branches: [main], tags: [v*] }
-jobs:
-  - name: docs
-    steps:
-      - run: [ckdocs, build, --root, ., --out, public, --strict]
-    artifacts:
-      name: packages
-      paths: [dist]
-pages:
-  path: public
-```
-
-Every push to `main` builds and, on success, publishes `public` as the
-project's Pages site — `--strict` fails the build, before publishing ever
-sees it, on a broken link or heading fragment (see [Documentation sites
-from Markdown](07-docs-sites.md)). A tag push instead produces a durable
-release from the same `packages` artifact, and does **not** touch Pages at
-all — the two outcomes are mutually exclusive per run, driven entirely by
-whether the triggering ref was a tag.
-
-**This project's own workflow, annotated** — the real, in-repository
-`.ckgit/ci.yml` this project builds, tests, and releases itself with:
-
-```yaml
-version: 1
-on:
-  branches: [master]
-  tags: [v*]
-jobs:
-  - name: build-test-package
-    steps:
-      - name: build
-        script: |
-          # computes a version string from CKGIT_COMMIT or .ckgit/build-commit
-          # (see §8), then: make BUILD_ROOT=... CKGIT_BUILD_VERSION=... all
-      - name: check
-        script: |
-          # make ... check -- the unit binary plus every tests/integration/*.sh
-      - name: docs
-        script: |
-          # ckdocs, just built by the build step, into ./public --strict
-          # (see Documentation sites from Markdown)
-      - name: package
-        script: |
-          # refuses a tag that does not match VERSION, builds .debs and a
-          # source tarball with packaging/build-deb.sh, writes build-version
-    artifacts:
-      # never "release": that name is reserved for the tag build's own
-      # release record
-      name: packages
-      paths: [dist]
-pages:
-  path: public
-```
-
-Read the full file in the repository root for the exact shell; the shape
-above is what matters for a reference — one job, four steps that share
-state through `$TMPDIR` (set by the runner, not the workflow), one artifact
-whose name was deliberately chosen to avoid the reserved `release`, and a
-top-level `pages:` block that publishes the `docs` step's own output on
-every successful push to this repository's default branch.
-
-## 12. Troubleshooting
+## Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
 | No run appears after a push | CI is not enabled for the project (`ckgit ci status` shows it, `sudo -u ckgit ckgit-admin ci enable NAME --config /etc/ck-git-hosting/server.ini` turns it on), or the runner is not running (`systemctl status ck-ci-runner.service`). |
-| Every run is `skipped` | The branch is not a trigger under [§4](#4-trigger-matrix); add it to `on: { branches: [...] }`, or push the default branch. A commit with no `.ckgit/ci.yml` is also skipped. |
-| Run is `error` before any step | The workflow is malformed, or over one of the bounds in [§10](#10-bounds-table); the run's own detail names the reason (`ckgit ci show RUN`). `ckgit ci lint` finds the same parse errors before a push. |
-| A step cannot reach the network | Expected: the sandbox denies the network beyond loopback by default. Set `ci_allow_network=true` and restart the runner if a build genuinely needs it — see the networking note in [§7](#7-filesystem) for exactly what that changes. |
-| A `sisters:`/`cache:` entry with extra fields is rejected as an unsupported key | The single-line `- { name: ..., ref: ... }` form does not parse — see the syntax note in [§2](#2-syntax); use the two-line block form instead. |
-| Log warns about missing isolation, or that filesystem masking could not be confirmed | Unprivileged user namespaces are disabled or unavailable on this host — see degraded mode in [§7](#7-filesystem). A step still ran, but without network or filesystem isolation from the rest of the server. |
+| Every run is `skipped` | The branch is not a trigger under [§4](#trigger-matrix); add it to `on: { branches: [...] }`, or push the default branch. A commit with no `.ckgit/ci.yml` is also skipped. |
+| Run is `error` before any step | The workflow is malformed, or over one of the bounds in [§10](#bounds-table); the run's own detail names the reason (`ckgit ci show RUN`). `ckgit ci lint` finds the same parse errors before a push. |
+| A step cannot reach the network | Expected: the sandbox denies the network beyond loopback by default. Set `ci_allow_network=true` and restart the runner if a build genuinely needs it — see the networking note in [§7](../reference/ci-runtime.md#filesystem) for exactly what that changes. |
+| A `sisters:`/`cache:` entry with extra fields is rejected as an unsupported key | The single-line `- { name: ..., ref: ... }` form does not parse — see the syntax note in [§2](#syntax); use the two-line block form instead. |
+| Log warns about missing isolation, or that filesystem masking could not be confirmed | Unprivileged user namespaces are disabled or unavailable on this host — see degraded mode in [§7](../reference/ci-runtime.md#filesystem). A step still ran, but without network or filesystem isolation from the rest of the server. |
 | `ckgit-admin ci ...` errors about state, or reports that the metadata state directory is not private and daemon-owned | Pass `--config /etc/ck-git-hosting/server.ini` (or `--state-root`) so it can find the state root, and run it as the `ckgit` service account that owns that directory: `sudo -u ckgit ckgit-admin ci ...`. Plain `sudo` runs it as root, which the private-state check refuses. |

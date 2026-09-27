@@ -18,7 +18,7 @@ The version comes from the `VERSION` file. A release is created by pushing a
 tag `vMAJOR.MINOR.PATCH` that matches it; the workflow refuses a mismatch.
 Pushing the same tag to both the GitHub `origin` remote and this project's
 own hosted `ckgit` remote produces the two channels side by side -- see
-[Releases](04-ci-cd.md#releases) and the
+[Releases](releases.md#releases) and the
 [self-hosted release and deploy guide](05-releases-and-deploy.md).
 
 ## Continuous integration

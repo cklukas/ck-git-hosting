@@ -1,15 +1,8 @@
-# Configuration for this repository's own documentation site, built by
-# ckdocs (see docs/planning's ckdocs work packages) and published both on
-# ck-git Pages (.ckgit/ci.yml's `docs` step) and on GitHub Pages
-# (.github/workflows/pages.yml). No `source:` -- the default `docs/` tree is
-# already right. The zero-config derivation this file overrides is exercised
-# directly by tests/unit/docs_site_tests.cpp; this nav exists only to name
-# the tabs and group the Continuous delivery pages, not because the derived
-# tree would be wrong.
+# Documentation navigation.
 version: 1
 site:
   title: ck-git-hosting
-  description: ck-git-hosting is a small, private Git control plane for a trusted LAN.
+  description: Private Git hosting, continuous integration, and documentation for your server.
   footer: "© 2026 C. Klukas · MIT License"
   links:
     - title: GitHub
@@ -18,17 +11,77 @@ search: true
 nav:
   - title: Home
     page: README.md
-  - title: Operations
+  - title: Guides
+    pages:
+      - docs/guides/client-setup.md
+      - docs/guides/publish-and-sync.md
+      - docs/guides/clone-and-update.md
+      - docs/guides/manage-checkouts.md
+      - docs/operations/08-web-dashboard.md
+      - docs/guides/ci-and-releases.md
+      - docs/guides/watch-ci.md
+  - title: Server
     pages:
       - docs/operations/01-installation.md
       - docs/operations/02-packages-and-releases.md
+      - docs/operations/manage-projects.md
       - docs/operations/03-backup-and-recovery.md
-      - title: Continuous delivery
-        pages:
-          - docs/operations/04-ci-cd.md
-          - docs/operations/05-releases-and-deploy.md
-          - docs/operations/06-ci-yml-reference.md
+      - docs/operations/05-releases-and-deploy.md
+  - title: CI
+    pages:
+      - docs/operations/04-ci-cd.md
+      - docs/operations/ci-runner.md
+      - docs/operations/ci-artifacts-and-cache.md
+      - docs/operations/releases.md
+      - docs/operations/pages-hosting.md
+      - docs/operations/06-ci-yml-reference.md
+      - docs/reference/ci-runtime.md
+      - docs/reference/ci-examples.md
+  - title: ckdocs
+    pages:
       - docs/operations/07-docs-sites.md
-      - docs/operations/08-web-dashboard.md
-  - title: Protocol
-    page: docs/protocol/01-ssh-and-control-v1.md
+      - docs/ckdocs/pages.md
+      - docs/ckdocs/front-matter.md
+      - docs/ckdocs/configuration.md
+      - docs/ckdocs/markdown.md
+      - docs/ckdocs/publishing.md
+      - docs/ckdocs/mermaid.md
+      - title: Flows and systems
+        pages:
+          - docs/ckdocs/diagrams/flowchart.md
+          - docs/ckdocs/diagrams/mindmap.md
+          - docs/ckdocs/diagrams/block-diagram.md
+          - docs/ckdocs/diagrams/architecture.md
+          - docs/ckdocs/diagrams/c4-diagram.md
+          - docs/ckdocs/diagrams/packet-diagram.md
+      - title: Software models
+        pages:
+          - docs/ckdocs/diagrams/class-diagram.md
+          - docs/ckdocs/diagrams/state-diagram.md
+          - docs/ckdocs/diagrams/entity-relationship.md
+          - docs/ckdocs/diagrams/requirement-diagram.md
+      - title: Sequences
+        pages:
+          - docs/ckdocs/diagrams/sequence-diagram.md
+          - docs/ckdocs/diagrams/zenuml-sequence.md
+      - title: Charts
+        pages:
+          - docs/ckdocs/diagrams/pie-chart.md
+          - docs/ckdocs/diagrams/xy-chart.md
+          - docs/ckdocs/diagrams/radar-chart.md
+          - docs/ckdocs/diagrams/quadrant-chart.md
+          - docs/ckdocs/diagrams/sankey-diagram.md
+          - docs/ckdocs/diagrams/treemap.md
+      - title: Planning and history
+        pages:
+          - docs/ckdocs/diagrams/gantt-chart.md
+          - docs/ckdocs/diagrams/timeline.md
+          - docs/ckdocs/diagrams/user-journey.md
+          - docs/ckdocs/diagrams/kanban-board.md
+          - docs/ckdocs/diagrams/git-graph.md
+  - title: Reference
+    pages:
+      - docs/reference/commands.md
+      - docs/reference/dashboard.md
+      - docs/reference/build-and-test.md
+      - docs/protocol/01-ssh-and-control-v1.md

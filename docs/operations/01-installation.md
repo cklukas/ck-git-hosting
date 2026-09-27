@@ -76,7 +76,7 @@ options.
 The CI runner and Pages server read further optional keys from the same file;
 the daemon ignores them, so `--check` does not echo them. A fresh install sets
 `ci_build_root`. See the full key table, including `pages_public_url`, in
-[04-ci-cd.md](04-ci-cd.md#configure-the-runner).
+[04-ci-cd.md](ci-runner.md#configure-the-runner).
 
 Validate the hardening profile on the target before relying on it:
 
