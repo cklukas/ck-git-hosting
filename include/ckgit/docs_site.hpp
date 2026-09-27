@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ckgit {
@@ -22,9 +23,10 @@ inline constexpr std::size_t kMaximumDocsNavDepth = 4;     // tab = 1, groups be
 inline constexpr std::size_t kMaximumDocsNavEntries = 4096;
 inline constexpr std::size_t kMaximumDocsLinks = 8;
 inline constexpr std::size_t kMaximumDocsExcludes = 64;
+inline constexpr std::size_t kMaximumDocsForeignFrontMatterKeys = 32;
 inline constexpr std::size_t kMaximumDocsConfigBytes = 64 * 1024;
 inline constexpr std::size_t kMaximumDocsTitleBytes = 128;
-inline constexpr std::size_t kMaximumDocsTextBytes = 1024;  // description, footer
+inline constexpr std::size_t kMaximumDocsTextBytes = 1024;  // description, footer, a foreign front matter value
 inline constexpr std::size_t kMaximumDocsUrlBytes = 1024;
 
 struct DocsLink {
@@ -66,7 +68,16 @@ struct DocsConfig {
   std::vector<std::string> exclude;  // path prefixes or trailing-`*` patterns, root- or source-relative
   std::vector<DocsNavEntry> nav;     // empty = derived from the tree
   bool search = false;
+  // front_matter.foreign_keys: page front matter keys that belong to other
+  // tools. ckdocs never interprets them; a page carrying one is not warned
+  // about, and its value is passed through as a `front-matter:<key>` meta tag.
+  std::vector<std::string> foreign_front_matter_keys;
 };
+
+// The meta-tag name a foreign front matter key is carried under. Namespaced
+// so a key meant for another tool can never act as a standard meta name
+// (`robots`, `referrer`, `viewport`, ...) or shadow one ckdocs writes itself.
+inline constexpr std::string_view kDocsForeignMetaPrefix = "front-matter:";
 
 // Parses the file's content. Throws std::length_error when a bound is
 // exceeded and std::runtime_error ("ckdocs.yml: ... (line N)") otherwise.
@@ -79,9 +90,14 @@ struct DocsPage {
   std::string output;  // site-relative output path, e.g. "operations/01-installation.html"
   std::string title;
   std::string description;
+  std::string author;  // front matter `author`, shown in the byline
+  std::string date;    // front matter `date`, a validated YYYY-MM-DD calendar date
   std::optional<int> nav_order;
   bool nav_exclude = false;
   bool home = false;
+  // The config's foreign keys this page carries with a single-line value of
+  // at most kMaximumDocsTextBytes, in file order, values exactly as parsed.
+  std::vector<std::pair<std::string, std::string>> foreign_front_matter;
   std::string front_matter_error;  // when the page's front matter did not parse
 };
 
@@ -108,8 +124,10 @@ struct DocsSiteModel {
 // dot-names otherwise), reads each page's front matter and first heading,
 // derives output paths and the navigation, and checks the bounds. Throws
 // std::runtime_error ("ckdocs: ...") on anything that must stop a build;
-// appends advisory findings (unknown front-matter keys, pages an explicit
-// nav does not mention, front matter that did not parse) to `warnings`.
+// appends advisory findings (front-matter keys neither ckdocs nor the
+// config's foreign keys name, front-matter values ckdocs cannot use, pages an
+// explicit nav does not mention, front matter that did not parse) to
+// `warnings`.
 DocsSiteModel loadDocsSite(const std::filesystem::path& root, const DocsConfig& config,
                            std::vector<std::string>* warnings);
 
@@ -148,7 +166,9 @@ struct DocsBuildReport {
 };
 
 // Renders every page of the model into `out`: the site's HTML (each page
-// with the embedded stylesheet, header tabs, the active tab's sidebar,
+// with the embedded stylesheet, its front matter's description, author, date
+// and foreign keys as meta tags, an author/date byline under its leading
+// heading, header tabs, the active tab's sidebar,
 // "On this page", breadcrumbs, previous/next, footer), the site index page,
 // the marker, and every asset a page references (regular files only,
 // mirrored at their source-relative path — or root-relative outside the

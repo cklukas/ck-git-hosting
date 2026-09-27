@@ -69,6 +69,12 @@ inline constexpr std::size_t kMaximumFrontMatterBytes = 8 * 1024;  // the block,
 inline constexpr std::size_t kMaximumFrontMatterKeyBytes = 64;
 inline constexpr std::size_t kMaximumFrontMatterValueBytes = 4096;
 
+// A front matter key is ASCII letters, digits, `.`, `_` and `-` (a line whose
+// key has any other byte is not front matter at all), non-empty, and within
+// kMaximumFrontMatterKeyBytes: the only kind of key a block can carry, and so
+// the only kind a configuration may name.
+bool isValidFrontMatterKey(std::string_view key);
+
 // The front matter of a Markdown file: an opening `---` on the very first
 // line, `key: value` lines in the same strict YAML subset as `.ckgit/ci.yml`
 // (plain, single- or double-quoted scalars with the escapes `\\ \" \n \t`,

@@ -853,6 +853,14 @@ bool fenceLine(std::string_view line, std::string_view marker) {
   return line.starts_with(marker) && trim(line.substr(marker.size())).empty();
 }
 
+bool hasOnlyFrontMatterKeyBytes(std::string_view key) {
+  return std::all_of(key.begin(), key.end(), [](char character) {
+    const auto byte = static_cast<unsigned char>(character);
+    return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '.' ||
+           byte == '_' || byte == '-';
+  });
+}
+
 // The `key` of a flat `key: value` line, or empty when the line has no such
 // shape. `rest` receives what follows the colon.
 std::string_view frontMatterKey(std::string_view line, std::string_view& rest) {
@@ -860,11 +868,7 @@ std::string_view frontMatterKey(std::string_view line, std::string_view& rest) {
   if (colon == std::string_view::npos || colon == 0) return {};
   if (colon + 1 < line.size() && line[colon + 1] != ' ') return {};
   const auto key = line.substr(0, colon);
-  for (const unsigned char byte : key) {
-    const bool plain = (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
-                       (byte >= '0' && byte <= '9') || byte == '.' || byte == '_' || byte == '-';
-    if (!plain) return {};
-  }
+  if (!hasOnlyFrontMatterKeyBytes(key)) return {};
   rest = trim(line.substr(colon + 1));
   return key;
 }
@@ -885,6 +889,10 @@ std::string renderMarkdown(std::string_view source, const LinkContext& context,
     start = newline + 1;
   }
   return Renderer(context, source.size(), outline).blocks(lines);
+}
+
+bool isValidFrontMatterKey(std::string_view key) {
+  return !key.empty() && key.size() <= kMaximumFrontMatterKeyBytes && hasOnlyFrontMatterKeyBytes(key);
 }
 
 std::optional<FrontMatter> splitFrontMatter(std::string_view source) {

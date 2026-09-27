@@ -4,6 +4,7 @@
 #include "ckgit/docs_site.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <chrono>
@@ -153,6 +154,57 @@ void parseNavEntries(const Node& sequence, std::vector<DocsNavEntry>& out, std::
     }
     out.push_back(std::move(entry));
   }
+}
+
+// The front matter keys ckdocs reads itself; no project may declare one foreign.
+constexpr std::array<std::string_view, 6> kDocsFrontMatterKeys{"title",       "description", "nav_order",
+                                                              "nav_exclude", "author",      "date"};
+
+// `front_matter: { foreign_keys: [...] }`.
+std::vector<std::string> parseForeignFrontMatterKeys(const Node& front_matter) {
+  requireKind(front_matter, Node::Kind::Mapping, "front_matter to be a mapping");
+  rejectUnknownKeys(front_matter, {"foreign_keys"});
+  const Node* list = findEntry(front_matter, "foreign_keys");
+  if (list == nullptr) malformed("front_matter needs 'foreign_keys'", front_matter.line);
+  requireKind(*list, Node::Kind::Sequence, "front_matter.foreign_keys to be a list");
+  if (list->items.empty()) malformed("front_matter.foreign_keys is empty", list->line);
+  if (list->items.size() > kMaximumDocsForeignFrontMatterKeys) tooLarge("front_matter.foreign_keys has more than 32 keys");
+  std::vector<std::string> keys;
+  for (const Node& item : list->items) {
+    auto key = scalarOf(item, "each foreign front matter key to be a scalar");
+    if (!isValidFrontMatterKey(key)) {
+      malformed("foreign front matter key '" + key + "' must be 1 to 64 ASCII letters, digits, '.', '_' or '-'", item.line);
+    }
+    if (std::find(kDocsFrontMatterKeys.begin(), kDocsFrontMatterKeys.end(), key) != kDocsFrontMatterKeys.end()) {
+      malformed("front matter key '" + key + "' is read by ckdocs itself and cannot be foreign", item.line);
+    }
+    if (std::find(keys.begin(), keys.end(), key) != keys.end()) {
+      malformed("foreign front matter key '" + key + "' is listed twice", item.line);
+    }
+    keys.push_back(std::move(key));
+  }
+  return keys;
+}
+
+// A strict ISO 8601 calendar date, YYYY-MM-DD, that exists in the proleptic
+// Gregorian calendar.
+bool isCalendarDate(std::string_view value) {
+  if (value.size() != 10 || value[4] != '-' || value[7] != '-') return false;
+  const auto digits = [value](std::size_t at, std::size_t length) -> std::optional<int> {
+    int result = 0;
+    for (const char byte : value.substr(at, length)) {
+      if (byte < '0' || byte > '9') return std::nullopt;
+      result = result * 10 + (byte - '0');
+    }
+    return result;
+  };
+  const auto year = digits(0, 4);
+  const auto month = digits(5, 2);
+  const auto day = digits(8, 2);
+  if (!year || !month || !day || *month < 1 || *month > 12 || *day < 1) return false;
+  constexpr std::array<int, 12> kDays{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leap = (*year % 4 == 0 && *year % 100 != 0) || *year % 400 == 0;
+  return *day <= kDays[static_cast<std::size_t>(*month - 1)] + (*month == 2 && leap ? 1 : 0);
 }
 
 std::optional<std::string> readFile(const fs::path& path, std::size_t limit) {
@@ -422,7 +474,7 @@ std::string docsTitleFromFilename(std::string_view name) {
 
 DocsConfig parseDocsConfig(std::string_view yaml) {
   const Node root = parseYamlSubset(yaml, kDocsConfigDialect);
-  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search"});
+  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search", "front_matter"});
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the config is missing 'version'", root.line);
   const auto& version_text = scalarOf(*version, "version to be a number");
@@ -491,6 +543,9 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
     const auto value = scalarOf(*search, "search to be true or false");
     if (value != "true" && value != "false") malformed("search must be true or false", search->line);
     config.search = value == "true";
+  }
+  if (const Node* front_matter = findEntry(root, "front_matter")) {
+    config.foreign_front_matter_keys = parseForeignFrontMatterKeys(*front_matter);
   }
   return config;
 }
@@ -610,8 +665,19 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
         } else if (key == "nav_exclude") {
           if (value == "true" || value == "false") page.nav_exclude = value == "true";
           else warn(file + ": nav_exclude '" + value + "' is not true or false; ignored");
+        } else if (key == "author") {
+          if (isValidDocsTitle(value)) page.author = value;
+          else warn(file + ": front matter author is empty, too long, or has control characters; ignored");
+        } else if (key == "date") {
+          if (isCalendarDate(value)) page.date = value;
+          else warn(file + ": date '" + value + "' is not a YYYY-MM-DD calendar date; ignored");
+        } else if (std::find(config.foreign_front_matter_keys.begin(), config.foreign_front_matter_keys.end(), key) !=
+                   config.foreign_front_matter_keys.end()) {
+          // Another tool's key: accepted silently, and carried when it fits a meta tag.
+          if (isValidDocsText(value)) page.foreign_front_matter.emplace_back(key, value);
         } else {
-          warn(file + ": unknown front matter key '" + key + "' ignored");
+          warn(file + ": unknown front matter key '" + key +
+               "' ignored; list it under front_matter.foreign_keys in ckdocs.yml if another tool reads it");
         }
       }
     }
@@ -850,6 +916,27 @@ std::string renderOutline(const std::vector<MarkdownHeading>& outline) {
   return out.empty() ? out : "<ul>" + out + "</ul>";
 }
 
+// The page's author and date as a byline, placed right under the article's
+// leading `<h1>` -- or first, when the article does not open with one.
+std::string withByline(std::string article, const DocsPage& page) {
+  if (page.author.empty() && page.date.empty()) return article;
+  std::string byline = "<p class=\"byline\">";
+  if (!page.author.empty()) byline += "<span class=\"author\">" + escapeHtml(page.author) + "</span>";
+  if (!page.author.empty() && !page.date.empty()) byline += " · ";
+  if (!page.date.empty()) byline += "<time datetime=\"" + escapeHtml(page.date) + "\">" + escapeHtml(page.date) + "</time>";
+  byline += "</p>\n";
+  std::size_t at = 0;
+  if (article.starts_with("<h1")) {
+    constexpr std::string_view kClose = "</h1>";
+    if (const auto close = article.find(kClose); close != std::string::npos) {
+      at = close + kClose.size();
+      if (at < article.size() && article[at] == '\n') ++at;
+    }
+  }
+  article.insert(at, byline);
+  return article;
+}
+
 struct ShellInput {
   std::string title;        // the page title
   std::string description;  // meta description, may be empty
@@ -871,6 +958,15 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
                     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
   out += "<title>" + escapeHtml(in.title == model.title ? in.title : in.title + " · " + model.title) + "</title>";
   if (!in.description.empty()) out += "<meta name=\"description\" content=\"" + escapeHtml(in.description) + "\">";
+  if (in.page) {
+    const DocsPage& page = model.pages[*in.page];
+    const auto meta = [&out](std::string_view name, std::string_view content) {
+      out += "<meta name=\"" + escapeHtml(name) + "\" content=\"" + escapeHtml(content) + "\">";
+    };
+    if (!page.author.empty()) meta("author", page.author);
+    if (!page.date.empty()) meta("date", page.date);
+    for (const auto& [key, value] : page.foreign_front_matter) meta(std::string(kDocsForeignMetaPrefix) + key, value);
+  }
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(context.version) + "\">";
   out += "<style>";
   out += kDocsStyles;
@@ -1311,7 +1407,7 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     input.title = page.title;
     input.description = page.description.empty() && page.home ? model.config.description : page.description;
     input.output = page.output;
-    input.article = std::move(article);
+    input.article = withByline(std::move(article), page);
     input.outline = &context.outlines[index];
     input.page = index;
     writeFile(page.output, renderShell(context, input));

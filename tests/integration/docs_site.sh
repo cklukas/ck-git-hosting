@@ -8,7 +8,9 @@
 # reference resolves to a file relative to the page that carries it. Then, on
 # a small synthetic fixture, proves a broken link fails `ckdocs check` with a
 # report naming both the offending page and its target -- the CLI wiring
-# that unit tests, which call the library directly, cannot reach. Finally,
+# that unit tests, which call the library directly, cannot reach -- and that
+# a front matter key declared under front_matter.foreign_keys passes `ckdocs
+# check` and reaches the page head while an undeclared one fails it. Finally,
 # `ckdocs serve` is started on an OS-chosen loopback port and probed for the
 # index, a nested page, and a 404, then stopped.
 
@@ -141,6 +143,67 @@ case "$fixture_output" in
     ;;
 esac
 [ ! -e "$fixture/public" ] || { echo "check must never leave an output directory behind" >&2; exit 1; }
+
+# ---- front matter: author, date, and another tool's declared keys ----------
+
+tagged="$test_root/tagged"
+mkdir -p "$tagged"
+cat >"$tagged/ckdocs.yml" <<'EOF'
+version: 1
+site:
+  title: Tagged
+front_matter:
+  foreign_keys: [format]
+EOF
+cat >"$tagged/README.md" <<'EOF'
+---
+author: C. Klukas
+date: 2026-08-09
+format: pdf
+---
+# Tagged
+
+Body.
+EOF
+
+"$CKDOCS" check --root "$tagged" >"$test_root/tagged-check.log" 2>&1 || {
+  echo "ckdocs check should accept a declared foreign front matter key:" >&2
+  cat "$test_root/tagged-check.log" >&2
+  exit 1
+}
+"$CKDOCS" build --root "$tagged" --out "$test_root/tagged-site" --strict --quiet
+for expected in '<meta name="author" content="C. Klukas">' '<meta name="date" content="2026-08-09">' \
+  '<meta name="front-matter:format" content="pdf">' \
+  '<p class="byline"><span class="author">C. Klukas</span> · <time datetime="2026-08-09">2026-08-09</time></p>'; do
+  grep -qF "$expected" "$test_root/tagged-site/index.html" || {
+    echo "the tagged page is missing: $expected" >&2
+    exit 1
+  }
+done
+
+cat >"$tagged/other.md" <<'EOF'
+---
+layout: post
+---
+# Other
+EOF
+set +e
+tagged_output=$("$CKDOCS" check --root "$tagged" 2>&1)
+tagged_status=$?
+set -e
+[ "$tagged_status" -eq 1 ] || {
+  echo "ckdocs check should fail on an undeclared front matter key, got $tagged_status:" >&2
+  echo "$tagged_output" >&2
+  exit 1
+}
+case "$tagged_output" in
+  *"other.md: unknown front matter key 'layout' ignored"*) ;;
+  *)
+    echo "ckdocs check's report should name the page and the undeclared key:" >&2
+    echo "$tagged_output" >&2
+    exit 1
+    ;;
+esac
 
 # ---- serve: a loopback preview server --------------------------------------
 

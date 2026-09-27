@@ -406,6 +406,10 @@ void testMarkdownExtensions() {
   const auto long_key = splitFrontMatter("---\n" + std::string(kMaximumFrontMatterKeyBytes + 1, 'k') + ": v\n---\n");
   check(long_key && long_key->entries.empty() && contains(long_key->error, "a key is empty or too long (line 2)"),
         "a key over its bound is an error");
+  check(isValidFrontMatterKey("nav_order") && isValidFrontMatterKey("pdf.theme-2") && isValidFrontMatterKey(std::string(kMaximumFrontMatterKeyBytes, 'k')) &&
+            !isValidFrontMatterKey("") && !isValidFrontMatterKey(std::string(kMaximumFrontMatterKeyBytes + 1, 'k')) &&
+            !isValidFrontMatterKey("a b") && !isValidFrontMatterKey("a:b") && !isValidFrontMatterKey("Grüße"),
+        "a valid front matter key: 1 to 64 ASCII letters, digits, '.', '_' or '-'");
   check(splitFrontMatter("---\n- a\n- b\n---\n")->error == "front matter: a block mapping has no entries (line 2)",
         "a top-level list is an error, not body text");
   check(markdownBody("plain") == "plain", "a file without front matter is all body");

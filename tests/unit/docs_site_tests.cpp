@@ -232,11 +232,61 @@ void testConfig() {
                               "            pages: [x.md]\n").empty(),
           "groups to depth 3 with pages at depth 4 are fine");
   require(contains(rejection(minimal + "search: maybe\n"), "search must be true or false"), "search is a boolean");
+  require(ckgit::parseDocsConfig(minimal).foreign_front_matter_keys.empty(), "no foreign front matter keys by default");
   require(ckgit::docsTitleFromFilename("01-getting-started.md") == "Getting started" &&
               ckgit::docsTitleFromFilename("docs/ci-yml-reference.md") == "Ci yml reference" &&
               ckgit::docsTitleFromFilename("README") == "README" && ckgit::docsTitleFromFilename("2024_notes.md") == "Notes" &&
               ckgit::docsTitleFromFilename("007.md") == "007" && ckgit::docsTitleFromFilename("Über_uns.md") == "Über uns",
           "filename titles strip a numeric prefix and separators and capitalise ASCII");
+}
+
+void testForeignKeyConfig() {
+  const std::string minimal = "version: 1\nsite:\n  title: x\n";
+  const auto config = ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys: [format, pdf.theme, Paper_size-2]\n");
+  require(config.foreign_front_matter_keys == std::vector<std::string>{"format", "pdf.theme", "Paper_size-2"},
+          "foreign keys are read in order, with every key character front matter allows");
+  const auto block = ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys:\n    - format\n    - 'layout'\n");
+  require(block.foreign_front_matter_keys == std::vector<std::string>{"format", "layout"}, "a block list and quoted keys");
+
+  const auto foreign = [&](const std::string& list) { return rejection(minimal + "front_matter:\n  foreign_keys: " + list + "\n"); };
+  for (const auto* reserved : {"title", "description", "nav_order", "nav_exclude", "author", "date"}) {
+    require(contains(foreign(std::string("[format, ") + reserved + "]"),
+                     std::string("front matter key '") + reserved + "' is read by ckdocs itself and cannot be foreign (line 5)"),
+            std::string("a key ckdocs reads itself cannot be declared foreign: ") + reserved);
+  }
+  require(contains(foreign("[format, pdf, format]"), "foreign front matter key 'format' is listed twice (line 5)"), "a duplicate");
+  require(contains(foreign("[bad key]"), "foreign front matter key 'bad key' must be 1 to 64 ASCII letters, digits, '.', '_' or '-'"),
+          "a space is not a key character");
+  require(contains(foreign("['a:b']"), "foreign front matter key 'a:b' must be"), "a colon is not a key character");
+  require(contains(foreign("['Grüße']"), "foreign front matter key 'Grüße' must be"), "non-ASCII is not a key character");
+  require(contains(foreign("['']"), "foreign front matter key '' must be"), "an empty key");
+  require(contains(foreign("[" + std::string(65, 'k') + "]"), "must be 1 to 64 ASCII"), "a key longer than front matter allows");
+  require(rejection(minimal + "front_matter:\n  foreign_keys: [" + std::string(64, 'k') + "]\n").empty(), "a 64-byte key is fine");
+  require(contains(foreign("[]"), "front_matter.foreign_keys is empty"), "an empty list");
+  require(contains(foreign("format"), "front_matter.foreign_keys to be a list"), "a bare scalar is not a list");
+  require(contains(foreign("\n    - name: format"), "each foreign front matter key to be a scalar"), "a mapping is not a key");
+  require(contains(foreign("[[a]]"), "foreign front matter key '[a]' must be"), "a flow list inside the list is not a key");
+  std::string keys;
+  for (std::size_t index = 0; index < ckgit::kMaximumDocsForeignFrontMatterKeys; ++index) keys += (index ? ", k" : "k") + std::to_string(index);
+  require(ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys: [" + keys + "]\n").foreign_front_matter_keys.size() == 32,
+          "32 foreign keys are within the bound");
+  bool too_many = false;
+  try {
+    static_cast<void>(ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys: [" + keys + ", k32]\n"));
+  } catch (const std::length_error& error) {
+    too_many = contains(error.what(), "front_matter.foreign_keys has more than 32 keys");
+  }
+  require(too_many, "a 33rd foreign key exceeds the bound");
+  require(contains(rejection(minimal + "front_matter:\n  foreign_keys: [format]\n  known_keys: [x]\n"), "unknown key 'known_keys'"),
+          "an unknown key under front_matter is rejected");
+  require(contains(rejection(minimal + "front_matter:\n  foreign: [x]\n"), "unknown key 'foreign'"), "a misspelt foreign_keys is rejected");
+  require(contains(rejection(minimal + "front_matter: format\n"), "front_matter to be a mapping"), "front_matter is a mapping");
+  require(contains(rejection(minimal + "front_matter: {}\n"), "front_matter needs 'foreign_keys' (line 4)"), "front_matter is not empty");
+  require(ckgit::parseDocsConfig(minimal + "front_matter: {foreign_keys: [format]}\n").foreign_front_matter_keys ==
+              std::vector<std::string>{"format"},
+          "the flow form");
+  require(contains(rejection(minimal + "front_matter:\n  foreign_keys: [format]\nfront_matter:\n  foreign_keys: [pdf]\n"), "duplicate key"),
+          "front_matter appears once");
 }
 
 void testDiscovery() {
@@ -245,8 +295,9 @@ void testDiscovery() {
   std::vector<std::string> warnings;
   const auto walked = ckgit::loadDocsSite(scratch.root, ckgit::DocsConfig{}, &warnings);
   checkDerivedModel(walked, scratch.root);
-  require(warnings.size() == 1 && warnings[0] == "docs/hidden.md: unknown front matter key 'layout' ignored",
-          "unknown front matter keys are warned about, once each");
+  require(warnings.size() == 1 && warnings[0] == "docs/hidden.md: unknown front matter key 'layout' ignored; list it under "
+                                                 "front_matter.foreign_keys in ckdocs.yml if another tool reads it",
+          "unknown front matter keys are warned about, once each, naming the way to declare another tool's key");
   require(ckgit::readDocsConfig(scratch.root).title.empty(), "no ckdocs.yml means defaults");
 
   // The same tree inside a Git work tree: only tracked files are pages.
@@ -654,10 +705,118 @@ void testSearch() {
           "a nested page's data-index climbs back to the site root, like any other page-relative reference");
 }
 
+// Front matter ckdocs reads for the page head and byline, another tool's
+// declared keys carried through, and the warnings (and so --strict) that
+// separate a declared key from a typo.
+void testFrontMatter() {
+  Scratch scratch;
+  write(scratch.root / "README.md",
+        "---\ntitle: Home\nauthor: C. Klukas\ndate: 2026-08-09\nformat: pdf\n---\n# Home\n\nBody text.\n");
+  write(scratch.root / "hostile.md",
+        "---\nauthor: \"<script>alert('x')</script> & co\"\nformat: \"a\\\"b<c>&'d\"\npdf.theme: \"\\\"><script>\"\n---\n"
+        "Text before any heading.\n\n# Later heading\n");
+  write(scratch.root / "dated.md", "---\ndate: 2024-02-29\nformat: \"two\\nlines\"\npdf.theme: " + std::string(1025, 't') +
+                                         "\n---\n# Dated\n");
+  write(scratch.root / "plain.md", "# Plain\n\nNo front matter.\n");
+
+  ckgit::DocsConfig config;
+  config.title = "Fixture";
+  config.search = true;
+  config.foreign_front_matter_keys = {"format", "pdf.theme"};
+  std::vector<std::string> warnings;
+  const auto model = ckgit::loadDocsSite(scratch.root, config, &warnings);
+  require(warnings.empty(), "declared foreign keys, author and date raise no warning -- --strict and check pass");
+  const auto& home = pageNamed(model, "README.md");
+  require(home.author == "C. Klukas" && home.date == "2026-08-09" &&
+              home.foreign_front_matter == std::vector<std::pair<std::string, std::string>>{{"format", "pdf"}},
+          "author, date and the declared key are read");
+  const auto& hostile = pageNamed(model, "hostile.md");
+  require(hostile.author == "<script>alert('x')</script> & co" &&
+              hostile.foreign_front_matter == std::vector<std::pair<std::string, std::string>>{{"format", "a\"b<c>&'d"},
+                                                                                               {"pdf.theme", "\"><script>"}},
+          "values are kept exactly as parsed, in file order");
+  const auto& dated = pageNamed(model, "dated.md");
+  require(dated.date == "2024-02-29" && dated.foreign_front_matter.empty(),
+          "a leap day is a date; a foreign value with a newline or over 1024 bytes is accepted silently but not carried");
+
+  // Undeclared: the same keys warn, exactly as any unknown key does.
+  std::vector<std::string> undeclared_warnings;
+  ckgit::DocsConfig undeclared = config;
+  undeclared.foreign_front_matter_keys = {"pdf.theme"};
+  static_cast<void>(ckgit::loadDocsSite(scratch.root, undeclared, &undeclared_warnings));
+  require(undeclared_warnings.size() == 3 &&
+              std::all_of(undeclared_warnings.begin(), undeclared_warnings.end(),
+                          [](const std::string& warning) { return contains(warning, "unknown front matter key 'format' ignored"); }),
+          "a key the config does not declare still warns on every page, so --strict and check still fail on it");
+
+  // Values ckdocs cannot use are warned about and dropped.
+  Scratch invalid;
+  std::string pages;
+  const std::vector<std::string> bad_dates{"2026-02-29", "1900-02-29", "2026-13-01", "2026-00-10", "2026-04-31", "2026-01-00",
+                                           "2026-8-9",   "26-08-09",   "2026/08/09", "2026-08-09T10:00", "+026-08-09", "２026-08-09"};
+  for (std::size_t index = 0; index < bad_dates.size(); ++index) {
+    write(invalid.root / ("d" + std::to_string(index) + ".md"), "---\ndate: \"" + bad_dates[index] + "\"\n---\n# D\n");
+  }
+  write(invalid.root / "README.md", "---\nauthor: \"\"\ndate: 2000-02-29\n---\n# Home\n");
+  write(invalid.root / "long.md", "---\nauthor: " + std::string(129, 'a') + "\n---\n# Long\n");
+  write(invalid.root / "control.md", "---\nauthor: \"a\\tb\"\n---\n# Control\n");
+  std::vector<std::string> invalid_warnings;
+  const auto rejected = ckgit::loadDocsSite(invalid.root, ckgit::DocsConfig{}, &invalid_warnings);
+  for (std::size_t index = 0; index < bad_dates.size(); ++index) {
+    const auto& page = pageNamed(rejected, "d" + std::to_string(index) + ".md");
+    require(page.date.empty() && std::count(invalid_warnings.begin(), invalid_warnings.end(),
+                                             page.source + ": date '" + bad_dates[index] + "' is not a YYYY-MM-DD calendar date; ignored") == 1,
+            "not a calendar date: " + bad_dates[index]);
+  }
+  require(pageNamed(rejected, "README.md").date == "2000-02-29" && pageNamed(rejected, "README.md").author.empty(),
+          "2000 is a leap year; an empty author is dropped");
+  for (const auto* source : {"README.md", "long.md", "control.md"}) {
+    require(pageNamed(rejected, source).author.empty() &&
+                std::count(invalid_warnings.begin(), invalid_warnings.end(),
+                           std::string(source) + ": front matter author is empty, too long, or has control characters; ignored") == 1,
+            std::string("an unusable author is warned about and dropped: ") + source);
+  }
+  require(invalid_warnings.size() == bad_dates.size() + 3, "nothing else is reported");
+
+  // The built pages: meta tags in the head, a byline under the title.
+  const auto site = scratch.root / "site";
+  ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, nullptr);
+  const auto index = slurp(site / "index.html");
+  const auto head = between(index, "<head>", "</head>");
+  require(contains(head, "<meta name=\"author\" content=\"C. Klukas\"><meta name=\"date\" content=\"2026-08-09\">"
+                         "<meta name=\"front-matter:format\" content=\"pdf\">"),
+          "author, date and the foreign key are meta tags, the foreign one namespaced");
+  require(contains(index, "<article><h1 id=\"home\">Home</h1>\n<p class=\"byline\"><span class=\"author\">C. Klukas</span> · "
+                          "<time datetime=\"2026-08-09\">2026-08-09</time></p>\n<p>Body text.</p>"),
+          "the byline sits right under the leading heading");
+  const auto hostile_page = slurp(site / "hostile.html");
+  require(contains(hostile_page, "<meta name=\"author\" content=\"&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; co\">"
+                                 "<meta name=\"front-matter:format\" content=\"a&quot;b&lt;c&gt;&amp;&#39;d\">"
+                                 "<meta name=\"front-matter:pdf.theme\" content=\"&quot;&gt;&lt;script&gt;\">"),
+          "hostile values are escaped in the head");
+  require(contains(hostile_page, "<article><p class=\"byline\"><span class=\"author\">&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; "
+                                 "&amp; co</span></p>\n<p>Text before any heading.</p>") &&
+              !contains(hostile_page, "<script>alert") && !contains(hostile_page, "\"><script>"),
+          "without a leading heading the byline opens the article; nothing hostile becomes markup");
+  const auto dated_page = slurp(site / "dated.html");
+  require(contains(dated_page, "<p class=\"byline\"><time datetime=\"2024-02-29\">2024-02-29</time></p>") &&
+              !contains(dated_page, "<meta name=\"author\"") && !contains(dated_page, "front-matter:"),
+          "only the parts present are shown; an uncarried value has no meta tag");
+  const auto plain = slurp(site / "plain.html");
+  require(!contains(plain, "class=\"byline\"") && !contains(plain, "<meta name=\"author\"") && !contains(plain, "<meta name=\"date\""),
+          "a page without author or date has neither byline nor meta tags");
+  require(!contains(slurp(site / "site-index.html"), "<meta name=\"author\""), "the site index carries no page's metadata");
+  const auto json = slurp(site / "search-index.json");
+  require(contains(json, "{\"heading\":\"Home\",\"anchor\":\"home\",\"excerpt\":\"Body text.\"}") && !contains(json, "Klukas"),
+          "the byline adds nothing to the search index");
+}
+
 }  // namespace
 
 void testDocsSite() {
   testConfig();
+  testForeignKeyConfig();
+  testFrontMatter();
   testDiscovery();
   testEdges();
   testBuild();
