@@ -250,6 +250,8 @@ check_serve() {  # check_serve PATH 'HTTP STATUS LINE' [CONTENT-TYPE PATTERN]
 
 check_serve "/" "HTTP/1.1 200 OK" "text/html"
 check_serve "/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/operations/08-web-dashboard.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/images/web-files.png" "HTTP/1.1 200 OK" "image/png"
 check_serve "/nope.html" "HTTP/1.1 404 Not Found"
 
 kill "$serve_pid" 2>/dev/null || true
