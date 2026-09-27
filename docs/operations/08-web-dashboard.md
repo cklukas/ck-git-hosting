@@ -4,23 +4,17 @@ The dashboard is a small web view of the Git repositories hosted by
 ck-git-hosting. It shows project activity, source files, commit history, and
 continuous integration without a separate database or web application.
 
-These screenshots are captured from the real `ck-git-hostingd` frontend during
-the documentation build. The projects below are disposable examples made by
-the [screenshot fixture](../../scripts/docs-web-screenshots.sh); they are not
-repositories from the server running the documentation site.
-
 ## Projects at a glance
 
 The project list shows the default branch, most recent commit, and latest CI
-result for each hosted repository. The two example projects include one
-successful run and one deliberately failing test.
+result for each hosted repository.
 
 ![Project list with two example repositories and their CI results](../images/web-projects.png)
 
 ## Project overview
 
 Open a project to see its branches, latest commit, clone commands, and rendered
-README. The Git clone address in this example uses `demo.invalid` deliberately.
+README.
 
 ![Overview of the Garden Notes example project](../images/web-project.png)
 
@@ -35,8 +29,7 @@ highlighting.
 ## Follow a CI run
 
 A run page shows the branch, commit, result of each workflow step, and artifacts.
-Each step links to its captured log. The demo's `build` and `test` steps ran
-through the actual CI runner before this screenshot was taken.
+Each step links to its captured log.
 
 ![Successful CI run with build and test steps and a downloadable artifact](../images/web-ci.png)
 

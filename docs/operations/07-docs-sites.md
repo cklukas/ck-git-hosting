@@ -231,15 +231,9 @@ files, so a page looks the same wherever it is read.
 | Task lists | `- [ ] text` / `- [x] text` | A disabled checkbox; the list gets a distinct class for styling. |
 | Strikethrough | `~~text~~` | Exactly two tildes; one or three are literal. |
 
-**Deliberately unsupported:** raw HTML (always shown as literal, escaped
-text — an inline comment is simply removed, but a `<div>` never becomes a
-live element), footnotes, definition lists, emoji shortcodes, and math.
-Supporting raw HTML in a tool meant to be pointed at arbitrary Markdown
-would mean either sandboxing a site's own markup — defeating the point of a
-generator whose only script is its own fixed, opt-in one, never anything a
-page's author supplies — or trusting page content outright, which this
-product does not do anywhere else either. A small, entirely predictable
-renderer is the design point, not an oversight.
+**Unsupported:** raw HTML, footnotes, definition lists, emoji shortcodes,
+and math. HTML is displayed as escaped text; HTML comments outside code
+blocks are omitted.
 
 ## Mermaid diagrams
 
@@ -970,16 +964,13 @@ to get there.
 
 ## Publishing on ck-git Pages and GitHub Pages
 
-Both hosts build this documentation from the same source. Each build refreshes
-the [web dashboard screenshots](08-web-dashboard.md) from isolated example
-repositories before `ckdocs` renders the site, so the PNG bytes can vary with
-the browser and build time.
+This repository publishes its documentation to both ck-git Pages and GitHub
+Pages using the same source and configuration.
 
 | | ck-git Pages (the LAN) | GitHub Pages |
 |---|---|---|
 | Where the build runs | this project's own sandboxed CI, on push | a GitHub Actions workflow, on push to `master` |
 | How `ckdocs` gets there | compiled by that CI run's own `make … all` | compiled by that workflow's own `make … all` — no dependency on a released package |
-| How web screenshots are made | the built daemon and CI runner plus headless Chromium on the RPi4 | the same fixture and the Ubuntu runner's headless Chromium |
 | What publishes it | a top-level `pages: { path: public }` in `.ckgit/ci.yml`, read by [`ck-pagesd`](04-ci-cd.md#pages) | `actions/upload-pages-artifact` + `actions/deploy-pages` in `.github/workflows/pages.yml` |
 | Reached at | `http://<server>:<pages_http_port>/ck-git-hosting/`, and the dashboard's **Docs** button | `https://cklukas.github.io/ck-git-hosting/` |
 
@@ -988,12 +979,7 @@ branch — a tag build never touches either (see [Pages](04-ci-cd.md#pages)
 for the LAN side's exact rule). This repository's own `.ckgit/ci.yml` and
 `.github/workflows/pages.yml` are the worked example: the docs build runs
 [`scripts/docs-web-screenshots.sh`](../../scripts/docs-web-screenshots.sh), then
-`ckdocs build --strict`. The screenshot script creates its own repo and state
-roots, executes the example projects' real `.ckgit/ci.yml` workflows, captures
-the loopback dashboard, and removes its temporary state. It never opens the
-server's production repository root. Checked-in PNGs keep local `ckdocs check`
-and source browsing useful; each publishing build replaces them with fresh
-captures. A missing browser, failed example workflow, or broken documentation
+`ckdocs build --strict`. A failed screenshot capture or broken documentation
 link stops publication. The [`docs_site.sh`](../../tests/integration/docs_site.sh)
 integration test checks the documentation links against this `ckdocs.yml` on
 every push.

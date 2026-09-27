@@ -123,9 +123,7 @@ command deploys any project's own release the same way.
 Whoever can push a matching tag to the CI-enabled project you deploy from can
 put an arbitrary package in front of root the next time `ck-git-hosting-deploy`
 runs: there is no per-ref or per-device access control beyond ordinary Git
-push access to that one project. This is a deliberate, contained trade-off,
-not an oversight -- the same trust already implied by giving someone push
-access to a project whose CI output you install as root. Keep the deploy
+push access to that one project. Keep the deploy
 command a manual, human-run step (its default state), or only enable the
 timer below for a project whose pushers you would already trust with root on
 this machine. Do not point it at a project with a wider or less trusted set
@@ -135,8 +133,7 @@ of pushers than that.
 
 `ck-git-hosting-deploy.service` and `ck-git-hosting-deploy.timer` are
 installed by both the package and the tarball installer, alongside the other
-units, but **never enabled by either** -- opting in is a separate, deliberate
-step:
+units, but **disabled by default**. Enable automatic deployment with:
 
 ```text
 sudo systemctl enable --now ck-git-hosting-deploy.timer
@@ -162,12 +159,8 @@ journalctl -u ck-git-hosting-deploy.service
 
 A run that finds nothing to deploy yet (no release has been published for
 the configured project) exits non-zero and shows as a **failed** unit --
-this is deliberate, not a bug: it surfaces a real misconfiguration (the timer
-was enabled before the project ever produced a release) the same way any
-other unexpected failure would, rather than swallowing it silently. A
-genuinely failed deploy still rolls back automatically, exactly as it would
-run by hand; the timer changes only when `ck-git-hosting-deploy` runs, never
-how it behaves once it does.
+publish a release before enabling the timer. A failed deployment rolls back
+automatically, with the same behavior as a manual deployment.
 
 Disabling the timer (`sudo systemctl disable --now
 ck-git-hosting-deploy.timer`) returns to the fully manual default without

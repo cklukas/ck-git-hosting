@@ -11,8 +11,7 @@ source, history, and CI results. Git and OpenSSH still carry the Git traffic.
 
 ![Web dashboard file browser with an example repository](docs/images/web-files.png)
 
-*Browse files and rendered READMEs in the dashboard. This is a real capture of
-a disposable example repository; no personal projects appear in the docs.*
+*Browse files and rendered READMEs in the dashboard.*
 
 ## Why use it
 
@@ -29,8 +28,8 @@ a disposable example repository; no personal projects appear in the docs.*
 
 ![CI run showing successful build and test steps](docs/images/web-ci.png)
 
-*The build and test steps shown here actually ran against the example project.
-The [dashboard tour](docs/operations/08-web-dashboard.md) has more screenshots.*
+*Follow build results, inspect logs, and download artifacts.
+See the [dashboard tour](docs/operations/08-web-dashboard.md) for more.*
 
 ## Get started
 
