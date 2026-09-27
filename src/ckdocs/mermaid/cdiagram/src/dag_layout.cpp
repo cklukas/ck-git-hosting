@@ -147,7 +147,8 @@ ClusterTree build_cluster_tree(const DagGraph& graph, FlowDir dir) {
 /// an item's position in it IS its key — integer, hence exact.
 std::vector<int> arrange(const ClusterTree& tree, const std::vector<int>& innermost,
                          const std::vector<int>& items, int cluster) {
-    if (items.size() < 2) return items;
+    if (items.empty()) return {};
+    if (items.size() == 1) return {items.front()};
     struct Group {
         int cluster = -1;  ///< -1 marks a bare item that sits directly here
         // 64-bit on every platform: the comparison below multiplies these,
