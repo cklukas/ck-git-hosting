@@ -43,6 +43,7 @@ pre{overflow:auto;white-space:pre;tab-size:4;background:var(--panel);border:1px 
 code{background:var(--tint);padding:.1rem .3rem;border-radius:.25rem}pre code{background:none;padding:0}
 blockquote{border-left:3px solid var(--line);margin:1rem 0;padding-left:1rem;color:var(--muted)}
 img{max-width:100%;height:auto}
+article img[src*="images/web-"]{display:block;margin:1.25rem 0;border:1px solid var(--line);border-radius:.75rem;box-shadow:0 .25rem .9rem #0002}
 .table-wrap,article table{display:block;overflow:auto;max-width:100%}article table{border-collapse:collapse}th,td{text-align:left;padding:.5rem .7rem;border:1px solid var(--line);vertical-align:top}th{background:var(--tint)}
 /* article's own overflow-wrap:anywhere (below) exists for long unbroken
    strings such as URLs and paths; inside a table cell it instead fractures
