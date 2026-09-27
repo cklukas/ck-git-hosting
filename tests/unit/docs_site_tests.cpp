@@ -418,38 +418,47 @@ void testThisRepository() {
     require(model.source == "docs" && model.pages[model.home].source == "README.md", "this repository's docs tree and README");
     require(std::none_of(model.pages.begin(), model.pages.end(), [](const ckgit::DocsPage& page) { return contains(page.source, "planning"); }),
             "gitignored planning documents are never pages");
-    require(model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" && model.nav[2].title == "Protocol",
-            "derived tabs Home, Operations, Protocol");
-    const auto& operations = model.nav[1].children;
-    require(operations.size() == 8, "eight operations pages, derived flat");
-    for (std::size_t index = 0; index < operations.size(); ++index) {
+    require(model.nav.size() == 6 && model.nav[0].title == "Home" && model.nav[1].title == "Ckdocs" &&
+                model.nav[2].title == "Guides" && model.nav[3].title == "Operations" &&
+                model.nav[4].title == "Protocol" && model.nav[5].title == "Reference",
+            "derived tabs follow the documentation directories");
+    const auto& operations = model.nav[3].children;
+    require(operations.size() >= 8, "the original operations guides remain available");
+    for (std::size_t index = 0; index < 8; ++index) {
       require(operations[index].page.has_value() && model.pages[*operations[index].page].source.starts_with("docs/operations/0" + std::to_string(index + 1) + "-"),
               "operations pages follow their numeric prefixes");
     }
   }
 
-  // The repository's own committed ckdocs.yml (WP7): an explicit nav names
-  // the tabs and groups the continuous-delivery pages, so this exercises the
-  // config actually published on ck-git Pages and GitHub Pages.
+  // Exercise the task-based navigation actually published on both sites.
   {
     const auto config = ckgit::readDocsConfig(root);
     require(!config.title.empty(), "this repository ships its own ckdocs.yml");
     std::vector<std::string> warnings;
     const auto model = ckgit::loadDocsSite(root, config, &warnings);
     require(model.title == "ck-git-hosting" && model.pages[model.home].source == "README.md" &&
-                model.nav.size() == 3 && model.nav[0].title == "Home" && model.nav[1].title == "Operations" &&
-                model.nav[2].title == "Protocol" && model.nav[2].page.has_value() &&
-                model.pages[*model.nav[2].page].source == "docs/protocol/01-ssh-and-control-v1.md",
-            "the configured site: title, home, tabs, and Protocol as a one-page tab");
-    const auto& operations = model.nav[1].children;
-    require(operations.size() == 6 && operations[0].page.has_value() &&
-                model.pages[*operations[0].page].source == "docs/operations/01-installation.md" &&
-                operations[3].title == "Continuous delivery" && operations[3].children.size() == 3 &&
-                model.pages[*operations[3].children[0].page].source == "docs/operations/04-ci-cd.md" &&
-                model.pages[*operations[3].children[2].page].source == "docs/operations/06-ci-yml-reference.md" &&
-                operations[4].page.has_value() && model.pages[*operations[4].page].source == "docs/operations/07-docs-sites.md" &&
-                operations[5].page.has_value() && model.pages[*operations[5].page].source == "docs/operations/08-web-dashboard.md",
-            "Operations: three flat pages, a Continuous delivery group with 04-06, then docs and dashboard guides");
+                model.nav.size() == 6 && model.nav[0].title == "Home" && model.nav[1].title == "Guides" &&
+                model.nav[2].title == "Server" && model.nav[3].title == "CI" &&
+                model.nav[4].title == "ckdocs" && model.nav[5].title == "Reference",
+            "the configured site: title, home, and task-based tabs");
+    require(warnings.empty(), "every documentation page belongs to the configured navigation");
+    const auto& guides = model.nav[1].children;
+    require(!guides.empty() && guides[0].page.has_value() &&
+                model.pages[*guides[0].page].source == "docs/guides/client-setup.md",
+            "the user guides begin with client setup");
+    const auto& docs = model.nav[4].children;
+    require(docs.size() == 12 && docs[0].page.has_value() &&
+                model.pages[*docs[0].page].source == "docs/operations/07-docs-sites.md",
+            "ckdocs has seven guides and five diagram categories");
+    std::size_t diagram_pages = 0;
+    for (const auto& group : docs) {
+      for (const auto& example : group.children) {
+        require(example.page.has_value() && model.pages[*example.page].source.starts_with("docs/ckdocs/diagrams/"),
+                "diagram categories link to individual example pages");
+        ++diagram_pages;
+      }
+    }
+    require(diagram_pages == 23, "all supported diagram examples appear in navigation");
     require(config.links.size() == 1 && config.links[0].title == "GitHub" && !config.footer.empty(),
             "the configured header link and footer");
   }

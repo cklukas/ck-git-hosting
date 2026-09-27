@@ -305,21 +305,24 @@ void testCaches() {
   require(rejected("version: 1\ncache:\n  - name: x\n    bogus: 1\n" + base), "unknown cache key rejected");
 }
 
-// WP9: docs/operations/06-ci-yml-reference.md documents every bound constant
-// and every exported step variable by hand; this only catches the document
+// The workflow and runtime references document bounds and exported variables
+// by hand; this only catches those documents
 // silently falling out of sync with the source, not that its prose is
 // correct. Skips when CKGIT_SOURCE_ROOT (set by the Makefile) is unset, so
 // this test is a no-op for anyone invoking the binary directly outside make.
 void testReferenceDocMatchesConstants() {
   const char* source_root = std::getenv("CKGIT_SOURCE_ROOT");
   if (source_root == nullptr || *source_root == '\0') return;
-  const std::filesystem::path doc_path =
-      std::filesystem::path(source_root) / "docs" / "operations" / "06-ci-yml-reference.md";
-  std::ifstream file(doc_path);
-  require(static_cast<bool>(file), "could not open " + doc_path.string());
-  std::ostringstream buffer;
-  buffer << file.rdbuf();
-  const std::string doc = buffer.str();
+  const auto read_doc = [&](const char* relative_path) {
+    const auto path = std::filesystem::path(source_root) / relative_path;
+    std::ifstream file(path);
+    require(static_cast<bool>(file), "could not open " + path.string());
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+  };
+  const auto doc = read_doc("docs/operations/06-ci-yml-reference.md");
+  const auto runtime = read_doc("docs/reference/ci-runtime.md");
 
   for (const char* bound : {"65536", "4096", "64", "128", "16384", "1024", "16", "8", "3650"}) {
     require(doc.find(bound) != std::string::npos,
@@ -328,7 +331,7 @@ void testReferenceDocMatchesConstants() {
   for (const char* variable :
        {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "CKGIT_CI", "CKGIT_COMMIT", "CKGIT_REF",
         "CKGIT_SISTER", "CKGIT_CACHE"}) {
-    require(doc.find(variable) != std::string::npos,
+    require(runtime.find(variable) != std::string::npos,
             "reference doc is missing exported variable " + std::string(variable));
   }
 }
