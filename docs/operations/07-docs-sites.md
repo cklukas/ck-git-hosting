@@ -298,21 +298,30 @@ to get there.
 
 ## Publishing on ck-git Pages and GitHub Pages
 
-The same output directory is published, unchanged, on both hosts:
+Both hosts build this documentation from the same source. Each build refreshes
+the [web dashboard screenshots](08-web-dashboard.md) from isolated example
+repositories before `ckdocs` renders the site, so the PNG bytes can vary with
+the browser and build time.
 
 | | ck-git Pages (the LAN) | GitHub Pages |
 |---|---|---|
 | Where the build runs | this project's own sandboxed CI, on push | a GitHub Actions workflow, on push to `master` |
-| How `ckdocs` gets there | compiled by that CI run's own `make … all` | compiled by that workflow's own `make … client` — no dependency on a released package |
+| How `ckdocs` gets there | compiled by that CI run's own `make … all` | compiled by that workflow's own `make … all` — no dependency on a released package |
+| How web screenshots are made | the built daemon and CI runner plus headless Chromium on the RPi4 | the same fixture and the Ubuntu runner's headless Chromium |
 | What publishes it | a top-level `pages: { path: public }` in `.ckgit/ci.yml`, read by [`ck-pagesd`](04-ci-cd.md#pages) | `actions/upload-pages-artifact` + `actions/deploy-pages` in `.github/workflows/pages.yml` |
 | Reached at | `http://<server>:<pages_http_port>/ck-git-hosting/`, and the dashboard's **Docs** button | `https://cklukas.github.io/ck-git-hosting/` |
 
 Both publish only a successful build of the repository's own default
 branch — a tag build never touches either (see [Pages](04-ci-cd.md#pages)
 for the LAN side's exact rule). This repository's own `.ckgit/ci.yml` and
-`.github/workflows/pages.yml` are the worked example: a `docs` step running
-`ckdocs build --root "$PWD" --out "$PWD/public" --strict` right after
-`check`, so a broken link fails the build *before* either host ever
-publishes it — the [`docs_site.sh`](../../tests/integration/docs_site.sh)
-integration test enforces exactly that on every push, against this same
-`ckdocs.yml`.
+`.github/workflows/pages.yml` are the worked example: the docs build runs
+[`scripts/docs-web-screenshots.sh`](../../scripts/docs-web-screenshots.sh), then
+`ckdocs build --strict`. The screenshot script creates its own repo and state
+roots, executes the example projects' real `.ckgit/ci.yml` workflows, captures
+the loopback dashboard, and removes its temporary state. It never opens the
+server's production repository root. Checked-in PNGs keep local `ckdocs check`
+and source browsing useful; each publishing build replaces them with fresh
+captures. A missing browser, failed example workflow, or broken documentation
+link stops publication. The [`docs_site.sh`](../../tests/integration/docs_site.sh)
+integration test checks the documentation links against this `ckdocs.yml` on
+every push.

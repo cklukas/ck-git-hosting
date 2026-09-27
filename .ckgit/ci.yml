@@ -23,7 +23,7 @@
 # site (ckdocs.yml) and, because `pages:` below only ever publishes a
 # non-tag build of the repository's own default branch (see
 # docs/operations/06-ci-yml-reference.md §9), publishes it here on ck-git
-# Pages; the identical site is published to GitHub Pages by the separate
+# Pages; the same documentation source is published to GitHub Pages by the separate
 # .github/workflows/pages.yml, which compiles its own ckdocs rather than
 # depending on anything built here.
 version: 1
@@ -68,6 +68,11 @@ jobs:
           # "public" -- on a broken link or heading fragment, exactly as
           # tests/integration/docs_site.sh already checks for this same
           # repository on every push.
+          CKGIT_ADMIN="$TMPDIR/build/bin/ckgit-admin" \
+          CKGIT_HOSTINGD="$TMPDIR/build/bin/ck-git-hostingd" \
+          CK_CI_RUNNER="$TMPDIR/build/bin/ck-ci-runnerd" \
+          CKGIT_POST_RECEIVE="$TMPDIR/build/hooks/post-receive" \
+            sh scripts/docs-web-screenshots.sh "$PWD/docs/images"
           "$TMPDIR/build/bin/ckdocs" build --root "$PWD" --out "$PWD/public" --strict
       - name: package
         script: |

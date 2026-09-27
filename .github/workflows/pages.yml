@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: MIT
 #
 # Publishes this repository's documentation (ckdocs.yml, README.md, docs/) to
-# https://cklukas.github.io/ck-git-hosting/ -- the identical site .ckgit/ci.yml's
+# https://cklukas.github.io/ck-git-hosting/ -- the same documentation source .ckgit/ci.yml's
 # own `docs` step publishes on ck-git Pages, for readers who cannot reach the
-# LAN. ckdocs is compiled here from source (`make ... client`), not installed
+# LAN. ckdocs is compiled here from source (`make ... all`), not installed
 # from a package or downloaded, so this workflow has no dependency on any
 # release having been cut; ci.yml's own `make all check` (which runs
 # tests/integration/docs_site.sh) already fails a broken docs link before it
-# ever reaches this workflow.
+# ever reaches this workflow. Both pipelines render the web tour from isolated
+# example repositories before building the site.
 
 name: Pages
 
@@ -35,10 +36,16 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential
-      - name: Build ckdocs and the site
+          sudo apt-get install -y --no-install-recommends build-essential git curl python3
+      - name: Build tools and render the web tour
         run: |
-          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" client
+          make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all
+          TMPDIR="$RUNNER_TEMP" \
+          CKGIT_ADMIN="$RUNNER_TEMP/build/bin/ckgit-admin" \
+          CKGIT_HOSTINGD="$RUNNER_TEMP/build/bin/ck-git-hostingd" \
+          CK_CI_RUNNER="$RUNNER_TEMP/build/bin/ck-ci-runnerd" \
+          CKGIT_POST_RECEIVE="$RUNNER_TEMP/build/hooks/post-receive" \
+            sh scripts/docs-web-screenshots.sh "$PWD/docs/images"
           "$RUNNER_TEMP/build/bin/ckdocs" build --root "$PWD" --out "$RUNNER_TEMP/site" --strict
       - name: Configure Pages
         uses: actions/configure-pages@v6

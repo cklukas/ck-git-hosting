@@ -1,47 +1,68 @@
 # ck-git-hosting
 
-`ck-git-hosting` is a small, private Git control plane for a trusted LAN.  It
-keeps Git transport in Git and OpenSSH, while adding safe local inventory,
-checkout registration, and a deliberately small web dashboard.
+**A private home for your Git projects, with a clear view of what is happening.**
+Keep standard bare repositories on your own Debian server. Use `ckgit` to
+publish, clone, and sync them from your devices; open the browser to explore
+source, history, and CI results. Git and OpenSSH still carry the Git traffic.
 
-The current implementation includes:
+[Install and pair a device](docs/operations/01-installation.md) ·
+[Explore the dashboard](docs/operations/08-web-dashboard.md) ·
+[Set up CI](docs/operations/04-ci-cd.md)
 
-- a local audit client that discovers working trees without modifying them and
-  reports local refs, remotes, current branch, and dirty-file counts;
-- a local server foundation that creates standard bare repositories with safe
-  receive defaults, serves a small same-user control socket, dispatches only
-  exact Git SSH service commands, and exposes an optional loopback dashboard;
-- privacy-aware checkout registration in a separate private state directory,
-  shown as last-reported client/path data in the dashboard;
-- an indexed, read-only dashboard with last commits, rendered READMEs, file
-  browsing, commit history and diffs, calendar views, and a commit graph;
-- administrative project removal that retains the bare repository in trash
-  and clears its metadata, plus cleanup for repositories deleted by hand;
-- opt-in per-project continuous integration that runs a repository's own
-  `.ckgit/ci.yml` in a sandboxed runner on push, with read-only status and
-  step logs in the dashboard and on every paired device through `ckgit ci`.
+![Web dashboard file browser with an example repository](docs/images/web-files.png)
 
-It now also ships as a service installation: a strict `server.ini`, a
-hardened systemd unit, an installer and uninstaller that print every change
-first, and a pairing helper that generates the restricted `authorized_keys`
-line for a device. The client keeps a private inventory with one main checkout
-per project on each device and holds a per-configuration lock so scheduled and
-manual uploads never overlap. Legacy checkout reports can be migrated into
-that inventory without exposing full paths to the server.
+*Browse files and rendered READMEs in the dashboard. This is a real capture of
+a disposable example repository; no personal projects appear in the docs.*
 
-## Install
+## Why use it
 
-macOS, with Homebrew:
+- **Bring existing repositories over.** `ckgit publish` previews what it will
+  create and push. It leaves uncommitted files alone and never forces a ref.
+- **Find your way around.** The dashboard puts the project list, README,
+  branches, files, commits, diffs, and activity calendar in one place.
+- **See whether a change works.** Each project can opt into CI with a small
+  `.ckgit/ci.yml`; the runner records step logs and artifacts alongside the
+  corresponding commit.
+- **Keep control of the server.** Repositories are ordinary Git repositories.
+  The dashboard listens on loopback, and paired devices use restricted SSH
+  commands. Project removal retains the bare repository in trash.
 
-```text
+![CI run showing successful build and test steps](docs/images/web-ci.png)
+
+*The build and test steps shown here actually ran against the example project.
+The [dashboard tour](docs/operations/08-web-dashboard.md) has more screenshots.*
+
+## Get started
+
+Install the server on a Debian 13 machine, including a Raspberry Pi 4 or 5,
+then [pair a device key](docs/operations/01-installation.md#pair-a-device).
+The [installation guide](docs/operations/01-installation.md) shows the package
+or source install, its configuration, and the exact key command.
+
+On macOS, install the client with Homebrew:
+
+```sh
 brew tap cklukas/ck-git-hosting https://github.com/cklukas/ck-git-hosting
 brew install --HEAD ckgit
 ```
 
-`brew install ckgit` (without `--HEAD`) and the Debian/tarball packages
-become available once a release is tagged; see
-[docs/operations/02-packages-and-releases.md](docs/operations/02-packages-and-releases.md)
-for every install path, including the server.
+Once the server and SSH access are ready, these commands take an existing
+checkout into the dashboard:
+
+```sh
+ckgit setup --server ckgit@server --client-id laptop --web-host server
+ckgit doctor
+cd ~/code/my-project
+ckgit publish
+ckgit web
+```
+
+`setup` saves the device configuration, `doctor` checks both SSH and the web
+tunnel, and `publish` shows the proposed Git push before asking you to proceed.
+`web` opens the dashboard through your ordinary server SSH login. The client
+ID must match the paired device key; `server` is your host name or SSH alias.
+See [packages and releases](docs/operations/02-packages-and-releases.md) for
+Debian, tarball, and released Homebrew installation paths.
 
 Online documentation: <https://cklukas.github.io/ck-git-hosting/>.
 
