@@ -22,7 +22,7 @@ done
 
 browser=${CKGIT_DOCS_BROWSER:-}
 if [ -z "$browser" ]; then
-  for candidate in chromium chromium-browser google-chrome google-chrome-stable; do
+  for candidate in google-chrome-stable google-chrome chromium chromium-browser; do
     if command -v "$candidate" >/dev/null 2>&1; then
       browser=$(command -v "$candidate")
       break
@@ -256,14 +256,46 @@ capture() {
   height=$3
   target="$output/$name.png"
   rm -f "$target"
-  "$browser" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
-    --disable-background-networking --disable-extensions --no-first-run \
-    --hide-scrollbars --force-device-scale-factor=1 --window-size=1440,"$height" \
-    --virtual-time-budget=1500 --user-data-dir="$fixture/chrome-$name" \
-    --screenshot="$target" "$base$route" >"$fixture/chrome-$name.log" 2>&1 || {
-      cat "$fixture/chrome-$name.log" >&2
-      echo "Chromium failed to capture $name" >&2
-      exit 1
+  echo "docs screenshots: capturing $name with $browser"
+  python3 - "$browser" "$target" "$fixture/chrome-$name" \
+    "$base$route" "$height" "$fixture/chrome-$name.log" <<'PY' || {
+import os
+import signal
+import subprocess
+import sys
+
+browser, target, profile, url, height, log_path = sys.argv[1:]
+command = [
+    browser, "--headless", "--no-sandbox", "--disable-gpu",
+    "--disable-dev-shm-usage", "--disable-background-networking",
+    "--disable-extensions", "--no-first-run", "--hide-scrollbars",
+    "--force-device-scale-factor=1", f"--window-size=1440,{height}",
+    "--virtual-time-budget=1500", f"--user-data-dir={profile}",
+    f"--screenshot={target}", url,
+]
+with open(log_path, "wb") as log:
+    child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+    try:
+        result = child.wait(timeout=45)
+    except subprocess.TimeoutExpired:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(child.pid, sig)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=3)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        raise SystemExit(f"Browser capture timed out after 45 seconds: {url}")
+if result:
+    raise SystemExit(f"Browser capture failed with exit {result}: {url}")
+PY
+    cat "$fixture/chrome-$name.log" >&2
+    echo "Browser failed to capture $name" >&2
+    exit 1
     }
   python3 - "$target" "$height" <<'PY'
 import os
