@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -643,6 +644,21 @@ void testSshCommandGrammar() {
          "ref RPC rejects traversal project arguments");
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 create cworks ../main", &reason).has_value(),
          "create RPC rejects an unsafe branch");
+  const auto default_branch = ckgit::parseSshOriginalCommand("ckgit-rpc 1 default-branch cworks", &reason);
+  expect(default_branch.has_value() && default_branch->rpc_operation == "default-branch" &&
+             default_branch->rpc_arguments == std::vector<std::string>{"cworks"},
+         "default-branch RPC is accepted with a project");
+  const auto set_default = ckgit::parseSshOriginalCommand("ckgit-rpc 1 set-default-branch cworks develop", &reason);
+  expect(set_default.has_value() && set_default->rpc_operation == "set-default-branch" &&
+             set_default->rpc_arguments == std::vector<std::string>{"cworks", "develop"},
+         "set-default-branch RPC is accepted with a project and branch");
+  for (const std::string rejected : {"ckgit-rpc 1 default-branch", "ckgit-rpc 1 default-branch cworks main",
+                                     "ckgit-rpc 1 set-default-branch cworks", "ckgit-rpc 1 set-default-branch cworks ../main",
+                                     "ckgit-rpc 1 set-default-branch cworks -main",
+                                     "ckgit-rpc 1 set-default-branch cworks main extra",
+                                     "ckgit-rpc 1 set-default-branch ../cworks main"}) {
+    expect(!ckgit::parseSshOriginalCommand(rejected, &reason).has_value(), "SSH layer rejects: " + rejected);
+  }
   expect(!ckgit::parseSshOriginalCommand("ckgit-rpc 1 register cworks not-hex", &reason).has_value(),
          "registration RPC rejects unsafe metadata tokens");
   expect(!ckgit::parseSshOriginalCommand("sh -c id", &reason).has_value(),
@@ -705,7 +721,16 @@ void testControlRequestGrammar() {
          "daemon accepts a four-argument ci-log request");
   const auto ping = ckgit::parseControlRequest("CKGIT-CONTROL/1 mac-studio ping\n");
   expect(ping.has_value() && ping->arguments.empty(), "daemon accepts an argument-less request");
+  const auto set_default = ckgit::parseControlRequest("CKGIT-CONTROL/1 mac-studio set-default-branch cworks develop\n");
+  expect(set_default.has_value() && set_default->operation == "set-default-branch" &&
+             set_default->arguments == std::vector<std::string>{"cworks", "develop"},
+         "daemon accepts a set-default-branch request");
   const std::vector<std::string> rejected_requests{
+           std::string("CKGIT-CONTROL/1 mac-studio default-branch\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio default-branch cworks extra\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio set-default-branch cworks\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio set-default-branch cworks bad..branch\n"),
+           std::string("CKGIT-CONTROL/1 mac-studio set-default-branch cworks main extra\n"),
            std::string("CKGIT-CONTROL/1 mac-studio ci-log cworks ") + run + " 2 4096 extra\n",
            std::string("CKGIT-CONTROL/1 mac-studio ci-log cworks ") + run + " 2\n",
            std::string("CKGIT-CONTROL/1 mac-studio ci-cancel cworks bad/id\n"),
@@ -738,6 +763,8 @@ void testControlRequestGrammar() {
   expect(refuses("ci-cancel", {"cworks", "bad/id"}), "forwarding client refuses an unsafe run id");
   expect(refuses("cancel", {"cworks", run}), "forwarding client refuses an undocumented operation");
   expect(refuses("ci-status", {}), "forwarding client refuses a missing project");
+  expect(refuses("set-default-branch", {"cworks", "bad..branch"}), "forwarding client refuses an invalid branch");
+  expect(refuses("default-branch", {}), "forwarding client refuses a default-branch request without a project");
   expect(!refuses("ci-log", {"cworks", run, "1", "0"}),
          "forwarding client accepts a valid request and fails only on the transport");
 }
@@ -785,6 +812,92 @@ void testBareRepositoryCreation() {
       duplicate_rejected = true;
     }
     expect(duplicate_rejected, "existing repository is never overwritten");
+  } catch (...) {
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    throw;
+  }
+  std::error_code error;
+  std::filesystem::remove_all(directory, error);
+}
+
+// The shared core of `ckgit default-branch` (via the daemon) and
+// `ckgit-admin default-branch`: read HEAD, and point it only at a branch that
+// exists, under the repository lifecycle lock.
+void testDefaultBranch() {
+  const auto directory = testDirectory();
+  try {
+    const auto root = directory / "repo-root";
+    std::filesystem::create_directories(root);
+    const auto repository = ckgit::createBareRepository(root, "cworks", "main");
+    const auto head = [&]() {
+      return ckgit::runProcess({"git", "--git-dir", repository.string(), "symbolic-ref", "HEAD"}).output;
+    };
+    const auto unborn = ckgit::readDefaultBranch(root, "cworks");
+    expect(unborn.branch == std::optional<std::string>("main") && !unborn.exists,
+           "a new project's default branch is reported as unborn");
+
+    const auto work = directory / "work";
+    const auto git = [&](const std::vector<std::string>& arguments) {
+      std::vector<std::string> command{"git", "-C", work.string(), "-c", "user.name=Tests",
+                                       "-c", "user.email=tests@example.test"};
+      command.insert(command.end(), arguments.begin(), arguments.end());
+      const auto result = ckgit::runProcess(command, std::chrono::seconds(30));
+      if (result.exit_code != 0) throw std::runtime_error("git failed: " + result.output);
+    };
+    std::filesystem::create_directories(work);
+    git({"init", "-q", "--initial-branch=main"});
+    git({"commit", "-q", "--allow-empty", "-m", "initial"});
+    git({"push", "-q", repository.string(), "HEAD:refs/heads/main", "HEAD:refs/heads/develop"});
+
+    const auto present = ckgit::readDefaultBranch(root, "cworks");
+    expect(present.branch == std::optional<std::string>("main") && present.exists,
+           "the default branch is reported as present once it has a commit");
+
+    const auto expectRefusal = [&](const std::string& project, const std::string& branch, const std::string& code,
+                                   const std::string& message) {
+      try {
+        static_cast<void>(ckgit::setDefaultBranch(root, project, branch));
+      } catch (const ckgit::DefaultBranchError& error) {
+        expect(error.code() == code, message + " (code " + error.code() + ")");
+        return;
+      } catch (const std::exception&) {
+      }
+      expect(false, message);
+    };
+    expectRefusal("cworks", "missing", "nobranch", "a branch that does not exist is refused");
+    expectRefusal("absent", "main", "noproject", "an unknown project is refused");
+    bool invalid_refused = false;
+    try {
+      static_cast<void>(ckgit::setDefaultBranch(root, "cworks", "bad..branch"));
+    } catch (const std::invalid_argument&) {
+      invalid_refused = true;
+    }
+    expect(invalid_refused, "an invalid branch name is refused");
+    expectEqual(head(), "refs/heads/main\n", "refused changes leave HEAD alone");
+    bool unknown_read_refused = false;
+    try {
+      static_cast<void>(ckgit::readDefaultBranch(root, "absent"));
+    } catch (const ckgit::DefaultBranchError& error) {
+      unknown_read_refused = error.code() == "noproject";
+    }
+    expect(unknown_read_refused, "reading an unknown project's default branch is refused");
+
+    const auto preview = ckgit::setDefaultBranch(root, "cworks", "develop", true);
+    expect(preview.changed && preview.previous == std::optional<std::string>("main"),
+           "a dry run reports the planned change");
+    expectEqual(head(), "refs/heads/main\n", "a dry run leaves HEAD alone");
+
+    const auto change = ckgit::setDefaultBranch(root, "cworks", "develop");
+    expect(change.changed && change.previous == std::optional<std::string>("main"),
+           "an existing branch becomes the default branch");
+    expectEqual(head(), "refs/heads/develop\n", "HEAD names the new default branch");
+    const auto after = ckgit::readDefaultBranch(root, "cworks");
+    expect(after.branch == std::optional<std::string>("develop") && after.exists,
+           "the new default branch is read back");
+    const auto again = ckgit::setDefaultBranch(root, "cworks", "develop");
+    expect(!again.changed && again.previous == std::optional<std::string>("develop"),
+           "selecting the current default branch changes nothing");
   } catch (...) {
     std::error_code error;
     std::filesystem::remove_all(directory, error);
@@ -1045,6 +1158,7 @@ int main(int argc, char** argv) {
     testTextEncoding();
     testCiControl();
     testBareRepositoryCreation();
+    testDefaultBranch();
     testDiscoveryAndAudit();
   } catch (const std::exception& error) {
     ++failures;

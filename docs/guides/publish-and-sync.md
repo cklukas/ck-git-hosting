@@ -10,6 +10,9 @@ ckgit publish
 
 `ckgit create` requests a validated empty bare repository from the paired
 server. It does not alter a local checkout; use `ckgit clone` after creation.
+Creation and a project's first publish choose its default branch; change it
+later with `ckgit default-branch BRANCH` (see
+[Manage hosted projects](../operations/manage-projects.md#change-the-default-branch)).
 
 Inside a Git repository, `ckgit publish` previews by default. With `--yes`, it
 creates the paired project only when the configured remote name is absent,

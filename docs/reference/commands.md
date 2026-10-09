@@ -26,6 +26,7 @@ ckgit clone --project NAME [--project NAME ...] --into DIR [--dry-run] [--yes]
 ckgit fetch [--repo PATH | --project NAME | --all] [--branch NAME ...] [--no-tags] [--dry-run] [--verbose]
 ckgit update [--repo PATH | --project NAME | --all] [--dry-run] [--verbose]
 ckgit create NAME [--default-branch BRANCH]
+ckgit default-branch [--project NAME] [BRANCH] [--dry-run] [--yes]
 ckgit publish [--name NAME] [--branch NAME ...] [--no-tags] [--replace-checkout] [--yes] [--dry-run] [--verbose] [REPOSITORY_OR_FOLDER]
 ckgit register [--repo PATH] [--replace-checkout]
 ckgit sync [--repo PATH | --scan] [--replace-checkout] [--dry-run] [--verbose]
@@ -49,6 +50,7 @@ ckgit completion bash
 ckgit completion zsh
 
 ckgit-admin create NAME --config SERVER-CONFIG [--default-branch BRANCH] [--hook-directory PATH] [--dry-run]
+ckgit-admin default-branch NAME [BRANCH] --config SERVER-CONFIG [--dry-run]
 ckgit-admin remove-project NAME --config SERVER-CONFIG [--control-socket PATH] [--dry-run] [--yes]
 ckgit-admin backup --output NEW-DIR --config SERVER-CONFIG [--dry-run] [--yes]
 ckgit-admin verify-backup BACKUP
@@ -85,6 +87,16 @@ configuration file. Argument errors name the problem and point to the relevant
 help page. Completion uses the same command definitions; load it with
 `source <(ckgit completion bash)` or, after zsh's `compinit`,
 `source <(ckgit completion zsh)`.
+
+A project's default branch is the branch its hosted repository's `HEAD`
+names: new clones check it out, CI workflows without `on:` build it, and ck-git
+Pages publishes only from its builds. `create` and `publish` choose it once;
+`ckgit default-branch` shows it for the paired project (or `--project NAME`),
+and `ckgit default-branch BRANCH` previews and, after confirmation or `--yes`,
+points it at another branch that already exists on the server. On the server,
+`ckgit-admin default-branch NAME BRANCH` does the same as the service account;
+it is also the way to select a branch whose name contains `/`, which the
+restricted SSH channel does not carry.
 
 `ckgit` exit codes are stable: `0` success, `1` error, `2` usage, `3` partial
 result or attention needed, and `4` when another sync or publish for the same

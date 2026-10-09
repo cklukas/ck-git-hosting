@@ -35,6 +35,8 @@ constexpr std::size_t kMaximumKeyFileBytes = 8 * 1024;
 void usage(std::ostream& output) {
   output << "Usage:\n"
          << "  ckgit-admin create NAME (--config FILE | --repo-root ROOT) [--default-branch BRANCH] [--hook-directory PATH] [--dry-run]\n"
+         << "  ckgit-admin default-branch NAME [BRANCH] (--config FILE | --repo-root ROOT [--state-root ROOT])\n"
+         << "                             [--control-socket PATH] [--dry-run]\n"
          << "  ckgit-admin remove-project NAME (--config FILE | --repo-root ROOT --state-root ROOT) [--control-socket PATH] [--dry-run] [--yes]\n"
          << "  ckgit-admin authorized-key --client-id ID --public-key FILE [--shell PATH] [--repo-root ROOT]\n"
          << "                             [--control-socket PATH] [--state-root ROOT]\n"
@@ -59,6 +61,9 @@ void usage(std::ostream& output) {
          << "ci commands read and write the private state root, so run them as the service account that owns\n"
          << "it, for example: sudo -u ckgit ckgit-admin ci enable NAME --config /etc/ck-git-hosting/server.ini\n"
          << "Paired devices inspect runs and cancel them with ckgit ci; enabling CI stays here.\n"
+         << "default-branch shows NAME's default branch, or points it at BRANCH, which must already exist on\n"
+         << "the server. CI workflows without on: and ck-git Pages follow the default branch. Run it as the\n"
+         << "service account too: sudo -u ckgit ckgit-admin default-branch NAME BRANCH --config FILE\n"
          << "Reflogs, unreachable objects, server OS settings, credentials, and SSH keys need separate backups.\n\n"
          << "authorized-key prints one restricted OpenSSH authorized_keys line for a device key.\n"
          << "It never edits a file; append the line to the installed authorized_keys yourself.\n";
@@ -236,6 +241,105 @@ int create(int argc, char* argv[]) {
   const auto repository = ckgit::createBareRepository(root, name, branch, dry_run, hook_directory);
   std::cout << (dry_run ? "Would create " : "Created ") << repository.string() << "\n";
   return 0;
+}
+
+// `ckgit-admin default-branch NAME [BRANCH]`: the server-side form of
+// `ckgit default-branch`, sharing its core (setDefaultBranch). With a state
+// root the change is recorded as an event; with a control socket the running
+// daemon is asked to reindex the project at once instead of at its next sweep.
+int defaultBranch(int argc, char* argv[]) {
+  std::optional<std::filesystem::path> config;
+  std::filesystem::path repo_root;
+  std::optional<std::filesystem::path> state_root;
+  std::optional<std::filesystem::path> control_socket;
+  std::vector<std::string> positional;
+  bool dry_run = false;
+  for (int index = 2; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if (argument == "--dry-run") {
+      dry_run = true;
+    } else if (argument == "--config" || argument == "--repo-root" || argument == "--state-root" ||
+               argument == "--control-socket") {
+      if (index + 1 == argc) {
+        std::cerr << "ckgit-admin: " << argument << " requires a value\n";
+        return kUsage;
+      }
+      const std::string value = argv[++index];
+      if (argument == "--config") config = value;
+      else if (argument == "--repo-root") repo_root = value;
+      else if (argument == "--state-root") state_root = value;
+      else control_socket = value;
+    } else if (!argument.empty() && argument.front() != '-') {
+      positional.push_back(argument);
+    } else {
+      std::cerr << "ckgit-admin: unknown default-branch option: " << argument << "\n";
+      return kUsage;
+    }
+  }
+  if (positional.empty() || positional.size() > 2) {
+    std::cerr << "ckgit-admin: usage: ckgit-admin default-branch NAME [BRANCH] (--config FILE | --repo-root ROOT)\n";
+    return kUsage;
+  }
+  if (config.has_value() && (!repo_root.empty() || state_root.has_value())) {
+    std::cerr << "ckgit-admin: --config cannot be combined with --repo-root or --state-root\n";
+    return kUsage;
+  }
+  if (config.has_value()) {
+    const auto server = ckgit::loadServerConfig(*config);
+    repo_root = server.repo_root;
+    state_root = server.state_root;
+    if (!control_socket.has_value() && !server.control_socket.empty()) control_socket = server.control_socket;
+  }
+  if (repo_root.empty()) {
+    std::cerr << "ckgit-admin: default-branch requires --config or --repo-root\n";
+    return kUsage;
+  }
+  const std::string& name = positional.front();
+  try {
+    if (positional.size() == 1) {
+      if (dry_run) {
+        std::cerr << "ckgit-admin: --dry-run needs BRANCH; without it default-branch only reads\n";
+        return kUsage;
+      }
+      const auto status = ckgit::readDefaultBranch(repo_root, name);
+      if (!status.branch.has_value()) {
+        std::cout << name << ": HEAD does not name a branch\n";
+        return 1;
+      }
+      std::cout << *status.branch << (status.exists ? "" : " (no commits yet)") << "\n";
+      return 0;
+    }
+    const std::string& branch = positional[1];
+    const auto change = ckgit::setDefaultBranch(repo_root, name, branch, dry_run);
+    if (!change.changed) {
+      std::cout << branch << " is already the default branch of " << name << "; nothing changed.\n";
+      return 0;
+    }
+    const std::string previous = change.previous.value_or("(none)");
+    if (dry_run) {
+      std::cout << "Would change the default branch of " << name << " from " << previous << " to " << branch << "\n";
+      return 0;
+    }
+    if (state_root.has_value()) {
+      try {
+        static_cast<void>(ckgit::appendHostedStateEvent(repo_root, *state_root, "default-branch-changed", name, "admin"));
+      } catch (const std::exception&) {
+        std::cerr << "ckgit-admin: warning: could not record the change in the event log\n";
+      }
+    }
+    if (control_socket.has_value()) {
+      try {
+        ckgit::forwardControlRpc(*control_socket, "admin", "refresh", {name}, nullptr, std::chrono::seconds(2));
+      } catch (const std::exception&) {
+        // The periodic index sweep also notices the changed HEAD.
+      }
+    }
+    std::cout << "Changed the default branch of " << name << " from " << previous << " to " << branch << "\n";
+    return 0;
+  } catch (const ckgit::DefaultBranchError& error) {
+    std::cerr << "ckgit-admin: " << error.what() << "\n";
+    return 1;
+  }
 }
 
 int removeProject(int argc, char* argv[]) {
@@ -575,6 +679,9 @@ int main(int argc, char* argv[]) {
     }
     if (argc >= 2 && std::string(argv[1]) == "authorized-key") {
       return authorizedKey(argc, argv);
+    }
+    if (argc >= 2 && std::string(argv[1]) == "default-branch") {
+      return defaultBranch(argc, argv);
     }
     if (argc >= 2 && std::string(argv[1]) == "remove-project") {
       return removeProject(argc, argv);

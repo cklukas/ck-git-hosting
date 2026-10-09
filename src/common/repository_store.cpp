@@ -154,6 +154,88 @@ std::filesystem::path createBareRepository(const std::filesystem::path& root,
   return repository;
 }
 
+namespace {
+
+// The hosted repository for a default-branch request, or DefaultBranchError
+// when it is not an existing non-symlink directory.
+std::filesystem::path requireHostedRepository(const std::filesystem::path& repository,
+                                              std::string_view project_name) {
+  struct stat status {};
+  if (lstat(repository.c_str(), &status) != 0) {
+    if (errno == ENOENT) {
+      throw DefaultBranchError("noproject", "no hosted project named " + std::string(project_name));
+    }
+    throw std::runtime_error("could not inspect repository " + repository.string());
+  }
+  if (!S_ISDIR(status.st_mode)) {
+    throw DefaultBranchError("noproject", "no hosted project named " + std::string(project_name));
+  }
+  return repository;
+}
+
+// The branch the bare HEAD names, read through Git so a packed or unusual
+// HEAD is interpreted exactly as Git does. std::nullopt for a detached HEAD or
+// one naming something other than a valid branch.
+std::optional<std::string> headBranch(const std::filesystem::path& repository) {
+  const ProcessResult head = runProcess(
+      {"git", "--git-dir", repository.string(), "symbolic-ref", "--quiet", "HEAD"}, std::chrono::seconds(30), 4096);
+  if (head.exit_code != 0 || head.timed_out || head.output_truncated) return std::nullopt;
+  std::string reference = head.output;
+  while (!reference.empty() && (reference.back() == '\n' || reference.back() == '\r')) reference.pop_back();
+  constexpr std::string_view kPrefix{"refs/heads/"};
+  if (reference.rfind(kPrefix, 0) != 0) return std::nullopt;
+  std::string branch = reference.substr(kPrefix.size());
+  if (!isValidBranchName(branch)) return std::nullopt;
+  return branch;
+}
+
+// True when refs/heads/BRANCH exists and names a commit.
+bool branchHasCommit(const std::filesystem::path& repository, std::string_view branch) {
+  const ProcessResult result = runProcess(
+      {"git", "--git-dir", repository.string(), "rev-parse", "--quiet", "--verify", "--end-of-options",
+       "refs/heads/" + std::string(branch) + "^{commit}"},
+      std::chrono::seconds(30), 4096);
+  if (result.timed_out || result.output_truncated) {
+    throw std::runtime_error("Git could not inspect branch " + std::string(branch));
+  }
+  return result.exit_code == 0;
+}
+
+}  // namespace
+
+DefaultBranchStatus readDefaultBranch(const std::filesystem::path& repo_root, std::string_view project_name) {
+  const auto repository = requireHostedRepository(bareRepositoryPath(repo_root, project_name), project_name);
+  DefaultBranchStatus status;
+  status.branch = headBranch(repository);
+  status.exists = status.branch.has_value() && branchHasCommit(repository, *status.branch);
+  return status;
+}
+
+DefaultBranchChange setDefaultBranch(const std::filesystem::path& repo_root, std::string_view project_name,
+                                     std::string_view branch, bool dry_run) {
+  const auto repository = bareRepositoryPath(repo_root, project_name);
+  if (!isValidBranchName(branch)) {
+    throw std::invalid_argument("invalid branch name: " + std::string(branch));
+  }
+  const RepositoryMutationLock lifecycle(repository.parent_path());
+  requireHostedRepository(repository, project_name);
+  DefaultBranchChange change;
+  change.previous = headBranch(repository);
+  // Hosted repositories deny ref deletion, so a branch verified here still
+  // exists when HEAD is pointed at it a moment later.
+  if (!branchHasCommit(repository, branch)) {
+    throw DefaultBranchError("nobranch", "branch " + std::string(branch) + " does not exist in " +
+                                             std::string(project_name) + "; push it first");
+  }
+  if (change.previous.has_value() && *change.previous == branch) return change;
+  change.changed = true;
+  if (dry_run) return change;
+  runGitOrThrow({"git", "--git-dir", repository.string(), "symbolic-ref", "-m", "ckgit: set default branch", "HEAD",
+                 "refs/heads/" + std::string(branch)},
+                "update the default branch");
+  return change;
+}
+
 std::filesystem::path removeProject(const std::filesystem::path& repo_root,
                                     const std::filesystem::path& state_root,
                                     std::string_view project_name, bool dry_run) {

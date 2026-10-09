@@ -211,6 +211,8 @@ reports whatever the steps themselves produced. If the site directory
 Pages size or file-count cap), the run's outcome is overwritten to `error`
 even though every step passed — a build that silently kept the previous
 live site is worse than a failed run, so that failure is never hidden.
+The default branch is read from the hosted repository's `HEAD` when the run
+starts; change it with `ckgit default-branch BRANCH`.
 
 ## Bounds table
 

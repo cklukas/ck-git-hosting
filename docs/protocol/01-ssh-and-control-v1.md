@@ -28,6 +28,8 @@ ckgit-rpc 1 checkouts
 ckgit-rpc 1 refs project
 ckgit-rpc 1 refresh project
 ckgit-rpc 1 create project branch
+ckgit-rpc 1 default-branch project
+ckgit-rpc 1 set-default-branch project branch
 ckgit-rpc 1 register project path-hex
 ckgit-rpc 1 replace-checkout project path-hex
 ckgit-rpc 1 forget-checkout project
@@ -107,14 +109,16 @@ The request line is at most 768 bytes including its final newline and holds
 at most six space-separated tokens after the prefix: the client ID, the
 operation, and at most four arguments.
 For version 1, `operation` is `ping`, `version`, `versions`, `list-projects`,
-`checkouts`, `refs`, `refresh`, `create`, `register`, `replace-checkout`,
-`forget-checkout`, `releases`, `ci-overview`, `ci-status`, `ci-run`,
-`ci-log`, or `ci-cancel`, each with exactly the arguments the SSH forms above
+`checkouts`, `refs`, `refresh`, `create`, `default-branch`,
+`set-default-branch`, `register`, `replace-checkout`, `forget-checkout`,
+`releases`, `ci-overview`, `ci-status`, `ci-run`, `ci-log`, or `ci-cancel`,
+each with exactly the arguments the SSH forms above
 show. `ping`, `version`, `versions`, `list-projects`, `checkouts`, and
 `ci-overview` take none.
-`refs`, `refresh`, `forget-checkout`, `releases`, and `ci-status` add
-one validated project-name argument and reject any further arguments.
-`create` adds a validated project name and branch.
+`refs`, `refresh`, `forget-checkout`, `releases`, `ci-status`, and
+`default-branch` add one validated project-name argument and reject any
+further arguments. `create` and `set-default-branch` add a validated project
+name and branch.
 `register` and `replace-checkout` add a project and a lowercase hex encoding of
 the client-selected display path: decoded data must be printable, valid UTF-8,
 and at most 256 bytes. The daemon checks the Unix peer credentials as an
@@ -164,6 +168,57 @@ from `refs`, so it is available to any client that can reach the control
 socket. It never touches the hosted repository or another client's records.
 Negative tests cover extra arguments, an unsafe or unknown project name, and
 a project with no releases (`ok 0`, no further lines).
+
+### Default branch operations
+
+`default-branch` and `set-default-branch` serve `ckgit default-branch`. A
+project's default branch is the branch its bare repository's `HEAD` names.
+
+```text
+default-branch:
+ok <branch> <present|unborn>
+
+set-default-branch:
+ok changed <previous-branch|->
+ok unchanged
+```
+
+- `default-branch project` reports the branch `HEAD` names and whether it has
+  a commit yet: `unborn` for a project nothing was pushed to. A `HEAD` that
+  names no valid branch is answered with
+  `error nohead the project's HEAD does not name a branch`.
+- `set-default-branch project branch` points `HEAD` at `refs/heads/<branch>`
+  with `git symbolic-ref`, which replaces it atomically through Git's lock
+  file. The daemon holds the repository lifecycle lock shared with creation
+  and removal, and refuses a branch that does not exist or has no commit with
+  `error nobranch no such branch on the server`: `HEAD` never names a missing
+  branch. Hosted repositories deny ref deletion, so the verified branch cannot
+  disappear before `HEAD` is moved. Selecting the current default branch is
+  answered `ok unchanged` and changes nothing. A change answers
+  `ok changed` with the branch `HEAD` named before (`-` when it named none),
+  appends a `default-branch-changed` event naming the requesting client ID,
+  and queues an index refresh so the dashboard shows the new default branch.
+
+Both operations answer an unknown project with
+`error noproject no such project`. The branch argument has the same grammar
+as `create`'s; because every `ckgit-rpc` token is limited to
+`[A-Za-z0-9._-]`, a branch name containing `/` cannot be selected over SSH
+and is set on the server with `ckgit-admin default-branch` instead.
+
+Authorization: any authorized device may read or change any project's
+default branch, under the same same-user peer check as every operation.
+`default-branch` returns only what `refs` and a clone already reveal. The
+change is acceptable for every key for the same reason as `ci-cancel`: it is
+weaker than push, which every key already holds and which can rewrite what the
+default branch contains; it destroys no ref or commit, is attributed in the
+event log, and is undone by the same command.
+
+Negative tests cover, at the SSH dispatcher, the daemon's request parser, and
+the forwarding client: a missing or extra argument, an unsafe branch or
+project, and a branch with a leading `-`. The daemon's replies are covered for
+an unknown project, a missing branch, an unborn default branch, and an
+unchanged selection, and end to end by `ckgit default-branch` and
+`ckgit-admin default-branch`.
 
 ### CI operations
 

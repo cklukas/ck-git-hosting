@@ -2643,6 +2643,7 @@ int releaseDownloadCommand(const std::vector<std::string>& arguments) {
 #include "setup_doctor.inc"
 #include "incoming.inc"
 #include "ci.inc"
+#include "default_branch.inc"
 
 // `ckgit version`: the local build plus the versions running on the server, so
 // the operator sees all four suite versions at once and can spot a service left
@@ -2769,6 +2770,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "ci") {
       return ciCommand(arguments);
+    }
+    if (command == "default-branch") {
+      return defaultBranchCommand(arguments);
     }
     if (command == "version") {
       return versionCommand(arguments);

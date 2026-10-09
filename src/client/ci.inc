@@ -82,34 +82,40 @@ CiOptions parseCiOptions(const std::vector<std::string>& arguments) {
 }
 
 // A failure the server reported as `error <code> <message>`.
-class CiReplyError : public std::runtime_error {
+class ControlReplyError : public std::runtime_error {
  public:
-  CiReplyError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
+  ControlReplyError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
   const std::string& code() const { return code_; }
 
  private:
   std::string code_;
 };
 
-// Runs one CI control operation and returns its `ok` reply. A daemon error is
-// raised as CiReplyError; a refusal by an older server's SSH dispatcher, which
-// does not know the operation, says so instead of an opaque denial.
-std::string ciControlReply(const ckgit::ClientConfig& config, std::string_view operation,
-                           const std::vector<std::string>& arguments) {
+// Runs one control operation and returns its `ok` reply. A daemon error is
+// raised as ControlReplyError; a refusal by an older server's SSH dispatcher,
+// which does not know the operation, says so instead of an opaque denial.
+// `action` completes "could not ..." for any other failure.
+std::string checkedControlReply(const ckgit::ClientConfig& config, std::string_view operation,
+                                const std::vector<std::string>& arguments, std::string_view action) {
   const auto result = controlRpc(config, operation, arguments);
   if (result.exit_code == 0 && !result.timed_out && !result.output_truncated) return result.output;
   if (!result.timed_out && !result.output_truncated && result.output.rfind("error ", 0) == 0) {
     const std::string line = result.output.substr(0, result.output.find('\n'));
     const std::size_t space = line.find(' ', 6);
-    throw CiReplyError(line.substr(6, space == std::string::npos ? std::string::npos : space - 6),
+    throw ControlReplyError(line.substr(6, space == std::string::npos ? std::string::npos : space - 6),
                        space == std::string::npos ? line : line.substr(space + 1));
   }
   if (result.output.find("denied: command is not an allowed") != std::string::npos) {
     throw std::runtime_error("the server at " + config.server + " does not offer " + std::string(operation) +
                              "; upgrade ck-git-hosting on the server to this client's version");
   }
-  throw std::runtime_error("could not query CI on " + config.server + " (" +
+  throw std::runtime_error("could not " + std::string(action) + " on " + config.server + " (" +
                            describeProcessFailure(result, kControlTimeout) + ")");
+}
+
+std::string ciControlReply(const ckgit::ClientConfig& config, std::string_view operation,
+                           const std::vector<std::string>& arguments) {
+  return checkedControlReply(config, operation, arguments, "query CI");
 }
 
 // Server-supplied text (refs, details, step names, notes) reaches a terminal:
@@ -193,7 +199,7 @@ std::optional<std::string> resolveCiProject(const ckgit::ClientConfig& config, c
 }
 
 // Explains a CI reply error in terms of the request and returns exit 1.
-int reportCiReplyError(const CiReplyError& error, const std::string& project, const std::string& run) {
+int reportControlReplyError(const ControlReplyError& error, const std::string& project, const std::string& run) {
   if (error.code() == "noproject") {
     std::cerr << "ckgit: " << project << " is not a hosted project\n";
   } else if (error.code() == "norun") {
@@ -269,8 +275,8 @@ int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options)
   try {
     report = options.all ? ckgit::parseCiStatusControlResponse(ciControlReply(config, "ci-overview", {}))
                          : fetchCiStatus(config, project);
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, project, {});
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, project, {});
   }
   const std::uint64_t now = report.server_epoch_seconds;
   if (options.json) {
@@ -310,8 +316,8 @@ int ciListCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   ckgit::CiStatusReport report;
   try {
     report = fetchCiStatus(config, *project);
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, *project, {});
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, *project, {});
   }
   const std::uint64_t now = report.server_epoch_seconds;
   auto runs = report.projects.front().runs;
@@ -373,8 +379,8 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   ckgit::CiRunReport report;
   try {
     report = fetchCiRun(config, *project, run_id);
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, *project, run_id);
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, *project, run_id);
   }
   const auto& run = report.run;
   const std::uint64_t now = report.server_epoch_seconds;
@@ -440,8 +446,8 @@ int ciArtifactsCommand(const ckgit::ClientConfig& config, const CiOptions& optio
   ckgit::CiRunReport report;
   try {
     report = fetchCiRun(config, *project, run_id);
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, *project, run_id);
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, *project, run_id);
   }
   if (options.json) {
     std::cout << "{\"schema_version\":1,\"project\":\"" << *project << "\",\"run_id\":\"" << run_id
@@ -469,8 +475,8 @@ int ciDownloadCommand(const ckgit::ClientConfig& config, const CiOptions& option
   ckgit::CiRunReport report;
   try {
     report = fetchCiRun(config, *project, run_id);
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, *project, run_id);
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, *project, run_id);
   }
   const auto& artifacts = report.run.artifacts;
   const auto artifact = std::find_if(artifacts.begin(), artifacts.end(),
@@ -504,7 +510,7 @@ int ciDownloadCommand(const ckgit::ClientConfig& config, const CiOptions& option
   return 0;
 }
 
-// Fetches one chunk of a step's log. Errors are CiReplyError as for any query.
+// Fetches one chunk of a step's log. Errors are ControlReplyError as for any query.
 ckgit::CiLogChunk fetchCiLogChunk(const ckgit::ClientConfig& config, const std::string& project,
                                   const std::string& run_id, std::size_t step, std::uint64_t offset) {
   return ckgit::parseCiLogControlResponse(
@@ -565,12 +571,12 @@ int ciLogCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
       }
     }
     return 0;
-  } catch (const CiReplyError& error) {
+  } catch (const ControlReplyError& error) {
     if (error.code() == "nolog") {
       std::cerr << "ckgit: run " << run_id << " has no log for that step\n";
       return 1;
     }
-    return reportCiReplyError(error, *project, run_id);
+    return reportControlReplyError(error, *project, run_id);
   }
 }
 
@@ -623,15 +629,15 @@ int ciWatchCommand(const ckgit::ClientConfig& config, const CiOptions& options) 
       try {
         report = fetchCiRun(config, *project, run_id);
         failed_polls = 0;
-      } catch (const CiReplyError&) {
+      } catch (const ControlReplyError&) {
         throw;
       } catch (const std::exception& error) {
         if (++failed_polls >= kCiWatchPollAttempts) throw;
         std::cerr << "ckgit: warning: " << error.what() << "; retrying\n";
       }
     }
-  } catch (const CiReplyError& error) {
-    return reportCiReplyError(error, *project, run_id);
+  } catch (const ControlReplyError& error) {
+    return reportControlReplyError(error, *project, run_id);
   }
 }
 
@@ -666,12 +672,12 @@ int ciCancelCommand(const ckgit::ClientConfig& config, const CiOptions& options)
     std::cout << "Requested cancellation of run " << run_id << ". Follow it with ckgit ci watch " << run_id
               << (options.project.has_value() ? " --project " + *project : "") << ".\n";
     return 0;
-  } catch (const CiReplyError& error) {
+  } catch (const ControlReplyError& error) {
     if (error.code() == "finished") {
       std::cout << "Run " << run_id << " finished before the cancellation arrived; nothing was cancelled.\n";
       return 0;
     }
-    return reportCiReplyError(error, *project, run_id);
+    return reportControlReplyError(error, *project, run_id);
   }
 }
 

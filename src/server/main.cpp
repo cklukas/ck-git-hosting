@@ -505,6 +505,40 @@ void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const 
   }
 }
 
+// `default-branch` reports a project's default branch as
+// `ok <branch> <present|unborn>`; `set-default-branch` points HEAD at an
+// existing branch and answers `ok changed <previous|->` or `ok unchanged`.
+// Every paired device may change it: it is weaker than push, which can already
+// rewrite what the default branch contains, and the change is attributed in the
+// event log and reversible with the same command.
+void answerDefaultBranchRequest(int client, const ckgit::ControlRequest& request,
+                                const std::filesystem::path& repository_root,
+                                const std::optional<std::filesystem::path>& state_root, ckgit::ProjectIndex& index) {
+  const std::string& project = request.arguments[0];
+  try {
+    if (request.operation == "default-branch") {
+      const auto status = ckgit::readDefaultBranch(repository_root, project);
+      if (!status.branch.has_value()) {
+        sendError(client, "nohead", "the project's HEAD does not name a branch");
+        return;
+      }
+      sendAll(client, "ok " + *status.branch + (status.exists ? " present\n" : " unborn\n"));
+      return;
+    }
+    const auto change = ckgit::setDefaultBranch(repository_root, project, request.arguments[1]);
+    if (!change.changed) {
+      sendAll(client, "ok unchanged\n");
+      return;
+    }
+    recordStateEvent(repository_root, state_root, "default-branch-changed", project, request.client_id);
+    index.refresh(project);
+    index.refreshMetadata(project);
+    sendAll(client, "ok changed " + change.previous.value_or("-") + "\n");
+  } catch (const ckgit::DefaultBranchError& error) {
+    sendError(client, error.code(), error.code() == "noproject" ? "no such project" : "no such branch on the server");
+  }
+}
+
 // Answers one request the shared operation table accepted. Every operation has
 // its own branch; one this daemon does not implement is refused explicitly
 // rather than falling through to another operation.
@@ -537,6 +571,8 @@ void answerControlRequest(int client, const ckgit::ControlRequest& request,
     index.refresh(arguments[0]);
     index.refreshMetadata(arguments[0]);
     sendAll(client, "ok created\n");
+  } else if (operation == "default-branch" || operation == "set-default-branch") {
+    answerDefaultBranchRequest(client, request, repository_root, state_root, index);
   } else if (operation == "register" || operation == "replace-checkout") {
     const auto& state = requireState();
     if (!isHostedProject(repository_root, arguments[0])) throw std::runtime_error("cannot register a missing project");

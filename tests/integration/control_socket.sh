@@ -748,6 +748,106 @@ for request in "ci-overview alpha" "ci-status" "ci-status alpha extra" "ci-run a
   fi
 done
 
+# default-branch / set-default-branch behind `ckgit default-branch`, and the
+# shared core behind `ckgit-admin default-branch`: HEAD only ever moves to a
+# branch that exists, and the change reaches the index and the event log.
+[ "$(rpc 'ckgit-rpc 1 default-branch alpha')" = 'ok main present' ] ||
+  { echo "default-branch did not report alpha's default branch" >&2; exit 1; }
+[ "$(rpc 'ckgit-rpc 1 default-branch beta')" = 'ok main unborn' ] ||
+  { echo "default-branch did not report an empty project's unborn branch" >&2; exit 1; }
+for request in "default-branch nosuch" "set-default-branch nosuch main"; do
+  if reply=$(rpc "ckgit-rpc 1 $request"); then
+    echo "an unknown project was accepted: $request" >&2; exit 1
+  fi
+  [ "$reply" = 'error noproject no such project' ] || { echo "unexpected reply to $request: $reply" >&2; exit 1; }
+done
+if reply=$(rpc 'ckgit-rpc 1 set-default-branch alpha nosuch'); then
+  echo "a missing branch became the default branch" >&2; exit 1
+fi
+[ "$reply" = 'error nobranch no such branch on the server' ] ||
+  { echo "unexpected reply to a missing branch: $reply" >&2; exit 1; }
+for request in "set-default-branch alpha" "set-default-branch alpha ../main" "set-default-branch alpha main extra" \
+               "default-branch" "default-branch alpha main"; do
+  if SSH_ORIGINAL_COMMAND="ckgit-rpc 1 $request" "$CK_GIT_SHELL" --client-id mac-studio --repo-root "$test_root" \
+    --control-socket "$test_root/control.sock" --dry-run >/dev/null 2>&1; then
+    echo "dispatcher accepted a malformed default-branch request: $request" >&2; exit 1
+  fi
+done
+git -C "$test_root/work" push -q local HEAD:refs/heads/develop
+client_default() {
+  PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" default-branch --config "$test_root/client.ini" "$@"
+}
+[ "$(client_default --project alpha)" = 'main' ] || { echo "ckgit default-branch did not show main" >&2; exit 1; }
+[ "$(cd "$test_root/work" && client_default)" = 'main' ] ||
+  { echo "ckgit default-branch did not select the paired project" >&2; exit 1; }
+[ "$(client_default --project beta)" = 'main (no commits yet)' ] ||
+  { echo "ckgit default-branch did not explain an unborn default branch" >&2; exit 1; }
+preview=$(client_default --project alpha develop --dry-run)
+case "$preview" in
+  *'current: main'*'new:     develop ('*'Preview only; nothing changed.'*) ;;
+  *) echo "default-branch dry run did not preview the change: $preview" >&2; exit 1 ;;
+esac
+unconfirmed=$(client_default --project alpha develop </dev/null)
+case "$unconfirmed" in
+  *'Preview only. Run in a terminal to confirm, or pass --yes.'*) ;;
+  *) echo "default-branch changed without confirmation: $unconfirmed" >&2; exit 1 ;;
+esac
+[ "$(git --git-dir "$test_root/alpha.git" symbolic-ref HEAD)" = 'refs/heads/main' ] ||
+  { echo "a preview changed the default branch" >&2; exit 1; }
+if missing=$(client_default --project alpha nosuch 2>&1); then
+  echo "ckgit default-branch accepted a missing branch" >&2; exit 1
+fi
+case "$missing" in
+  *'has no branch nosuch; push it first'*) ;;
+  *) echo "missing branch was not explained: $missing" >&2; exit 1 ;;
+esac
+if client_default --project alpha 'bad..branch' >/dev/null 2>&1; then
+  echo "ckgit default-branch accepted an invalid branch name" >&2; exit 1
+fi
+if unknown=$(client_default --project nosuch 2>&1); then
+  echo "ckgit default-branch accepted an unknown project" >&2; exit 1
+fi
+case "$unknown" in
+  *'nosuch is not a hosted project'*) ;;
+  *) echo "unknown project was not explained: $unknown" >&2; exit 1 ;;
+esac
+changed=$(cd "$test_root/work" && client_default develop --yes)
+case "$changed" in
+  *'Changed the default branch of alpha to develop.') ;;
+  *) echo "ckgit default-branch did not report the change: $changed" >&2; exit 1 ;;
+esac
+[ "$(git --git-dir "$test_root/alpha.git" symbolic-ref HEAD)" = 'refs/heads/develop' ] ||
+  { echo "ckgit default-branch did not move HEAD" >&2; exit 1; }
+[ "$(client_default --project alpha develop --yes)" = 'develop is already the default branch of alpha; nothing to change.' ] ||
+  { echo "repeating the change was not a no-op" >&2; exit 1; }
+[ "$(rpc 'ckgit-rpc 1 set-default-branch alpha develop')" = 'ok unchanged' ] ||
+  { echo "set-default-branch did not report an unchanged default branch" >&2; exit 1; }
+index_attempt=0
+while :; do
+  curl --max-time 3 --silent --show-error -o "$test_root/default-branch.body" "http://127.0.0.1:$http_port/project/alpha"
+  if grep -q '<dt>Default branch</dt><dd class="ok">develop</dd>' "$test_root/default-branch.body"; then break; fi
+  index_attempt=$((index_attempt + 1))
+  [ "$index_attempt" -lt 30 ] || { echo "the index did not pick up the new default branch" >&2; exit 1; }
+  sleep 0.1
+done
+grep -q 'Default branch changed · <strong>mac-studio</strong>' "$test_root/default-branch.body" ||
+  { echo "the default branch change was not recorded as an event" >&2; exit 1; }
+[ "$("$CKGIT_ADMIN" default-branch alpha --repo-root "$test_root")" = 'develop' ] ||
+  { echo "ckgit-admin default-branch did not show the default branch" >&2; exit 1; }
+if "$CKGIT_ADMIN" default-branch alpha nosuch --repo-root "$test_root" >/dev/null 2>&1; then
+  echo "ckgit-admin default-branch accepted a missing branch" >&2; exit 1
+fi
+[ "$("$CKGIT_ADMIN" default-branch alpha main --repo-root "$test_root" --dry-run)" = \
+  'Would change the default branch of alpha from develop to main' ] ||
+  { echo "ckgit-admin default-branch dry run did not preview the change" >&2; exit 1; }
+[ "$(git --git-dir "$test_root/alpha.git" symbolic-ref HEAD)" = 'refs/heads/develop' ] ||
+  { echo "an administrator dry run changed the default branch" >&2; exit 1; }
+[ "$("$CKGIT_ADMIN" default-branch alpha main --repo-root "$test_root" --state-root "$test_root/state" \
+  --control-socket "$test_root/control.sock")" = 'Changed the default branch of alpha from develop to main' ] ||
+  { echo "ckgit-admin default-branch did not change the default branch" >&2; exit 1; }
+[ "$(rpc 'ckgit-rpc 1 default-branch alpha')" = 'ok main present' ] ||
+  { echo "the administrator change was not visible over the control channel" >&2; exit 1; }
+
 if SSH_ORIGINAL_COMMAND="git-upload-pack '../alpha.git'" "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock" \
   --dry-run >/dev/null 2>&1; then

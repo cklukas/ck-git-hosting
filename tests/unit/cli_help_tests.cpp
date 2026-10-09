@@ -43,7 +43,7 @@ void testCliHelp() {
       {"publish"}, {"sync"}, {"status"}, {"clone"}, {"scan"}, {"web"},
       {"release"}, {"release", "list"}, {"release", "download"},
       {"checkout"}, {"checkout", "list"}, {"checkout", "set-canonical"},
-      {"checkout", "migrate"}, {"register"}, {"create"}, {"config"},
+      {"checkout", "migrate"}, {"register"}, {"create"}, {"default-branch"}, {"config"},
       {"config", "show"}, {"completion"}, {"version"},
       {"ci"}, {"ci", "status"}, {"ci", "list"}, {"ci", "show"}, {"ci", "log"}, {"ci", "watch"},
       {"ci", "artifacts"}, {"ci", "download"}, {"ci", "lint"}, {"ci", "cancel"}};
@@ -160,6 +160,14 @@ void testCliHelp() {
   expectError({"ci", "lint", "--rev=-x"}, "--rev must be a Git revision", " ci lint");
   expectError({"ci", "cancel", run, "--force"}, "unknown option '--force'", " ci cancel");
   expectError({"ci", "list", "extra"}, "unexpected argument 'extra'", " ci list");
+  expectError({"default-branch", "bad..branch"}, "BRANCH must be a valid local Git branch name", " default-branch");
+  expectError({"default-branch", "main", "extra"}, "unexpected argument 'extra'", " default-branch");
+  expectError({"default-branch", "--force"}, "unknown option '--force'", " default-branch");
+  const auto default_branch = ckgit::prepareClientInvocation(
+      {"default-branch", "develop", "--project", "demo", "--yes", "--dry-run"});
+  require(!default_branch.exit_code && default_branch.command == "default-branch" &&
+              default_branch.arguments == std::vector<std::string>{"--project", "demo", "--yes", "--dry-run", "develop"},
+          "default-branch normalizes its options and BRANCH");
   const auto ci_log = ckgit::prepareClientInvocation(
       {"ci", "--project", "demo", "log", "--follow", run, "2", "--config", "/path/to/client.ini"});
   require(!ci_log.exit_code && ci_log.command == "ci" &&

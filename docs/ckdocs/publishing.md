@@ -14,7 +14,8 @@ Pages using the same source and configuration.
 
 Both publish only a successful build of the repository's own default
 branch — a tag build never touches either (see [Pages](../operations/pages-hosting.md#pages)
-for the LAN side's exact rule). This repository's own `.ckgit/ci.yml` and
+for the LAN side's exact rule; `ckgit default-branch BRANCH` changes which
+branch that is on the LAN side). This repository's own `.ckgit/ci.yml` and
 `.github/workflows/pages.yml` are the worked example: the docs build runs
 [`scripts/docs-web-screenshots.sh`](../../scripts/docs-web-screenshots.sh), then
 `ckdocs build --strict`. A failed screenshot capture or broken documentation

@@ -55,7 +55,10 @@ jobs:
   tags trigger the workflow (a tag pattern is an exact name or a trailing `*`,
   such as `v*`). Omit `on:` entirely to build the default branch and cut a
   release on any tag. A non-triggering ref is recorded `skipped`, as is a commit
-  with no `.ckgit/ci.yml`.
+  with no `.ckgit/ci.yml`. The default branch is whatever the hosted
+  repository's `HEAD` names; `ckgit default-branch` shows it and
+  `ckgit default-branch BRANCH` changes it. The change takes effect for the
+  next push; it does not start a build by itself.
 - `env:` is fixed `key: value` pairs; there is no `$VAR` expansion. A job's
   `env:` is merged over the top-level `env:`.
 - A step's `run:` written as a **list** is an exact command with no shell. A

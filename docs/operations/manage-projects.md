@@ -10,6 +10,33 @@ OpenSSH forced command: it consumes `SSH_ORIGINAL_COMMAND`, rejects shell
 syntax and traversal, and can invoke only `git-upload-pack`,
 `git-receive-pack`, or the documented local control RPC.
 
+## Change the default branch
+
+A project's default branch is the branch its bare repository's `HEAD` names.
+New clones check it out, CI workflows without `on:` build it, and ck-git Pages
+publishes only from its builds. It is chosen at creation and changed later
+from any paired device:
+
+```sh
+ckgit default-branch                     # show it for this repository's project
+ckgit default-branch develop --dry-run   # preview the change
+ckgit default-branch develop             # confirm on a terminal, or add --yes
+```
+
+`--project NAME` selects a project other than the one paired with the current
+repository. The branch must already exist on the server; push it first. On the
+server, run the same change as the service account that owns the repositories:
+
+```sh
+sudo -u ckgit ckgit-admin default-branch NAME BRANCH --config /etc/ck-git-hosting/server.ini
+```
+
+Without `BRANCH`, `ckgit-admin default-branch NAME` prints the current one.
+Both commands refuse a missing branch, record a `default-branch-changed` event,
+and refresh the dashboard (`ckgit-admin` through the configured control
+socket). Branches, commits, and checkouts are not changed, and the change starts
+no CI run: the next push to the new default branch builds and publishes it.
+
 ## Checkout registration and metadata
 
 `ckgit register` records the current paired checkout in the private local
@@ -28,7 +55,7 @@ before pushing refs; if registration fails, it skips the push. `--dry-run` does
 not alter registration metadata or Git refs.
 
 The same private state root keeps event logs for server project creation,
-checkout registrations, and pushes. The active log rotates before exceeding
+checkout registrations, pushes, CI cancellations, and default-branch changes. The active log rotates before exceeding
 64 KiB; repeated rotations in one month receive distinct archive names.
 Project pages read the newest two logs and show those
 events without writing a path or remote URL into the event log. Set

@@ -20,6 +20,12 @@ versioned copy, and the newest `pages_keep_versions` are kept, so a bad deploy
 can be rolled back by re-running an earlier commit's build. Deleting the project
 removes its sites.
 
+> [!NOTE]
+> To publish from another branch, make it the default branch with
+> `ckgit default-branch BRANCH` (or `ckgit-admin default-branch NAME BRANCH` on
+> the server). The live site stays as it is until the next successful build of
+> the new default branch, so push to that branch afterwards.
+
 If the steps pass but publishing the site fails — for example the site exceeds
 `kMaximumPagesSiteBytes` — the **run is marked failed** (with the reason in its
 detail) rather than reporting success while the live site silently stays on the
