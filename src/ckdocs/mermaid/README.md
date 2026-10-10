@@ -54,3 +54,9 @@ atomic output, and asset collisions.
 When copying a later fix, use the origin hashes to review the relevant source
 diff, preserve the local adaptations, update provenance, and run both suites.
 Do not automatically replace the copied tree with a newer upstream tree.
+
+The label-layout backport recorded in `ORIGIN.json` keeps the original import
+revision and hashes intact. Its `backports` entry records the source commit and
+both source and embedded hashes for the changed files. Quadrant point labels
+and headings share bounded placement with priority for visible markers; XY
+axes reserve measured label overhang. No font embedding dependency was added.

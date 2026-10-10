@@ -3,6 +3,13 @@
 [All diagram examples](../mermaid.md#diagram-examples)
 
 
+Point labels automatically try eight nearby positions to reduce collisions with
+other labels, markers, quadrant headings, and dividing lines. Coordinates, text,
+and font sizes stay unchanged. The search is deterministic and bounded; dense
+clusters and very long labels can still overlap. A larger chart or shorter
+labels can help when there is insufficient room.
+
+
 **Source**
 
 ````markdown
@@ -34,3 +41,7 @@ quadrantChart
     Campaign A: [0.3, 0.6]
     Campaign B: [0.7, 0.8]
 ```
+
+Quadrant headings can move between inset edge positions within their own
+quadrant when they cover points. Marker visibility takes priority over separating
+text labels; no points are moved to make room.

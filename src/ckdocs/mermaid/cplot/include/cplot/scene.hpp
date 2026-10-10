@@ -456,6 +456,10 @@ class TextMeasurer;
 SceneItem text_halo(const TextItem& text, const TextMeasurer& measurer, double padding,
                     ShapeStyle style);
 
+/// Axis-aligned text bounds, including alignment, baseline, and rotation.
+/// Uses the same metrics and geometry as text_halo and the renderers.
+RectF text_bounds(const TextItem& text, const TextMeasurer& measurer, double padding = 0.0);
+
 // -- the scene graph -----------------------------------------------------------
 
 /// Stable identity for a group, empty by default.

@@ -1134,6 +1134,21 @@ double top_axis_band(const Axes& axes, const ResolvedAxes& ra, const Theme& them
     return band;
 }
 
+// Shared by measurement and emission: changing an anchor or angle must also
+// change the reserved space, including the horizontal overhang of rotated text.
+TextItem x_tick_label(const std::string& text, const Font& font, Color color,
+                      Point position, bool rotate) {
+    TextItem label;
+    label.text = text;
+    label.font = font;
+    label.color = color;
+    label.pos = position;
+    label.halign = rotate ? HAlign::Right : HAlign::Center;
+    label.valign = VAlign::Top;
+    label.rotation = rotate ? -35.0 : 0.0;
+    return label;
+}
+
 /// Measure tick and axis labels and derive the panel margins. The
 /// suppress flags implement shared axes: a suppressed side keeps its
 /// tick marks but drops the label text — and the margin it would need.
@@ -1177,15 +1192,6 @@ PanelFrame compute_frame(const Axes& axes, const ResolvedAxes& ra, const RectF& 
         const double approx_band = (cell.w - 100.0) / ra.x_ticks.ticks.size();
         frame.rotate_x_labels = x_tick_w_max + 8.0 > approx_band;
     }
-    constexpr double kRotDeg = 35.0;
-    // The bottom margin below is derived from these, and the margin fixes
-    // the plot rectangle every coordinate in the panel is mapped into — so
-    // a one-ulp difference here would move the whole panel. Degrees, and
-    // cworks' trigonometry rather than the platform's.
-    double rot_sin = 0.0;
-    double rot_cos = 0.0;
-    cworks::sincos_deg(kRotDeg, rot_sin, rot_cos);
-
     const double pad = theme.padding;
     const double tick_gap = 4.0;
 
@@ -1203,8 +1209,12 @@ PanelFrame compute_frame(const Axes& axes, const ResolvedAxes& ra, const RectF& 
     } else {
         if (!x_label.empty()) bottom += tm.measure(x_label, label_font).height + 8.0;
         if (frame.rotate_x_labels) {
-            bottom += rot_sin * x_tick_w_max + rot_cos * tick_h +
-                      tick_gap + theme.tick_length;
+            double rotated_height = 0.0;
+            for (const auto& tick : ra.x_ticks.ticks)
+                rotated_height = std::max(rotated_height,
+                    text_bounds(x_tick_label(tick.label, tick_font, theme.text_color,
+                                             {0.0, 0.0}, true), tm, 2.0).h);
+            bottom += rotated_height + tick_gap + theme.tick_length;
         } else {
             bottom += (hide_x_tick_text ? 0.0 : tick_h + tick_gap) + theme.tick_length;
         }
@@ -1254,6 +1264,45 @@ PanelFrame compute_frame(const Axes& axes, const ResolvedAxes& ra, const RectF& 
             outside_legend_extent(resolved_legend, legend_entries, available_w, theme, tm);
         if (resolved_legend == LegendPosition::Top) top += extent;
         else bottom += extent;
+    }
+
+    // Fit measured tick boxes within this panel, not just the whole figure.
+    // Category ticks sit inside their bands; reversed and nonuniform numeric
+    // axes need the actual scale mapping, not a guess from the first label.
+    // Monotone passes converge for ordinary end overhangs. Cap additional
+    // margins to half the remaining width: pathological text must not consume
+    // the entire plot. Nothing is truncated or made smaller to force a fit.
+    if (!suppress_x_text && !hide_x_tick_text) {
+        const double extra_budget = std::max(0.0, cell.w - left - right) * 0.5;
+        const double initial_sum = left + right;
+        Scale scale = ra.x;
+        std::vector<RectF> boxes;
+        boxes.reserve(ra.x_ticks.ticks.size());
+        for (const auto& tick : ra.x_ticks.ticks)
+            boxes.push_back(text_bounds(x_tick_label(tick.label, tick_font,
+                theme.text_color, {0.0, 0.0}, frame.rotate_x_labels), tm, 2.0));
+        for (int pass = 0; pass < 12; ++pass) {
+            const double width = std::max(0.0, cell.w - left - right);
+            const bool reversed = axes.x_axis().reversed();
+            scale.set_pixel_range(reversed ? left + width : left,
+                                  reversed ? left : left + width);
+            double grow_left = 0.0, grow_right = 0.0;
+            for (std::size_t i = 0; i < boxes.size(); ++i) {
+                const double x = scale.map(ra.x_ticks.ticks[i].value);
+                if (!std::isfinite(x)) continue;
+                grow_left = std::max(grow_left, 2.0 - (x + boxes[i].x));
+                grow_right = std::max(grow_right,
+                    x + boxes[i].x + boxes[i].w - (cell.w - 2.0));
+            }
+            const double growth = grow_left + grow_right;
+            if (growth < 0.01) break;
+            const double available = std::max(0.0, extra_budget -
+                                               (left + right - initial_sum));
+            const double fraction = std::min(1.0, available / growth);
+            left += grow_left * fraction;
+            right += grow_right * fraction;
+            if (fraction < 1.0) break;
+        }
     }
 
     frame.left = left;
@@ -1351,7 +1400,6 @@ Group build_panel(const Axes& axes, const RectF& cell, const Theme& theme,
                    : compute_frame(axes, ra, cell, theme, tm, colorbar_series, legend_entries,
                                    opts.suppress_x_text, opts.suppress_y_text);
     const bool rotate_x_labels = frame.rotate_x_labels;
-    constexpr double kRotDeg = 35.0;
 
     const double pad = theme.padding;
     const double tick_gap = 4.0;
@@ -1726,20 +1774,9 @@ Group build_panel(const Axes& axes, const RectF& cell, const Theme& theme,
         panel.over.push_back(
             LineItem{{px, bottom_y}, {px, bottom_y + theme.tick_length}, axis_style});
         if (opts.suppress_x_text || hide_x_tick_text) continue;
-        TextItem label;
-        label.text = t.label;
-        label.font = tick_font;
-        label.color = theme.text_color;
-        label.pos = {px, bottom_y + theme.tick_length + tick_gap};
-        if (rotate_x_labels) {
-            label.halign = HAlign::Right;
-            label.valign = VAlign::Top;
-            label.rotation = -kRotDeg;
-        } else {
-            label.halign = HAlign::Center;
-            label.valign = VAlign::Top;
-        }
-        panel.over.push_back(std::move(label));
+        panel.over.emplace_back(std::in_place_type<TextItem>,
+            x_tick_label(t.label, tick_font, theme.text_color,
+                         {px, bottom_y + theme.tick_length + tick_gap}, rotate_x_labels));
     }
     for (double v : ra.x_ticks.minor) {
         const double px = ra.x.map(v);

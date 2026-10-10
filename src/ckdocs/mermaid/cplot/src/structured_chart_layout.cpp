@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "internal.hpp"
+#include "label_layout.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1129,25 +1130,38 @@ Scene build_scene(const Figure& fig, const QuadrantChart& chart) {
     const std::string labels[4] = {chart.quadrants.top_right, chart.quadrants.top_left,
                                    chart.quadrants.bottom_left,
                                    chart.quadrants.bottom_right};
+    const TextMeasurer& measurer = default_text_measurer();
+    std::vector<LabelPlacement> text_labels;
     for (std::size_t quadrant = 0; quadrant < 4; ++quadrant) {
         ShapeStyle fill;
         fill.fill = chart_color(theme, quadrant).with_alpha(0.10);
-        panel.under.push_back(RectItem{cells[quadrant], fill});
-        if (!labels[quadrant].empty())
-            add_text(panel.over,
-                     {cells[quadrant].x + cells[quadrant].w / 2.0,
-                      cells[quadrant].y + 6.0},
-                     labels[quadrant], quadrant_font, theme.muted_text_color,
-                     HAlign::Center, VAlign::Top);
+        panel.under.emplace_back(std::in_place_type<RectItem>, RectItem{cells[quadrant], fill});
+        if (!labels[quadrant].empty()) {
+            const RectF cell = cells[quadrant];
+            TextItem heading{{cell.x + cell.w / 2.0, cell.y + 6.0}, labels[quadrant],
+                             quadrant_font, theme.muted_text_color,
+                             HAlign::Center, VAlign::Top};
+            const RectF box = text_bounds(heading, measurer, 2.0);
+            LabelPlacement placement{heading, cell, {}};
+            // Keep headings in their own quadrant. Prefer the usual top centre,
+            // then other inset edges; they participate in the same collision
+            // search as point labels so they cannot silently mask a data point.
+            for (double y : {cell.y + 6.0, cell.y + cell.h - box.h - 6.0})
+                for (double x : {cell.x + cell.w / 2.0,
+                                 cell.x + box.w / 2.0 + 6.0,
+                                 cell.x + cell.w - box.w / 2.0 - 6.0})
+                    placement.positions.push_back({x, y});
+            text_labels.push_back(std::move(placement));
+        }
     }
     ShapeStyle frame;
     frame.stroke = theme.axis_color;
     frame.stroke_width = std::max(1.0, theme.axis_stroke_width);
-    panel.over.push_back(RectItem{{x0, y0, size, size}, frame});
+    panel.over.emplace_back(std::in_place_type<RectItem>, RectItem{{x0, y0, size, size}, frame});
     ShapeStyle midline = frame;
     midline.stroke_width = 1.0;
-    panel.over.push_back(LineItem{{middle_x, y0}, {middle_x, y1}, midline});
-    panel.over.push_back(LineItem{{x0, middle_y}, {x1, middle_y}, midline});
+    panel.over.emplace_back(std::in_place_type<LineItem>, LineItem{{middle_x, y0}, {middle_x, y1}, midline});
+    panel.over.emplace_back(std::in_place_type<LineItem>, LineItem{{x0, middle_y}, {x1, middle_y}, midline});
 
     if (!chart.x_axis.lower.empty())
         add_text(panel.over, {x0, y1 + 8.0}, chart.x_axis.lower, font,
@@ -1162,6 +1176,14 @@ Scene build_scene(const Figure& fig, const QuadrantChart& chart) {
         add_text(panel.over, {x0 - 16.0, y0 + size * 0.25}, chart.y_axis.upper,
                  font, theme.text_color, HAlign::Center, VAlign::Middle, -90.0);
 
+    std::vector<LabelObstacle> obstacles;
+    for (const SceneItem& item : panel.over)
+        if (const auto* label = std::get_if<TextItem>(&item))
+            obstacles.push_back({text_bounds(*label, measurer, 2.0), 1.0});
+    // Dividers are soft obstacles: prefer clear text but do not let a thin
+    // line outweigh a collision with another label or a marker.
+    obstacles.push_back({{middle_x - 0.5, y0, 1.0, size}, 0.25});
+    obstacles.push_back({{x0, middle_y - 0.5, size, 1.0}, 0.25});
     for (std::size_t i = 0; i < chart.points.size(); ++i) {
         const QuadrantPoint& point = chart.points[i];
         const Point position{x0 + point.x * size, y1 - point.y * size};
@@ -1172,10 +1194,17 @@ Scene build_scene(const Figure& fig, const QuadrantChart& chart) {
             dot.stroke_width = point.stroke_width.value_or(1.0);
         }
         const double radius = point.radius.value_or(5.0);
-        panel.marks.push_back(CircleItem{position, radius, dot});
-        add_text(panel.over, {position.x + radius + 3.0, position.y}, point.label, font,
-                 theme.text_color, HAlign::Left, VAlign::Middle);
+        panel.marks.emplace_back(std::in_place_type<CircleItem>, CircleItem{position, radius, dot});
+        const double outer = radius + (dot.stroke ? dot.stroke_width / 2.0 : 0.0);
+        obstacles.push_back({{position.x - outer, position.y - outer,
+                              outer * 2.0, outer * 2.0}, 1.0, true});
+        text_labels.push_back(point_label(
+            TextItem{position, point.label, font, theme.text_color, HAlign::Left, VAlign::Middle},
+            position, outer, {x0, y0, size, size}, measurer));
     }
+    place_labels(text_labels, obstacles, measurer);
+    for (LabelPlacement& label : text_labels)
+        panel.over.emplace_back(std::in_place_type<TextItem>, std::move(label.text));
     if (!chart.title.empty())
         add_text(panel.over, {fig.width() / 2.0, padding}, chart.title, title_font,
                  theme.text_color, HAlign::Center, VAlign::Top);

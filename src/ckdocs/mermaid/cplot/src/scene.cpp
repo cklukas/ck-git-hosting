@@ -332,6 +332,22 @@ SceneItem text_halo(const TextItem& text, const TextMeasurer& measurer, double p
                        std::move(style)};
 }
 
+
+RectF text_bounds(const TextItem& text, const TextMeasurer& measurer, double padding) {
+    const SceneItem halo = text_halo(text, measurer, padding, {});
+    if (const auto* rect = std::get_if<RectItem>(&halo)) return rect->rect;
+    const auto& points = std::get<PolygonItem>(halo).points;
+    double left = points.front().x, right = left;
+    double top = points.front().y, bottom = top;
+    for (Point p : points) {
+        left = std::min(left, p.x);
+        right = std::max(right, p.x);
+        top = std::min(top, p.y);
+        bottom = std::max(bottom, p.y);
+    }
+    return {left, top, right - left, bottom - top};
+}
+
 namespace {
 
 /// Document order, carrying the running CTM — the same order and the same

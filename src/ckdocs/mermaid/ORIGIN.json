@@ -482,6 +482,14 @@
     "libcworks/src/yaml.cpp": {
       "sha256": "5caa553bb025b08b1b596b7e08571cff6fdfcff95257b294feb9d17d09a4150e",
       "adapted": false
+    },
+    "cplot/src/label_layout.hpp": {
+      "sha256": "1a243d48857e0b8eb5237f9ab375a6da683f96ae59e0ab8f0042fd72e1cfb789",
+      "adapted": false
+    },
+    "cplot/src/label_layout.cpp": {
+      "sha256": "3db4f502d7156985c3e9c7e57cd18befc3d9bd696713e0aaf657eb9ccc0c2cc2",
+      "adapted": false
     }
   },
   "tests": {
@@ -580,6 +588,44 @@
     "tests/mermaid/test_sequence.cpp": {
       "origin": "cdiagram/tests/test_sequence.cpp",
       "sha256": "8871a641e191d7070316c59b7e32b18793ccac9886de52d281540756a77b5e95"
+    },
+    "tests/mermaid/test_chart_label_layout.cpp": {
+      "origin": "cplot/tests/test_label_layout.cpp",
+      "revision": "97a7848bdaad7f164bb48abc140cc42428b41d3b",
+      "sha256": "78a07e7a50c745d7827da4345bf3298d805f41fb8b282e0ea4d0c497b5c9f08a",
+      "adapted": true
     }
-  }
+  },
+  "backports": [
+    {
+      "revision": "97a7848bdaad7f164bb48abc140cc42428b41d3b",
+      "description": "Bounded label placement with marker avoidance and measured axis-label overhang. Original import hashes remain above; these hashes describe this selective backport.",
+      "files": {
+        "cplot/include/cplot/scene.hpp": {
+          "upstream_sha256": "e0e15d949491f837a71982908d025cbd58c5cd943c2bd2aa3f340f36695dd4be",
+          "embedded_sha256": "a1457bc04df48c97fc03fd27843306838b6f1c9a29934add93128de6e0989a61"
+        },
+        "cplot/src/scene.cpp": {
+          "upstream_sha256": "57d65d35060c89e6ef729cb2530a630976c8c6d86db790ca0e0bde217e6536ff",
+          "embedded_sha256": "a002bc10de2c3fc11d0ba1385cbe314f460fa4ee4e4802bcc74574bc7e43f332"
+        },
+        "cplot/src/label_layout.hpp": {
+          "upstream_sha256": "1a243d48857e0b8eb5237f9ab375a6da683f96ae59e0ab8f0042fd72e1cfb789",
+          "embedded_sha256": "b070a1828544bbb37cdd9ab875da02ce75caa3175d8f1a26287fa4c3b199e79b"
+        },
+        "cplot/src/label_layout.cpp": {
+          "upstream_sha256": "3db4f502d7156985c3e9c7e57cd18befc3d9bd696713e0aaf657eb9ccc0c2cc2",
+          "embedded_sha256": "42432688f90097efb236e46c3bed81a51957d6d92fd2da90fa7d2a46ea746c44"
+        },
+        "cplot/src/layout.cpp": {
+          "upstream_sha256": "6c9b26554a418c547808b6b90058bc882f959dba0d53b7a35ebb8947b825583a",
+          "embedded_sha256": "fcc766b302b4cd66039c72877fc151baef0f0b51638fae1953660171722dcfdf"
+        },
+        "cplot/src/structured_chart_layout.cpp": {
+          "upstream_sha256": "c230846b6a08630f12f3d171b8fbd16718e78315442a3d537a9c7cc2cd9c7f15",
+          "embedded_sha256": "64a878191b6bf4451c6f0265d656ea69faccd07718b8a19508ff0fe0040f2026"
+        }
+      }
+    }
+  ]
 }
