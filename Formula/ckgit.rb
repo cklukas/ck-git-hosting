@@ -10,8 +10,8 @@
 class Ckgit < Formula
   desc "Client for a private, local-first ck-git-hosting Git server"
   homepage "https://github.com/cklukas/ck-git-hosting"
-  url "https://github.com/cklukas/ck-git-hosting/releases/download/v0.3.0/ck-git-hosting-0.3.0-source.tar.gz"
-  sha256 "88ec1909b98b289fe1f4aa3d8f70c4ffe4c07f44bfdb2c72542f3231c94ecd3a"
+  url "https://github.com/cklukas/ck-git-hosting/releases/download/v0.4.0/ck-git-hosting-0.4.0-source.tar.gz"
+  sha256 "913c11d4327c99704a19b6b5ea0487396112eaf2b4f847a7497d156db088d989"
   license "MIT"
   head "https://github.com/cklukas/ck-git-hosting.git", branch: "master"
 
