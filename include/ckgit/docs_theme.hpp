@@ -10,8 +10,9 @@ namespace ckgit {
 // The stylesheet every ckdocs page embeds: the dashboard's colour tokens and
 // typography (copied, so the tool never depends on web/style.hpp), a
 // header / sidebar + main / footer grid, tabs, native <details> groups, the
-// "On this page" outline, alerts, task lists, syntax highlighting, and a
-// sidebar that collapses behind a checkbox toggle under 700px. No script.
+// "On this page" outline, alerts, task lists, syntax highlighting, a
+// portal's <details> site selector and welcome-page cards, and a sidebar
+// that collapses behind a checkbox toggle under 700px. No script.
 inline constexpr std::string_view kDocsStyles = R"CSS(
 :root{color-scheme:light dark;--bg:#fafbfd;--panel:#fff;--text:#18212b;--muted:#59636d;--line:#d9e0e7;--accent:#145ea8;--tint:#edf4fb}
 @media(prefers-color-scheme:dark){:root{--bg:#131920;--panel:#1b242e;--text:#dce5ed;--muted:#a5b1be;--line:#344251;--accent:#7db8ee;--tint:#263e53}}
@@ -22,6 +23,10 @@ a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(
 .skip-link{position:absolute;left:1rem;top:-5rem;background:var(--panel);padding:.6rem;z-index:2}.skip-link:focus{top:.5rem}
 header.site{display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;padding:.9rem 2rem;border-bottom:1px solid var(--line);background:var(--panel)}
 .brand{display:inline-flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.15rem;color:var(--text);letter-spacing:-.02em}.brand:hover{text-decoration:none}.brand img{height:1.8rem;width:auto}
+.site-select{position:relative;font-size:.92rem}.site-select>summary{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .75rem;border:1px solid var(--line);border-radius:1rem;background:var(--panel);color:var(--text);cursor:pointer;list-style:none;white-space:nowrap}
+.site-select>summary::-webkit-details-marker{display:none}.site-select>summary:after{content:"▾";color:var(--muted);font-size:.8em}.site-select[open]>summary:after{content:"▴"}.site-select>summary:hover{background:var(--tint)}
+.site-select ul{position:absolute;left:0;top:calc(100% + .35rem);z-index:6;min-width:100%;width:max-content;max-width:min(22rem,90vw);margin:0;padding:.3rem;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:.6rem;box-shadow:0 .6rem 1.8rem #0003}
+.site-select li a{display:block;padding:.4rem .7rem;border-radius:.4rem;color:var(--text)}.site-select li a:hover,.site-select li a:focus-visible{background:var(--tint);text-decoration:none}.site-select li a[aria-current=true]{color:var(--accent);font-weight:600}
 nav.tabs{display:flex;gap:1.2rem;flex-wrap:wrap}nav.tabs a{padding:.3rem 0;color:var(--text)}nav.tabs a[aria-current=page]{font-weight:700;color:var(--accent);text-decoration:underline;text-underline-offset:.5rem;text-decoration-thickness:2px}
 nav.links{margin-left:auto;display:flex;gap:1rem;flex-wrap:wrap;font-size:.92rem}
 .page{display:grid;grid-template-columns:minmax(230px,17rem) minmax(0,1fr);gap:2.5rem;max-width:1440px;width:100%;margin:0 auto;padding:1.5rem 2rem;flex:1}
@@ -64,11 +69,14 @@ nav.pager{display:flex;justify-content:space-between;gap:1rem;margin:2.5rem 0 0;
 .search-result{display:block;padding:.5rem .6rem;border-radius:.4rem;color:var(--text)}.search-result:hover,.search-result:focus-visible{background:var(--tint);text-decoration:none}.search-result b{color:var(--accent)}.search-result span{display:block;margin-top:.15rem;font-size:.85rem;color:var(--muted);font-weight:400}
 @media(max-width:700px){.search input{width:9rem;max-width:60vw}.search-results{width:90vw;right:-1rem}}
 footer.site{border-top:1px solid var(--line);padding:1rem 2rem;font-size:.85rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;max-width:1440px;width:100%;margin:0 auto}
+.page.portal{display:block;max-width:1040px}.portal-description{font-size:1.1rem;color:var(--muted);margin:0 0 1.5rem}
+.site-cards{list-style:none;margin:2rem 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1rem}.site-cards li{padding:1rem 1.2rem;border:1px solid var(--line);border-radius:.6rem;background:var(--panel)}.site-cards a{font-weight:600;font-size:1.1rem}.site-cards p{margin:.4rem 0 0;color:var(--muted)}
 .site-index ul{padding-left:1.2rem}.site-index li{margin:.2rem 0}.site-index .index-headings{color:var(--muted);font-size:.9rem}
 @media(max-width:700px){header.site{padding:.8rem 1rem;gap:.6rem 1rem}nav.links{margin-left:0}.page{display:block;padding:1rem}
 .nav-switch{display:block;position:absolute;opacity:0;width:1px;height:1px}.nav-toggle{display:inline-block;border:1px solid var(--line);border-radius:.4rem;padding:.45rem .8rem;margin-bottom:1rem;background:var(--panel);cursor:pointer}.nav-switch:focus-visible+.nav-toggle{outline:3px solid var(--accent)}
+.site-select ul{max-width:calc(100vw - 2rem)}.site-cards{grid-template-columns:minmax(0,1fr)}
 aside.sidebar{display:none;position:static;max-height:none;margin-bottom:1.5rem;padding:1rem;border:1px solid var(--line);border-radius:.5rem;background:var(--panel)}.nav-switch:checked~aside.sidebar{display:block}footer.site{padding:1rem}}
-@media print{header.site,aside.sidebar,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
+@media print{header.site,.site-select,aside.sidebar,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
 )CSS";
 
 // The opt-in search box's own behaviour (site.search / `search: true`):

@@ -110,7 +110,7 @@ exact same subset — one syntax, two schemas.
 | `on.branches` | list of strings | no | none | valid branch name each; see [trigger matrix](#trigger-matrix) |
 | `on.tags` | list of strings | no | none | a tag pattern: an exact name, or a name ending in a single trailing `*` wildcard |
 | `env` (top level) | mapping | no | empty | keys: `[A-Za-z_][A-Za-z0-9_]*`; values: any scalar |
-| `sisters[]` | list of a bare name or a `{name, ref}` mapping | no | empty | `name`: a valid project name (same rule as a hosted project's own name); `ref` (optional): a branch, tag, or commit-like ref, not starting with `-`/`/`, no `..` |
+| `sisters[]` | list of a bare name or a `{name, ref}` mapping | no | empty | `name`: a valid project name (same rule as a hosted project's own name); `ref` (optional): a branch, tag, or commit-like ref, not starting with `-`/`/`, no `..`; each name at most once; the project's own name only with a `ref` |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
 | `jobs[]` | list of mappings | required, non-empty | — | unique `name` per job |
@@ -135,7 +135,14 @@ exact same subset — one syntax, two schemas.
   points — parses successfully (these are ordinary valid names) and is only
   rejected when the runner actually **executes** the workflow. A syntax-only
   check of a workflow cannot catch this; only a real run can. The same is
-  true of a sister that names the project it belongs to.
+  true of a sister that names the project it belongs to **without** a `ref`.
+  With a `ref`, the project may list itself: that branch, tag, or commit of
+  its own repository is placed at `../<name>` and exported as
+  `CKGIT_SISTER_<NAME>` like any other sister. This lets one branch's build
+  read another branch's files, for example a documentation portal that also
+  renders the default branch's docs with
+  `ckdocs build --ref-tree main="$CKGIT_SISTER_<NAME>"` (see
+  [Publishing](../ckdocs/publishing.md#several-sites-from-several-branches)).
 
 ## Trigger matrix
 

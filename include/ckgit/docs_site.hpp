@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -29,6 +31,8 @@ inline constexpr std::size_t kMaximumDocsConfigBytes = 64 * 1024;
 inline constexpr std::size_t kMaximumDocsTitleBytes = 128;
 inline constexpr std::size_t kMaximumDocsTextBytes = 1024;  // description, footer, a foreign front matter value
 inline constexpr std::size_t kMaximumDocsUrlBytes = 1024;
+inline constexpr std::size_t kMaximumDocsSites = 8;
+inline constexpr std::size_t kMaximumDocsSiteIdBytes = 32;
 
 struct DocsLink {
   std::string title;
@@ -53,6 +57,25 @@ struct DocsNavEntry {
   std::vector<DocsNavEntry> pages;
 };
 
+// One `sites:` entry of a portal config: a documentation site built into
+// `<out>/<id>/` from its own, ordinary single-site config. The file form:
+//
+//   sites:
+//     - id: cpp                      # [a-z0-9][a-z0-9-]*, at most 32 bytes
+//       title: C++ edition
+//       description: The native port # optional, shown on the welcome page
+//       config: docs/ckdocs.yml      # optional, default ckdocs.yml, site-root-relative
+//       ref: main                    # optional: the site's root is this Git ref's tree
+//       redirect_from_root: true     # optional, at most one site
+struct DocsSiteEntry {
+  std::string id;
+  std::string title;
+  std::string description;
+  std::string config;  // relative to the site's root; empty = ckdocs.yml
+  std::string ref;     // a branch, tag, or commit; empty = the work tree root itself
+  bool redirect_from_root = false;
+};
+
 // `ckdocs.yml` at the repository root. Every path is repository-relative
 // and must be a safe relative path (no leading `/`, no `.`/`..` component,
 // no backslash). Unknown keys are rejected: this file is ours.
@@ -73,6 +96,11 @@ struct DocsConfig {
   // tools. ckdocs never interprets them; a page carrying one is not warned
   // about, and its value is passed through as a `front-matter:<key>` meta tag.
   std::vector<std::string> foreign_front_matter_keys;
+  // `sites:` makes this a portal config: one build holding several sites
+  // and a generated welcome page. Then only `site` and `home` (the welcome
+  // page's Markdown intro) may sit beside it; source, nav, search, exclude
+  // and front_matter belong to each site's own config.
+  std::vector<DocsSiteEntry> sites;
 };
 
 // The meta-tag name a foreign front matter key is carried under. Namespaced
@@ -175,6 +203,7 @@ struct DocsBuildReport {
   std::size_t diagrams_rendered = 0;
   std::size_t assets_generated = 0;
   std::size_t bytes_written = 0;
+  std::size_t redirects_written = 0;        // a portal's redirect_from_root pages
   std::vector<std::string> broken_links;    // "<page>: link target '<target>' <reason>"
   std::vector<std::string> broken_anchors;  // "<page>: '<href>' names no heading on <target page>"
   std::vector<std::string> warnings;        // other build-time findings, e.g. a truncated search index
@@ -196,5 +225,49 @@ struct DocsBuildReport {
 // ("ckdocs: …") on failure; broken links and anchors are reported, not fatal.
 void buildDocsSite(const DocsSiteModel& model, const std::filesystem::path& out, const DocsBuildOptions& options,
                    DocsBuildReport* report);
+
+// ---- several sites in one build (a portal) ----------------------------------
+
+struct DocsPortalSite {
+  DocsSiteEntry entry;
+  DocsSiteModel model;  // rooted at the work tree, an extracted ref tree, or a --ref-tree directory
+};
+
+struct DocsPortalModel {
+  std::filesystem::path root;  // the work tree root: the portal's logo, stylesheet and intro live here
+  DocsConfig config;           // the portal config itself
+  std::vector<DocsPortalSite> sites;
+  // The private directory ref trees were extracted into, if any; removed when
+  // the last copy of the model goes, so it outlives the build that reads it.
+  std::shared_ptr<const std::filesystem::path> extracted;
+};
+
+struct DocsPortalOptions {
+  // `--ref-tree REF=DIR`: a directory that already holds REF's tree, used
+  // instead of extracting the ref from the work tree's Git repository.
+  std::map<std::string, std::filesystem::path> ref_trees;
+};
+
+// Loads every site of a portal config (`config.sites` non-empty). A site
+// with a `ref` is rooted at options.ref_trees[ref] when given; else, inside
+// a Git work tree, at the committed tree of `<ref>` or `origin/<ref>`,
+// extracted with `git archive` into a private temporary directory; else the
+// load fails naming the ref. Each site's config is read relative to its own
+// root and must not list `sites` itself; one without a title takes its
+// entry's. Problems are those of loadDocsSite, prefixed "site '<id>': ";
+// warnings are prefixed "<id>: ".
+DocsPortalModel loadDocsPortal(const std::filesystem::path& root, const DocsConfig& config,
+                               const DocsPortalOptions& options, std::vector<std::string>* warnings);
+
+// Builds a portal into `out` with the same refusal, temporary-tree and atomic
+// swap rules as buildDocsSite, and one marker: the welcome page at
+// `index.html` (the portal title, description, the optional `home` intro,
+// then a card per site), every site under `<id>/` exactly as buildDocsSite
+// would lay it out there (with a site selector after the brand in its
+// header), and, for the site with redirect_from_root, a small redirect page
+// at each of its page paths but its home. The report covers all of it;
+// each site's broken links, anchors and warnings are prefixed "<id>: ".
+void buildDocsPortal(const DocsPortalModel& portal, const std::filesystem::path& out, const DocsBuildOptions& options,
+                     DocsBuildReport* report);
 
 }  // namespace ckgit

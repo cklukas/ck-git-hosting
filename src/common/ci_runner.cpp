@@ -744,7 +744,8 @@ std::string sisterEnvName(const std::string& name) {
 // scratch/<name> (reached from the checkout as ../<name>), read-only via `git
 // archive` — no hooks, no submodules, no network, same-server projects only.
 // `ref` pins a sister to a branch, tag, or commit; empty takes the project's
-// current default branch (its bare HEAD). Returns the CKGIT_SISTER_<NAME>=<path>
+// current default branch (its bare HEAD). The project may name itself only
+// with a `ref`, to see another of its own branches at ../<name>. Returns the CKGIT_SISTER_<NAME>=<path>
 // assignments to export, where <path> is where the step will see the sister:
 // under `visible_root` (the canonical kSandboxRoot when sandboxed, else the
 // physical scratch). Throws with a clear message when a named sister is not a
@@ -757,11 +758,16 @@ std::vector<std::string> materializeSisters(const CiWorkflow& workflow,
   std::vector<std::string> env;
   const std::filesystem::path repo_root = repository.parent_path();
   for (const CiSister& sister : workflow.sisters) {
-    if (sister.name == self) throw std::runtime_error("a project cannot list itself as a sister: " + sister.name);
+    // The project itself is allowed with an explicit ref: another branch's
+    // tree beside the checkout (a docs portal rendering two branches, say).
+    // Without one it would only repeat the checkout.
+    if (sister.name == self && sister.ref.empty()) {
+      throw std::runtime_error("a project can list itself as a sister only with an explicit ref: " + sister.name);
+    }
     if (sister.name == "src" || sister.name == "home" || sister.name == "tmp") {
       throw std::runtime_error("reserved sister name: " + sister.name);
     }
-    const std::filesystem::path sister_repo = repo_root / (sister.name + ".git");
+    const std::filesystem::path sister_repo = sister.name == self ? repository : repo_root / (sister.name + ".git");
     if (!std::filesystem::is_directory(sister_repo)) {
       throw std::runtime_error("sister project '" + sister.name + "' is not hosted here");
     }

@@ -74,7 +74,8 @@ jobs:
   `../<name>` and exported as `CKGIT_SISTER_<NAME>` — from its default branch, or
   a branch, tag, or commit you pin. No network is used and only same-server
   projects are allowed. Write `- name` for the default branch, or the two-line
-  form below it to pin. See below.
+  form below it to pin. The project may name itself only with a pinned `ref`,
+  to read another of its own branches. See below.
 - `cache:` lists persistent build caches (e.g. a ccache store) kept across runs.
   Each is a directory exported as `CKGIT_CACHE_<NAME>`, plus any variables bound
   with `env:`. Persistence needs `ci_cache_root` set on the server; without it a

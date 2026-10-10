@@ -10,7 +10,10 @@
 # report naming both the offending page and its target -- the CLI wiring
 # that unit tests, which call the library directly, cannot reach -- and that
 # a front matter key declared under front_matter.foreign_keys passes `ckdocs
-# check` and reaches the page head while an undeclared one fails it. Finally,
+# check` and reaches the page head while an undeclared one fails it, and
+# that a portal (two sites, one from another Git branch) builds with its
+# selector, welcome page and redirects, from the repository or with
+# --ref-tree. Finally,
 # `ckdocs serve` is started on an OS-chosen loopback port and probed for the
 # index, a nested page, and a 404, then stopped.
 
@@ -259,6 +262,94 @@ set +e
 mermaid_status=$?
 set -e
 [ "$mermaid_status" -eq 1 ] || { echo "Mermaid warnings should fail check, got $mermaid_status" >&2; exit 1; }
+
+# ---- several sites in one build: a portal over two branches ---------------
+
+portal_repo="$test_root/portal"
+mkdir -p "$portal_repo/docs"
+git -C "$portal_repo" -c init.defaultBranch=main init -q
+portal_commit() {
+  git -C "$portal_repo" add -A
+  git -C "$portal_repo" -c user.email=t@example.invalid -c user.name=Test -c commit.gpgSign=false commit -q -m "$1"
+}
+printf 'version: 1\nsite:\n  title: Python docs\n' >"$portal_repo/ckdocs.yml"
+printf '# Python home\n\nRead the [guide](guide.md).\n' >"$portal_repo/docs/README.md"
+printf '# Guide\n\nBody.\n' >"$portal_repo/docs/guide.md"
+portal_commit python
+git -C "$portal_repo" checkout -q -b cpp
+mkdir -p "$portal_repo/cpp-docs"
+cat >"$portal_repo/ckdocs.yml" <<'YAML'
+version: 1
+site:
+  title: Portal
+sites:
+  - id: cpp
+    title: C++ edition
+    config: cpp-docs/ckdocs.yml
+  - id: python
+    title: Python edition
+    ref: main
+    redirect_from_root: true
+YAML
+printf 'version: 1\nsite:\n  title: C++ docs\nsource: cpp-docs\n' >"$portal_repo/cpp-docs/ckdocs.yml"
+printf '# C++ home\n\nSee the [API](api.md).\n' >"$portal_repo/cpp-docs/README.md"
+printf '# API\n' >"$portal_repo/cpp-docs/api.md"
+portal_commit cpp
+
+portal_site="$test_root/portal-site"
+"$CKDOCS" build --root "$portal_repo" --out "$portal_site" --strict >"$test_root/portal.log" 2>&1 || {
+  echo "ckdocs build of a portal failed:" >&2
+  cat "$test_root/portal.log" >&2
+  exit 1
+}
+grep -q 'Built 5 page(s) in 2 site(s), 0 asset(s), 1 redirect(s)' "$test_root/portal.log" || {
+  echo "unexpected portal build summary:" >&2
+  cat "$test_root/portal.log" >&2
+  exit 1
+}
+for page in index.html .ckdocs cpp/index.html cpp/api.html python/index.html python/guide.html guide.html; do
+  [ -f "$portal_site/$page" ] || { echo "expected $page in the portal" >&2; exit 1; }
+done
+grep -qF '<a href="python/index.html">Python edition</a>' "$portal_site/index.html" ||
+  { echo "the welcome page is missing the Python card" >&2; exit 1; }
+grep -qF '<summary>Python edition</summary>' "$portal_site/python/guide.html" ||
+  { echo "a Python page is missing its site selector" >&2; exit 1; }
+grep -qF '<a href="../cpp/index.html">C++ edition</a>' "$portal_site/python/guide.html" ||
+  { echo "a Python page's selector does not link the C++ site" >&2; exit 1; }
+grep -qF 'url=python/guide.html' "$portal_site/guide.html" ||
+  { echo "the old root URL does not redirect into the Python site" >&2; exit 1; }
+
+# A tree without .git (a CI checkout, say) needs --ref-tree for the ref.
+portal_ci="$test_root/portal-ci"
+portal_main="$test_root/portal-main"
+mkdir -p "$portal_ci" "$portal_main"
+git -C "$portal_repo" archive --format=tar --output="$test_root/portal-cpp.tar" cpp
+tar -xf "$test_root/portal-cpp.tar" -C "$portal_ci"
+git -C "$portal_repo" archive --format=tar --output="$test_root/portal-main.tar" main
+tar -xf "$test_root/portal-main.tar" -C "$portal_main"
+set +e
+portal_output=$("$CKDOCS" check --root "$portal_ci" 2>&1)
+portal_status=$?
+set -e
+[ "$portal_status" -eq 1 ] || { echo "a portal ref with no repository should fail, got $portal_status" >&2; exit 1; }
+case "$portal_output" in
+  *"site 'python': ref 'main' is not available"*"--ref-tree main=DIR"*) ;;
+  *) echo "the missing-ref error should name the site and --ref-tree:" >&2; echo "$portal_output" >&2; exit 1 ;;
+esac
+(cd "$test_root" && "$CKDOCS" check --root portal-ci --ref-tree main=portal-main --quiet) ||
+  { echo "ckdocs check with a relative --ref-tree failed" >&2; exit 1; }
+"$CKDOCS" build --root "$portal_ci" --ref-tree "main=$portal_main" --out "$test_root/portal-ci-site" --strict --quiet
+cmp -s "$portal_site/python/guide.html" "$test_root/portal-ci-site/python/guide.html" ||
+  { echo "--ref-tree should build the same page as the extracted ref" >&2; exit 1; }
+
+set +e
+"$CKDOCS" check --root "$fixture" --ref-tree main=. >/dev/null 2>&1
+ref_tree_status=$?
+"$CKDOCS" check --root "$portal_repo" --source docs >/dev/null 2>&1
+source_status=$?
+set -e
+[ "$ref_tree_status" -eq 2 ] || { echo "--ref-tree without sites should be a usage error, got $ref_tree_status" >&2; exit 1; }
+[ "$source_status" -eq 2 ] || { echo "--source with sites should be a usage error, got $source_status" >&2; exit 1; }
 
 # ---- serve: a loopback preview server --------------------------------------
 

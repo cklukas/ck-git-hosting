@@ -30,7 +30,10 @@ jobs:
 
 Each sister is a read-only snapshot from its own hosted project, placed beside
 the checkout, so a build finds `../ckmath` (or `$CKGIT_SISTER_CKMATH`) with no
-network and no submodules. The cache is a directory private to this project,
+network and no submodules. A project can also list itself with a `ref` to get
+another of its own branches beside the checkout, as a
+[documentation portal](../ckdocs/publishing.md#several-sites-from-several-branches)
+does. The cache is a directory private to this project,
 owned by the runner account — on Linux, with the service tree masked (see
 [sandbox requirements](ci-runner.md#the-sandbox-and-its-requirements)), the checkout and this project's
 own declared caches are the only places a step can write — exported here as

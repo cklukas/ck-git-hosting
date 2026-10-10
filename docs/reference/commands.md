@@ -69,9 +69,9 @@ ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini [--once]
 ck-pagesd serve --config /etc/ck-git-hosting/server.ini
 ck-pagesd check --config /etc/ck-git-hosting/server.ini
 
-ckdocs build [--root DIR] [--source DIR] [--config FILE] [--out DIR] [--clean] [--strict] [--quiet]
-ckdocs check [--root DIR] [--source DIR] [--config FILE] [--quiet]
-ckdocs serve [--root DIR] [--out DIR] [--port PORT] [--quiet]
+ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean] [--strict] [--quiet]
+ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]
+ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT] [--quiet]
 ```
 
 `--config` defaults to `~/.config/ck-git-hosting/client.ini` (or the

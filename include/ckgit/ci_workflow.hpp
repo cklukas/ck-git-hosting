@@ -122,6 +122,7 @@ struct CiJob {
 // One sister project a workflow depends on: another project hosted on this same
 // server whose source is materialised beside the checkout. `ref` pins it to a
 // branch, tag, or commit; empty means the project's current default branch.
+// The project may name itself, but only with a `ref` (another of its branches).
 struct CiSister {
   std::string name;
   std::string ref;  // empty = default-branch HEAD

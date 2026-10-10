@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -52,9 +53,11 @@ constexpr unsigned short kDefaultServePort = 8422;
 
 void usage(std::ostream& out) {
   out << "Usage:\n"
-         "  ckdocs build [--root DIR] [--source DIR] [--config FILE] [--out DIR] [--clean] [--strict] [--quiet]\n"
-         "  ckdocs check [--root DIR] [--source DIR] [--config FILE] [--quiet]\n"
-         "  ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--out DIR] [--port PORT] [--quiet]\n"
+         "  ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean]\n"
+         "               [--strict] [--quiet]\n"
+         "  ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]\n"
+         "  ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT]\n"
+         "               [--quiet]\n"
          "  ckdocs --version\n"
          "  ckdocs --help\n"
          "\n"
@@ -86,10 +89,23 @@ void usage(std::ostream& out) {
          "  the same way a published Pages site is served, until Ctrl+C; there is no rebuild\n"
          "  on change in this version -- edit, then rerun the command.\n"
          "\n"
+         "Several sites:\n"
+         "  A configuration with a sites: list builds a portal: a welcome page at the output\n"
+         "  root and each site under <out>/<id>/, every page with a site selector beside the\n"
+         "  brand. Each site has its own configuration, read relative to its root: --root,\n"
+         "  or for a site with ref: the tree of that Git ref -- the directory --ref-tree\n"
+         "  REF=DIR names, else <ref> or origin/<ref> extracted from --root's repository\n"
+         "  into a private directory removed afterwards. Findings are prefixed with the\n"
+         "  site's id. --source does not apply to a portal.\n"
+         "\n"
          "Options:\n"
          "  --root DIR      The repository to read (default: the current directory).\n"
          "  --source DIR    Override the page source tree, relative to --root.\n"
          "  --config FILE   Read this file instead of <root>/ckdocs.yml.\n"
+         "  --ref-tree REF=DIR\n"
+         "                  Use DIR (relative to the current directory) as the tree of the\n"
+         "                  Git ref REF for the portal sites that name it, instead of\n"
+         "                  extracting it from the repository. Repeatable; portal only.\n"
          "  --out DIR       Where to write the site (default: <root>/public for build, a\n"
          "                  removed-on-exit directory for serve). build, serve.\n"
          "  --clean         Replace an existing site already at --out. build only.\n"
@@ -108,6 +124,7 @@ void usage(std::ostream& out) {
          "  ckdocs build --root /srv/checkout --out /srv/checkout/public --strict\n"
          "  ckdocs check --root .\n"
          "  ckdocs serve --root .\n"
+         "  ckdocs build --ref-tree main=../project-main --clean\n"
          "\n"
          "Exit codes:\n"
          "  0  Built (or checked) with nothing to report; serve exits 0 after Ctrl+C.\n"
@@ -123,6 +140,7 @@ struct Options {
   std::optional<fs::path> source;
   std::optional<fs::path> config;
   std::optional<fs::path> out;
+  std::map<std::string, fs::path> ref_trees;
   std::optional<unsigned short> port;
   bool clean = false;
   bool strict = false;
@@ -153,6 +171,17 @@ bool parseOptions(int argc, char** argv, int start, Command command, Options& op
       const auto value = next();
       if (!value) { error = "--config requires a value"; return false; }
       options.config = *value;
+    } else if (argument == "--ref-tree") {
+      const auto value = next();
+      const auto equals = value ? value->find('=') : std::string::npos;
+      if (!value || equals == 0 || equals == std::string::npos || equals + 1 == value->size()) {
+        error = "--ref-tree requires a value of the form REF=DIR";
+        return false;
+      }
+      if (!options.ref_trees.emplace(value->substr(0, equals), value->substr(equals + 1)).second) {
+        error = "--ref-tree names ref '" + value->substr(0, equals) + "' twice";
+        return false;
+      }
     } else if (argument == "--out") {
       if (!allow_out) { error = "--out is not valid for check"; return false; }
       const auto value = next();
@@ -373,10 +402,30 @@ int run(const std::string& command_name, int argc, char** argv) {
 
   ckgit::DocsConfig config =
       options.config ? ckgit::parseDocsConfig(readWholeFile(*options.config)) : ckgit::readDocsConfig(root);
+  const bool several = !config.sites.empty();
+  if (several && options.source) {
+    std::cerr << "ckdocs: --source does not apply to a configuration with sites; set source in each site's own configuration\n";
+    return kUsage;
+  }
+  if (!several && !options.ref_trees.empty()) {
+    std::cerr << "ckdocs: --ref-tree only applies to a configuration with sites\n";
+    return kUsage;
+  }
   if (options.source) config.source = options.source->generic_string();
 
   std::vector<std::string> problems;
-  const auto model = ckgit::loadDocsSite(root, config, &problems);
+  std::optional<ckgit::DocsSiteModel> model;
+  std::optional<ckgit::DocsPortalModel> portal;
+  if (several) {
+    ckgit::DocsPortalOptions portal_options;
+    for (const auto& [ref, directory] : options.ref_trees) {
+      portal_options.ref_trees.emplace(ref, fs::absolute(directory, error));
+      if (error) { std::cerr << "ckdocs: cannot resolve '" << directory.string() << "'\n"; return kFailed; }
+    }
+    portal = ckgit::loadDocsPortal(root, config, portal_options, &problems);
+  } else {
+    model = ckgit::loadDocsSite(root, config, &problems);
+  }
 
   const bool strict = options.strict || command == Command::kCheck;  // check always implies --strict
   std::optional<ScopedTempDirectory> scratch;
@@ -401,7 +450,14 @@ int run(const std::string& command_name, int argc, char** argv) {
   }
 
   ckgit::DocsBuildReport report;
-  ckgit::buildDocsSite(model, target, build_options, &report);
+  if (portal) {
+    ckgit::buildDocsPortal(*portal, target, build_options, &report);
+  } else {
+    ckgit::buildDocsSite(*model, target, build_options, &report);
+  }
+  // Extracted ref trees are only read while building; serve must not keep them.
+  const std::size_t sites = portal ? portal->sites.size() : 0;
+  portal.reset();
   for (const auto& broken : report.broken_links) problems.push_back(broken);
   for (const auto& broken : report.broken_anchors) problems.push_back(broken);
   for (const auto& warning : report.warnings) problems.push_back(warning);
@@ -413,11 +469,14 @@ int run(const std::string& command_name, int argc, char** argv) {
   }
   if (!options.quiet) {
     for (const auto& problem : problems) std::cout << "warning: " << problem << "\n";
+    const std::string in_sites = sites > 0 ? " in " + std::to_string(sites) + " site(s)" : std::string();
     if (command == Command::kCheck) {
-      std::cout << "Checked " << report.pages_written << " page(s): nothing to report.\n";
+      std::cout << "Checked " << report.pages_written << " page(s)" << in_sites << ": nothing to report.\n";
     } else {
-      std::cout << "Built " << report.pages_written << " page(s), " << report.assets_copied + report.assets_generated << " asset(s), "
-                << report.bytes_written << " byte(s) to " << target.string() << ".\n";
+      std::cout << "Built " << report.pages_written << " page(s)" << in_sites << ", "
+                << report.assets_copied + report.assets_generated << " asset(s), ";
+      if (report.redirects_written > 0) std::cout << report.redirects_written << " redirect(s), ";
+      std::cout << report.bytes_written << " byte(s) to " << target.string() << ".\n";
     }
   }
   if (command == Command::kServe) return runServe(target, options.port.value_or(kDefaultServePort));
@@ -451,7 +510,9 @@ int main(int argc, char* argv[]) {
   try {
     return run(command, argc, argv);
   } catch (const std::exception& error) {
-    std::cerr << "ckdocs: " << error.what() << "\n";
+    // Library errors carry the "ckdocs: " prefix already.
+    const std::string_view text = error.what();
+    std::cerr << (text.starts_with("ckdocs: ") ? "" : "ckdocs: ") << text << "\n";
     return kFailed;
   }
 }

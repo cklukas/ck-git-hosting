@@ -869,6 +869,274 @@ void testMermaidArtifacts() {
   require(refused && slurp(out / "index.html") == previous, "user assets cannot overwrite generated SVGs");
 }
 
+
+// ---- several sites in one build (a portal) ----------------------------------
+
+const std::string kPortalHead = "version: 1\nsite:\n  title: Portal\n";
+
+void testPortalConfig() {
+  const auto config = ckgit::parseDocsConfig(
+      kPortalHead +
+      "  description: Both editions\n"
+      "home: portal/welcome.md\n"
+      "sites:\n"
+      "  - id: cpp\n"
+      "    title: C++ edition\n"
+      "    description: The native port\n"
+      "    config: docs/cpp.yml\n"
+      "  - id: python-3\n"
+      "    title: Python edition\n"
+      "    ref: release/1.x\n"
+      "    redirect_from_root: true\n");
+  require(config.title == "Portal" && config.description == "Both editions" && config.home == "portal/welcome.md",
+          "a portal keeps site and home");
+  require(config.sites.size() == 2 && config.sites[0].id == "cpp" && config.sites[0].title == "C++ edition" &&
+              config.sites[0].description == "The native port" && config.sites[0].config == "docs/cpp.yml" &&
+              config.sites[0].ref.empty() && !config.sites[0].redirect_from_root,
+          "the first site's fields");
+  require(config.sites[1].id == "python-3" && config.sites[1].ref == "release/1.x" && config.sites[1].config.empty() &&
+              config.sites[1].redirect_from_root,
+          "the second site's ref and redirect");
+  require(ckgit::parseDocsConfig(kPortalHead).sites.empty(), "no sites: an ordinary config");
+
+  const std::string one = "sites:\n  - id: a\n    title: A\n";
+  for (const auto* key : {"source: docs\n", "nav: [README.md]\n", "search: true\n", "exclude: [x]\n",
+                          "front_matter:\n  foreign_keys: [layout]\n"}) {
+    const std::string name = std::string(key).substr(0, std::string(key).find(':'));
+    require(contains(rejection(kPortalHead + key + one), "'" + name + "' belongs to a site's own config when 'sites' is given"),
+            "a page-tree key beside sites is rejected: " + name);
+  }
+  for (const auto* id : {"Cpp", "-x", "a_b", "a.b", "abcdefghijabcdefghijabcdefghijabc", "\"\""}) {
+    require(contains(rejection(kPortalHead + "sites:\n  - id: " + id + "\n    title: A\n"), "must be 1 to 32 lowercase letters"),
+            std::string("a bad site id is rejected: ") + id);
+  }
+  require(rejection(kPortalHead + "sites:\n  - id: abcdefghijabcdefghijabcdefghijab\n    title: A\n").empty(), "a 32-byte id is fine");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n  - id: a\n    title: B\n"), "site id 'a' is listed twice"),
+          "duplicate ids are rejected");
+  std::string nine = kPortalHead + "sites:\n";
+  for (int index = 0; index < 9; ++index) nine += "  - id: s" + std::to_string(index) + "\n    title: S\n";
+  require(contains(rejection(nine), "more than 8"), "at most eight sites");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n    redirect_from_root: true\n"
+                                           "  - id: b\n    title: B\n    redirect_from_root: true\n"),
+                   "only one site may set redirect_from_root"),
+          "two redirecting sites are rejected");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n"), "a site needs both 'id' and 'title'"), "a title is required");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n    ref: --upload-pack=x\n"), "invalid site ref"),
+          "a ref that looks like an option is rejected");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n    ref: a..b\n"), "invalid site ref"), "a range is not a ref");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n    colour: red\n"), "colour"), "unknown site keys are rejected");
+  require(contains(rejection(kPortalHead + "sites:\n  - id: a\n    title: A\n    redirect_from_root: yes\n"), "must be true or false"),
+          "redirect_from_root is a boolean");
+
+  Scratch scratch;
+  write(scratch.root / "README.md", "# Home\n");
+  require(contains(loadError(scratch.root, ckgit::parseDocsConfig(kPortalHead + one)), "describes a portal"),
+          "loadDocsSite refuses a portal config");
+}
+
+void commitAll(const fs::path& root, const std::string& message) {
+  git(root, {"add", "-A"});
+  git(root, {"-c", "user.email=t@example.invalid", "-c", "user.name=Test", "commit", "-q", "-m", message});
+}
+
+std::string portalLoadError(const fs::path& root, const std::string& yaml, const ckgit::DocsPortalOptions& options = {}) {
+  try {
+    static_cast<void>(ckgit::loadDocsPortal(root, ckgit::parseDocsConfig(yaml), options, nullptr));
+    return {};
+  } catch (const std::exception& error) {
+    return error.what();
+  }
+}
+
+void testPortalBuild() {
+  Scratch scratch;
+  const fs::path root = scratch.root / "repo";
+  // The Python edition lives on main, as a formerly single-site project.
+  write(root / "ckdocs.yml", "version: 1\nsite:\n  title: Python docs\nsearch: true\n");
+  write(root / "docs/README.md", "# Python home\n\nRead the [guide](guide.md).\n");
+  write(root / "docs/guide.md", "# Guide\n\nA [missing](nope.md) page.\n\n## Usage\n");
+  git(root, {"init", "-q", "--initial-branch=main"});
+  commitAll(root, "python");
+  // A branch whose page would land inside the C++ site's directory.
+  git(root, {"checkout", "-q", "-b", "clash"});
+  write(root / "docs/cpp/clash.md", "# Clash\n");
+  commitAll(root, "clash");
+  // The C++ edition and the portal live on the branch being built.
+  git(root, {"checkout", "-q", "-b", "cpp-work", "main"});
+  const std::string portal_yaml =
+      "version: 1\n"
+      "site:\n"
+      "  title: Portal\n"
+      "  logo: portal/logo.svg\n"
+      "  description: Both editions\n"
+      "  footer: \"© Portal\"\n"
+      "  links:\n"
+      "    - title: Source\n"
+      "      url: https://example.test/src\n"
+      "home: portal/welcome.md\n"
+      "sites:\n"
+      "  - id: cpp\n"
+      "    title: C++ edition\n"
+      "    description: The native port\n"
+      "    config: cpp-docs/ckdocs.yml\n"
+      "  - id: python\n"
+      "    title: Python edition\n"
+      "    ref: main\n"
+      "    redirect_from_root: true\n";
+  write(root / "ckdocs.yml", portal_yaml);
+  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\nsource: cpp-docs\n");
+  write(root / "cpp-docs/README.md", "# C++ home\n\nSee the [API](api.md#calls).\n");
+  write(root / "cpp-docs/api.md", "# API\n\n## Calls\n");
+  write(root / "portal/welcome.md", "Choose an edition, or start with the [Python guide](/python/guide.html).\n\n"
+                                    "![logo](logo.svg) [nowhere](#nowhere)\n");
+  write(root / "portal/logo.svg", "<svg/>");
+  commitAll(root, "portal");
+
+  const auto config = ckgit::readDocsConfig(root);
+  const auto out = scratch.root / "out";
+  ckgit::DocsBuildReport report;
+  std::vector<std::string> warnings;
+  fs::path extracted;
+  std::string python_guide;
+  {
+    const auto portal = ckgit::loadDocsPortal(root, config, ckgit::DocsPortalOptions{}, &warnings);
+    require(portal.sites.size() == 2 && portal.sites[0].model.title == "C++ docs" && portal.sites[1].model.title == "Python docs",
+            "each site reads its own config");
+    require(portal.extracted && fs::is_directory(*portal.extracted) && portal.sites[1].model.root.string().starts_with(portal.extracted->string()),
+            "the ref is extracted into the portal's private directory");
+    require(portal.sites[0].model.root == root, "a site without a ref is rooted at the work tree");
+    extracted = *portal.extracted;
+    ckgit::buildDocsPortal(portal, out, ckgit::DocsBuildOptions{}, &report);
+  }
+  require(!fs::exists(extracted), "the extracted ref tree is removed with the model");
+  require(warnings.empty(), "no load warnings");
+  for (const auto* file : {"index.html", ".ckdocs", "portal/logo.svg", "guide.html", "cpp/index.html", "cpp/api.html",
+                           "cpp/site-index.html", "python/index.html", "python/guide.html", "python/site-index.html",
+                           "python/search-index.json"}) {
+    require(fs::is_regular_file(out / file), std::string("portal output: ") + file);
+  }
+  require(!fs::exists(out / "search-index.json") && !fs::exists(out / "site-index.html") && !fs::exists(out / "cpp/search-index.json") &&
+              !fs::exists(out / "cpp/.ckdocs") && !fs::exists(out / "python/.ckdocs"),
+          "one marker; search only where a site asked for it");
+  require(report.pages_written == 5 && report.redirects_written == 1 && report.assets_copied == 1,
+          "two pages per site, the welcome page, one redirect, the logo");
+  require(report.broken_links.size() == 1 && report.broken_links[0] == "python: docs/guide.md: link target 'nope.md' is not a page of this site",
+          "a site's broken link is reported under its id");
+  require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "portal/welcome.md: '#nowhere' names no heading"),
+          "the intro's own fragments are checked");
+  require(!hasTemporaryLeftovers(scratch.root, "out"), "no temporary directory is left behind");
+
+  python_guide = slurp(out / "python/guide.html");
+  checkInternalReferences(out, "python/guide.html", python_guide);
+  require(contains(python_guide, "<title>Guide · Python docs</title>"), "the site's own title in <title>");
+  require(contains(python_guide, "<a class=\"brand\" href=\"../index.html\"><img src=\"../portal/logo.svg\" alt=\"\">Portal</a>"
+                                 "<details class=\"site-select\"><summary>Python edition</summary>"),
+          "the portal's brand links to the welcome page, followed by the selector");
+  const auto selector = between(python_guide, "<details class=\"site-select\">", "</details>");
+  require(contains(selector, "<a href=\"../cpp/index.html\">C++ edition</a>") &&
+              contains(selector, "<a href=\"index.html\" aria-current=\"true\">Python edition</a>") && occurrences(selector, "aria-current") == 1,
+          "the selector lists every site's home, the current one marked");
+  require(contains(python_guide, "<a href=\"https://example.test/src\" rel=\"noopener\">Source</a>") &&
+              contains(python_guide, "<span>© Portal</span>"),
+          "a site without links or footer shows the portal's");
+  require(contains(python_guide, "<nav class=\"tabs\"") && contains(python_guide, "data-index=\"search-index.json\""),
+          "the site keeps its tabs and its own search");
+
+  const auto api = slurp(out / "cpp/api.html");
+  checkInternalReferences(out, "cpp/api.html", api);
+  require(contains(api, "<summary>C++ edition</summary>") && contains(api, "<a href=\"index.html\" aria-current=\"true\">C++ edition</a>") &&
+              contains(api, "<a href=\"../python/index.html\">Python edition</a>") && !contains(api, "ckdocs-search"),
+          "the C++ site's selector");
+  require(contains(slurp(out / "cpp/index.html"), "href=\"api.html#calls\""), "links within a site stay relative");
+
+  const auto welcome = slurp(out / "index.html");
+  checkInternalReferences(out, "index.html", welcome);
+  require(contains(welcome, "<title>Portal</title>") && contains(welcome, "<h1>Portal</h1>") &&
+              contains(welcome, "<p class=\"portal-description\">Both editions</p>") &&
+              contains(welcome, "<details class=\"site-select\"><summary>Sites</summary>") && !contains(welcome, "aria-current=\"true\""),
+          "the welcome page: title, description, a selector with no current site");
+  require(contains(welcome, "<a href=\"python/guide.html\">Python guide</a>") && contains(welcome, "src=\"portal/logo.svg\" alt=\"logo\""),
+          "the intro links to a site's page and to a file of the work tree");
+  require(contains(welcome, "<li><a href=\"cpp/index.html\">C++ edition</a><p>The native port</p></li>") &&
+              contains(welcome, "<li><a href=\"python/index.html\">Python edition</a></li>"),
+          "a card per site");
+  require(!contains(welcome, "class=\"tabs\"") && !contains(welcome, "<aside") && !contains(welcome, "ckdocs-search"),
+          "no tabs, sidebar or search on the welcome page");
+
+  const auto redirect = slurp(out / "guide.html");
+  require(contains(redirect, "<meta http-equiv=\"refresh\" content=\"0; url=python/guide.html\">") &&
+              contains(redirect, "<link rel=\"canonical\" href=\"python/guide.html\">") &&
+              contains(redirect, "<a href=\"python/guide.html\">Guide</a>"),
+          "an old root URL redirects to the page's new place");
+
+  // --ref-tree: a directory already holding the ref's tree gives the same site.
+  const auto tree = scratch.root / "main-tree";
+  fs::create_directories(tree);
+  const auto archived = ckgit::runProcess({"git", "-C", root.string(), "archive", "--format=tar",
+                                           "--output=" + (scratch.root / "main.tar").string(), "main"},
+                                          std::chrono::seconds(20), 64 * 1024);
+  require(archived.exit_code == 0, "fixture archive");
+  const auto unpacked = ckgit::runProcess({"tar", "-xf", (scratch.root / "main.tar").string(), "-C", tree.string()},
+                                          std::chrono::seconds(20), 64 * 1024);
+  require(unpacked.exit_code == 0, "fixture unpack");
+  ckgit::DocsPortalOptions given;
+  given.ref_trees.emplace("main", tree);
+  {
+    const auto portal = ckgit::loadDocsPortal(root, config, given, nullptr);
+    require(!portal.extracted && portal.sites[1].model.root == tree, "a given ref tree is used as it is");
+    ckgit::DocsBuildOptions clean;
+    clean.clean = true;
+    ckgit::buildDocsPortal(portal, out, clean, &report);
+  }
+  require(slurp(out / "python/guide.html") == python_guide, "--ref-tree builds the same pages as the extracted ref");
+
+  // origin/<ref> stands in for a ref only fetched as a remote-tracking branch.
+  const auto head = ckgit::runProcess({"git", "-C", root.string(), "rev-parse", "main"}, std::chrono::seconds(10), 4096);
+  git(root, {"update-ref", "refs/remotes/origin/published", head.output.substr(0, head.output.find('\n'))});
+  std::string variant = portal_yaml;
+  variant.replace(variant.find("ref: main"), 9, "ref: published");
+  require(portalLoadError(root, variant).empty(), "origin/<ref> is resolved when <ref> is not a local branch");
+
+  // A ref nobody has, here or as a given tree.
+  variant = portal_yaml;
+  variant.replace(variant.find("ref: main"), 9, "ref: nope");
+  require(portalLoadError(root, variant) ==
+              "ckdocs: site 'python': ref 'nope' is not available (no Git repository here, or a clone without that branch); "
+              "fetch it, or pass --ref-tree nope=DIR",
+          "a missing ref names the way out");
+  const auto plain = scratch.root / "plain";
+  write(plain / "README.md", "# Plain\n");
+  require(contains(portalLoadError(plain, kPortalHead + "sites:\n  - id: a\n    title: A\n    ref: main\n"), "ref 'main' is not available"),
+          "outside a Git repository a ref needs --ref-tree");
+  ckgit::DocsPortalOptions missing_tree;
+  missing_tree.ref_trees.emplace("main", scratch.root / "absent");
+  require(contains(portalLoadError(root, portal_yaml, missing_tree), "--ref-tree main=") , "a --ref-tree that is no directory is refused");
+
+  // A site whose config is the portal's own file (the default ckdocs.yml at
+  // the work tree root) would nest portals.
+  require(contains(portalLoadError(root, kPortalHead + "sites:\n  - id: a\n    title: A\n"), "lists 'sites' itself"),
+          "a site's config must not list sites");
+  require(contains(portalLoadError(root, kPortalHead + "sites:\n  - id: a\n    title: A\n    config: absent.yml\n"),
+                   "site 'a': config 'absent.yml' does not exist"),
+          "an explicit site config must exist");
+
+  // A redirect landing inside another site's directory is refused, and the
+  // existing output is left as it was.
+  variant = portal_yaml;
+  variant.replace(variant.find("ref: main"), 9, "ref: clash");
+  const auto before = slurp(out / "index.html");
+  bool refused = false;
+  try {
+    const auto portal = ckgit::loadDocsPortal(root, ckgit::parseDocsConfig(variant), {}, nullptr);
+    ckgit::DocsBuildOptions clean;
+    clean.clean = true;
+    ckgit::buildDocsPortal(portal, out, clean, &report);
+  } catch (const std::exception& error) {
+    refused = contains(error.what(), "site 'python': redirect_from_root would write 'cpp/clash.html', inside site 'cpp's directory");
+  }
+  require(refused && slurp(out / "index.html") == before && !hasTemporaryLeftovers(scratch.root, "out"),
+          "a colliding redirect fails the build and leaves the output alone");
+}
 }  // namespace
 
 void testDocsSite() {
@@ -880,5 +1148,7 @@ void testDocsSite() {
   testBuild();
   testMermaidArtifacts();
   testSearch();
+  testPortalConfig();
+  testPortalBuild();
   testThisRepository();
 }

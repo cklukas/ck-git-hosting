@@ -13,6 +13,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -185,6 +186,72 @@ std::vector<std::string> parseForeignFrontMatterKeys(const Node& front_matter) {
     keys.push_back(std::move(key));
   }
   return keys;
+}
+
+// A portal site's id: its output directory and the name it is reported under.
+bool isValidSiteId(std::string_view id) {
+  if (id.empty() || id.size() > kMaximumDocsSiteIdBytes || id.front() == '-') return false;
+  return std::all_of(id.begin(), id.end(), [](unsigned char byte) {
+    return (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '-';
+  });
+}
+
+// A site's Git ref: a branch, tag, or commit id, held to the same rule as a
+// CI sister's ref -- never a git option (no leading '-'), never outside the
+// object namespace (no '..', no leading '/').
+bool isValidSiteRef(std::string_view ref) {
+  if (ref.empty() || ref.size() > 255 || ref.front() == '-' || ref.front() == '/' || ref.find("..") != std::string_view::npos) {
+    return false;
+  }
+  return std::all_of(ref.begin(), ref.end(), [](unsigned char byte) {
+    return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '.' ||
+           byte == '_' || byte == '-' || byte == '/';
+  });
+}
+
+// `sites: [...]`, a portal's documentation sites.
+std::vector<DocsSiteEntry> parseSiteEntries(const Node& sequence) {
+  requireKind(sequence, Node::Kind::Sequence, "sites to be a list");
+  if (sequence.items.empty()) malformed("sites is empty", sequence.line);
+  if (sequence.items.size() > kMaximumDocsSites) tooLarge("sites has more than 8 entries");
+  std::vector<DocsSiteEntry> entries;
+  bool redirecting = false;
+  for (const Node& item : sequence.items) {
+    requireKind(item, Node::Kind::Mapping, "each site to be a mapping with 'id' and 'title'");
+    rejectUnknownKeys(item, {"id", "title", "description", "config", "ref", "redirect_from_root"});
+    const Node* id = findEntry(item, "id");
+    const Node* title = findEntry(item, "title");
+    if (id == nullptr || title == nullptr) malformed("a site needs both 'id' and 'title'", item.line);
+    DocsSiteEntry entry;
+    entry.id = scalarOf(*id, "a site id to be a scalar");
+    if (!isValidSiteId(entry.id)) {
+      malformed("site id '" + entry.id + "' must be 1 to 32 lowercase letters, digits or '-', not starting with '-'", id->line);
+    }
+    for (const auto& existing : entries) {
+      if (existing.id == entry.id) malformed("site id '" + entry.id + "' is listed twice", id->line);
+    }
+    entry.title = titleOf(*title, "a site title");
+    if (const Node* description = findEntry(item, "description")) {
+      entry.description = scalarOf(*description, "a site description to be a scalar");
+      if (!isValidDocsText(entry.description)) {
+        malformed("a site description is longer than 1024 bytes or has control characters", description->line);
+      }
+    }
+    if (const Node* config = findEntry(item, "config")) entry.config = pathOf(*config, "a site config");
+    if (const Node* ref = findEntry(item, "ref")) {
+      entry.ref = scalarOf(*ref, "a site ref to be a scalar");
+      if (!isValidSiteRef(entry.ref)) malformed("invalid site ref '" + entry.ref + "'", ref->line);
+    }
+    if (const Node* redirect = findEntry(item, "redirect_from_root")) {
+      const auto value = scalarOf(*redirect, "redirect_from_root to be true or false");
+      if (value != "true" && value != "false") malformed("redirect_from_root must be true or false", redirect->line);
+      entry.redirect_from_root = value == "true";
+      if (entry.redirect_from_root && redirecting) malformed("only one site may set redirect_from_root", redirect->line);
+      redirecting = redirecting || entry.redirect_from_root;
+    }
+    entries.push_back(std::move(entry));
+  }
+  return entries;
 }
 
 // A strict ISO 8601 calendar date, YYYY-MM-DD, that exists in the proleptic
@@ -475,7 +542,17 @@ std::string docsTitleFromFilename(std::string_view name) {
 
 DocsConfig parseDocsConfig(std::string_view yaml) {
   const Node root = parseYamlSubset(yaml, kDocsConfigDialect);
-  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search", "front_matter"});
+  const Node* sites = findEntry(root, "sites");
+  if (sites != nullptr) {
+    // A portal: the page-tree keys describe one site, so they live in that
+    // site's own config instead.
+    for (const auto* key : {"source", "nav", "search", "exclude", "front_matter"}) {
+      if (const Node* misplaced = findEntry(root, key)) {
+        malformed(std::string("'") + key + "' belongs to a site's own config when 'sites' is given", misplaced->line);
+      }
+    }
+  }
+  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search", "front_matter", "sites"});
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the config is missing 'version'", root.line);
   const auto& version_text = scalarOf(*version, "version to be a number");
@@ -548,6 +625,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
   if (const Node* front_matter = findEntry(root, "front_matter")) {
     config.foreign_front_matter_keys = parseForeignFrontMatterKeys(*front_matter);
   }
+  if (sites != nullptr) config.sites = parseSiteEntries(*sites);
   return config;
 }
 
@@ -569,6 +647,7 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
   model.root = root;
   model.config = config;
   std::error_code error;
+  if (!config.sites.empty()) siteError("the config lists 'sites', so it describes a portal of several sites, not one site");
   if (!fs::is_directory(root, error)) siteError("'" + root.string() + "' is not a directory");
 
   // The page tree.
@@ -856,6 +935,15 @@ bool findTrail(const std::vector<DocsNavItem>& items, std::size_t page, std::vec
   return false;
 }
 
+// What a site's pages need from the portal around them; absent in a
+// single-site build. Paths are portal-relative (from the output root).
+struct PortalShell {
+  const DocsPortalModel* portal = nullptr;
+  std::optional<std::size_t> current;  // the site being rendered; none on the welcome page
+  std::string logo_output;             // the portal's copied logo, or ""
+  std::string stylesheet_output;       // the portal's copied stylesheet, or ""
+};
+
 // Everything the page shell needs that does not change per page.
 struct SiteContext {
   const DocsSiteModel* model = nullptr;
@@ -863,7 +951,17 @@ struct SiteContext {
   std::string logo_output;        // site-relative path of the copied logo, or ""
   std::string stylesheet_output;  // site-relative path of the copied stylesheet, or ""
   std::vector<std::vector<MarkdownHeading>> outlines;  // per page, filled while rendering
+  std::string prefix;                   // where the site sits in the output: "" or "<id>/"
+  const PortalShell* portal = nullptr;  // set when the site is one of a portal's
 };
+
+// The portal's site selector: a native <details> dropdown, so it needs no
+// script, listing every site's home with the current one marked.
+// `from_dir` is the page's portal-relative directory.
+std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir);
+
+// Header links, as configured.
+std::string renderHeaderLinks(const std::vector<DocsLink>& links);
 
 void renderSidebarItems(std::string& out, const std::vector<DocsNavItem>& items, const DocsSiteModel& model,
                         std::size_t current, std::string_view from_dir) {
@@ -951,6 +1049,11 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   const DocsSiteModel& model = *context.model;
   const std::string from_dir(directoryOf(in.output));
   const auto url = [&](std::string_view target) { return escapeHtml(relativeUrl(from_dir, target)); };
+  // A portal-relative target (the portal's welcome page, logo, stylesheet,
+  // another site), from this page's place in the whole output.
+  const std::string portal_dir = context.prefix + from_dir;
+  const auto portalUrl = [&](std::string_view target) { return escapeHtml(relativeUrl(portal_dir, target)); };
+  const PortalShell* portal = context.portal;
   std::vector<const DocsNavItem*> trail;
   if (in.page) findTrail(model.nav, *in.page, trail);
   const DocsNavItem* tab = trail.empty() ? nullptr : trail.front();
@@ -972,13 +1075,25 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   out += "<style>";
   out += kDocsStyles;
   out += "</style>";
-  if (!context.stylesheet_output.empty()) out += "<link rel=\"stylesheet\" href=\"" + url(context.stylesheet_output) + "\">";
+  if (!context.stylesheet_output.empty()) {
+    out += "<link rel=\"stylesheet\" href=\"" + url(context.stylesheet_output) + "\">";
+  } else if (portal != nullptr && !portal->stylesheet_output.empty()) {
+    out += "<link rel=\"stylesheet\" href=\"" + portalUrl(portal->stylesheet_output) + "\">";
+  }
   out += "</head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a>";
 
-  // Header: brand, tabs, links.
-  out += "<header class=\"site\"><a class=\"brand\" href=\"" + url(model.pages[model.home].output) + "\">";
-  if (!context.logo_output.empty()) out += "<img src=\"" + url(context.logo_output) + "\" alt=\"\">";
-  out += escapeHtml(model.config.brand.empty() ? model.title : model.config.brand) + "</a>";
+  // Header: brand (the portal's, in a portal), the site selector, tabs, links.
+  if (portal != nullptr) {
+    const DocsConfig& portal_config = portal->portal->config;
+    out += "<header class=\"site\"><a class=\"brand\" href=\"" + portalUrl("index.html") + "\">";
+    if (!portal->logo_output.empty()) out += "<img src=\"" + portalUrl(portal->logo_output) + "\" alt=\"\">";
+    out += escapeHtml(portal_config.brand.empty() ? portal_config.title : portal_config.brand) + "</a>";
+    out += renderSiteSelector(*portal->portal, portal->current, portal_dir);
+  } else {
+    out += "<header class=\"site\"><a class=\"brand\" href=\"" + url(model.pages[model.home].output) + "\">";
+    if (!context.logo_output.empty()) out += "<img src=\"" + url(context.logo_output) + "\" alt=\"\">";
+    out += escapeHtml(model.config.brand.empty() ? model.title : model.config.brand) + "</a>";
+  }
   out += "<nav class=\"tabs\" aria-label=\"Sections\">";
   for (const auto& item : model.nav) {
     const auto first = firstPageOf(item);
@@ -999,13 +1114,8 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
            "<noscript><a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a></noscript>"
            "</form><script>" + std::string(kDocsSearchScript) + "</script>";
   }
-  if (!model.config.links.empty()) {
-    out += "<nav class=\"links\" aria-label=\"Links\">";
-    for (const auto& link : model.config.links) {
-      out += "<a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + escapeHtml(link.title) + "</a>";
-    }
-    out += "</nav>";
-  }
+  // A portal site without links of its own shows the portal's.
+  out += renderHeaderLinks(!model.config.links.empty() || portal == nullptr ? model.config.links : portal->portal->config.links);
   out += "</header>";
 
   // Sidebar: the active tab's pages, then this page's outline.
@@ -1067,10 +1177,32 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
 
   // Footer.
   out += "<footer class=\"site\">";
-  if (!model.config.footer.empty()) out += "<span>" + escapeHtml(model.config.footer) + "</span>";
+  const std::string& footer = !model.config.footer.empty() || portal == nullptr ? model.config.footer : portal->portal->config.footer;
+  if (!footer.empty()) out += "<span>" + escapeHtml(footer) + "</span>";
   out += "<span>Built with ckdocs " + escapeHtml(context.version) + "</span>";
   out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a>";
   return out + "</footer></body></html>";
+}
+
+std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir) {
+  std::string out = "<details class=\"site-select\"><summary>";
+  out += current ? escapeHtml(portal.sites[*current].entry.title) : std::string("Sites");
+  out += "</summary><nav aria-label=\"Documentation sites\"><ul>";
+  for (std::size_t index = 0; index < portal.sites.size(); ++index) {
+    const auto& site = portal.sites[index];
+    out += "<li><a href=\"" + escapeHtml(relativeUrl(from_dir, site.entry.id + "/" + site.model.pages[site.model.home].output)) +
+           "\"" + (current == index ? " aria-current=\"true\"" : "") + ">" + escapeHtml(site.entry.title) + "</a></li>";
+  }
+  return out + "</ul></nav></details>";
+}
+
+std::string renderHeaderLinks(const std::vector<DocsLink>& links) {
+  if (links.empty()) return {};
+  std::string out = "<nav class=\"links\" aria-label=\"Links\">";
+  for (const auto& link : links) {
+    out += "<a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + escapeHtml(link.title) + "</a>";
+  }
+  return out + "</nav>";
 }
 
 // Where an asset lands: like a page, relative to the source when inside it.
@@ -1279,30 +1411,90 @@ struct TemporaryDirectory {
   }
 };
 
-}  // namespace
-
-void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const DocsBuildOptions& options,
-                   DocsBuildReport* report) {
-  DocsBuildReport local_report;
-  DocsBuildReport& result = report != nullptr ? *report : local_report;
-  result = DocsBuildReport{};
-  if (model.pages.empty()) siteError("the site has no pages");
-  const fs::path out = fs::absolute(out_path).lexically_normal();
-  std::error_code error;
-
-  // Refuse early what the final swap would refuse, before any work.
-  if (fs::exists(out, error)) {
-    if (!fs::is_directory(out, error)) siteError("output path '" + out.string() + "' exists and is not a directory");
-    const bool empty = fs::is_empty(out, error);
-    const bool marked = fs::is_regular_file(out / kDocsSiteMarker, error);
-    if (!empty && !marked) siteError("output directory '" + out.string() + "' exists and was not written by ckdocs; refusing to touch it");
-    if (!empty && !options.clean) siteError("output directory '" + out.string() + "' already holds a site; use --clean to replace it");
+// The one temporary tree a build writes into, a fresh sibling of the output,
+// and its swap into place. Construction refuses early what the final swap
+// would refuse, before any work; nothing reaches `out` before commit().
+class OutputTree {
+ public:
+  OutputTree(const fs::path& out_path, bool clean, DocsBuildReport& report)
+      : out_(fs::absolute(out_path).lexically_normal()), report_(report) {
+    std::error_code error;
+    if (fs::exists(out_, error)) {
+      if (!fs::is_directory(out_, error)) siteError("output path '" + out_.string() + "' exists and is not a directory");
+      const bool empty = fs::is_empty(out_, error);
+      const bool marked = fs::is_regular_file(out_ / kDocsSiteMarker, error);
+      if (!empty && !marked) siteError("output directory '" + out_.string() + "' exists and was not written by ckdocs; refusing to touch it");
+      if (!empty && !clean) siteError("output directory '" + out_.string() + "' already holds a site; use --clean to replace it");
+    }
+    auto pattern = (out_.parent_path() / (out_.filename().string() + ".tmp-XXXXXX")).string();
+    std::vector<char> writable(pattern.begin(), pattern.end());
+    writable.push_back('\0');
+    if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory beside '" + out_.string() + "'");
+    temporary_.path = writable.data();
   }
 
+  // Writes one file at its output-relative path; the Pages size and entry
+  // bounds apply to everything written so far, plus the marker to come.
+  void write(const std::string& path, const std::string& content) {
+    const auto target = temporary_.path / path;
+    for (auto parent = fs::path(path).parent_path(); !parent.empty(); parent = parent.parent_path()) {
+      if (directories_.insert(parent.generic_string()).second) fs::create_directories(temporary_.path / parent);
+    }
+    std::ofstream stream(target, std::ios::binary | std::ios::trunc);
+    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+    if (!stream) siteError("cannot write '" + target.string() + "'");
+    files_.insert(path);
+    report_.bytes_written += content.size();
+    if (report_.bytes_written > kMaximumPagesSiteBytes) siteError("the site exceeds the size limit for a Pages site");
+    if (directories_.size() + files_.size() + 1 > kMaximumPagesEntries) siteError("the site exceeds the entry limit for a Pages site");
+  }
+
+  bool written(const std::string& path) const { return files_.count(path) != 0; }
+
+  // The marker, then the swap; an existing site is kept until the new one is in.
+  void commit(const std::string& version) {
+    write(std::string(kDocsSiteMarker),
+          "version=1\ngenerator=ckdocs " + version + "\npages=" + std::to_string(report_.pages_written) + "\n");
+    std::error_code error;
+    if (fs::exists(out_, error)) {
+      const fs::path old = fs::path(temporary_.path.string() + ".old");
+      fs::rename(out_, old, error);
+      if (error) siteError("cannot move the previous site aside: " + error.message());
+      fs::rename(temporary_.path, out_, error);
+      if (error) {
+        std::error_code restore;
+        fs::rename(old, out_, restore);
+        siteError("cannot move the new site into place: " + error.message());
+      }
+      fs::remove_all(old, error);
+    } else {
+      fs::create_directories(out_.parent_path(), error);
+      fs::rename(temporary_.path, out_, error);
+      if (error) siteError("cannot move the new site into place: " + error.message());
+    }
+    temporary_.keep = true;
+  }
+
+ private:
+  fs::path out_;
+  DocsBuildReport& report_;
+  TemporaryDirectory temporary_;
+  std::set<std::string> directories_;
+  std::set<std::string> files_;
+};
+
+// Renders one site's pages, site index, search index and assets into `tree`
+// below `prefix` ("" for a single site, "<id>/" in a portal), counting into
+// `result`.
+void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string& prefix, const PortalShell* portal,
+                const DocsBuildOptions& options, DocsBuildReport& result) {
+  std::error_code error;
   SiteContext context;
   context.model = &model;
   context.version = buildVersion();
   context.outlines.resize(model.pages.size());
+  context.prefix = prefix;
+  context.portal = portal;
 
   // Site-relative outputs and their sources: pages, assets, the logo and stylesheet.
   std::map<std::string, std::size_t> page_by_source;
@@ -1333,30 +1525,11 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     }
     return output;
   };
-  if (!model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
+  // In a portal the header shows the portal's brand and logo, not the site's.
+  if (portal == nullptr && !model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
   if (!model.config.stylesheet.empty()) context.stylesheet_output = addAsset(model.config.stylesheet, "site.stylesheet");
 
-  // The temporary directory beside the output.
-  auto pattern = (out.parent_path() / (out.filename().string() + ".tmp-XXXXXX")).string();
-  std::vector<char> writable(pattern.begin(), pattern.end());
-  writable.push_back('\0');
-  if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory beside '" + out.string() + "'");
-  TemporaryDirectory temporary{fs::path(writable.data())};
-  std::set<std::string> directories;
-  const auto writeFile = [&](const std::string& site_path, const std::string& content) {
-    const auto target = temporary.path / site_path;
-    for (auto parent = fs::path(site_path).parent_path(); !parent.empty(); parent = parent.parent_path()) {
-      if (directories.insert(parent.generic_string()).second) fs::create_directories(temporary.path / parent);
-    }
-    std::ofstream stream(target, std::ios::binary | std::ios::trunc);
-    stream.write(content.data(), static_cast<std::streamsize>(content.size()));
-    if (!stream) siteError("cannot write '" + target.string() + "'");
-    result.bytes_written += content.size();
-    if (result.bytes_written > kMaximumPagesSiteBytes) siteError("the site exceeds the size limit for a Pages site");
-    if (directories.size() + result.pages_written + result.assets_copied + result.assets_generated + 2 > kMaximumPagesEntries) {
-      siteError("the site exceeds the entry limit for a Pages site");
-    }
-  };
+  const auto writeFile = [&](const std::string& site_path, const std::string& content) { tree.write(prefix + site_path, content); };
 
   // Render and write every page; remember ids and links for the anchor check,
   // and, when search is on, each page's own sections for the index below.
@@ -1565,27 +1738,357 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
     writeFile(output, *asset);
     ++result.assets_copied;
   }
-  writeFile(std::string(kDocsSiteMarker), "version=1\ngenerator=ckdocs " + context.version + "\npages=" +
-                                              std::to_string(result.pages_written) + "\n");
+}
 
-  // Swap into place; an existing site is kept until the new one is in.
-  if (fs::exists(out, error)) {
-    const fs::path old = fs::path(temporary.path.string() + ".old");
-    fs::rename(out, old, error);
-    if (error) siteError("cannot move the previous site aside: " + error.message());
-    fs::rename(temporary.path, out, error);
-    if (error) {
-      std::error_code restore;
-      fs::rename(old, out, restore);
-      siteError("cannot move the new site into place: " + error.message());
+}  // namespace
+
+void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const DocsBuildOptions& options,
+                   DocsBuildReport* report) {
+  DocsBuildReport local_report;
+  DocsBuildReport& result = report != nullptr ? *report : local_report;
+  result = DocsBuildReport{};
+  if (model.pages.empty()) siteError("the site has no pages");
+  OutputTree tree(out_path, options.clean, result);
+  renderSite(model, tree, "", nullptr, options, result);
+  tree.commit(buildVersion());
+}
+
+
+// ---- several sites in one build (a portal) ----------------------------------
+
+namespace {
+
+// A failure inside one site, restated with the site's id.
+[[noreturn]] void rethrowForSite(const std::string& id, const std::exception& failure) {
+  std::string message = failure.what();
+  if (message.starts_with("ckdocs: ")) message.erase(0, 8);
+  siteError("site '" + id + "': " + message);
+}
+
+std::string trimmedOutput(std::string text) {
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == '\0')) text.pop_back();
+  return text;
+}
+
+// The committed tree of `entry.ref` -- or of `origin/<ref>`, the form a
+// CI clone that fetched the branch holds -- extracted with `git archive`
+// into a fresh directory below the portal's private scratch directory.
+fs::path extractRef(const fs::path& root, const DocsSiteEntry& entry, std::shared_ptr<const fs::path>& scratch,
+                    std::size_t number) {
+  const auto unavailable = [&]() {
+    siteError("site '" + entry.id + "': ref '" + entry.ref +
+              "' is not available (no Git repository here, or a clone without that branch); fetch it, or pass --ref-tree " +
+              entry.ref + "=DIR");
+  };
+  std::error_code error;
+  if (!fs::exists(root / ".git", error)) unavailable();
+  ProcessOptions resolve;
+  resolve.timeout = std::chrono::seconds(20);
+  resolve.output_limit = 256;
+  std::string commit;
+  for (const auto& candidate : {entry.ref, "origin/" + entry.ref}) {
+    const auto resolved = runProcess({"git", "-C", root.string(), "rev-parse", "--verify", "--quiet", "--end-of-options",
+                                      candidate + "^{commit}"},
+                                     resolve);
+    if (resolved.exit_code == 0 && !resolved.timed_out) {
+      commit = trimmedOutput(resolved.output);
+      break;
     }
-    fs::remove_all(old, error);
-  } else {
-    fs::create_directories(out.parent_path(), error);
-    fs::rename(temporary.path, out, error);
-    if (error) siteError("cannot move the new site into place: " + error.message());
   }
-  temporary.keep = true;
+  if (commit.empty() || !std::all_of(commit.begin(), commit.end(), [](unsigned char byte) { return std::isxdigit(byte) != 0; })) {
+    unavailable();
+  }
+  if (!scratch) {
+    auto pattern = (fs::temp_directory_path() / "ckdocs-refs-XXXXXX").string();
+    std::vector<char> writable(pattern.begin(), pattern.end());
+    writable.push_back('\0');
+    if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory for ref trees");
+    scratch = std::shared_ptr<const fs::path>(new fs::path(writable.data()), [](const fs::path* path) {
+      std::error_code ignored;
+      fs::remove_all(*path, ignored);
+      delete path;
+    });
+  }
+  const fs::path tree = *scratch / ("tree-" + std::to_string(number));
+  const fs::path archive = *scratch / ("tree-" + std::to_string(number) + ".tar");
+  fs::create_directories(tree, error);
+  if (error) siteError("cannot create a directory for ref '" + entry.ref + "': " + error.message());
+  ProcessOptions extract;
+  extract.timeout = std::chrono::seconds(120);
+  extract.output_limit = 64 * 1024;
+  // --output writes the archive itself; runProcess merges stdout and stderr,
+  // so the tar stream never passes through it.
+  const auto archived =
+      runProcess({"git", "-C", root.string(), "archive", "--format=tar", "--output=" + archive.string(), commit}, extract);
+  if (archived.exit_code != 0 || archived.timed_out) {
+    siteError("site '" + entry.id + "': git archive of ref '" + entry.ref + "' failed: " + trimmedOutput(archived.output));
+  }
+  const auto unpacked = runProcess({"tar", "-xf", archive.string(), "-C", tree.string()}, extract);
+  if (unpacked.exit_code != 0 || unpacked.timed_out) {
+    siteError("site '" + entry.id + "': unpacking ref '" + entry.ref + "' failed: " + trimmedOutput(unpacked.output));
+  }
+  fs::remove(archive, error);
+  return tree;
+}
+
+// A small page standing at a site's old, root-level URL: an immediate
+// refresh to the page's new place, its canonical link, and a visible link
+// for anything that does not follow the refresh.
+std::string renderRedirectPage(const std::string& target, const std::string& title) {
+  const auto href = escapeHtml(target);
+  return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" + escapeHtml(title) +
+         "</title><meta http-equiv=\"refresh\" content=\"0; url=" + href + "\"><link rel=\"canonical\" href=\"" + href +
+         "\"><meta name=\"robots\" content=\"noindex\"></head><body><p>This page has moved to <a href=\"" + href + "\">" +
+         escapeHtml(title) + "</a>.</p></body></html>\n";
+}
+
+// The welcome page: the portal's own shell (brand, a selector with no
+// current site, the portal's links; no tabs, sidebar or search), its title,
+// description and intro, then a card per site.
+std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& shell, const std::string& version,
+                              const std::string& intro) {
+  const DocsConfig& config = portal.config;
+  std::string out = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">";
+  out += "<title>" + escapeHtml(config.title) + "</title>";
+  if (!config.description.empty()) out += "<meta name=\"description\" content=\"" + escapeHtml(config.description) + "\">";
+  out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(version) + "\">";
+  out += "<style>";
+  out += kDocsStyles;
+  out += "</style>";
+  if (!shell.stylesheet_output.empty()) out += "<link rel=\"stylesheet\" href=\"" + escapeHtml(relativeUrl("", shell.stylesheet_output)) + "\">";
+  out += "</head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a>";
+  out += "<header class=\"site\"><a class=\"brand\" href=\"index.html\">";
+  if (!shell.logo_output.empty()) out += "<img src=\"" + escapeHtml(relativeUrl("", shell.logo_output)) + "\" alt=\"\">";
+  out += escapeHtml(config.brand.empty() ? config.title : config.brand) + "</a>";
+  out += renderSiteSelector(portal, std::nullopt, "");
+  out += renderHeaderLinks(config.links);
+  out += "</header><div class=\"page portal\"><main id=\"main-content\"><article><h1>" + escapeHtml(config.title) + "</h1>";
+  if (!config.description.empty()) out += "<p class=\"portal-description\">" + escapeHtml(config.description) + "</p>";
+  out += intro;
+  out += "<ul class=\"site-cards\">";
+  for (const auto& site : portal.sites) {
+    out += "<li><a href=\"" + escapeHtml(relativeUrl("", site.entry.id + "/" + site.model.pages[site.model.home].output)) + "\">" +
+           escapeHtml(site.entry.title) + "</a>";
+    if (!site.entry.description.empty()) out += "<p>" + escapeHtml(site.entry.description) + "</p>";
+    out += "</li>";
+  }
+  out += "</ul></article></main></div><footer class=\"site\">";
+  if (!config.footer.empty()) out += "<span>" + escapeHtml(config.footer) + "</span>";
+  out += "<span>Built with ckdocs " + escapeHtml(version) + "</span>";
+  return out + "</footer></body></html>";
+}
+
+}  // namespace
+
+DocsPortalModel loadDocsPortal(const fs::path& root, const DocsConfig& config, const DocsPortalOptions& options,
+                               std::vector<std::string>* warnings) {
+  if (config.sites.empty()) siteError("the config lists no 'sites'");
+  std::error_code error;
+  if (!fs::is_directory(root, error)) siteError("'" + root.string() + "' is not a directory");
+  DocsPortalModel portal;
+  portal.root = root;
+  portal.config = config;
+  if (!config.home.empty()) {
+    const auto intro = root / config.home;
+    if (fs::is_symlink(intro, error) || !fs::is_regular_file(intro, error)) {
+      siteError("home page '" + config.home + "' (the welcome page's intro) is not a regular file");
+    }
+  }
+
+  std::map<std::string, fs::path> trees;  // ref -> the site root holding its tree
+  for (const DocsSiteEntry& entry : config.sites) {
+    fs::path site_root = root;
+    if (!entry.ref.empty()) {
+      if (const auto known = trees.find(entry.ref); known != trees.end()) {
+        site_root = known->second;
+      } else if (const auto given = options.ref_trees.find(entry.ref); given != options.ref_trees.end()) {
+        site_root = fs::absolute(given->second, error);
+        if (error || !fs::is_directory(site_root, error)) {
+          siteError("site '" + entry.id + "': --ref-tree " + entry.ref + "=" + given->second.string() + " is not a directory");
+        }
+      } else {
+        site_root = extractRef(root, entry, portal.extracted, trees.size());
+      }
+      trees.emplace(entry.ref, site_root);
+    }
+
+    // The site's own config, relative to its root.
+    const std::string config_path = entry.config.empty() ? std::string("ckdocs.yml") : entry.config;
+    const std::string where = entry.ref.empty() ? std::string() : " in ref '" + entry.ref + "'";
+    DocsConfig site_config;
+    const auto file = site_root / config_path;
+    if (fs::exists(file, error)) {
+      if (fs::is_symlink(file, error) || !fs::is_regular_file(file, error)) {
+        siteError("site '" + entry.id + "': config '" + config_path + "'" + where + " is not a regular file");
+      }
+      const auto content = readFile(file, kMaximumDocsConfigBytes + 1);
+      if (!content) siteError("site '" + entry.id + "': cannot read config '" + config_path + "'" + where);
+      try {
+        site_config = parseDocsConfig(*content);
+      } catch (const std::exception& failure) {
+        siteError("site '" + entry.id + "': config '" + config_path + "'" + where + ": " + failure.what());
+      }
+      if (!site_config.sites.empty()) {
+        siteError("site '" + entry.id + "': config '" + config_path + "'" + where +
+                  " lists 'sites' itself; a site needs an ordinary single-site config (set 'config' to one)");
+      }
+    } else if (!entry.config.empty()) {
+      siteError("site '" + entry.id + "': config '" + config_path + "'" + where + " does not exist");
+    }
+    if (site_config.title.empty()) site_config.title = entry.title;
+
+    std::vector<std::string> site_warnings;
+    DocsPortalSite site;
+    site.entry = entry;
+    try {
+      site.model = loadDocsSite(site_root, site_config, &site_warnings);
+    } catch (const std::exception& failure) {
+      rethrowForSite(entry.id, failure);
+    }
+    if (warnings != nullptr) {
+      for (const auto& warning : site_warnings) warnings->push_back(entry.id + ": " + warning);
+    }
+    portal.sites.push_back(std::move(site));
+  }
+  return portal;
+}
+
+void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, const DocsBuildOptions& options,
+                     DocsBuildReport* report) {
+  DocsBuildReport local_report;
+  DocsBuildReport& result = report != nullptr ? *report : local_report;
+  result = DocsBuildReport{};
+  if (portal.sites.empty()) siteError("the portal has no sites");
+  for (const auto& site : portal.sites) {
+    if (site.model.pages.empty()) siteError("site '" + site.entry.id + "': the site has no pages");
+  }
+  std::error_code error;
+  OutputTree tree(out_path, options.clean, result);
+  const std::string version = buildVersion();
+
+  // The portal's own files (logo, stylesheet, what the intro references)
+  // land at their root-relative path, which must stay out of every site's
+  // directory.
+  std::set<std::string> portal_assets;
+  const auto siteOwning = [&portal](std::string_view path) -> const DocsPortalSite* {
+    const auto first = path.substr(0, path.find('/'));
+    for (const auto& site : portal.sites) {
+      if (site.entry.id == first) return &site;
+    }
+    return nullptr;
+  };
+  const auto addPortalAsset = [&](const std::string& root_relative, const std::string& what) {
+    const auto full = portal.root / root_relative;
+    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) siteError(what + " '" + root_relative + "' is not a regular file");
+    if (fs::file_size(full, error) > kMaximumPagesFileBytes) siteError(what + " '" + root_relative + "' exceeds the file size limit");
+    if (const auto* owner = siteOwning(root_relative)) {
+      siteError(what + " '" + root_relative + "' would be written inside site '" + owner->entry.id + "'s directory");
+    }
+    portal_assets.insert(root_relative);
+    return root_relative;
+  };
+  PortalShell shell;
+  shell.portal = &portal;
+  if (!portal.config.logo.empty()) shell.logo_output = addPortalAsset(portal.config.logo, "site.logo");
+  if (!portal.config.stylesheet.empty()) shell.stylesheet_output = addPortalAsset(portal.config.stylesheet, "site.stylesheet");
+
+  // Every site below its id, its findings prefixed with it.
+  for (std::size_t index = 0; index < portal.sites.size(); ++index) {
+    const auto& site = portal.sites[index];
+    shell.current = index;
+    const auto links_before = result.broken_links.size();
+    const auto anchors_before = result.broken_anchors.size();
+    const auto warnings_before = result.warnings.size();
+    try {
+      renderSite(site.model, tree, site.entry.id + "/", &shell, options, result);
+    } catch (const std::exception& failure) {
+      rethrowForSite(site.entry.id, failure);
+    }
+    for (auto at = links_before; at < result.broken_links.size(); ++at) result.broken_links[at].insert(0, site.entry.id + ": ");
+    for (auto at = anchors_before; at < result.broken_anchors.size(); ++at) result.broken_anchors[at].insert(0, site.entry.id + ": ");
+    for (auto at = warnings_before; at < result.warnings.size(); ++at) result.warnings[at].insert(0, site.entry.id + ": ");
+  }
+
+  // The welcome page, with the optional intro. Its links resolve within the
+  // work tree root (a file there is copied like any page's asset) or to a
+  // page of one of the sites, as `<id>/<page>.html`; a fragment-only link
+  // must name one of its own headings.
+  std::string intro;
+  if (!portal.config.home.empty()) {
+    const std::string& source = portal.config.home;
+    const auto content = readFile(portal.root / source, kMaximumMarkdownInputBytes);
+    if (!content) siteError("cannot read '" + source + "', or it exceeds the 512 KiB page limit");
+    if (!isValidUtf8(*content)) siteError("'" + source + "' is not valid UTF-8");
+    const std::string page_dir(directoryOf(source));
+    LinkContext link_context;
+    link_context.resolver = [&](std::string_view target, bool image) -> std::optional<std::string> {
+      const auto broken = [&](const std::string& reason) {
+        result.broken_links.push_back(source + ": " + (image ? "image" : "link") + " target '" + std::string(target) + "' " + reason);
+        return std::optional<std::string>{};
+      };
+      std::string joined;
+      if (target.starts_with('/')) joined = std::string(target.substr(1));
+      else joined = page_dir.empty() ? std::string(target) : page_dir + "/" + std::string(target);
+      const auto normalized = normalizePath(joined);
+      if (!normalized) return broken("leaves the repository");
+      if (const auto* owner = siteOwning(*normalized)) {
+        const auto rest = normalized->size() > owner->entry.id.size() ? normalized->substr(owner->entry.id.size() + 1) : std::string();
+        const std::string page = rest.empty() ? std::string("index.html") : rest;
+        for (const auto& candidate : owner->model.pages) {
+          if (candidate.output == page) return relativeUrl("", owner->entry.id + "/" + page);
+        }
+        return broken("is not a page of site '" + owner->entry.id + "'");
+      }
+      if (normalized->empty() || target.ends_with('/')) return broken("is a directory");
+      if (hasMarkdownExtension(*normalized)) return broken("is a Markdown file; link to a site's page as <id>/<page>.html");
+      const auto full = portal.root / *normalized;
+      if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
+      if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
+      return relativeUrl("", addPortalAsset(*normalized, "file"));
+    };
+    std::vector<MarkdownHeading> outline;
+    try {
+      intro = renderMarkdown(markdownBody(*content), link_context, &outline);
+    } catch (const std::length_error& bound) {
+      siteError("'" + source + "' exceeds a rendering bound: " + bound.what());
+    }
+    std::set<std::string> ids;
+    std::vector<std::pair<std::string, std::string>> links;
+    scanArticle(intro, ids, links);
+    for (const auto& [path, fragment] : links) {
+      const auto anchor = decodePathSegment(fragment).value_or(fragment);
+      if (path.empty() && ids.count(anchor) == 0) {
+        result.broken_anchors.push_back(source + ": '#" + fragment + "' names no heading on " + source);
+      }
+    }
+  }
+  tree.write("index.html", renderWelcomePage(portal, shell, version, intro));
+  ++result.pages_written;
+  for (const auto& asset : portal_assets) {
+    if (tree.written(asset)) siteError("'" + asset + "' would overwrite another output of the portal");
+    const auto content = readFile(portal.root / asset, kMaximumPagesFileBytes);
+    if (!content) siteError("cannot read '" + asset + "'");
+    tree.write(asset, *content);
+    ++result.assets_copied;
+  }
+
+  // Old root-level URLs of the site that used to be the whole build.
+  for (const auto& site : portal.sites) {
+    if (!site.entry.redirect_from_root) continue;
+    for (const auto& page : site.model.pages) {
+      if (page.output == "index.html") continue;  // the portal's welcome page stands there now
+      const auto fail = [&](const std::string& reason) {
+        siteError("site '" + site.entry.id + "': redirect_from_root would write '" + page.output + "', " + reason +
+                  "; rename the page or drop redirect_from_root");
+      };
+      if (const auto* owner = siteOwning(page.output)) fail("inside site '" + owner->entry.id + "'s directory");
+      if (tree.written(page.output)) fail("which another output of the portal already uses");
+      tree.write(page.output, renderRedirectPage(relativeUrl(directoryOf(page.output), site.entry.id + "/" + page.output), page.title));
+      ++result.redirects_written;
+    }
+  }
+  tree.commit(version);
 }
 
 }  // namespace ckgit

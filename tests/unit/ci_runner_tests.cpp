@@ -424,6 +424,39 @@ void testDefaultBranchTrigger() {
           "without on:, the default branch runs");
 }
 
+// A project may list itself as a sister with an explicit ref: that ref's
+// tree lands at ../<name> beside the checkout, exported as
+// CKGIT_SISTER_<NAME>. Without a ref the run is refused before any step.
+void testSelfSister() {
+  RunnerFixture fixture;
+  fixture.commit("other-branch\n", "marker.txt");
+  fixture.git({"branch", "other"});
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "sisters:\n"
+      "  - name: demo\n"
+      "    ref: other\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: grep -q other-branch \"$CKGIT_SISTER_DEMO/marker.txt\" && grep -q other-branch ../demo/marker.txt\n");
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id));
+  require(record.status == ckgit::CiRunStatus::Success,
+          "a self-sister with a ref is materialised beside the checkout (detail=" + record.detail + ")");
+
+  const std::string bare = fixture.commit(
+      "version: 1\n"
+      "sisters: [demo]\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [true]\n");
+  const ckgit::CiRunRecord refused = ckgit::runCiWorkflow(fixture.options(bare));
+  require(refused.status == ckgit::CiRunStatus::Error &&
+              refused.detail.find("can list itself as a sister only with an explicit ref") != std::string::npos,
+          "a self-sister without a ref is refused (detail=" + refused.detail + ")");
+}
+
 void testArtifacts() {
   RunnerFixture fixture;
   const std::string id = fixture.commit(
@@ -624,6 +657,7 @@ void testCiRunner() {
   testCancelledBeforeStart();
   testBranchTrigger();
   testDefaultBranchTrigger();
+  testSelfSister();
   testArtifacts();
   testArtifactOverCap();
   testReleaseOnTag();
