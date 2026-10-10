@@ -44,7 +44,13 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
-RestrictSUIDSGID=yes
+# Not RestrictSUIDSGID: its seccomp filter also refuses the mount API that
+# sandboxing tools use (bubblewrap fails with "Can't open source /: Function not
+# implemented"), so a build step could not confine the code it runs itself. The
+# protection it adds is already given here: NoNewPrivileges=yes means a set-user-ID
+# or set-group-ID file can never raise privileges for anything this unit starts,
+# and every file a step writes stays inside its own scratch tree.
+RestrictSUIDSGID=no
 RestrictNamespaces=user mnt net
 RestrictRealtime=yes
 LockPersonality=yes

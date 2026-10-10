@@ -114,6 +114,14 @@ and its own declared caches — not the CI spool or run records, not another
 project's release or cache, not the repositories directly (a `sisters` entry
 is the sanctioned, read-only way to reach another hosted project's source).
 
+A step may build sandboxes of its own inside this one, for example with
+bubblewrap to confine code it compiles and runs: the unit allows the mount API
+such tools need (it does not set `RestrictSUIDSGID`, whose seccomp filter would
+refuse it; `NoNewPrivileges` already makes set-user-ID files harmless). Such a
+nested sandbox cannot create a network namespace of its own, because the unit
+admits only `AF_UNIX`, `AF_INET` and `AF_INET6` sockets and bringing up its
+loopback needs netlink; the step's own network namespace isolates it instead.
+
 The network and mount isolation, and the masking above, need **unprivileged
 user namespaces** enabled on the host. On Debian they are on by default;
 confirm with:
