@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdint>
 #include <ctime>
 #include <exception>
@@ -511,6 +512,9 @@ std::string need(int& index, int argc, char** argv, const std::string& option) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Under systemd stdout is a pipe to the journal: line-buffer it so each
+  // progress line (connected, claimed, finished) appears when it happens.
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);
   try {
     if (argc < 2) return usage(std::cerr, 2);
     const std::string command = argv[1];
