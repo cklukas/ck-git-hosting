@@ -49,6 +49,7 @@ CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKG
 COMMON_SOURCES := \
 	src/common/authorized_keys.cpp \
 	src/common/ci_control.cpp \
+	src/common/ci_results.cpp \
 	src/common/ci_runner.cpp \
 	src/common/ci_store.cpp \
 	src/common/ci_workflow.cpp \

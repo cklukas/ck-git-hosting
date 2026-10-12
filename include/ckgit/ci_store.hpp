@@ -252,6 +252,12 @@ bool abandonCiJob(const std::filesystem::path& state_root, std::string_view job_
 std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_root,
                                             std::string_view project_name, std::string_view run_id);
 
+// Ensures <state_root>/ci/runs/<project>/<run_id>/incoming exists (private)
+// and returns it: the staging area for a run's outputs until it commits (see
+// ci_results.hpp).
+std::filesystem::path prepareCiIncomingDirectory(const std::filesystem::path& state_root,
+                                                 std::string_view project_name, std::string_view run_id);
+
 // Atomically writes the run record (run.ini) into its run directory.
 void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord& record);
 

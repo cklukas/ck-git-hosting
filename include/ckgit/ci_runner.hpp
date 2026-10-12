@@ -148,6 +148,18 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
 
 // --- executing a job (on any runner) ----------------------------------------
 
+// One output a run declared, as the runner reports it at the end: its name,
+// whether it is a release asset, the retention its workflow asked for, and a
+// note instead of bytes when it could not be packed (over the cap, a missing
+// path). A declared output without a note must have a complete staged upload.
+struct CiDeclaredOutput {
+  std::string name;
+  bool release = false;
+  unsigned retention_days = 0;  // 0 = the server default
+  std::string note;
+};
+
+
 // One checkout a run needs: the project and the exact commit, how much history
 // to bring along, and -- for the run's own project only -- the ref under build,
 // so a tag build also gets its tag and a branch build an origin/<branch> ref.
@@ -279,6 +291,7 @@ class LocalCiSink : public CiResultSink {
 
   const CiRunnerOptions& options_;
   const CiPreparedJob& prepared_;
+  std::vector<CiDeclaredOutput> outputs_;
   int log_fd_ = -1;
   std::uint64_t last_write_ = 0;
   std::uint64_t last_keep_alive_ = 0;

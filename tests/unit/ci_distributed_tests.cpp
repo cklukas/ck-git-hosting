@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -17,7 +18,10 @@
 #include <unistd.h>
 #include <vector>
 
+#include "ckgit/ci_results.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/hash.hpp"
+#include "ckgit/pages_store.hpp"
 #include "ckgit/dir_watch.hpp"
 
 namespace {
@@ -217,6 +221,174 @@ void testVersionOneJobStillClaims() {
           "a version-1 job is claimed as a first attempt");
 }
 
+
+bool throws(const std::function<void()>& action) {
+  try {
+    action();
+    return false;
+  } catch (const std::exception&) {
+    return true;
+  }
+}
+
+// R2b: a staged upload is resumable and exactly-once -- a retried chunk is
+// not stored twice, a gap is refused, and the announced size is capped before
+// any byte is stored.
+void testStagedUploadResume() {
+  Fixture fixture;
+  const std::string run = ckgit::generateCiId();
+  const std::string data = "0123456789";
+  const std::string sha = ckgit::sha256Hex(data);
+  using ckgit::CiUploadKind;
+  require(ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "bundle", 10, sha, 0,
+                                      data.substr(0, 4), 100) == 4,
+          "the first chunk is held");
+  require(ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "bundle", 10, sha, 0,
+                                      data.substr(0, 4), 100) == 4,
+          "a retried chunk is not stored twice");
+  require(throws([&]() {
+            ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "bundle", 10, sha, 7,
+                                        "789", 100);
+          }),
+          "a chunk that skips bytes is refused");
+  require(ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "bundle", 10, sha, 4,
+                                      data.substr(4), 100) == 10,
+          "the upload resumes where the server's bytes end");
+  require(throws([&]() {
+            ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "huge", 1000, sha, 0,
+                                        "x", 100);
+          }),
+          "an upload over the cap is refused before any byte is stored");
+  require(throws([&]() {
+            ckgit::appendCiStagedUpload(fixture.state, "demo", run, CiUploadKind::kArtifact, "release", 10, sha, 0,
+                                        "x", 100);
+          }),
+          "the reserved name cannot be uploaded");
+  const auto staged = ckgit::listCiStagedUploads(fixture.state, "demo", run);
+  require(staged.size() == 1 && staged[0].name == "bundle" && staged[0].held == 10 && staged[0].total == 10,
+          "the staged upload is listed complete");
+}
+
+ckgit::CiPreparedJob preparedJob(const std::string& run, const std::string& ref, bool default_branch,
+                                 const std::string& workflow_text) {
+  ckgit::CiPreparedJob prepared;
+  prepared.job = sampleJob(run, ref);
+  prepared.workflow_text = workflow_text;
+  prepared.workflow = ckgit::parseCiWorkflow(workflow_text);
+  prepared.is_default_branch = default_branch;
+  if (ref.rfind("refs/tags/", 0) == 0) {
+    prepared.is_release = true;
+    prepared.release_tag = ref.substr(10);
+  }
+  return prepared;
+}
+
+ckgit::CiRunRecord finishedRecord(const ckgit::CiPreparedJob& prepared, ckgit::CiRunStatus status) {
+  ckgit::CiRunRecord record;
+  record.run_id = prepared.job.job_id;
+  record.project_name = prepared.job.project_name;
+  record.ref = prepared.job.ref;
+  record.commit_id = prepared.job.commit_id;
+  record.status = status;
+  record.detail = "all steps passed";
+  return record;
+}
+
+// R2b: committing verifies every staged output; an incomplete or corrupt one
+// is recorded with a note instead of bytes, and a release only appears when the
+// whole run succeeded.
+void testCommitVerifiesStagedOutputs() {
+  Fixture fixture;
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  const std::string run = ckgit::generateCiId();
+  const auto prepared = preparedJob(run, "refs/heads/main", true, "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  const std::string good = "good-bundle";
+  ckgit::appendCiStagedUpload(fixture.state, "demo", run, ckgit::CiUploadKind::kArtifact, "good", good.size(),
+                              ckgit::sha256Hex(good), 0, good, 1u << 20);
+  ckgit::appendCiStagedUpload(fixture.state, "demo", run, ckgit::CiUploadKind::kArtifact, "half", 100,
+                              ckgit::sha256Hex(std::string(100, 'x')), 0, "xxxx", 1u << 20);
+  ckgit::appendCiStagedUpload(fixture.state, "demo", run, ckgit::CiUploadKind::kArtifact, "corrupt", 3,
+                              ckgit::sha256Hex("abc"), 0, "abd", 1u << 20);
+  const std::vector<ckgit::CiDeclaredOutput> outputs = {
+      {"good", false, 0, ""}, {"half", false, 0, ""}, {"corrupt", false, 0, ""}, {"missing", false, 0, ""},
+      {"noted", false, 0, "artifact exceeds the size cap"}};
+  const ckgit::CiRunRecord stored =
+      ckgit::commitCiRun(policy, prepared, finishedRecord(prepared, ckgit::CiRunStatus::Failure), outputs);
+  require(stored.status == ckgit::CiRunStatus::Failure, "the run keeps its status");
+  const auto run_loaded = ckgit::loadCiRun(fixture.state, "demo", run);
+  require(run_loaded.has_value() && run_loaded->artifacts.size() == 5, "every declared artifact is listed");
+  for (const ckgit::CiArtifactRecord& artifact : run_loaded->artifacts) {
+    if (artifact.name == "good") {
+      require(artifact.note.empty() && artifact.bytes == good.size(), "a verified artifact is stored");
+    } else {
+      require(!artifact.note.empty() && artifact.bytes == 0, "an unusable artifact carries a note: " + artifact.name);
+    }
+  }
+  require(ckgit::readCiArtifact(fixture.state, "demo", run, "good", 1024) == good, "the stored bytes are the upload");
+  require(ckgit::listCiStagedUploads(fixture.state, "demo", run).empty(), "the staging is discarded");
+
+  const std::string tag_run = ckgit::generateCiId();
+  const auto tag_job = preparedJob(tag_run, "refs/tags/v1", false, "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [x]\n");
+  const std::string asset = "asset-bytes";
+  ckgit::appendCiStagedUpload(fixture.state, "demo", tag_run, ckgit::CiUploadKind::kAsset, "pkg", asset.size(),
+                              ckgit::sha256Hex(asset), 0, asset, 1u << 20);
+  ckgit::commitCiRun(policy, tag_job, finishedRecord(tag_job, ckgit::CiRunStatus::Failure), {{"pkg", true, 0, ""}});
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "a failed tag build publishes no release");
+  ckgit::appendCiStagedUpload(fixture.state, "demo", tag_run, ckgit::CiUploadKind::kAsset, "pkg", asset.size(),
+                              ckgit::sha256Hex(asset), 0, asset, 1u << 20);
+  ckgit::commitCiRun(policy, tag_job, finishedRecord(tag_job, ckgit::CiRunStatus::Success), {{"pkg", true, 0, ""}});
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 1 && releases[0].assets.size() == 1 && releases[0].assets[0].bytes == asset.size(),
+          "a successful tag build publishes its verified asset");
+}
+
+// R2b: an older run never replaces a newer run's live Pages site, and a site
+// can arrive as a staged tar (the remote path).
+void testPagesOrderingGuard() {
+  Fixture fixture;
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  policy.pages_root = fixture.root / "pages";
+  const std::string text = "version: 1\npages: { path: public }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  const std::string older = ckgit::generateCiId();
+  const std::string newer = ckgit::generateCiId();
+  const std::filesystem::path site = fixture.root / "site";
+  std::filesystem::create_directories(site);
+  std::ofstream(site / "index.html") << "newer";
+  const auto newer_job = preparedJob(newer, "refs/heads/main", true, text);
+  ckgit::commitCiRun(policy, newer_job, finishedRecord(newer_job, ckgit::CiRunStatus::Success), {}, site);
+  require(ckgit::currentPagesVersion(policy.pages_root, "demo") == newer, "the newer run's site is live");
+
+  // The older run's site travels as a tar, as a remote runner would send it.
+  const std::filesystem::path old_tree = fixture.root / "old";
+  std::filesystem::create_directories(old_tree);
+  std::ofstream(old_tree / "index.html") << "older";
+  const std::filesystem::path tar = fixture.root / "old.tar";
+  require(std::system(("tar -cf '" + tar.string() + "' -C '" + old_tree.string() + "' .").c_str()) == 0,
+          "could not pack the test site");
+  std::ifstream in(tar, std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  ckgit::appendCiStagedUpload(fixture.state, "demo", older, ckgit::CiUploadKind::kPages, ckgit::kCiPagesUploadName,
+                              bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1u << 20);
+  const auto older_job = preparedJob(older, "refs/heads/main", true, text);
+  const ckgit::CiRunRecord kept =
+      ckgit::commitCiRun(policy, older_job, finishedRecord(older_job, ckgit::CiRunStatus::Success), {});
+  require(kept.status == ckgit::CiRunStatus::Success, "the older run still succeeds");
+  require(ckgit::currentPagesVersion(policy.pages_root, "demo") == newer, "the older run does not roll the site back");
+  const auto page = ckgit::readCurrentPage(policy.pages_root, "demo", "", 1024);
+  require(page.has_value() && page->content == "newer", "the live site is still the newer one");
+
+  // A newer run's staged tar is unpacked and published.
+  const std::string newest = ckgit::generateCiId();
+  ckgit::appendCiStagedUpload(fixture.state, "demo", newest, ckgit::CiUploadKind::kPages, ckgit::kCiPagesUploadName,
+                              bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1u << 20);
+  const auto newest_job = preparedJob(newest, "refs/heads/main", true, text);
+  ckgit::commitCiRun(policy, newest_job, finishedRecord(newest_job, ckgit::CiRunStatus::Success), {});
+  const auto replaced = ckgit::readCurrentPage(policy.pages_root, "demo", "", 1024);
+  require(replaced.has_value() && replaced->content == "older", "a staged site tar is unpacked and published");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -226,4 +398,7 @@ void testCiDistributed() {
   testReaperRequeuesThenGivesUp();
   testRestartAndAbandon();
   testVersionOneJobStillClaims();
+  testStagedUploadResume();
+  testCommitVerifiesStagedOutputs();
+  testPagesOrderingGuard();
 }

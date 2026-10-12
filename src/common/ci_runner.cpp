@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #endif
 
+#include "ckgit/ci_results.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/hash.hpp"
@@ -117,29 +118,6 @@ bool anyTagMatches(const std::string& tag, const std::vector<std::string>& patte
     if (tagMatches(tag, pattern)) return true;
   }
   return false;
-}
-
-// The message of an annotated tag object, for release notes. Empty for a
-// lightweight tag (which is a commit, carrying no annotation) or on any error.
-std::string readTagNotes(const std::filesystem::path& repository, const std::string& id) {
-  ProcessOptions options;
-  options.timeout = std::chrono::seconds(10);
-  options.output_limit = 64 * 1024;
-  const ProcessResult type =
-      runProcess({"git", "--git-dir", repository.string(), "cat-file", "-t", id}, options);
-  if (type.exit_code != 0 || type.timed_out) return {};
-  std::string kind = type.output;
-  while (!kind.empty() && (kind.back() == '\n' || kind.back() == '\r')) kind.pop_back();
-  if (kind != "tag") return {};
-  const ProcessResult object =
-      runProcess({"git", "--git-dir", repository.string(), "cat-file", "-p", id}, options);
-  if (object.exit_code != 0 || object.timed_out) return {};
-  const std::size_t blank = object.output.find("\n\n");
-  if (blank == std::string::npos) return {};
-  std::string notes = object.output.substr(blank + 2);
-  while (!notes.empty() && notes.back() == '\n') notes.pop_back();
-  if (notes.size() > kMaximumReleaseNotesBytes) notes.resize(kMaximumReleaseNotesBytes);
-  return notes;
 }
 
 // Reads .ckgit/ci.yml from the commit object; std::nullopt means the commit has
@@ -1333,37 +1311,20 @@ bool LocalCiSink::leaseLost() { return lease_lost_; }
 
 CiArtifactRecord LocalCiSink::putArtifact(const CiArtifact& artifact, const std::filesystem::path& bundle,
                                           const std::string& note, bool release) {
-  const std::string& project = prepared_.job.project_name;
-  CiArtifactRecord stored;
-  stored.name = artifact.name;
-  stored.created_epoch_seconds = nowEpoch();
-  std::filesystem::path dir;
-  if (release) {
-    stored.expires_epoch_seconds = 0;  // a release asset is durable
-    dir = prepareCiReleaseDirectory(options_.state_root, project, prepared_.release_tag);
-  } else {
-    unsigned days = artifact.retention_days == 0 ? options_.artifact_retention_days : artifact.retention_days;
-    if (options_.artifact_max_retention_days != 0 && days > options_.artifact_max_retention_days) {
-      days = options_.artifact_max_retention_days;
-    }
-    stored.expires_epoch_seconds = stored.created_epoch_seconds + static_cast<std::uint64_t>(days) * 86400ull;
-    dir = prepareCiArtifactDirectory(options_.state_root, project, prepared_.job.job_id);
+  // Staged now, committed at finish: a release asset only if the whole run
+  // succeeds, a CI artifact in any case.
+  CiDeclaredOutput output{artifact.name, release, artifact.retention_days, note};
+  CiArtifactRecord provisional;
+  provisional.name = artifact.name;
+  provisional.note = note;
+  if (note.empty() && !lease_lost_) {
+    stageCiFile(options_.state_root, prepared_.job.project_name, prepared_.job.job_id,
+                release ? CiUploadKind::kAsset : CiUploadKind::kArtifact, artifact.name, bundle);
+    provisional.bytes = std::filesystem::file_size(bundle);
+    provisional.sha256 = sha256HexOfFile(bundle);
   }
-  if (note.empty()) {
-    const std::filesystem::path blob = dir / (artifact.name + ".tar");
-    std::filesystem::copy_file(bundle, blob, std::filesystem::copy_options::overwrite_existing);
-    ::chmod(blob.c_str(), 0600);
-    stored.bytes = std::filesystem::file_size(blob);
-    stored.sha256 = sha256HexOfFile(blob);
-  } else {
-    stored.note = note;
-  }
-  if (release) {
-    writeCiReleaseArtifactRecord(options_.state_root, project, prepared_.release_tag, stored);
-  } else {
-    writeCiArtifactRecord(options_.state_root, project, prepared_.job.job_id, stored);
-  }
-  return stored;
+  outputs_.push_back(std::move(output));
+  return provisional;
 }
 
 void LocalCiSink::putPagesSite(const std::filesystem::path& site) { site_ = site; }
@@ -1376,48 +1337,15 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
     record.detail = "this runner lost its lease on the job; it was requeued";
     return record;
   }
-  const std::string& project = prepared_.job.project_name;
-  // A tag build publishes a release on success, and publishes nothing (cleaning
-  // up any partial assets) when it fails, so a release is always complete.
-  if (prepared_.is_release) {
-    if (record.status == CiRunStatus::Success) {
-      try {
-        CiReleaseRecord release;
-        release.tag = prepared_.release_tag;
-        release.commit_id = prepared_.job.commit_id;
-        release.created_epoch_seconds = nowEpoch();
-        release.notes = readTagNotes(options_.repository, prepared_.job.commit_id);
-        writeCiReleaseRecord(options_.state_root, project, release);
-      } catch (const std::exception&) {
-      }
-    } else {
-      try {
-        removeCiRelease(options_.state_root, project, prepared_.release_tag);
-      } catch (const std::exception&) {
-      }
-    }
-  }
-  // A successful default-branch build publishes its declared Pages directory as
-  // the project's site.
-  if (record.status == CiRunStatus::Success && site_.has_value() && !options_.pages_root.empty()) {
-    try {
-      publishPagesSite(options_.pages_root, project, record.run_id, *site_, options_.pages_keep_versions);
-    } catch (const std::exception& publish_error) {
-      // A build whose steps all passed but whose site failed to publish would
-      // otherwise report success while the live site silently stayed on its
-      // previous version. Fail the run so the broken publish is never hidden.
-      record.status = CiRunStatus::Error;
-      record.detail = firstLine(std::string("steps passed but the Pages site failed to publish: ") +
-                                publish_error.what());
-    }
-  }
-  writeCiRunRecord(options_.state_root, record);
-  // A cancel marker never outlives the run it targeted.
-  try {
-    clearCiCancel(options_.state_root, project, record.run_id);
-  } catch (const std::exception&) {
-  }
-  return record;
+  CiCommitPolicy policy;
+  policy.state_root = options_.state_root;
+  policy.repository = options_.repository;
+  policy.pages_root = options_.pages_root;
+  policy.pages_keep_versions = options_.pages_keep_versions;
+  policy.artifact_retention_days = options_.artifact_retention_days;
+  policy.artifact_max_retention_days = options_.artifact_max_retention_days;
+  policy.artifact_max_bytes = options_.artifact_max_bytes;
+  return commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
 }
 
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {

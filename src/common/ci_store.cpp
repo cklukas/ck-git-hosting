@@ -823,6 +823,20 @@ std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_r
   return root / "ci" / "runs" / std::string(project_name) / std::string(run_id);
 }
 
+std::filesystem::path prepareCiIncomingDirectory(const std::filesystem::path& state_root,
+                                                 std::string_view project_name, std::string_view run_id) {
+  if (!isValidProjectName(project_name)) fail("invalid project name for CI staging");
+  if (!isValidCiId(run_id)) fail("invalid CI run id");
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor runs_fd(ensureDirAt(ci_fd, "runs"));
+  Descriptor project_fd(ensureDirAt(runs_fd, std::string(project_name)));
+  Descriptor run_fd(ensureDirAt(project_fd, std::string(run_id)));
+  Descriptor incoming_fd(ensureDirAt(run_fd, "incoming"));
+  return root / "ci" / "runs" / std::string(project_name) / std::string(run_id) / "incoming";
+}
+
 void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord& record) {
   if (!isValidCiId(record.run_id) || !isValidProjectName(record.project_name) ||
       !isValidObjectId(record.commit_id)) {
@@ -1222,6 +1236,16 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
     }
 
     for (const std::string& id : ids) {
+      // Staging left behind by a run that has ended (a crash between upload
+      // and commit) is never committed any more.
+      const std::filesystem::path incoming = project_entry.path() / id / "incoming";
+      std::error_code incoming_ec;
+      if (std::filesystem::is_directory(incoming, incoming_ec)) {
+        const std::optional<CiRunRecord> run = loadCiRun(root, project, id);
+        if (!run.has_value() || !ciRunStatusIsActive(run->status)) {
+          std::filesystem::remove_all(incoming, incoming_ec);
+        }
+      }
       const std::filesystem::path art_dir = project_entry.path() / id / "artifacts";
       std::error_code art_ec;
       if (!std::filesystem::is_directory(art_dir, art_ec)) continue;
