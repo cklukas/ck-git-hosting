@@ -712,6 +712,44 @@ void testRunnerConfig() {
   require(rejected(base + "name=x\nclaim_wait_seconds=500\n"), "a long poll over the bound is refused");
 }
 
+
+// R5L: the gateway's stream keeps the server's log cap, answers a gap with
+// where its bytes end, refuses frames for steps it does not know, and ends
+// the session with lease-lost once the job was requeued.
+void testStreamEdges() {
+  Fixture fixture;
+  const std::string commit = hostProject(fixture, "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [true]\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  config.ci_max_log_bytes = 1024;
+  ckgit::CiJobRequest job = sampleJob(ckgit::generateCiId());
+  job.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, job);
+  const auto remote = ckgit::parseCiClaimResponse(gateway(config, "uconsole", "ckgit-runner 1 claim 0", "", fixture));
+  require(remote.has_value(), "the job is claimed");
+  const std::string tail = job.job_id + " " + remote->token;
+
+  const std::string big(1500, 'x');
+  const std::string capped = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail,
+                                     "started 1\nstep-start 0 -\nlog 0 0 1500\n" + big + "log 0 2000 3\nabc", fixture);
+  require(capped.find("ack 0 1500\n") != std::string::npos, "bytes past the cap are acknowledged, not resent");
+  require(capped.find("held 0 1024\n") != std::string::npos, "a gap is answered with where the held bytes end");
+  const auto log = ckgit::readCiRunLog(fixture.state, "demo", job.job_id, 0, 1u << 20);
+  require(log.has_value() && log->size() == 1024, "the step log stops at the server's cap");
+
+  int code = 0;
+  const std::string unknown =
+      gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "log 7 0 1\nz", fixture, &code);
+  require(code == 1 && unknown.find("error") != std::string::npos, "a log for an unknown step ends the session");
+
+  ckgit::CiReapOptions lapse;
+  lapse.now_epoch_seconds = epochNow() + 100000;
+  ckgit::reapCiLeases(fixture.state, lapse);
+  require(gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "heartbeat\n", fixture) == "lease-lost\n",
+          "a requeued job's stream is refused at once");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -732,4 +770,5 @@ void testCiDistributed() {
   testGatewayFinishesSkippedJobs();
   testRunnerKeyLine();
   testRunnerConfig();
+  testStreamEdges();
 }

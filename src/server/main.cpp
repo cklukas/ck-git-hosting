@@ -883,6 +883,11 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
   };
 
   int since_status = 0;
+  // A run is requeued when the runner holding it was lost: it drops back from
+  // Running to Pending and its next attempt starts over with fresh step logs,
+  // so a stream following the lost attempt ends and the page reloads onto the
+  // new one.
+  bool saw_running = false;
   for (;;) {
     if (stop_requested) return;
     bool wrote = false;
@@ -899,8 +904,10 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
       if (++since_status >= 4) {
         since_status = 0;
         const auto record = index.readCiRun(project, run_id);
-        const bool active =
-            record && ckgit::ciRunStatusIsActive(record->status) && step == record->steps.size();
+        if (record && record->status == ckgit::CiRunStatus::Running) saw_running = true;
+        const bool requeued = record && saw_running && record->status == ckgit::CiRunStatus::Pending;
+        const bool active = record && !requeued && ckgit::ciRunStatusIsActive(record->status) &&
+                            step == record->steps.size();
         if (!active) {
           // The step's whole log is on disk before its result is recorded, so
           // drain until caught up — no trailing bytes are lost to the final poll.
