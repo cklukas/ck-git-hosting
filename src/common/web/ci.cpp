@@ -85,8 +85,16 @@ std::string ciRunTiming(const CiRunDisplay& display) {
   return formatDuration(display.seconds) + (display.seconds < 3600 ? " min" : "");
 }
 
+// " on uconsole · attempt 2" after a status badge: where the run executes.
+std::string runnerNote(const CiRunRecord& run) {
+  std::string note;
+  if (!run.runner.empty()) note += " on " + htmlEscape(run.runner);
+  if (run.attempt > 1) note += (note.empty() ? " attempt " : " \xc2\xb7 attempt ") + std::to_string(run.attempt);
+  return note.empty() ? note : "<span class=\"muted\">" + note + "</span>";
+}
+
 std::string renderCiRuns(const ProjectSummary& project) {
-  std::string out = "<h1>Continuous integration</h1>";
+  std::string out = "<h1>Continuous integration</h1><p class=\"muted\"><a href=\"/ci/runners\">Runners</a></p>";
   if (project.ci_runs.empty()) {
     return out +
            "<p class=\"empty\">No CI runs recorded yet. A push to a CI-enabled branch queues a run "
@@ -96,7 +104,7 @@ std::string renderCiRuns(const ProjectSummary& project) {
          "<th>Steps</th></tr></thead><tbody>";
   for (const CiRunRecord& run : project.ci_runs) {
     const CiRunDisplay display = ciRunDisplay(run);
-    out += "<tr><td>" + statusBadge(project.name, run, display) + "</td>";
+    out += "<tr><td>" + statusBadge(project.name, run, display) + runnerNote(run) + "</td>";
     out += "<td>" + htmlEscape(branchLabel(run.ref)) + "</td>";
     out += "<td><code>" + htmlEscape(shortId(run.commit_id)) + "</code></td>";
     const std::string timing = ciRunTiming(display);
@@ -165,6 +173,15 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
   const std::string timing = ciRunTiming(display);
   if (!timing.empty()) {
     out += "<dt>" + std::string(display.active ? "Elapsed" : "Duration") + "</dt><dd>" + htmlEscape(timing) + "</dd>";
+  }
+  if (!run.runner.empty()) {
+    out += "<dt>Runner</dt><dd><a href=\"/ci/runners\">" + htmlEscape(run.runner) + "</a>" +
+           (run.runner == kCiPrimaryRunnerName ? std::string(" <span class=\"muted\">(this server)</span>") : "") +
+           "</dd>";
+  }
+  if (run.attempt > 1) {
+    out += "<dt>Attempt</dt><dd>" + std::to_string(run.attempt) +
+           " <span class=\"muted\">(an earlier runner was lost; its logs are kept on the server)</span></dd>";
   }
   if (!run.detail.empty()) out += "<dt>Detail</dt><dd>" + htmlEscape(run.detail) + "</dd>";
   out += "</dl>";
@@ -361,6 +378,55 @@ std::string renderReleases(const ProjectSummary& project) {
     }
     out += "</section>";
   }
+  return out;
+}
+
+std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const std::vector<CiClaim>& claims,
+                            std::uint64_t now) {
+  std::string out = "<h1>CI runners</h1><p class=\"muted\">The server runs a queued job itself when no remote "
+                    "runner takes it within a second; remote runners pull jobs while they are online.</p>";
+  out += "<table class=\"ci-runners\"><thead><tr><th>Runner</th><th>State</th><th>Last seen</th><th>Version</th>"
+         "<th>Working on</th></tr></thead><tbody>";
+  std::vector<std::string> names = {kCiPrimaryRunnerName};
+  for (const CiRunnerRecord& runner : runners) names.push_back(runner.name);
+  for (const CiClaim& claim : claims) {
+    if (std::find(names.begin(), names.end(), claim.lease.runner) == names.end()) names.push_back(claim.lease.runner);
+  }
+  for (const std::string& name : names) {
+    const auto record = std::find_if(runners.begin(), runners.end(),
+                                     [&](const CiRunnerRecord& runner) { return runner.name == name; });
+    out += "<tr><td><strong>" + htmlEscape(name) + "</strong>";
+    if (name == kCiPrimaryRunnerName) out += " <span class=\"muted\">(this server)</span>";
+    out += "</td><td>";
+    if (name == kCiPrimaryRunnerName) {
+      out += "built in";
+    } else if (record == runners.end()) {
+      out += "not registered";
+    } else {
+      out += record->enabled ? "enabled" : "disabled (draining)";
+    }
+    out += "</td><td>";
+    if (record != runners.end() && record->last_seen_epoch_seconds != 0) {
+      const std::uint64_t seen = record->last_seen_epoch_seconds;
+      out += "<span title=\"" + htmlEscape(formatUtcTimestamp(seen)) + "\">" + htmlEscape(relativeTime(seen)) + "</span>";
+      if (now > seen + 180) out += " <span class=\"muted\">(offline?)</span>";
+    } else {
+      out += "&mdash;";
+    }
+    out += "</td><td>" + (record != runners.end() ? htmlEscape(record->version) : std::string()) + "</td><td>";
+    bool any = false;
+    for (const CiClaim& claim : claims) {
+      if (claim.lease.runner != name) continue;
+      if (any) out += "<br>";
+      any = true;
+      out += "<a href=\"/project/" + htmlEscape(claim.job.project_name) + "/ci/" + htmlEscape(claim.job.job_id) +
+             "\">" + htmlEscape(claim.job.project_name) + " " + htmlEscape(branchLabel(claim.job.ref)) + "</a>";
+      if (claim.job.attempt > 1) out += " <span class=\"muted\">attempt " + std::to_string(claim.job.attempt) + "</span>";
+    }
+    if (!any) out += "<span class=\"muted\">idle</span>";
+    out += "</td></tr>";
+  }
+  out += "</tbody></table>";
   return out;
 }
 

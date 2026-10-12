@@ -21,13 +21,16 @@
 #include <fcntl.h>
 
 #include "ckgit/authorized_keys.hpp"
+#include "ckgit/ci_control.hpp"
 #include "ckgit/ci_gateway.hpp"
 #include "ckgit/ci_remote.hpp"
 #include "ckgit/ci_results.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/server_config.hpp"
+#include "ckgit/http_router.hpp"
 #include "ckgit/ssh_command.hpp"
+#include "ckgit/web_renderer.hpp"
 #include "ckgit/text.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/hash.hpp"
@@ -791,6 +794,70 @@ void testRunnerRegistry() {
           "a runner record can be removed once");
 }
 
+
+// R7: a run records which runner executes it and which attempt it is; the
+// dashboard and `ckgit ci show` show both.
+void testRunnerShownOnRuns() {
+  Fixture fixture;
+  ckgit::CiRunRecord run;
+  run.run_id = ckgit::generateCiId();
+  run.project_name = "demo";
+  run.ref = "refs/heads/main";
+  run.commit_id = std::string(40, 'a');
+  run.status = ckgit::CiRunStatus::Running;
+  run.runner = "uconsole";
+  run.attempt = 2;
+  ckgit::writeCiRunRecord(fixture.state, run);
+  const auto loaded = ckgit::loadCiRun(fixture.state, "demo", run.run_id);
+  require(loaded.has_value() && loaded->runner == "uconsole" && loaded->attempt == 2,
+          "runner and attempt survive the run record");
+
+  // A record written by the previous schema still loads, as attempt 1 of no runner.
+  const std::string old_id = ckgit::generateCiId();
+  const std::filesystem::path old_dir = fixture.state / "ci" / "runs" / "demo" / old_id;
+  std::filesystem::create_directories(old_dir);
+  std::filesystem::permissions(old_dir, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+  {
+    std::ofstream out(old_dir / "run.ini");
+    out << "schema_version=2\nrun_id=" << old_id << "\nproject=demo\nref_hex=" << ckgit::hexEncode("refs/heads/main")
+        << "\ncommit=" << std::string(40, 'b') << "\nstatus=success\nstarted_epoch=1\nfinished_epoch=2\n"
+        << "heartbeat_epoch=2\ndetail_hex=\nstep_count=0\n";
+  }
+  std::filesystem::permissions(old_dir / "run.ini", std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                               std::filesystem::perm_options::replace);
+  const auto old = ckgit::loadCiRun(fixture.state, "demo", old_id);
+  require(old.has_value() && old->runner.empty() && old->attempt == 1, "a schema-2 record still loads");
+
+  ckgit::CiRunReport report;
+  report.run = *loaded;
+  report.run.detail = "running";
+  const ckgit::CiRunReport shown =
+      ckgit::parseCiRunControlResponse(ckgit::formatCiRunControlResponse(report), "demo");
+  require(shown.run.detail == "running (on uconsole, attempt 2)", "ckgit ci show names the runner: " + shown.run.detail);
+
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  project.ci_runs.push_back(*loaded);
+  const std::string page = ckgit::renderCiRunDetail(project, *loaded, std::nullopt, 0, "nonce");
+  require(page.find("<dt>Runner</dt>") != std::string::npos && page.find("uconsole") != std::string::npos &&
+              page.find("<dt>Attempt</dt><dd>2") != std::string::npos,
+          "the run page shows the runner and the attempt");
+  require(ckgit::renderCiRuns(project).find("on uconsole") != std::string::npos, "the run list shows the runner");
+
+  ckgit::CiRunnerRecord registered;
+  registered.name = "uconsole";
+  registered.version = "0.6.0";
+  registered.last_seen_epoch_seconds = 1000;
+  ckgit::CiClaim claim;
+  claim.job = sampleJob(run.run_id);
+  claim.lease.runner = "uconsole";
+  const std::string runners = ckgit::renderCiRunners({registered}, {claim}, 1010);
+  require(runners.find("primary") != std::string::npos && runners.find("uconsole") != std::string::npos &&
+              runners.find("0.6.0") != std::string::npos && runners.find("/project/demo/ci/" + run.run_id) != std::string::npos,
+          "the runners page lists the server, the remote runner, and its current job");
+  require(ckgit::parseHttpRoute("/ci/runners").kind == ckgit::RouteKind::kCiRunners, "the runners page has a route");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -813,4 +880,5 @@ void testCiDistributed() {
   testRunnerConfig();
   testStreamEdges();
   testRunnerRegistry();
+  testRunnerShownOnRuns();
 }

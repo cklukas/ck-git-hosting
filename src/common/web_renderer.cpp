@@ -95,6 +95,9 @@ std::string renderEventList(const ckgit::ProjectSummary& project) {
                             : event.kind == "checkout-registered" ? "Checkout registered"
                             : event.kind == "git-push" ? "Git push"
                             : event.kind == "ci-cancel-requested" ? "CI cancel requested"
+                            : event.kind == "ci-claimed" ? "CI job claimed by a remote runner"
+                            : event.kind == "ci-finished" ? "CI job finished on a remote runner"
+                            : event.kind == "ci-requeued" ? "CI job handed back by a remote runner"
                             : event.kind == "default-branch-changed" ? "Default branch changed"
                                                                       : ckgit::htmlEscape(event.kind);
     rendered += "<li>" + label + " · <strong>" + ckgit::htmlEscape(event.client_id) + "</strong>";

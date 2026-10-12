@@ -103,6 +103,11 @@ struct CiRunRecord {
   // periodically within a long step). Zero in a terminal record written by older
   // code; a live record with a stale heartbeat marks an interrupted run.
   std::uint64_t heartbeat_epoch_seconds = 0;
+  // Which runner executes (or executed) the run -- "primary" for the server's
+  // own, a remote runner's client id otherwise, empty while it is queued --
+  // and which attempt this is (above 1 after its runner was lost).
+  std::string runner;
+  unsigned attempt = 1;
   std::string detail;  // one short human-readable line (e.g. the failing step)
   std::vector<CiStepResult> steps;
   std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars

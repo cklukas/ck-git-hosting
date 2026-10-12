@@ -28,6 +28,10 @@ std::string renderProjectDetail(const ProjectSummary& project, const PageContext
 // The read-only CI page body: the project's recent runs with per-step status
 // and links to each step's captured log. Wrapped by pageLayout by the caller.
 std::string renderCiRuns(const ProjectSummary& project);
+// The runners page: the server's own runner, every registered remote runner
+// (state, last contact, version), and what each is working on now.
+std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const std::vector<CiClaim>& claims,
+                            std::uint64_t now);
 // The live status page for one run: overall status with elapsed/total time,
 // per-step results, the running step's log tail, artifacts, and the cancel
 // affordances. `live_log` is the current step's captured output while the run

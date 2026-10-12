@@ -32,6 +32,7 @@ struct CiRunnerOptions {
   // Pending (see enqueueCiJob), rather than a second, disconnected record.
   // Empty generates a fresh id instead (the one-shot `run` command, and tests).
   std::string run_id;
+  unsigned attempt = 1;                  // the queued job's attempt, for the record
 
   unsigned timeout_seconds = 1800;       // per-step wall-clock budget
   std::size_t max_log_bytes = 1u << 20;  // per-step captured-output cap
@@ -231,6 +232,7 @@ class CiResultSink {
 
 // The runner-side knobs of an execution.
 struct CiExecutionOptions {
+  std::string runner;  // the executing runner's name, recorded on the run
   std::filesystem::path build_root;
   unsigned timeout_seconds = 1800;
   std::size_t max_log_bytes = 1u << 20;

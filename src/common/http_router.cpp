@@ -129,6 +129,10 @@ Route parseHttpRoute(std::string_view target) {
     route.sort_by_name = target == "/by-name";
     return route;
   }
+  if (target == "/ci/runners") {
+    route.kind = RouteKind::kCiRunners;
+    return route;
+  }
   if (!target.starts_with("/project/")) return {};
   target.remove_prefix(9);
   const auto project_end = target.find('/');

@@ -281,6 +281,8 @@ int finish(const ServerConfig& config, const std::string& runner, const CiRunner
     record.project_name = job.project_name;
     record.ref = job.ref;
     record.commit_id = job.commit_id;
+    record.runner = runner;
+    record.attempt = job.attempt;
     record.status = report.status;
     if (report.started_epoch_seconds != 0) record.started_epoch_seconds = report.started_epoch_seconds;
     record.detail = report.detail.substr(0, kMaximumCiDetailBytes);
@@ -317,7 +319,6 @@ class StreamSession {
   StreamSession(const ServerConfig& config, const std::string& runner, const CiRunnerCommand& command,
                 const CiClaim& claim, int out)
       : config_(config), command_(command), job_(claim.job), out_(out), state_(stateRoot(config)) {
-    static_cast<void>(runner);
     max_log_ = config.ci_max_log_bytes.value_or(1u << 20);
     if (std::optional<CiRunRecord> existing = loadCiRun(state_, job_.project_name, job_.job_id)) {
       record_ = *existing;
@@ -328,6 +329,8 @@ class StreamSession {
       record_.commit_id = job_.commit_id;
       record_.status = CiRunStatus::Pending;
     }
+    record_.runner = runner;
+    record_.attempt = job_.attempt;
     run_dir_ = prepareCiRunDirectory(state_, job_.project_name, job_.job_id);
   }
 

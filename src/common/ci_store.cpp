@@ -247,11 +247,12 @@ CiJobRequest parseJob(std::string_view content) {
 }
 
 std::string serializeRun(const CiRunRecord& run) {
-  // schema_version 2 adds heartbeat_epoch after finished_epoch; parseRun still
-  // reads the version-1 layout (which has no heartbeat line) written by earlier
-  // builds so an upgrade never discards a project's run history.
+  // schema_version 2 added heartbeat_epoch after finished_epoch, and 3 adds
+  // runner and attempt after it; parseRun still reads every earlier layout
+  // written by earlier builds so an upgrade never discards a project's run
+  // history.
   std::string out =
-      "schema_version=2\n"
+      "schema_version=3\n"
       "run_id=" + run.run_id + "\n"
       "project=" + run.project_name + "\n"
       "ref_hex=" + hexEncode(run.ref) + "\n"
@@ -260,6 +261,8 @@ std::string serializeRun(const CiRunRecord& run) {
       "started_epoch=" + std::to_string(run.started_epoch_seconds) + "\n"
       "finished_epoch=" + std::to_string(run.finished_epoch_seconds) + "\n"
       "heartbeat_epoch=" + std::to_string(run.heartbeat_epoch_seconds) + "\n"
+      "runner=" + (run.runner.empty() ? std::string("-") : run.runner) + "\n"
+      "attempt=" + std::to_string(run.attempt) + "\n"
       "detail_hex=" + hexEncode(run.detail) + "\n"
       "step_count=" + std::to_string(run.steps.size()) + "\n";
   for (const CiStepResult& step : run.steps) {
@@ -272,11 +275,12 @@ std::string serializeRun(const CiRunRecord& run) {
 CiRunRecord parseRun(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
   if (lines.empty()) fail("a CI run record has the wrong shape");
-  // Version 1 has no heartbeat line, so its header is one line shorter and the
-  // fields after finished_epoch sit one position earlier.
-  const bool v2 = lines[0] == "schema_version=2";
+  // Version 1 has no heartbeat line and version 2 no runner and attempt lines,
+  // so their headers are shorter and the later fields sit earlier.
+  const bool v3 = lines[0] == "schema_version=3";
+  const bool v2 = v3 || lines[0] == "schema_version=2";
   if (!v2 && lines[0] != "schema_version=1") fail("a CI run record has the wrong shape");
-  const std::size_t header = v2 ? 11 : 10;
+  const std::size_t header = v3 ? 13 : v2 ? 11 : 10;
   if (lines.size() < header) fail("a CI run record has the wrong shape");
   CiRunRecord run;
   run.run_id = std::string(expectField(lines[1], "run_id="));
@@ -290,6 +294,16 @@ CiRunRecord parseRun(std::string_view content) {
   run.finished_epoch_seconds = parseEpoch(expectField(lines[7], "finished_epoch="));
   std::size_t next = 8;
   if (v2) run.heartbeat_epoch_seconds = parseEpoch(expectField(lines[next++], "heartbeat_epoch="));
+  if (v3) {
+    const std::string_view runner = expectField(lines[next++], "runner=");
+    if (runner != "-") {
+      if (!isValidClientId(runner)) fail("a CI run record names an invalid runner");
+      run.runner = std::string(runner);
+    }
+    const std::uint64_t attempt = parseEpoch(expectField(lines[next++], "attempt="));
+    if (attempt < 1 || attempt > 1000) fail("a CI run record has an invalid attempt");
+    run.attempt = static_cast<unsigned>(attempt);
+  }
   run.detail = fromHex(expectField(lines[next++], "detail_hex="), kMaximumCiDetailBytes);
   const std::string_view count_text = expectField(lines[next], "step_count=");
   std::size_t count = 0;
@@ -588,6 +602,7 @@ void resetRunForRequeue(const std::filesystem::path& state_root, const CiJobRequ
     pending.ref = job.ref;
     pending.commit_id = job.commit_id;
     pending.status = CiRunStatus::Pending;
+    pending.attempt = job.attempt;
     pending.detail = detail.substr(0, kMaximumCiDetailBytes);
     writeCiRunRecord(state_root, pending);
   } catch (const std::exception&) {

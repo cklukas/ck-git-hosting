@@ -228,7 +228,14 @@ std::string formatCiRunControlResponse(const CiRunReport& report) {
   std::string response = "ok " + std::to_string(report.server_epoch_seconds) + " " +
                          std::to_string(run.artifacts.size()) + "\n";
   append(response, runLine(run, run.steps.size()), kWhat);
-  append(response, "detail " + encodeText(run.detail) + "\n", kWhat);
+  std::string detail = run.detail;
+  if ((!run.runner.empty() && run.runner != kCiPrimaryRunnerName) || run.attempt > 1) {
+    std::string where = run.runner.empty() ? std::string("queued") : "on " + run.runner;
+    if (run.attempt > 1) where += ", attempt " + std::to_string(run.attempt);
+    detail = detail.empty() ? where : detail + " (" + where + ")";
+    if (detail.size() > kMaximumCiDetailBytes) detail.resize(kMaximumCiDetailBytes);
+  }
+  append(response, "detail " + encodeText(detail) + "\n", kWhat);
   for (std::size_t index = 0; index < run.steps.size(); ++index) {
     const CiStepResult& step = run.steps[index];
     if (step.name.size() > kMaximumStepNameBytes) {

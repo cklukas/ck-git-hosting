@@ -929,6 +929,7 @@ CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJob
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
+  record.attempt = job.attempt;
   record.status = status;
   record.started_epoch_seconds = nowEpoch();
   record.finished_epoch_seconds = record.started_epoch_seconds;
@@ -951,6 +952,8 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
+  record.runner = options.runner;
+  record.attempt = job.attempt;
   record.status = CiRunStatus::Running;
   record.started_epoch_seconds = nowEpoch();
 
@@ -1359,6 +1362,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   job.commit_id = options.commit_id;
   job.client_id = kCiPrimaryRunnerName;
   job.queued_epoch_seconds = nowEpoch();
+  job.attempt = options.attempt;
 
   // A cancel requested while the job was still queued ends it before anything
   // is read: no workflow, no sandbox probe, no checkout.
@@ -1374,6 +1378,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   }
 
   CiExecutionOptions execution;
+  execution.runner = kCiPrimaryRunnerName;
   execution.build_root = options.build_root;
   execution.timeout_seconds = options.timeout_seconds;
   execution.max_log_bytes = options.max_log_bytes;

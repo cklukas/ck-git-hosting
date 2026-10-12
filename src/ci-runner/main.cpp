@@ -219,6 +219,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.ref = job->ref;
     options.commit_id = job->commit_id;
     options.run_id = job->job_id;
+    options.attempt = job->attempt;
     options.state_root = state_root;
     options.build_root = build_root;
     options.timeout_seconds = config.ci_timeout_seconds.value_or(1800);
@@ -386,6 +387,7 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
     std::cout << "ck-ci-runnerd: " << job->prepared.job.project_name << " " << run_id << " claimed (attempt "
               << job->prepared.job.attempt << ")\n";
     ckgit::CiExecutionOptions execution;
+    execution.runner = config.name;
     execution.build_root = config.build_root;
     execution.timeout_seconds = job->policy.timeout_seconds;
     if (config.timeout_seconds.has_value()) {

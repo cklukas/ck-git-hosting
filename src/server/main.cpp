@@ -888,6 +888,7 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
   // so a stream following the lost attempt ends and the page reloads onto the
   // new one.
   bool saw_running = false;
+  unsigned attempt = 0;
   for (;;) {
     if (stop_requested) return;
     bool wrote = false;
@@ -905,7 +906,9 @@ void streamCiLog(int descriptor, ckgit::ProjectIndex& index, const std::string& 
         since_status = 0;
         const auto record = index.readCiRun(project, run_id);
         if (record && record->status == ckgit::CiRunStatus::Running) saw_running = true;
-        const bool requeued = record && saw_running && record->status == ckgit::CiRunStatus::Pending;
+        if (record && attempt == 0) attempt = record->attempt;
+        const bool requeued = record && ((saw_running && record->status == ckgit::CiRunStatus::Pending) ||
+                                         record->attempt != attempt);
         const bool active = record && !requeued && ckgit::ciRunStatusIsActive(record->status) &&
                             step == record->steps.size();
         if (!active) {
@@ -977,6 +980,16 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       auto projects = index.tableSnapshot();
       if (route.sort_by_name) std::sort(projects.begin(), projects.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
       response.body = ckgit::renderProjectTable(projects, route.sort_by_name);
+    } else if (route.kind == ckgit::RouteKind::kCiRunners) {
+      std::vector<ckgit::CiRunnerRecord> runners;
+      std::vector<ckgit::CiClaim> claims;
+      if (state_root.has_value()) {
+        runners = ckgit::loadCiRunnerRecords(*state_root);
+        claims = ckgit::listCiClaims(*state_root);
+      }
+      response.body = ckgit::pageLayout(
+          "CI runners",
+          ckgit::renderCiRunners(runners, claims, static_cast<std::uint64_t>(std::time(nullptr))));
     } else {
       project = index.find(route.project);
       if (route.kind == ckgit::RouteKind::kNotFound || !project) throw ckgit::WebError(404, "Page was not found.");
