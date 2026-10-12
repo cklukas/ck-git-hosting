@@ -12,8 +12,10 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
+#include "ckgit/ci_gateway.hpp"
 #include "ckgit/ci_runner.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
@@ -30,6 +32,7 @@ void onStop(int) { g_stop = 1; }
 int usage(std::ostream& out, int code) {
   out << "usage:\n"
          "  ck-ci-runnerd serve --config FILE [--once]\n"
+         "  ck-ci-runnerd gateway --config FILE --runner ID --command 'ckgit-runner 1 ...'\n"
          "  ck-ci-runnerd run --repo DIR --commit ID --project NAME --state-root DIR\n"
          "                    --build-root DIR [--ref REF] [--timeout SECONDS]\n"
          "                    [--max-log-bytes N] [--allow-network] [--keep-scratch]\n"
@@ -307,6 +310,27 @@ int main(int argc, char** argv) {
         return usage(std::cerr, 2);
       }
       return serve(config_path, once);
+    }
+    if (command == "gateway") {
+      // Started by ck-git-shell for a runner key; see ci_gateway.hpp.
+      std::filesystem::path config_path;
+      std::string runner;
+      std::string line;
+      for (int i = 2; i < argc; ++i) {
+        const std::string option = argv[i];
+        if (option == "--config") config_path = need(i, argc, argv, option);
+        else if (option == "--runner") runner = need(i, argc, argv, option);
+        else if (option == "--command") line = need(i, argc, argv, option);
+        else throw std::runtime_error("unknown gateway option: " + option);
+      }
+      std::string reason;
+      const std::optional<ckgit::CiRunnerCommand> parsed = ckgit::parseCiRunnerCommand(line, &reason);
+      if (config_path.empty() || runner.empty() || !parsed.has_value()) {
+        std::cout << "error " << (reason.empty() ? "invalid gateway invocation" : reason) << "\n";
+        return 2;
+      }
+      std::signal(SIGPIPE, SIG_IGN);
+      return ckgit::runCiGateway(ckgit::loadServerConfig(config_path), runner, *parsed, STDIN_FILENO, STDOUT_FILENO);
     }
     if (command != "run") {
       std::cerr << "ck-ci-runnerd: unknown command '" << command << "'\n";

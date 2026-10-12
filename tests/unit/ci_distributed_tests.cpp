@@ -17,8 +17,16 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <fcntl.h>
 
+#include "ckgit/authorized_keys.hpp"
+#include "ckgit/ci_gateway.hpp"
 #include "ckgit/ci_results.hpp"
+#include "ckgit/ci_runner_protocol.hpp"
+#include "ckgit/process.hpp"
+#include "ckgit/server_config.hpp"
+#include "ckgit/ssh_command.hpp"
+#include "ckgit/text.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/pages_store.hpp"
@@ -441,6 +449,236 @@ void testOneRunPerRef() {
   require(c.has_value() && c->job.job_id == second, "once the ref is free its next job runs");
 }
 
+
+// R4: the runner protocol's command grammar.
+void testRunnerCommandGrammar() {
+  const std::string id = "00000000000000000001-aaaaaaaa";
+  const std::string token(32, 'a');
+  const std::string sha(64, 'b');
+  const auto parse = [](const std::string& line) { return ckgit::parseCiRunnerCommand(line); };
+  require(parse("ckgit-runner 1 claim 60").has_value(), "claim parses");
+  require(parse("ckgit-runner 1 hello 302e362e30").has_value(), "hello parses");
+  require(parse("ckgit-runner 1 stream " + id + " " + token).has_value(), "stream parses");
+  require(parse("ckgit-runner 1 upload-pack " + id + " " + token + " libx").has_value(), "upload-pack parses");
+  const auto put = parse("ckgit-runner 1 put " + id + " " + token + " artifact bundle 0 10 " + sha);
+  require(put.has_value() && put->total == 10 && put->kind == "artifact", "put parses");
+  require(ckgit::formatCiRunnerCommand(*put) == "ckgit-runner 1 put " + id + " " + token + " artifact bundle 0 10 " + sha,
+          "a command formats back to its line");
+  require(!parse("ckgit-runner 2 claim 60").has_value(), "another protocol version is refused");
+  require(!parse("ckgit-runner 1 claim 600").has_value(), "a claim wait over the bound is refused");
+  require(!parse("ckgit-runner 1 claim 060").has_value(), "a non-canonical number is refused");
+  require(!parse("ckgit-runner 1 stream " + id + " short").has_value(), "a malformed token is refused");
+  require(!parse("ckgit-runner 1 put " + id + " " + token + " artifact bundle 11 10 " + sha).has_value(),
+          "an offset past the total is refused");
+  require(!parse("ckgit-runner 1 put " + id + " " + token + " binary bundle 0 10 " + sha).has_value(),
+          "an unknown upload kind is refused");
+  require(!parse("ckgit-runner 1 upload-pack " + id + " " + token + " ../evil").has_value(),
+          "an unsafe project is refused");
+  require(!parse("ckgit-rpc 1 ping").has_value(), "a device operation is not a runner operation");
+  require(!parse("ckgit-runner 1 claim 60; rm -rf /").has_value(), "shell syntax is refused");
+  require(!ckgit::parseSshOriginalCommand("ckgit-runner 1 claim 60").has_value(),
+          "a device key cannot run runner operations");
+}
+
+// R4: what the gateway sends and the runner reads back are one definition.
+void testProtocolRoundTrips() {
+  ckgit::CiPreparedJob prepared;
+  prepared.job = sampleJob(ckgit::generateCiId(), "refs/tags/v1.2");
+  prepared.job.attempt = 2;
+  prepared.workflow_text =
+      "version: 1\nsisters:\n  - name: libx\n    depth: 7\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  prepared.workflow = ckgit::parseCiWorkflow(prepared.workflow_text);
+  prepared.is_release = true;
+  prepared.release_tag = "v1.2";
+  prepared.sisters.push_back(ckgit::CiResolvedSister{"libx", std::string(40, 'c'), {}});
+  ckgit::CiLease lease;
+  lease.token = std::string(32, 'd');
+  ckgit::CiRemotePolicy policy;
+  policy.timeout_seconds = 77;
+  policy.allow_network = true;
+  const auto remote = ckgit::parseCiClaimResponse(ckgit::formatCiClaimResponse(prepared, lease, policy));
+  require(remote.has_value() && remote->prepared.job.job_id == prepared.job.job_id &&
+              remote->prepared.job.ref == "refs/tags/v1.2" && remote->prepared.job.attempt == 2,
+          "the job survives the round trip");
+  require(remote->prepared.is_release && remote->prepared.release_tag == "v1.2" && remote->token == lease.token,
+          "release and lease survive the round trip");
+  require(remote->policy.timeout_seconds == 77 && remote->policy.allow_network, "the server's policy travels along");
+  require(remote->prepared.sisters.size() == 1 && remote->prepared.sisters[0].checkout.depth == 7,
+          "a sister's resolved commit and history settings arrive");
+  require(!ckgit::parseCiClaimResponse("none\n").has_value(), "none means no job");
+
+  ckgit::CiFinishReport report;
+  report.status = ckgit::CiRunStatus::Timeout;
+  report.started_epoch_seconds = 1234;
+  report.detail = "step 'x' exceeded its 1s budget";
+  report.steps.push_back(ckgit::CiStepResult{"build", -1, true, false});
+  report.steps.push_back(ckgit::CiStepResult{"", 3, false, true});
+  report.outputs.push_back(ckgit::CiDeclaredOutput{"pkg", true, 5, ""});
+  report.outputs.push_back(ckgit::CiDeclaredOutput{"big", false, 0, "artifact exceeds the size cap"});
+  const ckgit::CiFinishReport parsed = ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report));
+  require(parsed.status == report.status && parsed.detail == report.detail && parsed.started_epoch_seconds == 1234,
+          "the final status round-trips");
+  require(parsed.steps.size() == 2 && parsed.steps[0].exit_code == -1 && parsed.steps[0].timed_out &&
+              parsed.steps[1].name.empty() && parsed.steps[1].output_truncated,
+          "the steps round-trip");
+  require(parsed.outputs.size() == 2 && parsed.outputs[0].release && parsed.outputs[0].retention_days == 5 &&
+              parsed.outputs[1].note == "artifact exceeds the size cap",
+          "the declared outputs round-trip");
+}
+
+// A bare repository demo.git under the fixture's repo root with one commit
+// carrying `workflow`; returns the commit id.
+std::string hostProject(const Fixture& fixture, const std::string& workflow) {
+  const std::filesystem::path bare = fixture.root / "repos" / "demo.git";
+  const std::filesystem::path work = fixture.root / "work";
+  const auto run = [](const std::vector<std::string>& command) {
+    const auto result = ckgit::runProcess(command, std::chrono::seconds(30));
+    if (result.exit_code != 0) throw std::runtime_error("fixture git failed: " + result.output);
+    return result.output;
+  };
+  std::filesystem::create_directories(fixture.root / "repos");
+  run({"git", "init", "-q", "--bare", "--initial-branch=main", bare.string()});
+  run({"git", "init", "-q", "--initial-branch=main", work.string()});
+  std::filesystem::create_directories(work / ".ckgit");
+  std::ofstream(work / ".ckgit" / "ci.yml") << workflow;
+  run({"git", "-C", work.string(), "add", "-A"});
+  run({"git", "-C", work.string(), "-c", "user.email=t@example.invalid", "-c", "user.name=T", "commit", "-q", "-m",
+       "ci"});
+  run({"git", "-C", work.string(), "push", "-q", "file://" + bare.string(), "HEAD:main"});
+  std::string id = run({"git", "-C", work.string(), "rev-parse", "HEAD"});
+  while (!id.empty() && id.back() == '\n') id.pop_back();
+  return id;
+}
+
+// Runs one gateway operation with `input` as its stdin; returns its stdout.
+std::string gateway(const ckgit::ServerConfig& config, const std::string& runner, const std::string& line,
+                    const std::string& input, const Fixture& fixture, int* code = nullptr) {
+  const auto command = ckgit::parseCiRunnerCommand(line);
+  require(command.has_value(), "test command parses: " + line);
+  const std::filesystem::path in_path = fixture.root / "gateway.in";
+  const std::filesystem::path out_path = fixture.root / "gateway.out";
+  std::ofstream(in_path, std::ios::binary | std::ios::trunc) << input;
+  const int in = ::open(in_path.c_str(), O_RDONLY);
+  const int out = ::open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  const int result = ckgit::runCiGateway(config, runner, *command, in, out);
+  ::close(in);
+  ::close(out);
+  if (code != nullptr) *code = result;
+  std::ifstream read(out_path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(read)), std::istreambuf_iterator<char>());
+}
+
+// R4: a whole remote run through the gateway -- claim, live progress through
+// the stream, a resumable upload, and the commit at finish -- and the lease
+// check that refuses anyone else.
+void testGatewayRun() {
+  Fixture fixture;
+  const std::string commit = hostProject(fixture,
+                                         "version: 1\njobs:\n  - name: build\n    steps:\n      - run: [true]\n"
+                                         "    artifacts:\n      name: bundle\n      paths: [out]\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  ckgit::CiJobRequest job = sampleJob(ckgit::generateCiId());
+  job.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, job);
+
+  const std::string answer = gateway(config, "uconsole", "ckgit-runner 1 claim 0", "", fixture);
+  const auto remote = ckgit::parseCiClaimResponse(answer);
+  require(remote.has_value() && remote->prepared.job.job_id == job.job_id, "the runner claims the job");
+  require(remote->prepared.is_default_branch, "main is the default branch of the hosted project");
+  const std::string token = remote->token;
+  const std::string tail = job.job_id + " " + token;
+
+  int code = 0;
+  const std::string stolen =
+      gateway(config, "intruder", "ckgit-runner 1 heartbeat " + job.job_id + " " + token, "", fixture, &code);
+  require(stolen == "lease-lost\n", "another runner cannot use the lease");
+  require(gateway(config, "uconsole", "ckgit-runner 1 heartbeat " + tail, "", fixture) == "ok\n",
+          "the holder's heartbeat renews the lease");
+
+  const std::string frames = "started 1700000000\nstep-start 0 " + ckgit::hexEncode("build") +
+                             "\nlog 0 0 6\nhello\nlog 0 3 7\nlo\nbye\nstep-end 0 0 0 0 " +
+                             ckgit::hexEncode("build") + "\nheartbeat\n";
+  const std::string relayed = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, frames, fixture);
+  require(relayed.find("ready\n") != std::string::npos && relayed.find("ack 0 10\n") != std::string::npos,
+          "the stream acknowledges what it holds (got: " + relayed + ")");
+  const auto log = ckgit::readCiRunLog(fixture.state, "demo", job.job_id, 0, 1024);
+  require(log.has_value() && *log == "hello\nbye\n", "overlapping log frames are stored exactly once");
+  const auto running = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
+  require(running.has_value() && running->status == ckgit::CiRunStatus::Running && running->steps.size() == 1,
+          "the stream keeps the run record current");
+  const std::string again = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "", fixture);
+  require(again.rfind("held 0 10\nready\n", 0) == 0,
+          "a reconnecting stream learns how much is held (got: " + again + ")");
+
+  const std::string bundle = "bundle-bytes";
+  const std::string sha = ckgit::sha256Hex(bundle);
+  const std::string put1 = gateway(config, "uconsole",
+                                   "ckgit-runner 1 put " + tail + " artifact bundle 0 " + std::to_string(bundle.size()) +
+                                       " " + sha,
+                                   bundle.substr(0, 5), fixture);
+  require(put1 == "ok 5\n", "the first chunk is held");
+  const std::string put2 = gateway(config, "uconsole",
+                                   "ckgit-runner 1 put " + tail + " artifact bundle 5 " + std::to_string(bundle.size()) +
+                                       " " + sha,
+                                   bundle.substr(5), fixture);
+  require(put2 == "ok " + std::to_string(bundle.size()) + "\n", "the upload completes");
+
+  ckgit::CiFinishReport report;
+  report.status = ckgit::CiRunStatus::Success;
+  report.started_epoch_seconds = 1700000000;
+  report.detail = "all steps passed";
+  report.steps.push_back(ckgit::CiStepResult{"build", 0, false, false});
+  report.outputs.push_back(ckgit::CiDeclaredOutput{"bundle", false, 0, ""});
+  const std::string finished =
+      gateway(config, "uconsole", "ckgit-runner 1 finish " + tail, ckgit::formatCiFinishReport(report), fixture);
+  require(finished == "ok success\n", "the run commits (got: " + finished + ")");
+  const auto done = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
+  require(done.has_value() && done->status == ckgit::CiRunStatus::Success && done->artifacts.size() == 1 &&
+              done->artifacts[0].bytes == bundle.size(),
+          "the finished run and its uploaded artifact are on the main host");
+  require(!ckgit::loadCiClaim(fixture.state, job.job_id).has_value(), "the job is released");
+  require(gateway(config, "uconsole", "ckgit-runner 1 heartbeat " + tail, "", fixture) == "lease-lost\n",
+          "a finished job's lease is gone");
+}
+
+// R4: jobs that end without running never reach a runner.
+void testGatewayFinishesSkippedJobs() {
+  Fixture fixture;
+  const std::string commit = hostProject(fixture,
+                                         "version: 1\non: { branches: [release] }\njobs:\n  - name: a\n    steps:\n"
+                                         "      - run: [true]\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  ckgit::CiJobRequest job = sampleJob(ckgit::generateCiId());
+  job.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, job);
+  require(gateway(config, "uconsole", "ckgit-runner 1 claim 0", "", fixture) == "none\n",
+          "a job that is no trigger is not handed out");
+  const auto skipped = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
+  require(skipped.has_value() && skipped->status == ckgit::CiRunStatus::Skipped,
+          "it is recorded as skipped on the main host");
+}
+
+
+// R4: a runner key's forced command names the gateway's configuration; a
+// device key's never does.
+void testRunnerKeyLine() {
+  const std::string key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOz6m3Iv7uX1rX5dJZp1fZ3v1nA0qkGqk1xQmvE7ZbBc runner@host";
+  ckgit::ForcedCommandLayout layout{"/usr/bin/ck-git-shell", "/srv/ck-git-hosting/repos",
+                                    "/run/ck-git-hosting/control.sock", "/var/lib/ck-git-hosting/state"};
+  const std::string device = ckgit::renderAuthorizedKeyLine("mac", key, layout);
+  require(device.find("--runner-config") == std::string::npos, "a device key has no runner role");
+  layout.runner_config = "/etc/ck-git-hosting/server.ini";
+  const std::string runner = ckgit::renderAuthorizedKeyLine("uconsole", key, layout);
+  require(runner.find("--client-id uconsole") != std::string::npos &&
+              runner.find("--runner-config /etc/ck-git-hosting/server.ini\"") != std::string::npos &&
+              runner.rfind("restrict,command=", 0) == 0,
+          "a runner key's forced command carries the runner role");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -455,4 +693,9 @@ void testCiDistributed() {
   testPagesOrderingGuard();
   testClaimDelay();
   testOneRunPerRef();
+  testRunnerCommandGrammar();
+  testProtocolRoundTrips();
+  testGatewayRun();
+  testGatewayFinishesSkippedJobs();
+  testRunnerKeyLine();
 }

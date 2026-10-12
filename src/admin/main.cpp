@@ -39,7 +39,7 @@ void usage(std::ostream& output) {
          << "                             [--control-socket PATH] [--dry-run]\n"
          << "  ckgit-admin remove-project NAME (--config FILE | --repo-root ROOT --state-root ROOT) [--control-socket PATH] [--dry-run] [--yes]\n"
          << "  ckgit-admin authorized-key --client-id ID --public-key FILE [--shell PATH] [--repo-root ROOT]\n"
-         << "                             [--control-socket PATH] [--state-root ROOT]\n"
+         << "                             [--control-socket PATH] [--state-root ROOT] [--runner [--runner-config FILE]]\n"
          << "  ckgit-admin backup --output DIR [ROOT OPTIONS] [--dry-run] [--yes]\n"
          << "  ckgit-admin verify-backup BACKUP\n"
          << "  ckgit-admin restore-backup BACKUP [ROOT OPTIONS] [--dry-run] [--yes]\n"
@@ -620,8 +620,14 @@ int authorizedKey(int argc, char* argv[]) {
                                     std::filesystem::path(ckgit::kInstalledStateRoot)};
   for (int index = 2; index < argc; ++index) {
     const std::string argument = argv[index];
+    if (argument == "--runner") {
+      // A CI runner key: its forced command reaches only the runner gateway.
+      if (layout.runner_config.empty()) layout.runner_config = std::filesystem::path(ckgit::kInstalledServerConfig);
+      continue;
+    }
     if (argument != "--client-id" && argument != "--public-key" && argument != "--shell" &&
-        argument != "--repo-root" && argument != "--control-socket" && argument != "--state-root") {
+        argument != "--repo-root" && argument != "--control-socket" && argument != "--state-root" &&
+        argument != "--runner-config") {
       std::cerr << "ckgit-admin: unknown option: " << argument << "\n";
       return kUsage;
     }
@@ -640,12 +646,18 @@ int authorizedKey(int argc, char* argv[]) {
       layout.repo_root = value;
     } else if (argument == "--control-socket") {
       layout.control_socket = value;
+    } else if (argument == "--runner-config") {
+      layout.runner_config = value;
     } else {
       layout.state_root = value;
     }
   }
   if (client_id.empty() || !public_key.has_value()) {
     std::cerr << "ckgit-admin: authorized-key requires --client-id and --public-key\n";
+    return kUsage;
+  }
+  if (!layout.runner_config.empty() && client_id == ckgit::kCiPrimaryRunnerName) {
+    std::cerr << "ckgit-admin: '" << client_id << "' is reserved for the server's own runner\n";
     return kUsage;
   }
   std::cout << ckgit::renderAuthorizedKeyLine(client_id, readPublicKeyFile(*public_key), layout);

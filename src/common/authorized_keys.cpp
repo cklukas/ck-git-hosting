@@ -99,7 +99,10 @@ std::string renderAuthorizedKeyLine(std::string_view client_id, std::string_view
                               std::string(client_id) + " --repo-root " +
                               embeddablePath(layout.repo_root, "repository root") + " --control-socket " +
                               embeddablePath(layout.control_socket, "control socket") + " --state-root " +
-                              embeddablePath(layout.state_root, "state root");
+                              embeddablePath(layout.state_root, "state root") +
+                              (layout.runner_config.empty()
+                                   ? std::string()
+                                   : " --runner-config " + embeddablePath(layout.runner_config, "runner config"));
   return "restrict,command=\"" + command + "\" " + std::string(key_type) + " " + std::string(key_data) + " " +
          std::string(client_id) + "\n";
 }

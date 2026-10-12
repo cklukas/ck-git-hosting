@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "ckgit/ci_runner_protocol.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/repository_store.hpp"
@@ -29,11 +31,16 @@ struct Options {
   std::filesystem::path repo_root;
   std::filesystem::path control_socket;
   std::optional<std::filesystem::path> state_root;
+  // Set for a CI runner key (see renderAuthorizedKeyLine): only ckgit-runner
+  // operations, handed to the runner gateway.
+  std::optional<std::filesystem::path> runner_config;
+  std::filesystem::path runner_program{"/usr/bin/ck-ci-runnerd"};
   bool dry_run{false};
 };
 
 void usage(std::ostream& output) {
-  output << "Usage: ck-git-shell --client-id ID --repo-root ROOT --control-socket PATH [--state-root ROOT] [--dry-run]\n";
+  output << "Usage: ck-git-shell --client-id ID --repo-root ROOT --control-socket PATH [--state-root ROOT]\n"
+            "                    [--runner-config FILE [--runner-program PATH]] [--dry-run]\n";
 }
 
 bool parseOptions(int argc, char* argv[], Options* options) {
@@ -43,10 +50,15 @@ bool parseOptions(int argc, char* argv[], Options* options) {
       options->dry_run = true;
       continue;
     }
-    if ((argument == "--client-id" || argument == "--repo-root" ||
-         argument == "--control-socket" || argument == "--state-root") && index + 1 < argc) {
+    if ((argument == "--client-id" || argument == "--repo-root" || argument == "--control-socket" ||
+         argument == "--state-root" || argument == "--runner-config" || argument == "--runner-program") &&
+        index + 1 < argc) {
       const std::string value = argv[++index];
-      if (argument == "--client-id") {
+      if (argument == "--runner-config") {
+        options->runner_config.emplace(value);
+      } else if (argument == "--runner-program") {
+        options->runner_program = value;
+      } else if (argument == "--client-id") {
         options->client_id = value;
       } else if (argument == "--repo-root") {
         options->repo_root = value;
@@ -103,12 +115,57 @@ void requireExistingRepository(const std::filesystem::path& repository) {
   throw std::runtime_error("could not start Git service: " + std::string(std::strerror(errno)));
 }
 
+// A runner key reaches nothing but the gateway: the validated command line is
+// handed over whole, with a minimal environment.
+int dispatchRunner(const Options& options, const char* original) {
+  std::string reason;
+  const auto command = ckgit::parseCiRunnerCommand(original, &reason);
+  if (!command.has_value()) {
+    std::cerr << "ck-git-shell: denied: " << reason << "\n";
+    return kDenied;
+  }
+  if (options.client_id == ckgit::kCiPrimaryRunnerName) {
+    std::cerr << "ck-git-shell: denied: reserved runner name\n";
+    return kDenied;
+  }
+  if (options.dry_run) {
+    std::cout << "runner " << original << " for " << options.client_id << "\n";
+    return 0;
+  }
+  const std::string program = options.runner_program.string();
+  const std::string config = options.runner_config->string();
+  std::vector<std::string> arguments{program, "gateway", "--config", config, "--runner", options.client_id,
+                                     "--command", original};
+  std::vector<std::string> environment_values{"PATH=/usr/bin:/bin", "LANG=C"};
+  if (const char* temporary_root = std::getenv("TMPDIR")) {
+    environment_values.push_back("TMPDIR=" + std::string(temporary_root));
+  }
+  // Git's protocol negotiation, when sshd passes it through (AcceptEnv).
+  if (const char* protocol = std::getenv("GIT_PROTOCOL")) {
+    const std::string_view value(protocol);
+    if (value.size() < 64 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '=' || c == ':';
+        })) {
+      environment_values.push_back("GIT_PROTOCOL=" + std::string(value));
+    }
+  }
+  std::vector<char*> argv_raw;
+  for (auto& argument : arguments) argv_raw.push_back(argument.data());
+  argv_raw.push_back(nullptr);
+  std::vector<char*> environment;
+  for (auto& value : environment_values) environment.push_back(value.data());
+  environment.push_back(nullptr);
+  execve(program.c_str(), argv_raw.data(), environment.data());
+  throw std::runtime_error("could not start the runner gateway: " + std::string(std::strerror(errno)));
+}
+
 int dispatch(const Options& options) {
   const char* original = std::getenv("SSH_ORIGINAL_COMMAND");
   if (original == nullptr) {
     std::cerr << "ck-git-shell: SSH_ORIGINAL_COMMAND is not set\n";
     return kDenied;
   }
+  if (options.runner_config.has_value()) return dispatchRunner(options, original);
   std::string reason;
   const auto command = ckgit::parseSshOriginalCommand(original, &reason);
   if (!command.has_value()) {

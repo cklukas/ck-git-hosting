@@ -14,6 +14,10 @@ struct ForcedCommandLayout {
   std::filesystem::path repo_root;
   std::filesystem::path control_socket;
   std::filesystem::path state_root;
+  // Set for a CI runner key: the server configuration the gateway reads. Such
+  // a key may run only `ckgit-runner 1 ...` operations -- no Git and no
+  // ckgit-rpc -- and a device key may run none of them.
+  std::filesystem::path runner_config{};
 };
 
 // Builds one complete OpenSSH authorized_keys line that pairs a device public
