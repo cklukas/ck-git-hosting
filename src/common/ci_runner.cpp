@@ -177,8 +177,8 @@ void checkoutCommit(const std::filesystem::path& repository, const std::string& 
 }
 
 // Base + workflow + job + caller env, later definitions winning, as KEY=VALUE.
-std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
-                                  const CiRunnerOptions& options, const std::filesystem::path& home,
+std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& ci_job, const CiJobRequest& job,
+                                  const std::vector<std::string>& extra_env, const std::filesystem::path& home,
                                   const std::filesystem::path& tmp,
                                   const std::vector<std::string>& extra_run_env) {
   std::vector<std::pair<std::string, std::string>> ordered = {
@@ -191,8 +191,8 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
       {"CI", "true"},
       // The commit and ref under build, so a step can stamp a reliable version
       // into the artifacts (the sandbox has no .git for `git describe`).
-      {"CKGIT_COMMIT", options.commit_id},
-      {"CKGIT_REF", options.ref},
+      {"CKGIT_COMMIT", job.commit_id},
+      {"CKGIT_REF", job.ref},
   };
   const auto put = [&ordered](const std::string& key, const std::string& value) {
     for (auto& entry : ordered) {
@@ -201,8 +201,8 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& job,
     ordered.emplace_back(key, value);
   };
   for (const auto& [key, value] : workflow.env) put(key, value);
-  for (const auto& [key, value] : job.env) put(key, value);
-  for (const std::string& assignment : options.extra_env) {
+  for (const auto& [key, value] : ci_job.env) put(key, value);
+  for (const std::string& assignment : extra_env) {
     const std::size_t equals = assignment.find('=');
     if (equals != std::string::npos) put(assignment.substr(0, equals), assignment.substr(equals + 1));
   }
@@ -457,11 +457,14 @@ struct StepOutcome {
 struct StepHooks {
   std::function<void()> heartbeat;
   std::function<bool()> cancel_requested;
+  std::function<void()> tick;  // every poll round (<= 200 ms): lets the sink flush output
 };
 
+// Runs one step in the sandbox, streaming its combined output to the sink (up
+// to the log cap) and reporting liveness and cancellation through `hooks`.
 StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesystem::path& cwd,
-                        const std::vector<std::string>& env, const CiRunnerOptions& options,
-                        const std::filesystem::path& log_path, const std::filesystem::path& bind_source,
+                        const std::vector<std::string>& env, const CiExecutionOptions& options,
+                        CiResultSink& sink, std::size_t step_index, const std::filesystem::path& bind_source,
                         const SandboxMounts& mounts, const StepHooks& hooks) {
   StepOutcome outcome;
   int pipe_fd[2];
@@ -469,24 +472,15 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     outcome.spawn_failed = true;
     return outcome;
   }
-  const int log = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-  if (log < 0) {
-    ::close(pipe_fd[0]);
-    ::close(pipe_fd[1]);
-    outcome.spawn_failed = true;
-    return outcome;
-  }
   const pid_t pid = ::fork();
   if (pid < 0) {
     ::close(pipe_fd[0]);
     ::close(pipe_fd[1]);
-    ::close(log);
     outcome.spawn_failed = true;
     return outcome;
   }
   if (pid == 0) {
     ::close(pipe_fd[0]);
-    ::close(log);
     ::setpgid(0, 0);
     enterSandbox(options.allow_network, bind_source, mounts);
     applyRlimits();
@@ -539,6 +533,7 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
         outcome.cancelled = true;
       }
     }
+    if (hooks.tick) hooks.tick();
     pollfd descriptor{pipe_fd[0], POLLIN, 0};
     const int ready = ::poll(&descriptor, 1, 200);
     if (ready < 0) {
@@ -556,13 +551,7 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
       if (written < options.max_log_bytes) {
         const std::size_t room = options.max_log_bytes - written;
         const std::size_t take = std::min(room, static_cast<std::size_t>(received));
-        std::size_t offset = 0;
-        while (offset < take) {
-          const ssize_t w = ::write(log, buffer + offset, take - offset);
-          if (w < 0 && errno == EINTR) continue;
-          if (w <= 0) break;
-          offset += static_cast<std::size_t>(w);
-        }
+        sink.appendLog(step_index, std::string_view(buffer, take));
         written += take;
         if (static_cast<std::size_t>(received) > take) outcome.truncated = true;
       } else {
@@ -571,7 +560,6 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     }
   }
   ::close(pipe_fd[0]);
-  ::close(log);
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
   }
@@ -690,36 +678,26 @@ PackOutcome packToFile(const std::vector<std::string>& argv, const std::filesyst
   return outcome;
 }
 
-// Packs one job's declared artifact from the checkout into `dir` as <name>.tar
-// and returns its record. `expires` of 0 marks a durable release asset;
-// otherwise it is an ephemeral CI artifact. A bundle that cannot be packed or is
-// over the cap is returned with a note and no stored bytes. The caller writes
-// the sidecar (which commits the artifact) and never lets this fail the build.
-CiArtifactRecord packArtifactInto(const CiArtifact& artifact, const std::filesystem::path& work,
-                                  const std::filesystem::path& dir, std::size_t max_bytes,
-                                  std::uint64_t created, std::uint64_t expires) {
-  CiArtifactRecord stored;
-  stored.name = artifact.name;
-  stored.created_epoch_seconds = created;
-  stored.expires_epoch_seconds = expires;
-  const std::filesystem::path blob = dir / (artifact.name + ".tar");
+// Packs one job's declared artifact from the checkout into `bundle` (a tar).
+// Returns an empty string on success, or the short note recorded instead of
+// the bundle when it cannot be packed or is over the cap (and then removes any
+// partial bundle). Never fails the build.
+std::string packArtifact(const CiArtifact& artifact, const std::filesystem::path& work,
+                         const std::filesystem::path& bundle, std::size_t max_bytes) {
   std::vector<std::string> argv = {"tar", "-cf", "-", "-C", work.string(), "--"};
   for (const std::string& path : artifact.paths) argv.push_back(path);
-  const PackOutcome outcome = packToFile(argv, blob, max_bytes, 300);
+  const PackOutcome outcome = packToFile(argv, bundle, max_bytes, 300);
   std::error_code error;
-  if (outcome.spawn_failed) {
-    stored.note = "could not start packing the artifact";
-  } else if (outcome.truncated) {
-    std::filesystem::remove(blob, error);
-    stored.note = "artifact exceeds the size cap";
-  } else if (outcome.exit_code != 0) {
-    std::filesystem::remove(blob, error);
-    stored.note = "packing failed (a path may be missing)";
-  } else {
-    stored.bytes = outcome.bytes;
-    stored.sha256 = sha256HexOfFile(blob);
+  if (outcome.spawn_failed) return "could not start packing the artifact";
+  if (outcome.truncated) {
+    std::filesystem::remove(bundle, error);
+    return "artifact exceeds the size cap";
   }
-  return stored;
+  if (outcome.exit_code != 0) {
+    std::filesystem::remove(bundle, error);
+    return "packing failed (a path may be missing)";
+  }
+  return {};
 }
 
 std::string firstLine(const std::string& text) {
@@ -738,62 +716,6 @@ std::string sisterEnvName(const std::string& name) {
     out.push_back(std::isalnum(c) ? static_cast<char>(std::toupper(c)) : '_');
   }
   return out;
-}
-
-// Materialises each declared sister project's snapshot into the scratch tree at
-// scratch/<name> (reached from the checkout as ../<name>), read-only via `git
-// archive` — no hooks, no submodules, no network, same-server projects only.
-// `ref` pins a sister to a branch, tag, or commit; empty takes the project's
-// current default branch (its bare HEAD). The project may name itself only
-// with a `ref`, to see another of its own branches at ../<name>. Returns the CKGIT_SISTER_<NAME>=<path>
-// assignments to export, where <path> is where the step will see the sister:
-// under `visible_root` (the canonical kSandboxRoot when sandboxed, else the
-// physical scratch). Throws with a clear message when a named sister is not a
-// hosted repository or a pinned ref does not resolve.
-std::vector<std::string> materializeSisters(const CiWorkflow& workflow,
-                                            const std::filesystem::path& repository,
-                                            const std::string& self,
-                                            const std::filesystem::path& scratch,
-                                            const std::filesystem::path& visible_root) {
-  std::vector<std::string> env;
-  const std::filesystem::path repo_root = repository.parent_path();
-  for (const CiSister& sister : workflow.sisters) {
-    // The project itself is allowed with an explicit ref: another branch's
-    // tree beside the checkout (a docs portal rendering two branches, say).
-    // Without one it would only repeat the checkout.
-    if (sister.name == self && sister.ref.empty()) {
-      throw std::runtime_error("a project can list itself as a sister only with an explicit ref: " + sister.name);
-    }
-    if (sister.name == "src" || sister.name == "home" || sister.name == "tmp") {
-      throw std::runtime_error("reserved sister name: " + sister.name);
-    }
-    const std::filesystem::path sister_repo = sister.name == self ? repository : repo_root / (sister.name + ".git");
-    if (!std::filesystem::is_directory(sister_repo)) {
-      throw std::runtime_error("sister project '" + sister.name + "' is not hosted here");
-    }
-    // Resolve the requested ref (or the default branch) to a single commit.
-    const std::string spec = sister.ref.empty() ? "HEAD" : sister.ref;
-    ProcessOptions resolve;
-    resolve.timeout = std::chrono::seconds(20);
-    resolve.output_limit = 256;
-    const ProcessResult resolved = runProcess(
-        {"git", "--git-dir", sister_repo.string(), "rev-parse", "--verify", "--end-of-options",
-         spec + "^{commit}"},
-        resolve);
-    if (resolved.timed_out || resolved.exit_code != 0) {
-      throw std::runtime_error("sister project '" + sister.name + "' has no " +
-                               (sister.ref.empty() ? "commits" : "ref '" + sister.ref + "'"));
-    }
-    std::string commit = resolved.output;
-    while (!commit.empty() && (commit.back() == '\n' || commit.back() == '\r')) commit.pop_back();
-    const std::filesystem::path dest = scratch / sister.name;
-    std::error_code error;
-    std::filesystem::create_directories(dest, error);
-    if (error) throw std::runtime_error("could not create the sister workspace for '" + sister.name + "'");
-    checkoutCommit(sister_repo, commit, dest, scratch / (sister.name + ".sister.tar"));
-    env.push_back(sisterEnvName(sister.name) + "=" + (visible_root / sister.name).string());
-  }
-  return env;
 }
 
 // The default variable a cache is exported as: CKGIT_CACHE_<NAME>, the name
@@ -884,53 +806,138 @@ bool ciSandboxCompiledIn() {
 #endif
 }
 
-CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
-  if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job) {
+  CiPreparation result;
+  CiPreparedJob prepared;
+  prepared.job = job;
+  const auto outcome = [&result](CiRunStatus status, std::string detail) {
+    result.status = status;
+    result.detail = std::move(detail);
+    return result;
+  };
+  try {
+    const std::optional<std::string> text = readWorkflowBlob(repository, job.commit_id);
+    if (!text.has_value()) return outcome(CiRunStatus::Skipped, "no .ckgit/ci.yml in this commit");
+    prepared.workflow_text = *text;
+    prepared.workflow = parseCiWorkflow(*text);
+  } catch (const std::exception& error) {
+    return outcome(CiRunStatus::Error, std::string("workflow: ") + error.what());
+  }
+  const CiWorkflow& workflow = prepared.workflow;
+
+  // Decide whether this ref triggers the workflow, and whether it is a release.
+  // Tag pushes match `on.tags`; branch pushes match `on.branches`, or the
+  // repository's default branch when the workflow omits `on:` entirely.
+  const std::string kTagPrefix = "refs/tags/";
+  if (job.ref.rfind(kTagPrefix, 0) == 0) {
+    const std::string tag = job.ref.substr(kTagPrefix.size());
+    if (!anyTagMatches(tag, workflow.tags)) return outcome(CiRunStatus::Skipped, "tag " + tag + " is not a trigger");
+    if (!isValidReleaseTag(tag)) {
+      return outcome(CiRunStatus::Skipped, "tag " + tag + " is not a supported release tag");
+    }
+    prepared.is_release = true;
+    prepared.release_tag = tag;
+  } else {
+    const std::string branch = branchOf(job.ref);
+    const std::optional<std::string> def = defaultBranch(repository);
+    if (workflow.triggers_default_branch) {
+      if (def.has_value() && branch != *def) {
+        return outcome(CiRunStatus::Skipped, "branch " + branch + " is not the default branch " + *def);
+      }
+    } else if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) == workflow.branches.end()) {
+      return outcome(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
+    }
+    // Only the default branch may replace the live Pages site.
+    prepared.is_default_branch = def.has_value() && branch == *def;
+  }
+
+  // Resolve every sister to one commit now, on the main host, so each attempt
+  // of this run builds against the same sister source wherever it executes.
+  try {
+    const std::filesystem::path repo_root = repository.parent_path();
+    for (const CiSister& sister : workflow.sisters) {
+      // The project itself is allowed with an explicit ref: another branch's
+      // tree beside the checkout (a docs portal rendering two branches, say).
+      // Without one it would only repeat the checkout.
+      if (sister.name == job.project_name && sister.ref.empty()) {
+        throw std::runtime_error("a project can list itself as a sister only with an explicit ref: " + sister.name);
+      }
+      if (sister.name == "src" || sister.name == "home" || sister.name == "tmp") {
+        throw std::runtime_error("reserved sister name: " + sister.name);
+      }
+      const std::filesystem::path sister_repo =
+          sister.name == job.project_name ? repository : repo_root / (sister.name + ".git");
+      if (!std::filesystem::is_directory(sister_repo)) {
+        throw std::runtime_error("sister project '" + sister.name + "' is not hosted here");
+      }
+      const std::string spec = sister.ref.empty() ? "HEAD" : sister.ref;
+      ProcessOptions resolve;
+      resolve.timeout = std::chrono::seconds(20);
+      resolve.output_limit = 256;
+      const ProcessResult resolved = runProcess(
+          {"git", "--git-dir", sister_repo.string(), "rev-parse", "--verify", "--end-of-options",
+           spec + "^{commit}"},
+          resolve);
+      if (resolved.timed_out || resolved.exit_code != 0) {
+        throw std::runtime_error("sister project '" + sister.name + "' has no " +
+                                 (sister.ref.empty() ? "commits" : "ref '" + sister.ref + "'"));
+      }
+      std::string commit = resolved.output;
+      while (!commit.empty() && (commit.back() == '\n' || commit.back() == '\r')) commit.pop_back();
+      if (!isValidObjectId(commit)) throw std::runtime_error("sister project '" + sister.name + "' did not resolve");
+      prepared.sisters.push_back(CiResolvedSister{sister.name, commit});
+    }
+  } catch (const std::exception& error) {
+    return outcome(CiRunStatus::Error, std::string("sisters: ") + error.what());
+  }
+  result.prepared = std::move(prepared);
+  return result;
+}
+
+CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJobRequest& job, CiRunStatus status,
+                            const std::string& detail) {
   CiRunRecord record;
-  record.run_id = options.run_id.empty() ? generateCiId() : options.run_id;
-  record.project_name = options.project_name;
-  record.ref = options.ref;
-  record.commit_id = options.commit_id;
+  record.run_id = job.job_id;
+  record.project_name = job.project_name;
+  record.ref = job.ref;
+  record.commit_id = job.commit_id;
+  record.status = status;
+  record.started_epoch_seconds = nowEpoch();
+  record.finished_epoch_seconds = record.started_epoch_seconds;
+  record.heartbeat_epoch_seconds = record.started_epoch_seconds;
+  record.detail = firstLine(detail);
+  writeCiRunRecord(state_root, record);
+  try {
+    clearCiCancel(state_root, job.project_name, job.job_id);
+  } catch (const std::exception&) {
+  }
+  return record;
+}
+
+CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions& options,
+                         CiSourceProvider& source, CiResultSink& sink, CiSandboxReport* sandbox) {
+  const CiJobRequest& job = prepared.job;
+  const CiWorkflow& workflow = prepared.workflow;
+  CiRunRecord record;
+  record.run_id = job.job_id;
+  record.project_name = job.project_name;
+  record.ref = job.ref;
+  record.commit_id = job.commit_id;
   record.status = CiRunStatus::Running;
   record.started_epoch_seconds = nowEpoch();
 
-  // Lease keeping (see CiRunnerOptions::keep_alive). Once the lease is lost
-  // nothing more is written: the job belongs to whichever runner claims it next.
-  bool lease_lost = false;
-  auto last_keep_alive = std::chrono::steady_clock::now();
-  const auto keepAlive = [&](bool force) -> bool {
-    if (lease_lost || !options.keep_alive) return !lease_lost;
-    const auto now = std::chrono::steady_clock::now();
-    if (!force && now - last_keep_alive < std::chrono::seconds(std::max(1u, options.keep_alive_seconds))) {
-      return true;
-    }
-    last_keep_alive = now;
-    try {
-      if (!options.keep_alive()) lease_lost = true;
-    } catch (const std::exception&) {
-      // A failed renewal is retried at the next heartbeat; only an explicit
-      // "lost" answer gives the job up.
-    }
-    return !lease_lost;
+  std::filesystem::path scratch;
+  const auto removeScratch = [&]() {
+    if (scratch.empty() || options.keep_scratch) return;
+    std::error_code error;
+    std::filesystem::remove_all(scratch, error);
   };
-
   const auto finish = [&](CiRunStatus status, const std::string& detail) -> CiRunRecord {
-    if (lease_lost) {
-      record.status = CiRunStatus::Error;
-      record.detail = "this runner lost its lease on the job; it was requeued";
-      return record;
-    }
     record.status = status;
     record.detail = firstLine(detail);
     record.finished_epoch_seconds = nowEpoch();
     record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
-    writeCiRunRecord(options.state_root, record);
-    // A cancel marker never outlives the run it targeted.
-    try {
-      clearCiCancel(options.state_root, options.project_name, record.run_id);
-    } catch (const std::exception&) {
-    }
-    return record;
+    return sink.finish(record);
   };
 
   // A queued job can be cancelled while it still sits in the spool, before any
@@ -938,14 +945,10 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // soon as it is queued, and its Cancel button writes the ordinary marker.
   // Honor that before doing anything else — no sandbox probe, no checkout — so
   // the record goes straight from Pending to Cancelled and never shows Running.
-  try {
-    if (isCiCancelRequested(options.state_root, options.project_name, record.run_id)) {
-      return finish(CiRunStatus::Cancelled, "cancelled before it started");
-    }
-  } catch (const std::exception&) {
-  }
+  if (sink.cancelRequested()) return finish(CiRunStatus::Cancelled, "cancelled before it started");
 
   CiSandboxReport report;
+  report.probed = true;
   report.namespaces_available = probeUserNamespaces(options.allow_network);
   report.network_isolated = report.namespaces_available && !options.allow_network;
   // Loopback only needs its own probe when the isolated network namespace is
@@ -959,68 +962,25 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   report.filesystem_masked = report.namespaces_available && probeFilesystemMask();
   if (sandbox != nullptr) *sandbox = report;
 
-  CiWorkflow workflow;
   try {
-    const std::optional<std::string> text = readWorkflowBlob(options.repository, options.commit_id);
-    if (!text.has_value()) return finish(CiRunStatus::Skipped, "no .ckgit/ci.yml in this commit");
-    workflow = parseCiWorkflow(*text);
-  } catch (const std::exception& error) {
-    return finish(CiRunStatus::Error, std::string("workflow: ") + error.what());
-  }
-
-  // Decide whether this ref triggers the workflow, and whether it is a release.
-  // Tag pushes match `on.tags`; branch pushes match `on.branches`, or the
-  // repository's default branch when the workflow omits `on:` entirely.
-  const std::string kTagPrefix = "refs/tags/";
-  const bool is_tag = options.ref.rfind(kTagPrefix, 0) == 0;
-  bool is_release = false;
-  std::string release_tag;
-  if (is_tag) {
-    const std::string tag = options.ref.substr(kTagPrefix.size());
-    if (!anyTagMatches(tag, workflow.tags)) {
-      return finish(CiRunStatus::Skipped, "tag " + tag + " is not a trigger");
-    }
-    if (!isValidReleaseTag(tag)) {
-      return finish(CiRunStatus::Skipped, "tag " + tag + " is not a supported release tag");
-    }
-    is_release = true;
-    release_tag = tag;
-  } else {
-    const std::string branch = branchOf(options.ref);
-    if (workflow.triggers_default_branch) {
-      const std::optional<std::string> def = defaultBranch(options.repository);
-      if (def.has_value() && branch != *def) {
-        return finish(CiRunStatus::Skipped, "branch " + branch + " is not the default branch " + *def);
-      }
-    } else if (std::find(workflow.branches.begin(), workflow.branches.end(), branch) ==
-               workflow.branches.end()) {
-      return finish(CiRunStatus::Skipped, "branch " + branch + " is not a trigger");
-    }
-  }
-
-  std::filesystem::path run_dir;
-  std::filesystem::path scratch;
-  try {
-    run_dir = prepareCiRunDirectory(options.state_root, options.project_name, record.run_id);
     // Publish the run as Running before any slow setup (checkout, sisters,
-    // caches) so the dashboard shows it immediately, then let the daemon refresh
-    // its cache rather than wait for the next periodic sweep.
+    // caches) so the dashboard shows it immediately.
     record.heartbeat_epoch_seconds = record.started_epoch_seconds;
-    writeCiRunRecord(options.state_root, record);
-    if (options.on_run_started) options.on_run_started();
+    sink.runStarted(record);
     std::error_code error;
     std::filesystem::create_directories(options.build_root, error);
     scratch = options.build_root / record.run_id;
     std::filesystem::remove_all(scratch, error);
     std::filesystem::create_directories(scratch / "src", error);
     if (error) throw std::runtime_error("could not create the scratch workspace");
-    checkoutCommit(options.repository, options.commit_id, scratch / "src", scratch / "commit.tar");
+    source.checkout(job.project_name, job.commit_id, scratch / "src");
   } catch (const std::exception& error) {
+    removeScratch();
     return finish(CiRunStatus::Error, std::string("setup: ") + error.what());
   }
-  if (!keepAlive(true)) {
-    std::error_code error;
-    std::filesystem::remove_all(scratch, error);
+  sink.heartbeat(record);
+  if (sink.leaseLost()) {
+    removeScratch();
     return finish(CiRunStatus::Error, "lease lost");
   }
 
@@ -1041,20 +1001,32 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   std::filesystem::create_directories(scratch / "home", scratch_error);
   std::filesystem::create_directories(scratch / "tmp", scratch_error);
 
-  // Materialise the sister projects this workflow declared before any step runs.
-  std::vector<std::string> sister_env;
+  // Materialise the sister projects this workflow declared before any step
+  // runs, at scratch/<name> (reached from the checkout as ../<name>) and
+  // exported as CKGIT_SISTER_<NAME> where the step will see it.
+  std::vector<std::string> run_env;
   try {
-    sister_env = materializeSisters(workflow, options.repository, options.project_name, scratch, visible_root);
+    for (const CiResolvedSister& sister : prepared.sisters) {
+      const std::filesystem::path destination = scratch / sister.name;
+      std::error_code error;
+      std::filesystem::create_directories(destination, error);
+      if (error) throw std::runtime_error("could not create the sister workspace for '" + sister.name + "'");
+      source.checkout(sister.name, sister.commit, destination);
+      run_env.push_back(sisterEnvName(sister.name) + "=" + (visible_root / sister.name).string());
+    }
   } catch (const std::exception& error) {
+    removeScratch();
     return finish(CiRunStatus::Error, std::string("sisters: ") + error.what());
   }
-  // Provision persistent build caches (a warm ccache store, say), which survive
-  // across runs when the server configures a cache root.
+  sink.heartbeat(record);
+  // Provision build caches (a warm ccache store, say), which survive across
+  // runs when this runner configures a cache root.
   CacheProvision cache_provision;
   try {
-    cache_provision = provisionCaches(workflow, options.project_name, options.cache_root, scratch, visible_root);
-    sister_env.insert(sister_env.end(), cache_provision.env.begin(), cache_provision.env.end());
+    cache_provision = provisionCaches(workflow, job.project_name, options.cache_root, scratch, visible_root);
+    run_env.insert(run_env.end(), cache_provision.env.begin(), cache_provision.env.end());
   } catch (const std::exception& error) {
+    removeScratch();
     return finish(CiRunStatus::Error, std::string("cache: ") + error.what());
   }
 
@@ -1062,20 +1034,17 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // regardless of where the scratch physically lives — this is what makes the
   // checkout and a declared cache "the only places a step can write" actually
   // true, not just documented. Built once per run (not per step, though
-  // enterSandbox applies it fresh in every step's own namespace): the private
-  // state root (spool, run records, other projects' releases), the CI build
-  // root (sibling runs' scratch), the cache root (other projects' caches —
-  // this project's own is exempted via the bind above), Pages, and the
-  // bare-repository root (every hosted project's real Git data; sisters are
-  // the sanctioned, read-only, git-archived way to reach another one). Only
-  // non-empty, existing paths are included; enterSandbox silently skips the
-  // rest.
+  // enterSandbox applies it fresh in every step's own namespace): the caller's
+  // service paths (on the primary: the private state root, Pages, and the
+  // bare-repository root), the CI build root (sibling runs' scratch), and the
+  // cache root (other projects' caches — this project's own is exempted via
+  // the bind above). Only non-empty, existing paths matter; enterSandbox
+  // silently skips the rest.
   SandboxMounts sandbox_mounts;
   sandbox_mounts.cache_binds = cache_provision.mounts;
-  for (const std::filesystem::path* candidate : {&options.state_root, &options.pages_root}) {
-    if (!candidate->empty()) sandbox_mounts.hide.push_back(*candidate);
+  for (const std::filesystem::path& hidden : options.hidden_paths) {
+    if (!hidden.empty()) sandbox_mounts.hide.push_back(hidden);
   }
-  if (!options.repository.empty()) sandbox_mounts.hide.push_back(options.repository.parent_path());
 
   // Do not mount over the whole build root: the active scratch lives beneath
   // it and is already bound at /mnt for the step.  On GitHub-hosted Linux
@@ -1083,8 +1052,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // /mnt/src unreachable (and every otherwise-valid step exits 126).  Cover
   // each sibling run instead.  They remain inaccessible while the current
   // run's source, HOME, and TMPDIR stay available through the sanctioned bind.
-  const auto hideSiblings = [&](const std::filesystem::path& root,
-                                const std::filesystem::path& keep) {
+  const auto hideSiblings = [&](const std::filesystem::path& root, const std::filesystem::path& keep) {
     if (root.empty()) return;
     std::error_code error;
     std::filesystem::directory_iterator iterator(root, error);
@@ -1099,74 +1067,52 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // A project can use only the caches it declares, but it must never access
   // another project's cache tree.  Leave its own parent reachable so a
   // declared cache bind is not obscured by the sibling masking.
-  hideSiblings(options.cache_root, options.cache_root / options.project_name);
+  hideSiblings(options.cache_root, options.cache_root / job.project_name);
 
-  // Liveness and cancellation share one small surface. writeProgress republishes
-  // the run.ini (Running plus the steps finished so far) with a fresh heartbeat,
-  // throttled unless forced; cancelRequested polls the cancel marker.
-  std::uint64_t last_progress = record.started_epoch_seconds;
-  const auto writeProgress = [&](bool force) {
-    if (lease_lost) return;
-    const std::uint64_t now = nowEpoch();
-    if (!force && now - last_progress < 3) return;  // bound fsync churn on chatty steps
-    last_progress = now;
-    record.heartbeat_epoch_seconds = now;
-    try {
-      writeCiRunRecord(options.state_root, record);
-    } catch (const std::exception&) {
-      // A dropped heartbeat only delays liveness; the terminal write is authoritative.
-    }
-  };
-  const auto cancelRequested = [&]() -> bool {
-    try {
-      return isCiCancelRequested(options.state_root, options.project_name, record.run_id);
-    } catch (const std::exception&) {
-      return false;
-    }
-  };
-  const StepHooks hooks{[&]() {
-                          keepAlive(false);
-                          writeProgress(false);
-                        },
-                        [&]() { return lease_lost || cancelRequested(); }};
+  const StepHooks hooks{[&]() { sink.heartbeat(record); },
+                        [&]() { return sink.leaseLost() || sink.cancelRequested(); },
+                        [&]() { sink.tick(); }};
+
+  // Packed artifacts wait here, outside the checkout, until the sink takes them.
+  const std::filesystem::path outputs = scratch / ".outputs";
 
   CiRunStatus status = CiRunStatus::Success;
   std::string detail;
   std::size_t step_index = 0;
   bool stop = false;
-  for (const CiJob& job : workflow.jobs) {
+  for (const CiJob& ci_job : workflow.jobs) {
     if (stop) break;
-    if (cancelRequested()) {
+    if (sink.cancelRequested()) {
       status = CiRunStatus::Cancelled;
-      detail = "run cancelled before job '" + job.name + "'";
+      detail = "run cancelled before job '" + ci_job.name + "'";
       break;
     }
     const std::vector<std::string> env =
-        buildEnv(workflow, job, options, home_visible, tmp_visible, sister_env);
-    for (const CiStep& step : job.steps) {
-      if (cancelRequested()) {
+        buildEnv(workflow, ci_job, job, options.extra_env, home_visible, tmp_visible, run_env);
+    for (const CiStep& step : ci_job.steps) {
+      if (sink.cancelRequested()) {
         status = CiRunStatus::Cancelled;
-        detail = "run cancelled before step '" + (step.name.empty() ? job.name : step.name) + "'";
+        detail = "run cancelled before step '" + (step.name.empty() ? ci_job.name : step.name) + "'";
         stop = true;
         break;
       }
-      const std::filesystem::path log_path = run_dir / "steps" / (std::to_string(step_index) + ".log");
       std::vector<std::string> argv;
       if (step.usesShell()) {
         argv = {"/bin/sh", "-ec", step.script};
       } else {
         argv = step.argv;
       }
+      sink.stepStarted(record, step_index);
       const StepOutcome outcome =
-          executeStep(argv, work_visible, env, options, log_path, bind_source, sandbox_mounts, hooks);
+          executeStep(argv, work_visible, env, options, sink, step_index, bind_source, sandbox_mounts, hooks);
       CiStepResult result;
-      result.name = step.name.empty() ? job.name : step.name;
+      result.name = step.name.empty() ? ci_job.name : step.name;
       result.exit_code = outcome.exit_code;
       result.timed_out = outcome.timed_out;
       result.output_truncated = outcome.truncated;
       record.steps.push_back(result);
+      sink.stepFinished(record, step_index);  // publish the just-finished step promptly
       ++step_index;
-      writeProgress(true);  // publish the just-finished step promptly
       if (outcome.cancelled) {
         status = CiRunStatus::Cancelled;
         detail = "run cancelled during step '" + result.name + "'";
@@ -1181,8 +1127,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       }
       if (outcome.timed_out) {
         status = CiRunStatus::Timeout;
-        detail = "step '" + result.name + "' exceeded its " +
-                 std::to_string(options.timeout_seconds) + "s budget";
+        detail = "step '" + result.name + "' exceeded its " + std::to_string(options.timeout_seconds) + "s budget";
         stop = true;
         break;
       }
@@ -1193,94 +1138,279 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
         break;
       }
     }
-    if (!stop && job.artifact.has_value()) {
-      const std::uint64_t created = nowEpoch();
+    if (!stop && ci_job.artifact.has_value()) {
       try {
-        if (is_release) {
-          const std::filesystem::path dir =
-              prepareCiReleaseDirectory(options.state_root, options.project_name, release_tag);
-          const CiArtifactRecord stored =
-              packArtifactInto(*job.artifact, work, dir, options.artifact_max_bytes, created, /*expires=*/0);
-          writeCiReleaseArtifactRecord(options.state_root, options.project_name, release_tag, stored);
-          record.artifacts.push_back(stored);
-        } else {
-          unsigned days = job.artifact->retention_days == 0 ? options.artifact_retention_days
-                                                            : job.artifact->retention_days;
-          if (options.artifact_max_retention_days != 0 && days > options.artifact_max_retention_days) {
-            days = options.artifact_max_retention_days;
-          }
-          const std::uint64_t expires = created + static_cast<std::uint64_t>(days) * 86400ull;
-          const std::filesystem::path dir =
-              prepareCiArtifactDirectory(options.state_root, options.project_name, record.run_id);
-          const CiArtifactRecord stored =
-              packArtifactInto(*job.artifact, work, dir, options.artifact_max_bytes, created, expires);
-          writeCiArtifactRecord(options.state_root, options.project_name, record.run_id, stored);
-          record.artifacts.push_back(stored);
-        }
+        std::error_code error;
+        std::filesystem::create_directories(outputs, error);
+        const std::filesystem::path bundle = outputs / (ci_job.artifact->name + ".tar");
+        const std::string note = packArtifact(*ci_job.artifact, work, bundle, options.artifact_max_bytes);
+        record.artifacts.push_back(sink.putArtifact(*ci_job.artifact, bundle, note, prepared.is_release));
+        std::filesystem::remove(bundle, error);
       } catch (const std::exception&) {
         // Artifact collection never fails the build; the run already succeeded.
       }
     }
   }
 
-  if (lease_lost) {
+  if (sink.leaseLost()) {
     // The job was requeued under this run: leave every result to the attempt
     // that claims it next, and only clean up this runner's own scratch.
-    std::error_code error;
-    if (!options.keep_scratch) std::filesystem::remove_all(scratch, error);
+    removeScratch();
     return finish(CiRunStatus::Error, "lease lost");
   }
 
-  // A tag build publishes a release on success, and publishes nothing (cleaning
-  // up any partial assets) when it fails, so a release is always complete.
-  if (is_release) {
-    if (status == CiRunStatus::Success) {
+  // A successful default-branch build hands its declared Pages directory to
+  // the sink, which publishes it as the project's site when the run commits.
+  if (status == CiRunStatus::Success && !prepared.is_release && workflow.pages_path.has_value() &&
+      prepared.is_default_branch) {
+    const std::filesystem::path site = work / *workflow.pages_path;
+    std::error_code error;
+    if (std::filesystem::is_directory(site, error)) {
       try {
-        CiReleaseRecord release;
-        release.tag = release_tag;
-        release.commit_id = options.commit_id;
-        release.created_epoch_seconds = nowEpoch();
-        release.notes = readTagNotes(options.repository, options.commit_id);
-        writeCiReleaseRecord(options.state_root, options.project_name, release);
-      } catch (const std::exception&) {
-      }
-    } else {
-      try {
-        removeCiRelease(options.state_root, options.project_name, release_tag);
-      } catch (const std::exception&) {
-      }
-    }
-  }
-
-  // A successful default-branch build publishes its declared Pages directory as
-  // the project's site. Only the default branch may replace the live site.
-  if (status == CiRunStatus::Success && !is_release && workflow.pages_path.has_value() &&
-      !options.pages_root.empty()) {
-    const std::optional<std::string> def = defaultBranch(options.repository);
-    if (def.has_value() && branchOf(options.ref) == *def) {
-      try {
-        const std::filesystem::path site = work / *workflow.pages_path;
-        std::error_code error;
-        if (std::filesystem::is_directory(site, error)) {
-          publishPagesSite(options.pages_root, options.project_name, record.run_id, site,
-                           options.pages_keep_versions);
-        }
+        sink.putPagesSite(site);
       } catch (const std::exception& publish_error) {
-        // A build whose steps all passed but whose site failed to publish would
-        // otherwise report success while the live site silently stayed on its
-        // previous version. Fail the run so the broken publish is never hidden.
         status = CiRunStatus::Error;
         detail = std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
       }
     }
   }
 
-  if (!options.keep_scratch) {
-    std::error_code error;
-    std::filesystem::remove_all(scratch, error);
-  }
   if (status == CiRunStatus::Success) detail = "all steps passed";
-  return finish(status, detail);
+  // Commit before the scratch goes: the sink may still read the Pages site.
+  const CiRunRecord stored = finish(status, detail);
+  removeScratch();
+  return stored;
+}
+
+// --- the primary's direct path ----------------------------------------------
+
+LocalCiSource::LocalCiSource(std::filesystem::path repository, std::string project_name)
+    : repository_(std::move(repository)), project_name_(std::move(project_name)) {}
+
+void LocalCiSource::checkout(const std::string& project, const std::string& commit,
+                             const std::filesystem::path& destination) {
+  if (!isValidProjectName(project) || !isValidObjectId(commit)) throw std::runtime_error("invalid checkout request");
+  const std::filesystem::path repository =
+      project == project_name_ ? repository_ : repository_.parent_path() / (project + ".git");
+  checkoutCommit(repository, commit, destination, destination.parent_path() / ("." + project + ".checkout.tar"));
+}
+
+LocalCiSink::LocalCiSink(const CiRunnerOptions& options, const CiPreparedJob& prepared)
+    : options_(options), prepared_(prepared) {}
+
+LocalCiSink::~LocalCiSink() {
+  if (log_fd_ >= 0) ::close(log_fd_);
+}
+
+void LocalCiSink::write(const CiRunRecord& record, bool force) {
+  if (lease_lost_) return;
+  const std::uint64_t now = nowEpoch();
+  if (!force && now - last_write_ < 3) return;  // bound fsync churn on chatty steps
+  last_write_ = now;
+  CiRunRecord copy = record;
+  copy.heartbeat_epoch_seconds = now;
+  try {
+    writeCiRunRecord(options_.state_root, copy);
+  } catch (const std::exception&) {
+    // A dropped heartbeat only delays liveness; the terminal write is authoritative.
+  }
+}
+
+void LocalCiSink::keepAlive(bool force) {
+  if (lease_lost_ || !options_.keep_alive) return;
+  const std::uint64_t now = nowEpoch();
+  if (!force && now - last_keep_alive_ < std::max(1u, options_.keep_alive_seconds)) return;
+  last_keep_alive_ = now;
+  try {
+    if (!options_.keep_alive()) lease_lost_ = true;
+  } catch (const std::exception&) {
+    // A failed renewal is retried at the next heartbeat; only an explicit
+    // "lost" answer gives the job up.
+  }
+}
+
+void LocalCiSink::runStarted(const CiRunRecord& record) {
+  prepareCiRunDirectory(options_.state_root, record.project_name, record.run_id);
+  last_keep_alive_ = nowEpoch();
+  write(record, true);
+  if (options_.on_run_started) options_.on_run_started();
+}
+
+void LocalCiSink::stepStarted(const CiRunRecord& record, std::size_t index) {
+  if (log_fd_ >= 0) ::close(log_fd_);
+  log_fd_ = -1;
+  if (lease_lost_) return;
+  const std::filesystem::path run_dir =
+      prepareCiRunDirectory(options_.state_root, record.project_name, record.run_id);
+  const std::filesystem::path log_path = run_dir / "steps" / (std::to_string(index) + ".log");
+  log_fd_ = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+}
+
+void LocalCiSink::appendLog(std::size_t, std::string_view bytes) {
+  if (log_fd_ < 0 || lease_lost_) return;
+  std::size_t offset = 0;
+  while (offset < bytes.size()) {
+    const ssize_t written = ::write(log_fd_, bytes.data() + offset, bytes.size() - offset);
+    if (written < 0 && errno == EINTR) continue;
+    if (written <= 0) return;
+    offset += static_cast<std::size_t>(written);
+  }
+}
+
+void LocalCiSink::stepFinished(const CiRunRecord& record, std::size_t) {
+  if (log_fd_ >= 0) ::close(log_fd_);
+  log_fd_ = -1;
+  write(record, true);
+}
+
+void LocalCiSink::heartbeat(const CiRunRecord& record) {
+  keepAlive(false);
+  write(record, false);
+}
+
+void LocalCiSink::progress(const CiRunRecord& record) { write(record, true); }
+
+bool LocalCiSink::cancelRequested() {
+  try {
+    return isCiCancelRequested(options_.state_root, prepared_.job.project_name, prepared_.job.job_id);
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+bool LocalCiSink::leaseLost() { return lease_lost_; }
+
+CiArtifactRecord LocalCiSink::putArtifact(const CiArtifact& artifact, const std::filesystem::path& bundle,
+                                          const std::string& note, bool release) {
+  const std::string& project = prepared_.job.project_name;
+  CiArtifactRecord stored;
+  stored.name = artifact.name;
+  stored.created_epoch_seconds = nowEpoch();
+  std::filesystem::path dir;
+  if (release) {
+    stored.expires_epoch_seconds = 0;  // a release asset is durable
+    dir = prepareCiReleaseDirectory(options_.state_root, project, prepared_.release_tag);
+  } else {
+    unsigned days = artifact.retention_days == 0 ? options_.artifact_retention_days : artifact.retention_days;
+    if (options_.artifact_max_retention_days != 0 && days > options_.artifact_max_retention_days) {
+      days = options_.artifact_max_retention_days;
+    }
+    stored.expires_epoch_seconds = stored.created_epoch_seconds + static_cast<std::uint64_t>(days) * 86400ull;
+    dir = prepareCiArtifactDirectory(options_.state_root, project, prepared_.job.job_id);
+  }
+  if (note.empty()) {
+    const std::filesystem::path blob = dir / (artifact.name + ".tar");
+    std::filesystem::copy_file(bundle, blob, std::filesystem::copy_options::overwrite_existing);
+    ::chmod(blob.c_str(), 0600);
+    stored.bytes = std::filesystem::file_size(blob);
+    stored.sha256 = sha256HexOfFile(blob);
+  } else {
+    stored.note = note;
+  }
+  if (release) {
+    writeCiReleaseArtifactRecord(options_.state_root, project, prepared_.release_tag, stored);
+  } else {
+    writeCiArtifactRecord(options_.state_root, project, prepared_.job.job_id, stored);
+  }
+  return stored;
+}
+
+void LocalCiSink::putPagesSite(const std::filesystem::path& site) { site_ = site; }
+
+CiRunRecord LocalCiSink::finish(CiRunRecord record) {
+  if (log_fd_ >= 0) ::close(log_fd_);
+  log_fd_ = -1;
+  if (lease_lost_) {
+    record.status = CiRunStatus::Error;
+    record.detail = "this runner lost its lease on the job; it was requeued";
+    return record;
+  }
+  const std::string& project = prepared_.job.project_name;
+  // A tag build publishes a release on success, and publishes nothing (cleaning
+  // up any partial assets) when it fails, so a release is always complete.
+  if (prepared_.is_release) {
+    if (record.status == CiRunStatus::Success) {
+      try {
+        CiReleaseRecord release;
+        release.tag = prepared_.release_tag;
+        release.commit_id = prepared_.job.commit_id;
+        release.created_epoch_seconds = nowEpoch();
+        release.notes = readTagNotes(options_.repository, prepared_.job.commit_id);
+        writeCiReleaseRecord(options_.state_root, project, release);
+      } catch (const std::exception&) {
+      }
+    } else {
+      try {
+        removeCiRelease(options_.state_root, project, prepared_.release_tag);
+      } catch (const std::exception&) {
+      }
+    }
+  }
+  // A successful default-branch build publishes its declared Pages directory as
+  // the project's site.
+  if (record.status == CiRunStatus::Success && site_.has_value() && !options_.pages_root.empty()) {
+    try {
+      publishPagesSite(options_.pages_root, project, record.run_id, *site_, options_.pages_keep_versions);
+    } catch (const std::exception& publish_error) {
+      // A build whose steps all passed but whose site failed to publish would
+      // otherwise report success while the live site silently stayed on its
+      // previous version. Fail the run so the broken publish is never hidden.
+      record.status = CiRunStatus::Error;
+      record.detail = firstLine(std::string("steps passed but the Pages site failed to publish: ") +
+                                publish_error.what());
+    }
+  }
+  writeCiRunRecord(options_.state_root, record);
+  // A cancel marker never outlives the run it targeted.
+  try {
+    clearCiCancel(options_.state_root, project, record.run_id);
+  } catch (const std::exception&) {
+  }
+  return record;
+}
+
+CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
+  if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
+  CiJobRequest job;
+  job.job_id = options.run_id.empty() ? generateCiId() : options.run_id;
+  job.project_name = options.project_name;
+  job.ref = options.ref;
+  job.commit_id = options.commit_id;
+  job.client_id = kCiPrimaryRunnerName;
+  job.queued_epoch_seconds = nowEpoch();
+
+  // A cancel requested while the job was still queued ends it before anything
+  // is read: no workflow, no sandbox probe, no checkout.
+  try {
+    if (isCiCancelRequested(options.state_root, options.project_name, job.job_id)) {
+      return recordCiOutcome(options.state_root, job, CiRunStatus::Cancelled, "cancelled before it started");
+    }
+  } catch (const std::exception&) {
+  }
+  const CiPreparation preparation = prepareCiJob(options.repository, job);
+  if (!preparation.prepared.has_value()) {
+    return recordCiOutcome(options.state_root, job, preparation.status, preparation.detail);
+  }
+
+  CiExecutionOptions execution;
+  execution.build_root = options.build_root;
+  execution.timeout_seconds = options.timeout_seconds;
+  execution.max_log_bytes = options.max_log_bytes;
+  execution.allow_network = options.allow_network;
+  execution.keep_scratch = options.keep_scratch;
+  execution.artifact_max_bytes = options.artifact_max_bytes;
+  execution.cache_root = options.cache_root;
+  execution.extra_env = options.extra_env;
+  // The primary's service tree: the private state root (spool, run records,
+  // other projects' releases), Pages, and the bare-repository root (every
+  // hosted project's real Git data; sisters are the sanctioned, read-only way
+  // to reach another one).
+  execution.hidden_paths = {options.state_root, options.pages_root};
+  if (!options.repository.empty()) execution.hidden_paths.push_back(options.repository.parent_path());
+
+  LocalCiSource source(options.repository, options.project_name);
+  LocalCiSink sink(options, *preparation.prepared);
+  return executeCiJob(*preparation.prepared, execution, source, sink, sandbox);
 }
 
 }  // namespace ckgit

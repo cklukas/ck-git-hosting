@@ -226,7 +226,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
     try {
       ckgit::CiSandboxReport sandbox;
       const ckgit::CiRunRecord record = ckgit::runCiWorkflow(options, &sandbox);
-      if (!sandbox.namespaces_available && !warned_degraded) {
+      if (sandbox.probed && !sandbox.namespaces_available && !warned_degraded) {
         std::cerr << "ck-ci-runnerd: warning: unprivileged namespaces unavailable — steps run "
                      "without network/mount isolation\n";
         warned_degraded = true;
@@ -326,7 +326,9 @@ int main(int argc, char** argv) {
     ckgit::CiSandboxReport sandbox;
     const ckgit::CiRunRecord record = ckgit::runCiWorkflow(options, &sandbox);
 
-    if (!sandbox.namespaces_available) {
+    if (!sandbox.probed) {
+      // The run ended before anything executed (skipped or cancelled).
+    } else if (!sandbox.namespaces_available) {
       std::cerr << "ck-ci-runnerd: warning: unprivileged namespaces unavailable — steps ran without "
                    "network/mount isolation"
                 << (ckgit::ciSandboxCompiledIn() ? " (kernel setting?)" : " (not a Linux host)") << "\n";

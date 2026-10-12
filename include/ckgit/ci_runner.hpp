@@ -6,10 +6,13 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_workflow.hpp"
 
 namespace ckgit {
 
@@ -98,20 +101,184 @@ struct CiRunnerOptions {
 // loopback_available is meaningless (left false) when no mount namespace was
 // created at all.
 struct CiSandboxReport {
+  bool probed = false;  // false when the run ended before anything executed (skipped, cancelled)
   bool namespaces_available = false;
   bool network_isolated = false;
   bool loopback_available = false;
   bool filesystem_masked = false;
 };
 
+// --- preparing a job (always on the main host) ------------------------------
+
+// A sister project as the main host resolved it for one run: the project name
+// and the exact commit every attempt of the run builds against, wherever it
+// executes.
+struct CiResolvedSister {
+  std::string name;
+  std::string commit;
+};
+
+// A queued job as the main host has prepared it for whichever runner executes
+// it: the workflow read from the commit, the trigger decision already made, and
+// sister refs already resolved to commits. A runner needs nothing else from the
+// repositories than the commits named here.
+struct CiPreparedJob {
+  CiJobRequest job;                       // job_id doubles as the run id
+  std::string workflow_text;              // the commit's .ckgit/ci.yml
+  CiWorkflow workflow;                    // parsed from workflow_text
+  bool is_release = false;                // a tag build that publishes a release
+  std::string release_tag;
+  bool is_default_branch = false;         // only such a build may publish Pages
+  std::vector<CiResolvedSister> sisters;  // in workflow order
+};
+
+// Either a prepared job, or the terminal outcome a job has without running
+// anything: Skipped (no workflow, or the ref is not a trigger) or Error (an
+// unparsable workflow, an unknown sister).
+struct CiPreparation {
+  std::optional<CiPreparedJob> prepared;
+  CiRunStatus status = CiRunStatus::Pending;
+  std::string detail;
+};
+
+// Prepares `job` from the bare repository `repository`; sisters are looked up
+// as siblings of it (<repository's parent>/<name>.git).
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job);
+
+// --- executing a job (on any runner) ----------------------------------------
+
+// Where a run's source comes from. The primary reads the server's own bare
+// repositories; a remote runner fetches through the server.
+class CiSourceProvider {
+ public:
+  virtual ~CiSourceProvider() = default;
+  // Materialises `commit` of `project` into the empty directory `destination`.
+  // Throws std::runtime_error with a short reason when it cannot.
+  virtual void checkout(const std::string& project, const std::string& commit,
+                        const std::filesystem::path& destination) = 0;
+};
+
+// Where a run's progress and results go. The primary writes the server's state
+// root directly; a remote runner relays everything to the server. The executor
+// calls these in the order the dashboard relies on: runStarted, then for each
+// step stepStarted, appendLog..., stepFinished, and finally finish.
+class CiResultSink {
+ public:
+  virtual ~CiResultSink() = default;
+  // The run is about to set up: publish it as Running.
+  virtual void runStarted(const CiRunRecord& record) = 0;
+  // Step `index` (== record.steps.size()) starts; its log begins empty.
+  virtual void stepStarted(const CiRunRecord& record, std::size_t index) = 0;
+  // More output of step `index`, already capped by the executor.
+  virtual void appendLog(std::size_t index, std::string_view bytes) = 0;
+  // Step `index` ended; its result is record.steps.back().
+  virtual void stepFinished(const CiRunRecord& record, std::size_t index) = 0;
+  // Called about once a second while a step runs and between setup phases.
+  virtual void heartbeat(const CiRunRecord& record) = 0;
+  // Called every few hundred milliseconds while a step runs (log flushing).
+  virtual void tick() {}
+  // The run's detail line changed while it is still running (e.g. uploads).
+  virtual void progress(const CiRunRecord& record) = 0;
+  virtual bool cancelRequested() = 0;
+  // True once the runner's lease on the job is gone: stop and write nothing.
+  virtual bool leaseLost() = 0;
+  // One job's declared artifact, packed at `bundle` (or not, with `note` set).
+  // Returns the record as stored (sizes, checksum, expiry, or a note).
+  virtual CiArtifactRecord putArtifact(const CiArtifact& artifact, const std::filesystem::path& bundle,
+                                       const std::string& note, bool release) = 0;
+  // The Pages site directory of a successful default-branch build.
+  virtual void putPagesSite(const std::filesystem::path& site) = 0;
+  // Commits everything staged according to `record.status` and writes the
+  // terminal record; may turn a success into an error (a site that failed to
+  // publish). Returns the record as finally stored.
+  virtual CiRunRecord finish(CiRunRecord record) = 0;
+};
+
+// The runner-side knobs of an execution.
+struct CiExecutionOptions {
+  std::filesystem::path build_root;
+  unsigned timeout_seconds = 1800;
+  std::size_t max_log_bytes = 1u << 20;
+  bool allow_network = false;
+  bool keep_scratch = false;
+  std::size_t artifact_max_bytes = static_cast<std::size_t>(256) << 20;
+  std::filesystem::path cache_root;
+  std::vector<std::string> extra_env;
+  // Absolute paths of the service tree a step must never see (masked with an
+  // empty tmpfs inside its mount namespace); the build root's other runs and
+  // the cache root's other projects are always added.
+  std::vector<std::filesystem::path> hidden_paths;
+};
+
+// Executes a prepared job: checkout, sisters, caches, steps in the sandbox,
+// artifacts, Pages, and the terminal record through `sink`. Returns the record
+// as the sink stored it. Does not throw for a job outcome.
+CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions& options,
+                         CiSourceProvider& source, CiResultSink& sink, CiSandboxReport* sandbox = nullptr);
+
+// --- the primary's direct path ----------------------------------------------
+
+// Reads source straight from the server's bare repositories: `repository` for
+// the project itself, its siblings for sisters.
+class LocalCiSource : public CiSourceProvider {
+ public:
+  LocalCiSource(std::filesystem::path repository, std::string project_name);
+  void checkout(const std::string& project, const std::string& commit,
+                const std::filesystem::path& destination) override;
+
+ private:
+  std::filesystem::path repository_;
+  std::string project_name_;
+};
+
+// Writes progress and results straight into the server's state root, Pages
+// root, and release store, using the options' policy (retention, Pages
+// versions) and lease keeping.
+class LocalCiSink : public CiResultSink {
+ public:
+  LocalCiSink(const CiRunnerOptions& options, const CiPreparedJob& prepared);
+  ~LocalCiSink() override;
+  void runStarted(const CiRunRecord& record) override;
+  void stepStarted(const CiRunRecord& record, std::size_t index) override;
+  void appendLog(std::size_t index, std::string_view bytes) override;
+  void stepFinished(const CiRunRecord& record, std::size_t index) override;
+  void heartbeat(const CiRunRecord& record) override;
+  void progress(const CiRunRecord& record) override;
+  bool cancelRequested() override;
+  bool leaseLost() override;
+  CiArtifactRecord putArtifact(const CiArtifact& artifact, const std::filesystem::path& bundle,
+                               const std::string& note, bool release) override;
+  void putPagesSite(const std::filesystem::path& site) override;
+  CiRunRecord finish(CiRunRecord record) override;
+
+ private:
+  void write(const CiRunRecord& record, bool force);
+  void keepAlive(bool force);
+
+  const CiRunnerOptions& options_;
+  const CiPreparedJob& prepared_;
+  int log_fd_ = -1;
+  std::uint64_t last_write_ = 0;
+  std::uint64_t last_keep_alive_ = 0;
+  bool lease_lost_ = false;
+  std::optional<std::filesystem::path> site_;
+};
+
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result
-// under the state root (a run.ini plus steps/<n>.log). A missing workflow or a
-// branch the workflow does not list is recorded as Skipped; an unparsable
-// workflow or a failed checkout is recorded as Error; a step exiting non-zero is
-// Failure and a step exceeding its budget is Timeout (both stop the run). The
-// returned record is the same one written to disk. This function does not throw
-// for a job outcome — only for an options/state-root problem it cannot record.
+// under the state root (a run.ini plus steps/<n>.log): prepareCiJob, then
+// executeCiJob with the local source and sink. A missing workflow or a branch
+// the workflow does not list is recorded as Skipped; an unparsable workflow or
+// a failed checkout is recorded as Error; a step exiting non-zero is Failure
+// and a step exceeding its budget is Timeout (both stop the run). The returned
+// record is the same one written to disk. This function does not throw for a
+// job outcome — only for an options/state-root problem it cannot record.
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox = nullptr);
+
+// Writes the terminal record of a job that ends without running (a prepared
+// Skipped or Error outcome, or a cancel before it started), and clears any
+// cancel marker. Returns the record written.
+CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJobRequest& job, CiRunStatus status,
+                            const std::string& detail);
 
 // Whether this build was compiled with the Linux namespace sandbox. False on
 // macOS and other non-Linux hosts; a caller/test can use it to scope

@@ -642,6 +642,53 @@ void testPagesPublishFailureFailsRun() {
           "the failed publish is persisted as a failed run");
 }
 
+
+// R2: the main host prepares a job before any runner sees it -- the trigger
+// decision is made, the default-branch flag that gates Pages is set, and every
+// sister ref is resolved to one commit.
+void testPrepareOnMainHost() {
+  RunnerFixture fixture;
+  fixture.commit("other-branch\n", "marker.txt");
+  fixture.git({"branch", "other"});
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "on: { branches: [main, feature] }\n"
+      "sisters:\n"
+      "  - name: demo\n"
+      "    ref: other\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [true]\n");
+  ckgit::CiJobRequest job;
+  job.job_id = ckgit::generateCiId();
+  job.project_name = "demo";
+  job.ref = "refs/heads/main";
+  job.commit_id = id;
+  job.client_id = "test";
+  const ckgit::CiPreparation main = ckgit::prepareCiJob(fixture.repo / ".git", job);
+  require(main.prepared.has_value(), "a triggering branch is prepared (detail=" + main.detail + ")");
+  require(main.prepared->is_default_branch && !main.prepared->is_release, "main is the default branch");
+  require(main.prepared->sisters.size() == 1 && main.prepared->sisters[0].name == "demo" &&
+              main.prepared->sisters[0].commit.size() == 40 && main.prepared->sisters[0].commit != id,
+          "the sister ref is resolved to its own commit");
+  require(main.prepared->workflow_text.find("sisters:") != std::string::npos, "the workflow text travels along");
+
+  job.ref = "refs/heads/feature";
+  const ckgit::CiPreparation feature = ckgit::prepareCiJob(fixture.repo / ".git", job);
+  require(feature.prepared.has_value() && !feature.prepared->is_default_branch,
+          "a feature branch runs but may not publish Pages");
+
+  job.ref = "refs/heads/elsewhere";
+  const ckgit::CiPreparation skipped = ckgit::prepareCiJob(fixture.repo / ".git", job);
+  require(!skipped.prepared.has_value() && skipped.status == ckgit::CiRunStatus::Skipped,
+          "a branch that is no trigger is skipped without running anything");
+
+  job.ref = "refs/tags/v2.0";
+  const ckgit::CiPreparation tag = ckgit::prepareCiJob(fixture.repo / ".git", job);
+  require(!tag.prepared.has_value() && tag.status == ckgit::CiRunStatus::Skipped,
+          "a tag the workflow does not list is skipped");
+}
 }  // namespace
 
 void testCiRunner() {
@@ -666,4 +713,5 @@ void testCiRunner() {
   testPagesPublish();
   testPagesNotPublishedOnFeatureBranch();
   testPagesPublishFailureFailsRun();
+  testPrepareOnMainHost();
 }
