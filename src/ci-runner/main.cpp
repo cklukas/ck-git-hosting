@@ -105,6 +105,10 @@ int serve(const std::filesystem::path& config_path, bool once) {
   const unsigned rescan = watch.active() ? config.ci_rescan_seconds.value_or(300) : fallback_poll;
   const unsigned lease_seconds = config.ci_lease_seconds.value_or(ckgit::kCiDefaultLeaseSeconds);
   const unsigned max_attempts = config.ci_max_attempts.value_or(ckgit::kCiDefaultMaxAttempts);
+  // The primary claims a new job only after it waited this long without a
+  // free secondary runner taking it.
+  const std::chrono::milliseconds claim_delay(config.ci_claim_delay_ms.value_or(1000));
+  std::optional<std::chrono::milliseconds> claim_retry;
 
   // Requeues jobs whose runner was lost (its lease lapsed). On start-up the
   // primary's own earlier leases count as lapsed too: whatever this runner was
@@ -138,6 +142,10 @@ int serve(const std::filesystem::path& config_path, bool once) {
   const auto waitForWork = [&]() {
     const auto start = std::chrono::steady_clock::now();
     auto deadline = start + std::chrono::seconds(rescan);
+    if (claim_retry.has_value() && start + *claim_retry < deadline) {
+      // A queued job becomes eligible for the primary when its delay is over.
+      deadline = start + *claim_retry;
+    }
     if (next_lease_expiry.has_value()) {
       // Wake one second after the earliest lease lapses, to requeue it.
       const std::uint64_t now = nowEpoch();
@@ -169,7 +177,8 @@ int serve(const std::filesystem::path& config_path, bool once) {
     try {
       ckgit::CiClaimOptions claim_options;
       claim_options.lease_seconds = lease_seconds;
-      if (std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(state_root, claim_options)) {
+      claim_options.min_age = claim_delay;
+      if (std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(state_root, claim_options, &claim_retry)) {
         job = claim->job;
         lease_token = claim->lease.token;
       }
@@ -177,9 +186,14 @@ int serve(const std::filesystem::path& config_path, bool once) {
       std::cerr << "ck-ci-runnerd: could not read the spool: " << error.what() << "\n";
     }
     if (!job.has_value()) {
-      if (once) {
+      if (once && !claim_retry.has_value()) {
         maybeSweep(true);  // a final maintenance pass before draining out
         break;
+      }
+      if (once) {
+        // A queued job is still inside its claim delay: drain it too.
+        std::this_thread::sleep_for(*claim_retry + std::chrono::milliseconds(10));
+        continue;
       }
       maybeSweep(false);
       waitForWork();

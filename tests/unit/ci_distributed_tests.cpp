@@ -389,6 +389,58 @@ void testPagesOrderingGuard() {
   require(replaced.has_value() && replaced->content == "older", "a staged site tar is unpacked and published");
 }
 
+
+// R3: the primary's claim delay holds a fresh job back (so a free secondary
+// gets it first) and reports when it becomes eligible; a secondary claims at
+// once.
+void testClaimDelay() {
+  Fixture fixture;
+  const std::string id = ckgit::generateCiId();
+  ckgit::enqueueCiJob(fixture.state, sampleJob(id));
+  ckgit::CiClaimOptions primary;
+  primary.min_age = std::chrono::seconds(60);
+  std::optional<std::chrono::milliseconds> retry;
+  require(!ckgit::claimCiJob(fixture.state, primary, &retry).has_value(), "the primary leaves a fresh job alone");
+  require(retry.has_value() && *retry > std::chrono::seconds(50) && *retry <= std::chrono::seconds(60),
+          "the primary learns when the job becomes eligible");
+  ckgit::CiClaimOptions secondary;
+  secondary.runner = "uconsole";
+  const auto claim = ckgit::claimCiJob(fixture.state, secondary, &retry);
+  require(claim.has_value() && claim->job.job_id == id, "a secondary claims the fresh job at once");
+  require(!retry.has_value(), "nothing is left waiting on the delay");
+
+  const std::string later = ckgit::generateCiId();
+  ckgit::enqueueCiJob(fixture.state, sampleJob(later, "refs/heads/other"));
+  primary.min_age = std::chrono::milliseconds(150);
+  require(!ckgit::claimCiJob(fixture.state, primary).has_value(), "inside the delay the job waits");
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  const auto taken = ckgit::claimCiJob(fixture.state, primary);
+  require(taken.has_value() && taken->job.job_id == later, "after the delay the primary claims it");
+}
+
+// R3: a project's runs on one ref never overlap; other refs still run.
+void testOneRunPerRef() {
+  Fixture fixture;
+  const std::string first = ckgit::generateCiId();
+  const std::string second = ckgit::generateCiId();
+  const std::string other = ckgit::generateCiId();
+  ckgit::enqueueCiJob(fixture.state, sampleJob(first));
+  ckgit::enqueueCiJob(fixture.state, sampleJob(second));
+  ckgit::enqueueCiJob(fixture.state, sampleJob(other, "refs/heads/feature"));
+  ckgit::CiClaimOptions runner_a;
+  runner_a.runner = "runner-a";
+  ckgit::CiClaimOptions runner_b;
+  runner_b.runner = "runner-b";
+  const auto a = ckgit::claimCiJob(fixture.state, runner_a);
+  require(a.has_value() && a->job.job_id == first, "the oldest job is claimed first");
+  const auto b = ckgit::claimCiJob(fixture.state, runner_b);
+  require(b.has_value() && b->job.job_id == other, "the next free runner skips the busy ref and takes another");
+  require(!ckgit::claimCiJob(fixture.state, runner_b).has_value(), "the second job on the busy ref waits");
+  ckgit::releaseCiJob(fixture.state, first);
+  const auto c = ckgit::claimCiJob(fixture.state, runner_b);
+  require(c.has_value() && c->job.job_id == second, "once the ref is free its next job runs");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -401,4 +453,6 @@ void testCiDistributed() {
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();
   testPagesOrderingGuard();
+  testClaimDelay();
+  testOneRunPerRef();
 }

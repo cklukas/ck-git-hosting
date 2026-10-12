@@ -42,6 +42,9 @@ struct ServerConfig {
   // an error (see reapCiLeases).
   std::optional<unsigned> ci_lease_seconds;
   std::optional<unsigned> ci_max_attempts;
+  // How long the primary runner leaves a newly queued job for a free secondary
+  // runner before it claims the job itself (default 1000 ms).
+  std::optional<unsigned> ci_claim_delay_ms;
   bool ci_allow_network = false;
 
   // Artifact retention, enforced by the runner's periodic sweep. Days default

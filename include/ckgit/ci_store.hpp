@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -203,11 +204,24 @@ struct CiClaim {
 struct CiClaimOptions {
   std::string runner = kCiPrimaryRunnerName;
   unsigned lease_seconds = kCiDefaultLeaseSeconds;
+  // Only jobs that have waited in the spool at least this long are eligible,
+  // measured from when the job entered the spool (queued, or requeued). The
+  // primary uses it so a free secondary runner gets a new job first; a
+  // secondary claims with no delay.
+  std::chrono::milliseconds min_age{0};
+  // Skips a job whose project and ref already have a run in progress, so a
+  // project's runs on one ref finish in push order and an older commit can
+  // never publish after a newer one. Other projects and refs still run in
+  // parallel on other runners.
+  bool one_per_ref = true;
 };
 
-// Claims the oldest queued job like claimNextCiJob and records a fresh lease
-// for `options.runner`. std::nullopt when nothing is queued.
-std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options);
+// Claims the oldest eligible queued job and records a fresh lease for
+// `options.runner`. std::nullopt when nothing is eligible; then `retry_in`,
+// when given, tells how long until the earliest job held back only by
+// min_age becomes eligible (nullopt: nothing is waiting on the delay).
+std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options,
+                                  std::optional<std::chrono::milliseconds>* retry_in = nullptr);
 
 // Extends a lease by `lease_seconds` from now. False when the job is no longer
 // claimed or `token` does not match -- the runner has lost the job (it was

@@ -132,7 +132,8 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         config.hook_directory.emplace(value);
       }
     } else if (key == "ci_timeout_seconds" || key == "ci_poll_seconds" || key == "ci_max_log_bytes" ||
-               key == "ci_rescan_seconds" || key == "ci_lease_seconds" || key == "ci_max_attempts") {
+               key == "ci_rescan_seconds" || key == "ci_lease_seconds" || key == "ci_max_attempts" ||
+               key == "ci_claim_delay_ms") {
       unsigned long long number = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), number);
       if (value.empty() || parse_error != std::errc{} || end != value.data() + value.size()) {
@@ -150,6 +151,9 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       } else if (key == "ci_lease_seconds") {
         if (number < 10 || number > 3600) configError(path, line_number, "ci_lease_seconds must be 10 to 3600");
         config.ci_lease_seconds = static_cast<unsigned>(number);
+      } else if (key == "ci_claim_delay_ms") {
+        if (number > 60000) configError(path, line_number, "ci_claim_delay_ms must be 0 to 60000");
+        config.ci_claim_delay_ms = static_cast<unsigned>(number);
       } else if (key == "ci_max_attempts") {
         if (number < 1 || number > 10) configError(path, line_number, "ci_max_attempts must be 1 to 10");
         config.ci_max_attempts = static_cast<unsigned>(number);
@@ -265,6 +269,9 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_lease_seconds.has_value()) {
     rendered += "ci_lease_seconds=" + std::to_string(*config.ci_lease_seconds) + "\n";
+  }
+  if (config.ci_claim_delay_ms.has_value()) {
+    rendered += "ci_claim_delay_ms=" + std::to_string(*config.ci_claim_delay_ms) + "\n";
   }
   if (config.ci_max_attempts.has_value()) {
     rendered += "ci_max_attempts=" + std::to_string(*config.ci_max_attempts) + "\n";

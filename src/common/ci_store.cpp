@@ -487,7 +487,10 @@ CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root) {
 }
 
 std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_root) {
-  const std::optional<CiClaim> claim = claimCiJob(state_root, CiClaimOptions{});
+  // The plain FIFO claim: no per-ref serialization and no delay.
+  CiClaimOptions options;
+  options.one_per_ref = false;
+  const std::optional<CiClaim> claim = claimCiJob(state_root, options);
   if (!claim.has_value()) return std::nullopt;
   return claim->job;
 }
@@ -646,7 +649,9 @@ RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, c
 
 }  // namespace
 
-std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options) {
+std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options,
+                                  std::optional<std::chrono::milliseconds>* retry_in) {
+  if (retry_in != nullptr) retry_in->reset();
   if (!isValidClientId(options.runner) || options.lease_seconds == 0) fail("invalid CI claim options");
   const std::filesystem::path root = validatedMetadataRoot(state_root);
   Descriptor root_fd(openDir(root));
@@ -664,7 +669,46 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
     if (name.size() > 4 && name.compare(name.size() - 4, 4, ".ini") == 0) names.push_back(std::move(name));
   }
   std::sort(names.begin(), names.end());
+
+  // The project/ref pairs that already have a run in progress.
+  std::set<std::pair<std::string, std::string>> busy;
+  if (options.one_per_ref) {
+    for (const std::string& name : listNames(working_fd)) {
+      if (!endsWith(name, ".ini")) continue;
+      if (std::optional<CiJobRequest> running = readJobAt(working_fd, name)) {
+        busy.emplace(running->project_name, running->ref);
+      }
+    }
+  }
+  const auto now = std::chrono::system_clock::now();
   for (const std::string& name : names) {
+    // Eligibility is decided on the spool copy before the claim; a job that
+    // cannot be read here goes through the claim below, which sets it aside.
+    if (options.one_per_ref || options.min_age.count() > 0) {
+      if (std::optional<CiJobRequest> queued = readJobAt(spool_fd, name)) {
+        if (busy.count({queued->project_name, queued->ref}) != 0) continue;
+        if (options.min_age.count() > 0) {
+          struct stat status {};
+          if (::fstatat(spool_fd, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0) {
+#if defined(__APPLE__)
+            const auto modified = std::chrono::seconds(status.st_mtimespec.tv_sec) +
+                                  std::chrono::nanoseconds(status.st_mtimespec.tv_nsec);
+#else
+            const auto modified =
+                std::chrono::seconds(status.st_mtim.tv_sec) + std::chrono::nanoseconds(status.st_mtim.tv_nsec);
+#endif
+            const std::chrono::system_clock::time_point queued_at(
+                std::chrono::duration_cast<std::chrono::system_clock::duration>(modified));
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - queued_at);
+            if (age < options.min_age) {
+              const auto wait = options.min_age - age;
+              if (retry_in != nullptr && (!retry_in->has_value() || wait < **retry_in)) *retry_in = wait;
+              continue;
+            }
+          }
+        }
+      }
+    }
     if (::renameat(spool_fd, name.c_str(), working_fd, name.c_str()) != 0) {
       if (errno == ENOENT) continue;  // claimed by another runner
       fail("could not claim a CI job");
