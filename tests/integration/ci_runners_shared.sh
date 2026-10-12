@@ -108,9 +108,15 @@ wait_status() {
     sleep .1
   done
 }
+# The runner empties its build root right after it reported the result, so
+# give it a moment once the server shows the run finished.
 build_root_empty() {
-  [ -z "$(ls -A "$secondary_build" 2>/dev/null || true)" ] ||
-    fail "$1: the secondary kept data: $(ls -A "$secondary_build")"
+  attempt=0
+  while [ -n "$(ls -A "$secondary_build" 2>/dev/null || true)" ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 150 ] || fail "$1: the secondary kept data: $(ls -A "$secondary_build")"
+    sleep .1
+  done
 }
 
 cat > "$test_root/server.ini" <<INI
