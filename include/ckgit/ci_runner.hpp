@@ -320,4 +320,9 @@ CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJob
 // network-isolation expectations.
 bool ciSandboxCompiledIn();
 
+// Whether this host can confine a step in unprivileged user, mount and network
+// namespaces right now. A remote runner refuses jobs without it unless its
+// configuration explicitly allows running degraded.
+bool ciSandboxAvailable();
+
 }  // namespace ckgit

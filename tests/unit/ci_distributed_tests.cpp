@@ -5,6 +5,7 @@
 // queue: spool notifications, leases and requeueing, claim scheduling, and the
 // runner protocol.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -21,6 +22,7 @@
 
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/ci_gateway.hpp"
+#include "ckgit/ci_remote.hpp"
 #include "ckgit/ci_results.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
 #include "ckgit/process.hpp"
@@ -679,6 +681,37 @@ void testRunnerKeyLine() {
           "a runner key's forced command carries the runner role");
 }
 
+
+// R5: runner.ini is strict like server.ini.
+void testRunnerConfig() {
+  Fixture fixture;
+  const std::filesystem::path file = fixture.root / "runner.ini";
+  const auto write = [&](const std::string& text) { std::ofstream(file, std::ios::trunc) << text; };
+  write("schema_version=1\nserver=ckgit@rpi4\nname=uconsole\nci_build_root=/var/lib/ck-git-runner/ci-build\n"
+        "identity=/var/lib/ck-git-runner/.ssh/id_ed25519\nci_allow_network=false\nci_timeout_seconds=600\n");
+  const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(file);
+  require(config.server == "ckgit@rpi4" && config.name == "uconsole" && !config.allow_network &&
+              config.timeout_seconds == 600u && config.claim_wait_seconds == 60 && !config.cache_root.has_value(),
+          "a runner configuration parses with clean-runner defaults");
+  require(ckgit::loadRunnerConfig(file).build_root == "/var/lib/ck-git-runner/ci-build", "the build root parses");
+  const ckgit::CiRemoteTransport transport(config, file);
+  const auto argv = transport.sshArguments();
+  require(argv.back() == "ckgit@rpi4" && std::find(argv.begin(), argv.end(), "BatchMode=yes") != argv.end(),
+          "the transport runs ssh non-interactively against the server");
+  require(transport.fetchUrl("demo") == "ckgit@rpi4:demo.git", "a project is fetched from the server");
+  const auto rejected = [&](const std::string& text) {
+    write(text);
+    return throws([&]() { ckgit::loadRunnerConfig(file); });
+  };
+  const std::string base = "schema_version=1\nserver=ckgit@rpi4\nci_build_root=/b\n";
+  require(rejected(base + "name=primary\n"), "the primary's name is reserved");
+  require(rejected(base + "name=a b\n"), "an invalid name is refused");
+  require(rejected(base + "name=x\nbogus=1\n"), "an unknown key is refused");
+  require(rejected(base + "name=x\nname=y\n"), "a duplicate key is refused");
+  require(rejected("schema_version=1\nserver=ckgit@rpi4\nname=x\n"), "the build root is required");
+  require(rejected(base + "name=x\nclaim_wait_seconds=500\n"), "a long poll over the bound is refused");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -698,4 +731,5 @@ void testCiDistributed() {
   testGatewayRun();
   testGatewayFinishesSkippedJobs();
   testRunnerKeyLine();
+  testRunnerConfig();
 }

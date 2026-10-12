@@ -49,6 +49,7 @@ CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKG
 COMMON_SOURCES := \
 	src/common/authorized_keys.cpp \
 	src/common/ci_control.cpp \
+	src/common/ci_remote.cpp \
 	src/common/ci_gateway.cpp \
 	src/common/ci_results.cpp \
 	src/common/ci_runner.cpp \
@@ -197,6 +198,7 @@ test: test-mermaid $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/recovery.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/dashboard.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT=$(CKGIT) CK_GIT_SHELL=$(CK_GIT_SHELL) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/ci_runner.sh
+	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CK_GIT_SHELL=$(CK_GIT_SHELL) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/ci_remote_runner.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) CKGIT_ADMIN=$(CKGIT_ADMIN) CK_CI_RUNNER=$(CK_CI_RUNNER) CK_PAGES=$(CK_PAGES) CKGIT_POST_RECEIVE=$(CK_GIT_POST_RECEIVE) CKGIT_HOSTINGD=$(CK_GIT_HOSTINGD) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/pages.sh
 	CKGIT_TEST_ROOT=$(BUILD_ROOT_ABS) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/deploy.sh
 	TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/docs.sh

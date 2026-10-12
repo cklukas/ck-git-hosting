@@ -12,10 +12,12 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
 #include "ckgit/ci_gateway.hpp"
+#include "ckgit/ci_remote.hpp"
 #include "ckgit/ci_runner.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
@@ -23,6 +25,7 @@
 #include "ckgit/dir_watch.hpp"
 #include "ckgit/runtime_status.hpp"
 #include "ckgit/server_config.hpp"
+#include "ckgit/text.hpp"
 
 namespace {
 
@@ -32,6 +35,7 @@ void onStop(int) { g_stop = 1; }
 int usage(std::ostream& out, int code) {
   out << "usage:\n"
          "  ck-ci-runnerd serve --config FILE [--once]\n"
+         "  ck-ci-runnerd serve --remote --config RUNNER.INI [--once]\n"
          "  ck-ci-runnerd gateway --config FILE --runner ID --command 'ckgit-runner 1 ...'\n"
          "  ck-ci-runnerd run --repo DIR --commit ID --project NAME --state-root DIR\n"
          "                    --build-root DIR [--ref REF] [--timeout SECONDS]\n"
@@ -283,6 +287,131 @@ int serve(const std::filesystem::path& config_path, bool once) {
   return 0;
 }
 
+// Empties a directory without removing it (the runner's build root), making
+// read-only directories a step left behind writable first. Returns false when
+// something could not be removed.
+bool emptyDirectory(const std::filesystem::path& directory) {
+  std::error_code error;
+  if (!std::filesystem::exists(directory, error)) return true;
+  for (auto entry = std::filesystem::recursive_directory_iterator(
+           directory, std::filesystem::directory_options::skip_permission_denied, error);
+       !error && entry != std::filesystem::recursive_directory_iterator(); entry.increment(error)) {
+    if (entry->is_directory(error) && !entry->is_symlink(error)) {
+      std::filesystem::permissions(entry->path(), std::filesystem::perms::owner_all,
+                                   std::filesystem::perm_options::add, error);
+    }
+  }
+  bool clean = true;
+  for (const auto& child : std::filesystem::directory_iterator(directory, error)) {
+    std::error_code remove_error;
+    std::filesystem::remove_all(child.path(), remove_error);
+    if (remove_error) clean = false;
+  }
+  return clean && std::filesystem::is_empty(directory, error);
+}
+
+// A remote runner (see ci_remote.hpp): claims jobs from the main host over
+// SSH, runs them in the same sandbox, relays everything back, and keeps
+// nothing between jobs. Stops on SIGTERM/SIGINT, handing a job in progress
+// back to the queue. With `once`, exits when the queue is empty.
+int serveRemote(const std::filesystem::path& config_path, bool once) {
+  const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(config_path);
+  const ckgit::CiRemoteTransport transport(config, config_path);
+  std::signal(SIGTERM, onStop);
+  std::signal(SIGINT, onStop);
+  std::signal(SIGPIPE, SIG_IGN);
+  std::error_code error;
+  std::filesystem::create_directories(config.build_root, error);
+  ::chmod(config.build_root.c_str(), 0700);
+  // A clean runner: whatever a crash or power loss left behind goes first.
+  if (!emptyDirectory(config.build_root)) {
+    std::cerr << "ck-ci-runnerd: cannot empty the build root " << config.build_root << "\n";
+    return 1;
+  }
+  if (!ckgit::ciSandboxAvailable() && !config.allow_degraded) {
+    std::cerr << "ck-ci-runnerd: unprivileged namespaces are unavailable on this host; refusing to run jobs "
+                 "without the sandbox (set ci_allow_degraded=true to accept that)\n";
+    return 1;
+  }
+  {
+    ckgit::CiRunnerCommand hello;
+    hello.op = ckgit::CiRunnerOp::kHello;
+    hello.version_hex = ckgit::hexEncode(ckgit::buildVersion());
+    const auto result = transport.run(hello, {}, std::chrono::seconds(60));
+    if (result.exit_code == 0 && result.output.rfind("ok\n", 0) == 0) {
+      std::cout << "ck-ci-runnerd: connected to " << config.server << " as " << config.name << "\n";
+    } else {
+      std::cerr << "ck-ci-runnerd: could not reach " << config.server << " yet; will keep trying\n";
+    }
+  }
+  unsigned failures = 0;
+  while (g_stop == 0) {
+    ckgit::CiRunnerCommand claim;
+    claim.op = ckgit::CiRunnerOp::kClaim;
+    claim.wait_seconds = once ? 0 : config.claim_wait_seconds;
+    const auto answer = transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 60));
+    std::optional<ckgit::CiRemoteJob> job;
+    bool ok = answer.exit_code == 0;
+    if (ok) {
+      try {
+        job = ckgit::parseCiClaimResponse(answer.output);
+      } catch (const std::exception& parse_error) {
+        std::cerr << "ck-ci-runnerd: unusable claim answer: " << parse_error.what() << "\n";
+        ok = false;
+      }
+    }
+    if (!ok) {
+      // Unreachable main host (or asleep, or rebooting): back off, try again.
+      ++failures;
+      const unsigned delay = std::min(60u, 1u << std::min(failures, 6u));
+      for (unsigned tick = 0; tick < delay * 10 && g_stop == 0; ++tick) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      if (once && failures > 3) return 1;
+      continue;
+    }
+    failures = 0;
+    if (!job.has_value()) {
+      if (once) break;
+      continue;  // the long poll ended without work; ask again
+    }
+    const std::string run_id = job->prepared.job.job_id;
+    std::cout << "ck-ci-runnerd: " << job->prepared.job.project_name << " " << run_id << " claimed (attempt "
+              << job->prepared.job.attempt << ")\n";
+    ckgit::CiExecutionOptions execution;
+    execution.build_root = config.build_root;
+    execution.timeout_seconds = job->policy.timeout_seconds;
+    if (config.timeout_seconds.has_value()) {
+      execution.timeout_seconds = std::min(execution.timeout_seconds, *config.timeout_seconds);
+    }
+    execution.max_log_bytes = static_cast<std::size_t>(job->policy.max_log_bytes);
+    execution.allow_network = job->policy.allow_network && config.allow_network;
+    execution.artifact_max_bytes = static_cast<std::size_t>(job->policy.artifact_max_bytes);
+    execution.cache_root = config.cache_root.value_or(std::filesystem::path{});
+    // The runner's own secrets: a step must never read the SSH key it could
+    // use to impersonate this runner.
+    if (config.identity.has_value()) execution.hidden_paths.push_back(config.identity->parent_path());
+    if (config.known_hosts.has_value()) execution.hidden_paths.push_back(config.known_hosts->parent_path());
+    ckgit::RemoteCiSource source(transport, run_id, job->token);
+    ckgit::RemoteCiSink sink(transport, *job, config.build_root / (run_id + ".relay"), &g_stop);
+    try {
+      ckgit::CiSandboxReport sandbox;
+      const ckgit::CiRunRecord record = ckgit::executeCiJob(job->prepared, execution, source, sink, &sandbox);
+      std::cout << "ck-ci-runnerd: " << job->prepared.job.project_name << " " << run_id << " "
+                << (sink.abandoned() ? std::string("handed back") : std::string(ckgit::ciRunStatusName(record.status)))
+                << "\n";
+    } catch (const std::exception& run_error) {
+      std::cerr << "ck-ci-runnerd: run failed for " << run_id << ": " << run_error.what() << "\n";
+    }
+    // Keep nothing: the checkout, sisters, build outputs, packed bundles.
+    if (!emptyDirectory(config.build_root)) {
+      std::cerr << "ck-ci-runnerd: could not empty the build root after " << run_id << "; not taking new jobs\n";
+      return 1;
+    }
+  }
+  return 0;
+}
+
 std::string need(int& index, int argc, char** argv, const std::string& option) {
   if (++index >= argc) throw std::runtime_error(option + " requires a value");
   return argv[index];
@@ -299,17 +428,35 @@ int main(int argc, char** argv) {
     if (command == "serve") {
       std::filesystem::path config_path;
       bool once = false;
+      bool remote = false;
       for (int i = 2; i < argc; ++i) {
         const std::string option = argv[i];
         if (option == "--config") config_path = need(i, argc, argv, option);
         else if (option == "--once") once = true;
+        else if (option == "--remote") remote = true;
         else throw std::runtime_error("unknown serve option: " + option);
       }
       if (config_path.empty()) {
         std::cerr << "ck-ci-runnerd: serve requires --config FILE\n";
         return usage(std::cerr, 2);
       }
-      return serve(config_path, once);
+      return remote ? serveRemote(config_path, once) : serve(config_path, once);
+    }
+    if (command == "ssh-shim") {
+      // What GIT_SSH_COMMAND runs while a remote runner fetches a job's source.
+      std::filesystem::path config_path;
+      std::string job_id;
+      std::string token;
+      int i = 2;
+      for (; i + 1 < argc; i += 2) {
+        const std::string option = argv[i];
+        if (option == "--config") config_path = argv[i + 1];
+        else if (option == "--job") job_id = argv[i + 1];
+        else if (option == "--token") token = argv[i + 1];
+        else break;
+      }
+      std::vector<std::string> git_arguments(argv + i, argv + argc);
+      return ckgit::runCiSshShim(config_path, job_id, token, git_arguments);
     }
     if (command == "gateway") {
       // Started by ck-git-shell for a runner key; see ci_gateway.hpp.

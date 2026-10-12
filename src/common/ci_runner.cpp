@@ -824,6 +824,8 @@ void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, c
   }
 }
 
+bool ciSandboxAvailable() { return probeUserNamespaces(false); }
+
 bool ciSandboxCompiledIn() {
 #if defined(__linux__)
   return true;
