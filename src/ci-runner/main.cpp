@@ -103,6 +103,31 @@ int serve(const std::filesystem::path& config_path, bool once) {
     std::cerr << "ck-ci-runnerd: could not prepare the CI queue: " << error.what() << "\n";
   }
   const unsigned rescan = watch.active() ? config.ci_rescan_seconds.value_or(300) : fallback_poll;
+  const unsigned lease_seconds = config.ci_lease_seconds.value_or(ckgit::kCiDefaultLeaseSeconds);
+  const unsigned max_attempts = config.ci_max_attempts.value_or(ckgit::kCiDefaultMaxAttempts);
+
+  // Requeues jobs whose runner was lost (its lease lapsed). On start-up the
+  // primary's own earlier leases count as lapsed too: whatever this runner was
+  // doing before it restarted is no longer running.
+  std::optional<std::uint64_t> next_lease_expiry;
+  const auto reapLeases = [&](bool restarted) {
+    try {
+      ckgit::CiReapOptions reap;
+      reap.max_attempts = max_attempts;
+      if (restarted) reap.restarted_runner = ckgit::kCiPrimaryRunnerName;
+      const ckgit::CiReapResult result = ckgit::reapCiLeases(state_root, reap);
+      next_lease_expiry = result.next_expiry_epoch_seconds;
+      for (const std::string& id : result.requeued) {
+        std::cout << "ck-ci-runnerd: requeued " << id << " (its runner was lost)\n";
+      }
+      for (const std::string& id : result.failed) {
+        std::cout << "ck-ci-runnerd: gave up on " << id << " (its runner was lost on the last attempt)\n";
+      }
+    } catch (const std::exception& error) {
+      std::cerr << "ck-ci-runnerd: could not check CI leases: " << error.what() << "\n";
+    }
+  };
+  reapLeases(true);
   if (!once && !watch.active()) {
     std::cerr << "ck-ci-runnerd: warning: spool notifications unavailable — rescanning every " << rescan
               << "s\n";
@@ -113,6 +138,13 @@ int serve(const std::filesystem::path& config_path, bool once) {
   const auto waitForWork = [&]() {
     const auto start = std::chrono::steady_clock::now();
     auto deadline = start + std::chrono::seconds(rescan);
+    if (next_lease_expiry.has_value()) {
+      // Wake one second after the earliest lease lapses, to requeue it.
+      const std::uint64_t now = nowEpoch();
+      const auto lapse_in =
+          std::chrono::seconds(*next_lease_expiry + 1 > now ? *next_lease_expiry + 1 - now : 0);
+      if (start + lapse_in < deadline) deadline = start + lapse_in;
+    }
     if (last_sweep != 0) {
       const std::uint64_t now = nowEpoch();
       const std::uint64_t due = last_sweep + cleanup_interval;
@@ -131,9 +163,16 @@ int serve(const std::filesystem::path& config_path, bool once) {
   bool warned_loopback = false;
   bool warned_unmasked = false;
   while (g_stop == 0) {
+    reapLeases(false);
     std::optional<ckgit::CiJobRequest> job;
+    std::string lease_token;
     try {
-      job = ckgit::claimNextCiJob(state_root);
+      ckgit::CiClaimOptions claim_options;
+      claim_options.lease_seconds = lease_seconds;
+      if (std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(state_root, claim_options)) {
+        job = claim->job;
+        lease_token = claim->lease.token;
+      }
     } catch (const std::exception& error) {
       std::cerr << "ck-ci-runnerd: could not read the spool: " << error.what() << "\n";
     }
@@ -164,6 +203,13 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.pages_root = config.pages_root.value_or(std::filesystem::path{});
     options.pages_keep_versions = config.pages_keep_versions.value_or(3);
     options.cache_root = config.ci_cache_root.value_or(std::filesystem::path{});
+    {
+      const std::string job_id = job->job_id;
+      options.keep_alive = [state_root, job_id, lease_token, lease_seconds]() {
+        return ckgit::renewCiLease(state_root, job_id, lease_token, lease_seconds);
+      };
+      options.keep_alive_seconds = std::max(1u, lease_seconds / 6);
+    }
     if (!config.control_socket.empty()) {
       // Refresh the dashboard as soon as the run publishes itself as Running, so
       // a new run appears within seconds rather than at the next periodic sweep.

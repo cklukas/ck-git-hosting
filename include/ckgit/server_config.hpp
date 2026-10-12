@@ -37,6 +37,11 @@ struct ServerConfig {
   // A safety rescan of the spool behind the notifications, in case one was
   // missed (default 300 s).
   std::optional<unsigned> ci_rescan_seconds;
+  // How long a runner's claim on a job lasts without renewal, and how many
+  // times a job whose runner was lost is attempted before it is recorded as
+  // an error (see reapCiLeases).
+  std::optional<unsigned> ci_lease_seconds;
+  std::optional<unsigned> ci_max_attempts;
   bool ci_allow_network = false;
 
   // Artifact retention, enforced by the runner's periodic sweep. Days default

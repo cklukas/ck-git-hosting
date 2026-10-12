@@ -104,7 +104,7 @@ attempt=0
 port=''
 while [ -z "$port" ]; do
   if ! kill -0 "$server_pid" 2>/dev/null; then cat "$test_root/server.log" >&2; exit 1; fi
-  port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
+  port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log" 2>/dev/null || true)
   attempt=$((attempt + 1))
   [ "$attempt" -lt 100 ] || { echo 'Dashboard listener never became ready' >&2; exit 1; }
   [ -n "$port" ] || sleep .1

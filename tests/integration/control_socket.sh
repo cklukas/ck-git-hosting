@@ -91,7 +91,7 @@ done
 
 attempt=0
 while :; do
-  http_port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
+  http_port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log" 2>/dev/null || true)
   if [ -n "$http_port" ]; then break; fi
   if ! kill -0 "$server_pid" 2>/dev/null; then
     sed -n '1,80p' "$test_root/server.log" >&2

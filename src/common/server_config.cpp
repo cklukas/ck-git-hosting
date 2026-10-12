@@ -132,7 +132,7 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
         config.hook_directory.emplace(value);
       }
     } else if (key == "ci_timeout_seconds" || key == "ci_poll_seconds" || key == "ci_max_log_bytes" ||
-               key == "ci_rescan_seconds") {
+               key == "ci_rescan_seconds" || key == "ci_lease_seconds" || key == "ci_max_attempts") {
       unsigned long long number = 0;
       const auto [end, parse_error] = std::from_chars(value.data(), value.data() + value.size(), number);
       if (value.empty() || parse_error != std::errc{} || end != value.data() + value.size()) {
@@ -147,6 +147,12 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       } else if (key == "ci_rescan_seconds") {
         if (number < 10 || number > 3600) configError(path, line_number, "ci_rescan_seconds must be 10 to 3600");
         config.ci_rescan_seconds = static_cast<unsigned>(number);
+      } else if (key == "ci_lease_seconds") {
+        if (number < 10 || number > 3600) configError(path, line_number, "ci_lease_seconds must be 10 to 3600");
+        config.ci_lease_seconds = static_cast<unsigned>(number);
+      } else if (key == "ci_max_attempts") {
+        if (number < 1 || number > 10) configError(path, line_number, "ci_max_attempts must be 1 to 10");
+        config.ci_max_attempts = static_cast<unsigned>(number);
       } else {
         if (number < 1024 || number > (1ull << 30)) {
           configError(path, line_number, "ci_max_log_bytes must be 1024 to 1073741824");
@@ -256,6 +262,12 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_rescan_seconds.has_value()) {
     rendered += "ci_rescan_seconds=" + std::to_string(*config.ci_rescan_seconds) + "\n";
+  }
+  if (config.ci_lease_seconds.has_value()) {
+    rendered += "ci_lease_seconds=" + std::to_string(*config.ci_lease_seconds) + "\n";
+  }
+  if (config.ci_max_attempts.has_value()) {
+    rendered += "ci_max_attempts=" + std::to_string(*config.ci_max_attempts) + "\n";
   }
   if (config.ci_allow_network) {
     rendered += "ci_allow_network=true\n";

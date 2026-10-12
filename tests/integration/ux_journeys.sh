@@ -163,7 +163,7 @@ while [ -z "$port" ] || [ ! -S "$test_root/control.sock" ]; do
     cat "$test_root/server.log" >&2
     fail 'fixture daemon exited before becoming ready'
   fi
-  port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log")
+  port=$(sed -n 's/^ck-git-hostingd: loopback HTTP ready on \([0-9][0-9]*\)$/\1/p' "$test_root/server.log" 2>/dev/null || true)
   attempt=$((attempt + 1))
   [ "$attempt" -lt 100 ] || fail 'fixture listeners did not become ready'
   [ -n "$port" ] && [ -S "$test_root/control.sock" ] || sleep .1

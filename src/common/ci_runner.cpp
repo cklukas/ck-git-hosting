@@ -894,7 +894,32 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   record.status = CiRunStatus::Running;
   record.started_epoch_seconds = nowEpoch();
 
+  // Lease keeping (see CiRunnerOptions::keep_alive). Once the lease is lost
+  // nothing more is written: the job belongs to whichever runner claims it next.
+  bool lease_lost = false;
+  auto last_keep_alive = std::chrono::steady_clock::now();
+  const auto keepAlive = [&](bool force) -> bool {
+    if (lease_lost || !options.keep_alive) return !lease_lost;
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now - last_keep_alive < std::chrono::seconds(std::max(1u, options.keep_alive_seconds))) {
+      return true;
+    }
+    last_keep_alive = now;
+    try {
+      if (!options.keep_alive()) lease_lost = true;
+    } catch (const std::exception&) {
+      // A failed renewal is retried at the next heartbeat; only an explicit
+      // "lost" answer gives the job up.
+    }
+    return !lease_lost;
+  };
+
   const auto finish = [&](CiRunStatus status, const std::string& detail) -> CiRunRecord {
+    if (lease_lost) {
+      record.status = CiRunStatus::Error;
+      record.detail = "this runner lost its lease on the job; it was requeued";
+      return record;
+    }
     record.status = status;
     record.detail = firstLine(detail);
     record.finished_epoch_seconds = nowEpoch();
@@ -993,6 +1018,11 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   } catch (const std::exception& error) {
     return finish(CiRunStatus::Error, std::string("setup: ") + error.what());
   }
+  if (!keepAlive(true)) {
+    std::error_code error;
+    std::filesystem::remove_all(scratch, error);
+    return finish(CiRunStatus::Error, "lease lost");
+  }
 
   const std::filesystem::path work = scratch / "src";  // physical: host-side packing/publishing
 
@@ -1076,6 +1106,7 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   // throttled unless forced; cancelRequested polls the cancel marker.
   std::uint64_t last_progress = record.started_epoch_seconds;
   const auto writeProgress = [&](bool force) {
+    if (lease_lost) return;
     const std::uint64_t now = nowEpoch();
     if (!force && now - last_progress < 3) return;  // bound fsync churn on chatty steps
     last_progress = now;
@@ -1093,7 +1124,11 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
       return false;
     }
   };
-  const StepHooks hooks{[&]() { writeProgress(false); }, cancelRequested};
+  const StepHooks hooks{[&]() {
+                          keepAlive(false);
+                          writeProgress(false);
+                        },
+                        [&]() { return lease_lost || cancelRequested(); }};
 
   CiRunStatus status = CiRunStatus::Success;
   std::string detail;
@@ -1186,6 +1221,14 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
         // Artifact collection never fails the build; the run already succeeded.
       }
     }
+  }
+
+  if (lease_lost) {
+    // The job was requeued under this run: leave every result to the attempt
+    // that claims it next, and only clean up this runner's own scratch.
+    std::error_code error;
+    if (!options.keep_scratch) std::filesystem::remove_all(scratch, error);
+    return finish(CiRunStatus::Error, "lease lost");
   }
 
   // A tag build publishes a release on success, and publishes nothing (cleaning

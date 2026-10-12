@@ -63,6 +63,9 @@ struct CiJobRequest {
   std::string commit_id;   // the pushed new object id (40 or 64 hex)
   std::string client_id;
   std::uint64_t queued_epoch_seconds = 0;
+  // 1 for a fresh job; incremented each time the job is requeued because the
+  // runner holding it was lost (see reapCiLeases).
+  unsigned attempt = 1;
 };
 
 struct CiStepResult {
@@ -166,8 +169,83 @@ CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root);
 // entry is moved aside (never executed) and skipped.
 std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_root);
 
-// Removes a claimed job from ci/working once its run has been recorded.
+// Removes a claimed job (and its lease) from ci/working once its run has been
+// recorded.
 void releaseCiJob(const std::filesystem::path& state_root, std::string_view job_id);
+
+// --- leases: several runners sharing one queue ------------------------------
+//
+// A claimed job carries a lease: which runner holds it, a random token that
+// proves ownership on every later write, and when the claim lapses unless the
+// runner renews it. Leases live in ci/leases/<job_id>.ini, apart from
+// working/, so a renewal is not mistaken for a queue change by a runner
+// watching the queue directories. A job whose lease lapses -- its runner
+// crashed, went to sleep, or lost the network -- is requeued by reapCiLeases
+// for any runner to pick up, up to a maximum number of attempts. Claims,
+// renewals, and the reaper all hold the spool lock, so they never interleave.
+
+inline constexpr unsigned kCiDefaultLeaseSeconds = 90;
+inline constexpr unsigned kCiDefaultMaxAttempts = 2;
+// The runner name the server's own (local) runner uses in leases and records.
+inline constexpr char kCiPrimaryRunnerName[] = "primary";
+
+struct CiLease {
+  std::string runner;                       // client id of the runner holding the job
+  std::string token;                        // 32 lowercase hex
+  std::uint64_t expires_epoch_seconds = 0;
+};
+
+struct CiClaim {
+  CiJobRequest job;
+  CiLease lease;
+};
+
+struct CiClaimOptions {
+  std::string runner = kCiPrimaryRunnerName;
+  unsigned lease_seconds = kCiDefaultLeaseSeconds;
+};
+
+// Claims the oldest queued job like claimNextCiJob and records a fresh lease
+// for `options.runner`. std::nullopt when nothing is queued.
+std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options);
+
+// Extends a lease by `lease_seconds` from now. False when the job is no longer
+// claimed or `token` does not match -- the runner has lost the job (it was
+// requeued) and must stop working on it without writing anything further.
+bool renewCiLease(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token,
+                  unsigned lease_seconds);
+
+// The claimed job and its lease, or std::nullopt when the job is not claimed.
+std::optional<CiClaim> loadCiClaim(const std::filesystem::path& state_root, std::string_view job_id);
+
+struct CiReapOptions {
+  std::uint64_t now_epoch_seconds = 0;  // 0 = the current time
+  unsigned max_attempts = kCiDefaultMaxAttempts;
+  // Leases held by this runner are treated as lapsed at once: the runner has
+  // restarted, so nothing it claimed before is still being worked on.
+  std::string restarted_runner;
+};
+
+struct CiReapResult {
+  std::vector<std::string> requeued;  // job ids put back into the spool
+  std::vector<std::string> failed;    // job ids recorded as error after the last attempt
+  // When the earliest remaining lease lapses, so a caller can sleep until then.
+  std::optional<std::uint64_t> next_expiry_epoch_seconds;
+};
+
+// Requeues every claimed job whose lease has lapsed (or that has no lease at
+// all, a claim interrupted by a crash): the job goes back into the spool with
+// its attempt incremented, the run record returns to Pending, and the lost
+// attempt's step logs are kept aside under attempt-<n>/ in the run directory.
+// A job that has used up `max_attempts` is recorded as an error instead.
+CiReapResult reapCiLeases(const std::filesystem::path& state_root, const CiReapOptions& options);
+
+// Gives a leased job back at once (a runner shutting down cleanly, or one that
+// cannot work on it): the same requeue the reaper performs, without waiting
+// for the lease to lapse and without counting against the attempt limit.
+// False when the job is not claimed under `token`.
+bool abandonCiJob(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token,
+                  std::string_view runner);
 
 // Ensures <state_root>/ci/runs/<project>/<run_id>/steps exists (private) and
 // returns the run directory, so the runner can stream step logs into it.

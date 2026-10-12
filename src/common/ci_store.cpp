@@ -208,19 +208,25 @@ std::string_view expectField(std::string_view line, std::string_view key) {
   return line.substr(key.size());
 }
 
+// schema_version 2 adds the attempt counter after queued_epoch; parseJob still
+// reads a version-1 job (attempt 1) queued by an earlier build.
 std::string serializeJob(const CiJobRequest& job) {
-  return "schema_version=1\n"
+  return "schema_version=2\n"
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
          "ref_hex=" + hexEncode(job.ref) + "\n"
          "commit=" + job.commit_id + "\n"
          "client_id=" + job.client_id + "\n"
-         "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n";
+         "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n"
+         "attempt=" + std::to_string(job.attempt) + "\n";
 }
 
 CiJobRequest parseJob(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  if (lines.size() != 7 || lines[0] != "schema_version=1") fail("a CI job record has the wrong shape");
+  const bool v2 = !lines.empty() && lines[0] == "schema_version=2";
+  if (!((v2 && lines.size() == 8) || (lines.size() == 7 && lines[0] == "schema_version=1"))) {
+    fail("a CI job record has the wrong shape");
+  }
   CiJobRequest job;
   job.job_id = std::string(expectField(lines[1], "job_id="));
   job.project_name = std::string(expectField(lines[2], "project="));
@@ -228,6 +234,11 @@ CiJobRequest parseJob(std::string_view content) {
   job.commit_id = std::string(expectField(lines[4], "commit="));
   job.client_id = std::string(expectField(lines[5], "client_id="));
   job.queued_epoch_seconds = parseEpoch(expectField(lines[6], "queued_epoch="));
+  if (v2) {
+    const std::uint64_t attempt = parseEpoch(expectField(lines[7], "attempt="));
+    if (attempt < 1 || attempt > 1000) fail("a CI job record has an invalid attempt");
+    job.attempt = static_cast<unsigned>(attempt);
+  }
   if (!isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
       !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
     fail("a CI job record contains invalid data");
@@ -476,6 +487,167 @@ CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root) {
 }
 
 std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_root) {
+  const std::optional<CiClaim> claim = claimCiJob(state_root, CiClaimOptions{});
+  if (!claim.has_value()) return std::nullopt;
+  return claim->job;
+}
+
+namespace {
+
+std::uint64_t currentEpoch() {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+          .count());
+}
+
+std::string generateLeaseToken() {
+  std::random_device device;
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string token;
+  token.reserve(32);
+  for (int index = 0; index < 32; ++index) token += hex[device() & 0x0f];
+  return token;
+}
+
+bool isValidLeaseToken(std::string_view token) {
+  return token.size() == 32 && std::all_of(token.begin(), token.end(), [](unsigned char character) {
+           return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+         });
+}
+
+std::string serializeLease(const CiLease& lease) {
+  return "schema_version=1\n"
+         "runner=" + lease.runner + "\n"
+         "token=" + lease.token + "\n"
+         "expires_epoch=" + std::to_string(lease.expires_epoch_seconds) + "\n";
+}
+
+CiLease parseLease(std::string_view content) {
+  const std::vector<std::string_view> lines = frame(content);
+  if (lines.size() != 4 || lines[0] != "schema_version=1") fail("a CI lease has the wrong shape");
+  CiLease lease;
+  lease.runner = std::string(expectField(lines[1], "runner="));
+  lease.token = std::string(expectField(lines[2], "token="));
+  lease.expires_epoch_seconds = parseEpoch(expectField(lines[3], "expires_epoch="));
+  if (!isValidClientId(lease.runner) || !isValidLeaseToken(lease.token)) fail("a CI lease contains invalid data");
+  return lease;
+}
+
+// The queue's directories, opened once for an operation that holds the spool
+// lock across all of them.
+struct QueueDirs {
+  std::filesystem::path root;
+  int spool = -1;
+  int working = -1;
+  int leases = -1;
+};
+
+std::optional<CiLease> readLeaseAt(int leases_fd, const std::string& job_id) {
+  try {
+    bool missing = false;
+    const std::string content = readCappedAt(leases_fd, job_id + ".ini", 4096, &missing);
+    if (missing) return std::nullopt;
+    return parseLease(content);
+  } catch (const std::exception&) {
+    return std::nullopt;  // an unreadable lease is treated like a missing one: lapsed
+  }
+}
+
+std::optional<CiJobRequest> readJobAt(int directory_fd, const std::string& name) {
+  try {
+    bool missing = false;
+    const std::string content = readCappedAt(directory_fd, name, kMaximumCiRunRecordBytes, &missing);
+    if (missing) return std::nullopt;
+    return parseJob(content);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+// Returns a lost attempt's run to Pending so the dashboard shows it waiting
+// again: its step logs move aside to attempt-<n>/ (kept for diagnosis), a
+// partial artifact or upload set is dropped, and the record is rewritten with
+// no steps. Best-effort: the job itself is requeued whether or not this works.
+void resetRunForRequeue(const std::filesystem::path& state_root, const CiJobRequest& job, unsigned lost_attempt,
+                        const std::string& detail) {
+  try {
+    const std::filesystem::path run_dir = prepareCiRunDirectory(state_root, job.project_name, job.job_id);
+    std::error_code error;
+    const std::filesystem::path aside = run_dir / ("attempt-" + std::to_string(lost_attempt));
+    std::filesystem::remove_all(aside, error);
+    std::filesystem::rename(run_dir / "steps", aside, error);
+    std::filesystem::remove_all(run_dir / "artifacts", error);
+    std::filesystem::remove_all(run_dir / "incoming", error);
+    prepareCiRunDirectory(state_root, job.project_name, job.job_id);  // a fresh, empty steps/
+    CiRunRecord pending;
+    pending.run_id = job.job_id;
+    pending.project_name = job.project_name;
+    pending.ref = job.ref;
+    pending.commit_id = job.commit_id;
+    pending.status = CiRunStatus::Pending;
+    pending.detail = detail.substr(0, kMaximumCiDetailBytes);
+    writeCiRunRecord(state_root, pending);
+  } catch (const std::exception&) {
+  }
+}
+
+// Puts a claimed job back into the spool (or, past the attempt limit, records
+// its run as an error). The caller holds the spool lock.
+enum class RequeueOutcome { kRequeued, kFailed, kGone };
+RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, const std::string& runner,
+                             bool enforce_limit, unsigned max_attempts) {
+  const std::string name = job_id + ".ini";
+  std::optional<CiJobRequest> job = readJobAt(dirs.working, name);
+  if (!job.has_value()) {
+    ::renameat(dirs.working, name.c_str(), dirs.working, (name + ".rejected").c_str());
+    ::unlinkat(dirs.leases, name.c_str(), 0);
+    return RequeueOutcome::kGone;
+  }
+  const unsigned lost_attempt = job->attempt;
+  const std::string who = runner.empty() ? std::string("its runner") : "runner " + runner;
+  if (enforce_limit && lost_attempt >= max_attempts) {
+    try {
+      CiRunRecord record;
+      if (std::optional<CiRunRecord> existing = loadCiRun(dirs.root, job->project_name, job->job_id)) {
+        record = *existing;
+      } else {
+        record.run_id = job->job_id;
+        record.project_name = job->project_name;
+        record.ref = job->ref;
+        record.commit_id = job->commit_id;
+      }
+      record.status = CiRunStatus::Error;
+      record.finished_epoch_seconds = currentEpoch();
+      record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
+      record.detail = (who + " was lost; gave up after " + std::to_string(lost_attempt) + " attempt" +
+                       (lost_attempt == 1 ? "" : "s")).substr(0, kMaximumCiDetailBytes);
+      writeCiRunRecord(dirs.root, record);
+    } catch (const std::exception&) {
+    }
+    ::unlinkat(dirs.working, name.c_str(), 0);
+    ::unlinkat(dirs.leases, name.c_str(), 0);
+    ::fsync(dirs.working);
+    return RequeueOutcome::kFailed;
+  }
+  job->attempt = lost_attempt + 1;
+  resetRunForRequeue(dirs.root, *job,
+                     lost_attempt,
+                     "requeued: " + who + (enforce_limit ? " was lost" : " gave the job back") + " (attempt " +
+                         std::to_string(job->attempt) + ")");
+  // Into the spool first, then out of working/: a crash in between leaves the
+  // job queued twice under one id, never lost; the second claim of it finds the
+  // working copy and simply replaces it.
+  atomicWriteAt(dirs.spool, name, serializeJob(*job));
+  ::unlinkat(dirs.working, name.c_str(), 0);
+  ::unlinkat(dirs.leases, name.c_str(), 0);
+  ::fsync(dirs.working);
+  return RequeueOutcome::kRequeued;
+}
+
+}  // namespace
+
+std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const CiClaimOptions& options) {
+  if (!isValidClientId(options.runner) || options.lease_seconds == 0) fail("invalid CI claim options");
   const std::filesystem::path root = validatedMetadataRoot(state_root);
   Descriptor root_fd(openDir(root));
   bool missing = false;
@@ -484,6 +656,7 @@ std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_ro
   Descriptor spool_fd(openDirAt(ci_fd, "spool", &missing));
   if (missing) return std::nullopt;
   Descriptor working_fd(ensureDirAt(ci_fd, "working"));
+  Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
 
   lockExclusive(spool_fd);
   std::vector<std::string> names;
@@ -497,17 +670,127 @@ std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_ro
       fail("could not claim a CI job");
     }
     if (::fsync(working_fd) != 0) fail("could not commit a CI claim");
+    CiJobRequest job;
     try {
       bool gone = false;
       const std::string content = readCappedAt(working_fd, name, kMaximumCiRunRecordBytes, &gone);
       if (gone) continue;
-      return parseJob(content);
+      job = parseJob(content);
     } catch (const std::exception&) {
       // An unreadable, unsafe, or malformed job is set aside, never executed.
       ::renameat(working_fd, name.c_str(), working_fd, (name + ".rejected").c_str());
+      continue;
     }
+    CiLease lease;
+    lease.runner = options.runner;
+    lease.token = generateLeaseToken();
+    lease.expires_epoch_seconds = currentEpoch() + options.lease_seconds;
+    atomicWriteAt(leases_fd, name, serializeLease(lease));
+    return CiClaim{std::move(job), std::move(lease)};
   }
   return std::nullopt;
+}
+
+bool renewCiLease(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token,
+                  unsigned lease_seconds) {
+  if (!isValidCiId(job_id) || !isValidLeaseToken(token)) return false;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+  if (missing) return false;
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  Descriptor working_fd(ensureDirAt(ci_fd, "working"));
+  Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
+  lockExclusive(spool_fd);
+  const std::string id(job_id);
+  struct stat status {};
+  if (::fstatat(working_fd, (id + ".ini").c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0) return false;
+  std::optional<CiLease> lease = readLeaseAt(leases_fd, id);
+  if (!lease.has_value() || lease->token != token) return false;
+  lease->expires_epoch_seconds = currentEpoch() + lease_seconds;
+  atomicWriteAt(leases_fd, id + ".ini", serializeLease(*lease));
+  return true;
+}
+
+std::optional<CiClaim> loadCiClaim(const std::filesystem::path& state_root, std::string_view job_id) {
+  if (!isValidCiId(job_id)) return std::nullopt;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+    if (missing) return std::nullopt;
+    Descriptor leases_fd(openDirAt(ci_fd, "leases", &missing));
+    if (missing) return std::nullopt;
+    const std::string id(job_id);
+    std::optional<CiJobRequest> job = readJobAt(working_fd, id + ".ini");
+    std::optional<CiLease> lease = readLeaseAt(leases_fd, id);
+    if (!job.has_value() || !lease.has_value()) return std::nullopt;
+    return CiClaim{std::move(*job), std::move(*lease)};
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+CiReapResult reapCiLeases(const std::filesystem::path& state_root, const CiReapOptions& options) {
+  CiReapResult result;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+  if (missing) return result;
+  Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+  if (missing) return result;
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
+  lockExclusive(spool_fd);
+  const QueueDirs dirs{root, spool_fd, working_fd, leases_fd};
+  const std::uint64_t now = options.now_epoch_seconds != 0 ? options.now_epoch_seconds : currentEpoch();
+  for (const std::string& name : listNames(working_fd)) {
+    if (!endsWith(name, ".ini")) continue;
+    const std::string job_id = name.substr(0, name.size() - 4);
+    if (!isValidCiId(job_id)) continue;
+    const std::optional<CiLease> lease = readLeaseAt(leases_fd, job_id);
+    const bool lapsed = !lease.has_value() || lease->expires_epoch_seconds <= now ||
+                        (!options.restarted_runner.empty() && lease->runner == options.restarted_runner);
+    if (!lapsed) {
+      if (!result.next_expiry_epoch_seconds.has_value() ||
+          lease->expires_epoch_seconds < *result.next_expiry_epoch_seconds) {
+        result.next_expiry_epoch_seconds = lease->expires_epoch_seconds;
+      }
+      continue;
+    }
+    switch (requeueLocked(dirs, job_id, lease.has_value() ? lease->runner : std::string(), true,
+                          options.max_attempts == 0 ? 1 : options.max_attempts)) {
+      case RequeueOutcome::kRequeued: result.requeued.push_back(job_id); break;
+      case RequeueOutcome::kFailed: result.failed.push_back(job_id); break;
+      case RequeueOutcome::kGone: break;
+    }
+  }
+  return result;
+}
+
+bool abandonCiJob(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token,
+                  std::string_view runner) {
+  if (!isValidCiId(job_id) || !isValidLeaseToken(token)) return false;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+  if (missing) return false;
+  Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+  if (missing) return false;
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
+  lockExclusive(spool_fd);
+  const std::string id(job_id);
+  const std::optional<CiLease> lease = readLeaseAt(leases_fd, id);
+  if (!lease.has_value() || lease->token != token) return false;
+  const QueueDirs dirs{root, spool_fd, working_fd, leases_fd};
+  return requeueLocked(dirs, id, std::string(runner), false, 0) == RequeueOutcome::kRequeued;
 }
 
 void releaseCiJob(const std::filesystem::path& state_root, std::string_view job_id) {
@@ -521,6 +804,9 @@ void releaseCiJob(const std::filesystem::path& state_root, std::string_view job_
   if (missing) return;
   const std::string name = std::string(job_id) + ".ini";
   if (::unlinkat(working_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI job");
+  Descriptor leases_fd(openDirAt(ci_fd, "leases", &missing));
+  if (missing) return;
+  if (::unlinkat(leases_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI lease");
 }
 
 std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_root,

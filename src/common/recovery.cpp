@@ -370,7 +370,8 @@ void validateState(const fs::path& state, const std::vector<std::string>& names)
   if (entryExists(ci)) for (const auto& entry : fs::directory_iterator(ci)) {
     const auto name = entry.path().filename().string();
     if (!fs::is_directory(entry.symlink_status()) ||
-        (name != "spool" && name != "working" && name != "runs" && name != "projects")) {
+        (name != "spool" && name != "working" && name != "runs" && name != "projects" && name != "leases" &&
+         name != "runners")) {
       throw std::runtime_error("unsupported CI metadata entry: " + name);
     }
   }

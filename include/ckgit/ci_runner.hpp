@@ -67,6 +67,15 @@ struct CiRunnerOptions {
   // new run appears promptly rather than at the next periodic sweep. Empty by
   // default (the one-shot `run` command needs no notification).
   std::function<void()> on_run_started;
+
+  // Renews the runner's lease on the job (see renewCiLease), called about every
+  // keep_alive_seconds while the run is in progress -- from the step heartbeat
+  // and between setup phases. Returning false means the lease was lost: the
+  // job has been requeued for another runner, so the run stops at once, kills
+  // its step, and writes nothing further. Empty when there is no lease to keep
+  // (the one-shot `run` command, and tests).
+  std::function<bool()> keep_alive;
+  unsigned keep_alive_seconds = 15;
 };
 
 // Isolation the runner applied to a run. On Linux the runner confines each step
