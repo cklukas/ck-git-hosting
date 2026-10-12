@@ -99,4 +99,5 @@ default branch, whether sister projects exist, or the server's limits.
 - [Create a release](releases.md)
 - [Publish a project website](pages-hosting.md)
 - [Configure the runner and sandbox](ci-runner.md)
+- [Share CI load with remote runners](ci-remote-runners.md)
 - [Workflow reference and troubleshooting](06-ci-yml-reference.md)

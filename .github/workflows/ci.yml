@@ -89,7 +89,8 @@ jobs:
           lintian --no-tag-display-limit "$RUNNER_TEMP"/dist/*.deb || true
       - name: Install, exercise, and purge the packages
         run: |
-          apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb "$RUNNER_TEMP"/dist/ckdocs_*.deb
+          apt-get install -y "$RUNNER_TEMP"/dist/ck-git-hosting_*.deb "$RUNNER_TEMP"/dist/ckgit_*.deb "$RUNNER_TEMP"/dist/ckdocs_*.deb \
+            "$RUNNER_TEMP"/dist/ck-git-runner_*.deb
           id ckgit
           test -x /usr/bin/ck-git-hostingd
           test -x /usr/bin/ck-ci-runnerd
@@ -134,6 +135,17 @@ jobs:
           ckgit --help
           test -x /usr/bin/ckdocs
           ckdocs --version
+          # The remote runner package installs beside the server package
+          # (its binary lives elsewhere), adds its own account and unit, and
+          # leaves its unit disabled until a runner.ini exists.
+          id ckgit-runner
+          test -x /usr/lib/ck-git-runner/ck-ci-runnerd
+          ck-git-runner --help >/dev/null
+          test -f /usr/lib/systemd/system/ck-git-runner.service
+          test -d /var/lib/ck-git-runner/ci-build
+          test ! -e /etc/systemd/system/multi-user.target.wants/ck-git-runner.service
+          apt-get purge -y ck-git-runner
+          test ! -d /var/lib/ck-git-runner
           apt-get remove -y ck-git-hosting ckgit ckdocs
           test -f /etc/ck-git-hosting/server.ini
           test -d /srv/ck-git-hosting/repos/smoke.git

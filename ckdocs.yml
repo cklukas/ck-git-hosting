@@ -31,6 +31,7 @@ nav:
     pages:
       - docs/operations/04-ci-cd.md
       - docs/operations/ci-runner.md
+      - docs/operations/ci-remote-runners.md
       - docs/operations/ci-artifacts-and-cache.md
       - docs/operations/releases.md
       - docs/operations/pages-hosting.md

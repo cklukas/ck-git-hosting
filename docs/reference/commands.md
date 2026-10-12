@@ -57,15 +57,20 @@ ckgit-admin verify-backup BACKUP
 ckgit-admin restore-backup BACKUP --config SERVER-CONFIG [--dry-run] [--yes]
 ckgit-admin trash list --config SERVER-CONFIG
 ckgit-admin restore-project TRASH-ENTRY --config SERVER-CONFIG [--name NAME] [--dry-run] [--yes]
-ckgit-admin authorized-key --client-id ID --public-key FILE [--shell PATH] [--repo-root ROOT] [--control-socket PATH] [--state-root ROOT]
+ckgit-admin authorized-key --client-id ID --public-key FILE [--shell PATH] [--repo-root ROOT] [--control-socket PATH] [--state-root ROOT] [--runner [--runner-config FILE]]
 ckgit-admin ci enable|disable|status NAME --config SERVER-CONFIG
 ckgit-admin ci runs NAME --config SERVER-CONFIG
 ckgit-admin ci log NAME RUN [STEP] [--follow] --config SERVER-CONFIG
 ckgit-admin ci cancel NAME RUN --config SERVER-CONFIG
+ckgit-admin runner add NAME --public-key FILE --config SERVER-CONFIG [--shell PATH]
+ckgit-admin runner list|enable NAME|disable NAME|remove NAME --config SERVER-CONFIG
 ck-git-hostingd --repo-root ROOT --control-socket PATH [--state-root ROOT] [--hook-directory PATH] [--http-port PORT] [--check]
 ck-git-hostingd --config /etc/ck-git-hosting/server.ini [--check]
-ck-git-shell --client-id ID --repo-root ROOT --control-socket PATH [--state-root ROOT]
+ck-git-shell --client-id ID --repo-root ROOT --control-socket PATH [--state-root ROOT] [--runner-config FILE [--runner-program PATH]]
 ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini [--once]
+ck-ci-runnerd gateway --config SERVER-CONFIG --runner NAME --command 'ckgit-runner 1 ...'
+ck-git-runner serve --remote --config /etc/ck-git-hosting/runner.ini [--once]
+ck-git-runner register --server USER@HOST --name NAME [--config RUNNER-CONFIG] [--home DIR] [--account USER] [--force]
 ck-pagesd serve --config /etc/ck-git-hosting/server.ini
 ck-pagesd check --config /etc/ck-git-hosting/server.ini
 
@@ -97,6 +102,14 @@ points it at another branch that already exists on the server. On the server,
 `ckgit-admin default-branch NAME BRANCH` does the same as the service account;
 it is also the way to select a branch whose name contains `/`, which the
 restricted SSH channel does not carry.
+
+`ckgit-admin runner` manages the remote CI runners that share the server's CI
+load ([Share CI load with remote runners](../operations/ci-remote-runners.md)):
+`add` registers one and prints its restricted `authorized_keys` line, `disable`
+drains it, `list` shows each runner's state, last contact, version and current
+job. `ck-git-runner` (from the `ck-git-runner` package) is the runner itself;
+`ck-ci-runnerd gateway` is what a runner key's forced command runs on the
+server.
 
 `ckgit` exit codes are stable: `0` success, `1` error, `2` usage, `3` partial
 result or attention needed, and `4` when another sync or publish for the same

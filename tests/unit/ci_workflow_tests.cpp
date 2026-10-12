@@ -357,13 +357,13 @@ void testReferenceDocMatchesConstants() {
   const auto doc = read_doc("docs/operations/06-ci-yml-reference.md");
   const auto runtime = read_doc("docs/reference/ci-runtime.md");
 
-  for (const char* bound : {"65536", "4096", "64", "128", "16384", "1024", "16", "8", "3650"}) {
+  for (const char* bound : {"65536", "4096", "64", "128", "16384", "1024", "16", "8", "3650", "100000"}) {
     require(doc.find(bound) != std::string::npos,
             "reference doc is missing bound value " + std::string(bound));
   }
   for (const char* variable :
        {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "CKGIT_CI", "CKGIT_COMMIT", "CKGIT_REF",
-        "CKGIT_SISTER", "CKGIT_CACHE"}) {
+        "CKGIT_BRANCH", "CKGIT_TAG", "CKGIT_SISTER", "CKGIT_CACHE"}) {
     require(runtime.find(variable) != std::string::npos,
             "reference doc is missing exported variable " + std::string(variable));
   }

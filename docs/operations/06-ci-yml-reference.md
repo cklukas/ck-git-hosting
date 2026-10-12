@@ -110,7 +110,11 @@ exact same subset — one syntax, two schemas.
 | `on.branches` | list of strings | no | none | valid branch name each; see [trigger matrix](#trigger-matrix) |
 | `on.tags` | list of strings | no | none | a tag pattern: an exact name, or a name ending in a single trailing `*` wildcard |
 | `env` (top level) | mapping | no | empty | keys: `[A-Za-z_][A-Za-z0-9_]*`; values: any scalar |
-| `sisters[]` | list of a bare name or a `{name, ref}` mapping | no | empty | `name`: a valid project name (same rule as a hosted project's own name); `ref` (optional): a branch, tag, or commit-like ref, not starting with `-`/`/`, no `..`; each name at most once; the project's own name only with a `ref` |
+| `sisters[]` | list of a bare name or a `{name, ref, depth, since, tags}` mapping | no | empty | `name`: a valid project name (same rule as a hosted project's own name); `ref` (optional): a branch, tag, or commit-like ref, not starting with `-`/`/`, no `..`; each name at most once; the project's own name only with a `ref`; `depth`/`since`/`tags` as for `checkout` below, for the history of the sister's commit |
+| `checkout.depth` | integer | no | `1` | `0` (full history) to `100000`; the number of commits the checkout carries, ending at the commit under build |
+| `checkout.since` | date | no | — | `YYYY-MM-DD`; every commit since that date instead of a fixed depth; not together with `depth` |
+| `checkout.tags` | boolean | no | `false` | `true` also fetches the tags inside that history (for `git describe`) |
+| `checkout.mode` | `git` or `archive` | no | `git` | `archive` removes `.git` after the checkout: the plain tree earlier runners produced |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
 | `jobs[]` | list of mappings | required, non-empty | — | unique `name` per job |
@@ -133,9 +137,11 @@ exact same subset — one syntax, two schemas.
   named `release`.
 - A sister named `src`, `home`, or `tmp` — the sandbox's own fixed mount
   points — parses successfully (these are ordinary valid names) and is only
-  rejected when the runner actually **executes** the workflow. A syntax-only
+  rejected when the server **prepares** the job for a runner. A syntax-only
   check of a workflow cannot catch this; only a real run can. The same is
-  true of a sister that names the project it belongs to **without** a `ref`.
+  true of a sister that names the project it belongs to **without** a `ref`,
+  and of a sister that is not hosted on the server or whose `ref` does not
+  resolve.
   With a `ref`, the project may list itself: that branch, tag, or commit of
   its own repository is placed at `../<name>` and exported as
   `CKGIT_SISTER_<NAME>` like any other sister. This lets one branch's build
@@ -164,7 +170,8 @@ and every one of its assets, if it has one.
 
 One CI job is queued **per updated ref in a push**, unconditionally — the
 receive hook never parses the workflow or evaluates `on:` itself; that
-happens only once the runner claims the job. This is why a push to a
+happens only once a runner claims the job, on the server itself (a remote
+runner never even sees a job that resolves to skipped). This is why a push to a
 non-triggering branch still produces a visible run in the dashboard: the job
 really was queued, and the run really was created — it simply resolved to
 **skipped** once the runner read the workflow and matched the ref.
@@ -174,7 +181,46 @@ digits, `. _ -` only, no `/`, at most 128 bytes) to trigger a release, even
 if it matches an `on.tags` pattern; an invalid tag's run is skipped with a
 stated reason.
 
-Jobs are claimed from the spool **oldest first**.
+Jobs are claimed from the spool **oldest first**, with two rules on top: a job
+waits while its project already has a run in progress on the same ref (so runs
+of one ref finish in push order), and the server's own runner leaves a new job
+for `ci_claim_delay_ms` to a free remote runner first (see
+[Share CI load with remote runners](ci-remote-runners.md)).
+
+## Checkout and history
+
+Every checkout is a **shallow Git clone of exactly the commit under build**,
+fetched by its hash, so a step can run `git log`, `git describe` or
+`git rev-parse` in it. By default it carries only that commit (`depth: 1`);
+ask for more history when a step needs it — the sandbox has no network, so a
+step cannot fetch more later:
+
+```yaml
+checkout:
+  depth: 50          # 50 commits ending at the commit under build; 0 = full history
+  tags: true         # also the tags inside that history, for git describe
+
+sisters:
+  - libckvision                 # its default branch's newest commit, depth 1
+  - name: cworks
+    ref: 3f2a9c1e0b7d4e5f6a7b8c9d0e1f2a3b4c5d6e7f
+    depth: 200                  # history of that commit
+```
+
+- `since: 2026-01-31` takes every commit since that date instead of a fixed
+  `depth`.
+- A tag build also fetches its own tag, so `git describe --tags` names it even
+  at depth 1; a branch build gets `refs/remotes/origin/<branch>`. `CKGIT_BRANCH`
+  or `CKGIT_TAG` name the ref too (see the
+  [runtime reference](../reference/ci-runtime.md#environment)).
+- `mode: archive` removes `.git` after the checkout: the plain tree earlier
+  runners produced, for a build that packs the whole checkout and must not
+  include `.git`.
+- Sisters are resolved to one commit when the server prepares the job, so
+  every attempt of a run — on whichever runner — builds against the same
+  sister source.
+- No hooks, submodules, or user or system Git configuration take part in a
+  checkout.
 
 ## Artifacts, releases, and Pages
 
@@ -245,6 +291,7 @@ the runner acts on the parsed workflow.
 | Artifact `paths:` entries | 64 | one artifact block |
 | Path length | 1024 bytes | any `paths:`/`pages.path` entry |
 | Sisters | 16 | `sisters:` |
+| Checkout depth | 100000 commits | `checkout.depth`, `sisters[].depth` (`0` means the full history) |
 | Caches | 8 | `cache:` |
 | `env:` names per cache | 8 | `cache[].env:` |
 | `retention_days` | 3650 (10 years) | `artifacts.retention_days`, as an upper cap |

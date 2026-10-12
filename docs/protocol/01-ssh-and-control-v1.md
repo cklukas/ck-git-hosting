@@ -373,6 +373,79 @@ argument would instead need a second, private grammar inside a token.
 Future operations that accept structured metadata will use a separately
 versioned length-delimited payload; they must not extend this line grammar.
 
+## Runner keys
+
+A remote CI runner (see
+[Share CI load with remote runners](../operations/ci-remote-runners.md)) uses a
+key of its own class. Its forced command adds `--runner-config FILE` (the
+server configuration the gateway reads):
+
+```text
+restrict,command="/usr/bin/ck-git-shell --client-id uconsole --repo-root /srv/ck-git-hosting/repos --control-socket /run/ck-git-hosting/control.sock --state-root /var/lib/ck-git-hosting/state --runner-config /etc/ck-git-hosting/server.ini" ssh-ed25519 AAAA... uconsole
+```
+
+With it, `ck-git-shell` accepts **only** the runner protocol, version 1, and
+executes `ck-ci-runnerd gateway` with the validated command line; Git services
+and `ckgit-rpc` are refused. A device key (no `--runner-config`) refuses every
+runner operation. The client id `primary` is reserved for the server's own
+runner.
+
+```text
+ckgit-runner 1 hello <version-hex>
+ckgit-runner 1 claim <wait-seconds>
+ckgit-runner 1 upload-pack <job-id> <token> <project>
+ckgit-runner 1 stream <job-id> <token>
+ckgit-runner 1 heartbeat <job-id> <token>
+ckgit-runner 1 put <job-id> <token> <kind> <name> <offset> <total> <sha256>
+ckgit-runner 1 finish <job-id> <token>
+ckgit-runner 1 abandon <job-id> <token>
+```
+
+Tokens are unquoted `[A-Za-z0-9._-]`; a command is at most 1024 bytes and ten
+tokens. `wait-seconds` is a canonical decimal from 0 to 120; `job-id` is a CI
+run id; `token` is the 32 lowercase hex characters a claim returned; `kind` is
+`artifact`, `asset`, or `pages`; `name` is an artifact name (`site` for
+`pages`); `offset` and `total` are canonical decimals with `offset <= total`;
+`sha256` is 64 lowercase hex characters.
+
+- `hello` records the runner's build version and last contact and answers
+  `ok` with the protocol version.
+- `claim` answers `none`, or `job` followed by `key=value` lines: the job, its
+  lease token and length, the server's limits, the release tag and
+  default-branch flag, each sister resolved to a commit, and the workflow text
+  (hex). It long-polls up to `wait-seconds`, woken by the queue's change
+  notification. A disabled runner always gets `none`. Jobs that end without
+  running (a cancel while queued, no workflow, a ref that is no trigger) are
+  finished on the server and never handed out.
+- `upload-pack` runs `git-upload-pack` for the claimed job's project or one of
+  the sisters its workflow declares, allowing any reachable commit to be
+  fetched by hash; it is what a runner's Git fetch talks to.
+- `stream` is one long-lived session per run. The server first sends
+  `held <step> <bytes>` for each step log it already holds, then `ready`. The
+  runner then sends lines `started <epoch>`, `step-start <n> <name-hex>`,
+  `log <n> <offset> <length>` followed by exactly `<length>` (at most 65536)
+  raw bytes, `step-end <n> <exit> <timed-out> <truncated> <name-hex>`,
+  `heartbeat`, and `progress <detail-hex>` (an empty hex field is `-`). The
+  server appends a log frame only at the offset its file ends (an overlapping
+  frame is stored once; a gap is answered with `held <n> <bytes>`), applies its
+  own log cap, keeps the run record current, and answers `ack <n> <bytes>`,
+  `cancel` when a cancel was requested, and `lease-lost` when the job was
+  requeued.
+- `heartbeat` renews the lease outside a stream (during uploads) and answers
+  `ok`, `cancel`, or `lease-lost`.
+- `put` appends its stdin (at most 4 MiB) to a staged upload at `offset`; the
+  first chunk announces `total` and `sha256`, the cap is checked against
+  `total` before any byte is stored, and a chunk the server already holds is
+  ignored. It answers `ok <bytes-held>`.
+- `finish` reads the final record from stdin (`status=`, `started_epoch=`,
+  `detail_hex=`, then `step=` and `output=` lines), verifies every staged
+  upload, commits artifacts, the release and the Pages site, releases the job,
+  and answers `ok <status>`.
+- `abandon` hands the job back to the queue at once.
+
+Every operation on a job is refused (`lease-lost`, or `error lease-lost`)
+unless the job is claimed by this runner under this token.
+
 ## Compatibility rule
 
 An unknown major protocol version is rejected.  A future compatible operation

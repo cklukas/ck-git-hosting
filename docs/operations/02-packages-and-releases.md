@@ -7,6 +7,7 @@
 | `ck-git-hosting_V_arm64.deb`, `ck-git-hosting_V_amd64.deb` | `packaging/build-deb.sh` in a Debian 13 container | Debian 13 servers, including Raspberry Pi 4/5 on arm64 |
 | `ckgit_V_arm64.deb`, `ckgit_V_amd64.deb` | same | Debian 13 clients |
 | `ckdocs_V_arm64.deb`, `ckdocs_V_amd64.deb` | same | the documentation-site generator, standalone (no file overlap with the other two, so it installs anywhere independently) |
+| `ck-git-runner_V_arm64.deb`, `ck-git-runner_V_amd64.deb` | same | a [remote CI runner](ci-remote-runners.md) for another machine (its own binary path, account and unit; no file overlap with the server package) |
 | `ck-git-hosting-V-linux-{arm64,amd64}.tar.gz` | `packaging/build-tarball.sh` | other systemd distributions with glibc 2.41 or newer; carries `bin/ckdocs` too |
 | `ckgit-V-macos-{arm64,x86_64}.tar.gz` | same, `--client-only` | macOS clients; carries `bin/ckdocs` too |
 | `ck-git-hosting-V-source.tar.gz` | `git archive` | Homebrew formula source |
@@ -28,7 +29,7 @@ own hosted `ckgit` remote produces the two channels side by side -- see
 - Linux amd64 and arm64 with GCC and Clang: strict `-Werror` build plus the
   unit and integration suites (`make all check`).
 - macOS Apple silicon and Intel: the same.
-- Debian 13 container on both architectures: builds all three packages, runs
+- Debian 13 container on both architectures: builds all four packages, runs
   `lintian` for information, installs them with `apt`, confirms the daemon,
   CI runner, Pages, and ckdocs binaries and units are in place, creates a
   device key line and a project, removes the packages while verifying that

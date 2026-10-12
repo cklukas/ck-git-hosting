@@ -59,6 +59,8 @@ itself adds:
 | `CKGIT_CI` | `1` |
 | `CKGIT_COMMIT` | the full commit id under build |
 | `CKGIT_REF` | the pushed ref, e.g. `refs/heads/master` or `refs/tags/v1.0.0` |
+| `CKGIT_BRANCH` | for a branch build, the branch name (`master`); absent for a tag build |
+| `CKGIT_TAG` | for a tag build, the tag name (`v1.0.0`); absent for a branch build |
 
 `CKGIT_CI` (not the generic `CI`) is the one to test for "am I running
 inside this project's own sandbox" specifically — a test that needs to skip
@@ -100,10 +102,10 @@ namespace, on a throwaway checkout under `/mnt`:
 
 | Path | Contents |
 |---|---|
-| `/mnt/src` | the checkout — also the step's working directory |
+| `/mnt/src` | the checkout, a shallow Git clone of the commit under build (see [Checkout and history](../operations/06-ci-yml-reference.md#checkout-and-history)) — also the step's working directory |
 | `/mnt/home` | `HOME`; always created, sandboxed or not |
 | `/mnt/tmp` | `TMPDIR`; always created, sandboxed or not |
-| `/mnt/<sister-name>` | each declared sister's read-only source, sibling of `src` — reachable from inside the checkout as `../<sister-name>` |
+| `/mnt/<sister-name>` | each declared sister's source, a shallow Git clone of its resolved commit, sibling of `src` — reachable from inside the checkout as `../<sister-name>` |
 | `/mnt/.cache/<cache-name>` | each declared cache, whether persisted across runs (`ci_cache_root` configured) or ephemeral (this run only) |
 
 **What gets masked.** The step's mount namespace also covers every one of
@@ -114,8 +116,9 @@ records, run spool, and release metadata), the CI build root (other runs'
 scratch trees), the cache root (other projects' persistent caches — this
 project's own is exempted, since it is bound in before the mask is applied),
 the Pages storage root, and the directory containing every hosted project's
-bare repository. A path that does not exist is silently skipped rather than
-failing the step.
+bare repository. On a remote runner, the runner's own SSH key directory is
+masked the same way. A path that does not exist is silently skipped rather
+than failing the step.
 
 **Networking.** Unless `ci_allow_network=true`, the step gets its own
 network namespace with only loopback (`127.0.0.1`/`::1`) brought up — no
@@ -142,19 +145,22 @@ silently pretending the isolation happened; see
 
 ## Version-stamping recipe
 
-The sandbox checkout comes from `git archive`, so it has no `.git`
-directory and no way to run `git describe` inside a step. Two things work
-around that, and this project's own `.ckgit/ci.yml` uses both:
+The checkout is a shallow Git clone, so `git rev-parse HEAD` always works and
+`git describe` works as far as its history reaches (a tag build fetches its own
+tag; ask for more with `checkout.depth` or `checkout.tags`). Two things work
+without any Git history at all — for `mode: archive`, an older runner that
+produced a plain tree, or a source tarball built by hand — and this project's
+own `.ckgit/ci.yml` uses both:
 
 - **`CKGIT_COMMIT`** ([§6](#environment)) is the exact commit id, supplied
   by the runner directly — no git command needed inside the sandbox at all.
 - **`.ckgit/build-commit`**, a one-line file containing the `git archive`
   `export-subst` placeholder `$Format:%H$`, with the matching
-  `.gitattributes` line `/.ckgit/build-commit export-subst`. Because the
-  runner materializes every checkout with `git archive`, that placeholder is
-  substituted with the real archived commit hash in the tree a step actually
-  sees — a fallback that also works for an older runner build that predates
-  the `CKGIT_COMMIT` export, or for a source tarball built entirely by hand
+  `.gitattributes` line `/.ckgit/build-commit export-subst`. In anything
+  produced with `git archive` — an older runner's checkout, a release source
+  tarball — that placeholder is substituted with the real archived commit
+  hash: a fallback that also works for a runner that predates the
+  `CKGIT_COMMIT` export, or for a source tarball built entirely by hand
   outside any CI system.
 
 This project's own Makefile (`CKGIT_BUILD_VERSION`) is the worked example: it

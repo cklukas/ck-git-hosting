@@ -31,7 +31,10 @@ required for the service; the rest are optional with the defaults shown.
 ci_build_root=/var/lib/ck-git-hosting/ci-build
 # ci_timeout_seconds=1800            # per-step wall-clock budget (1..86400)
 # ci_max_log_bytes=1048576           # per-step captured-output cap (1024..1073741824)
-# ci_poll_seconds=5                  # spool poll interval (1..3600)
+# ci_rescan_seconds=300              # safety rescan behind the queue notifications (10..3600)
+# ci_claim_delay_ms=1000             # leave a new job this long for a free remote runner (0..60000)
+# ci_lease_seconds=90                # a claim lapses without renewal after this long (10..3600)
+# ci_max_attempts=2                  # attempts before a job whose runner keeps getting lost is an error (1..10)
 # ci_allow_network=false             # true skips network isolation: the step shares the host's real network
 # ci_cache_root=/var/lib/ck-git-hosting/ci-cache   # persist `cache:` dirs (ccache, ...) across runs; unset = per-run
 # --- artifact retention (enforced by the runner's periodic sweep) ---
@@ -66,6 +69,22 @@ echo the CI keys):
 ```text
 sudo ck-git-hostingd --config /etc/ck-git-hosting/server.ini --check
 ```
+
+`ci_poll_seconds` from earlier versions is still accepted: the runner no longer
+polls the spool but is woken by a change notification on it (inotify), with a
+slow `ci_rescan_seconds` rescan behind it; only where notifications are
+unavailable does it fall back to rescanning every `ci_poll_seconds` (default 5).
+
+### Leases and requeueing
+
+A claimed job carries a lease, renewed while the run is in progress. When it
+lapses -- the runner crashed, or a remote runner went to sleep or lost the
+network -- the job goes back into the queue as its next attempt (its run shows
+Pending again and the lost attempt's step logs are kept aside in the run
+directory as `attempt-<n>/`), until `ci_max_attempts` is used up and the run is
+recorded as an error. A restarted runner requeues whatever it held before at
+once. Remote runners, which share this queue, are described in
+[Share CI load with remote runners](ci-remote-runners.md).
 
 Restart the runner after changing any CI key:
 
