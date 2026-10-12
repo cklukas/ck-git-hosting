@@ -280,6 +280,39 @@ void testSisters() {
   require(rejected("version: 1\nsisters:\n  - name: ckmath\n    ref: 'a..b'\n" + base), "range ref rejected");
 }
 
+// R2a: how much history a checkout and each sister carry.
+void testCheckoutOptions() {
+  const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  const ckgit::CiWorkflow plain = ckgit::parseCiWorkflow("version: 1" + base);
+  require(plain.checkout.depth == 1 && plain.checkout.since.empty() && !plain.checkout.tags &&
+              !plain.checkout.archive,
+          "the default checkout is a depth-1 Git clone without tags");
+  const ckgit::CiWorkflow deep =
+      ckgit::parseCiWorkflow("version: 1\ncheckout:\n  depth: 50\n  tags: true\n" + base);
+  require(deep.checkout.depth == 50 && deep.checkout.tags, "depth and tags parse");
+  require(ckgit::parseCiWorkflow("version: 1\ncheckout: { depth: 0 }" + base).checkout.depth == 0,
+          "depth 0 asks for the full history");
+  const ckgit::CiWorkflow since = ckgit::parseCiWorkflow("version: 1\ncheckout: { since: 2026-01-31 }" + base);
+  require(since.checkout.since == "2026-01-31", "since parses");
+  require(ckgit::parseCiWorkflow("version: 1\ncheckout: { mode: archive }" + base).checkout.archive,
+          "archive mode parses");
+  const ckgit::CiWorkflow sister = ckgit::parseCiWorkflow(
+      "version: 1\nsisters:\n  - libx\n  - name: liby\n    ref: v1\n    depth: 200\n    tags: true\n" + base);
+  require(sister.sisters[0].checkout.depth == 1, "a bare sister is a depth-1 clone");
+  require(sister.sisters[1].checkout.depth == 200 && sister.sisters[1].checkout.tags && sister.sisters[1].ref == "v1",
+          "a sister can ask for more history of its commit");
+  require(rejected("version: 1\ncheckout: { depth: 5, since: 2026-01-01 }" + base), "depth and since together rejected");
+  require(rejected("version: 1\ncheckout: { depth: -1 }" + base), "negative depth rejected");
+  require(rejected("version: 1\ncheckout: { depth: 100001 }" + base), "depth over the bound rejected");
+  require(rejected("version: 1\ncheckout: { since: yesterday }" + base), "non-date since rejected");
+  require(rejected("version: 1\ncheckout: { since: 2026-13-01 }" + base), "impossible month rejected");
+  require(rejected("version: 1\ncheckout: { tags: yes }" + base), "non-boolean tags rejected");
+  require(rejected("version: 1\ncheckout: { mode: svn }" + base), "unknown mode rejected");
+  require(rejected("version: 1\ncheckout: { submodules: true }" + base), "unknown checkout key rejected");
+  require(rejected("version: 1\nsisters:\n  - name: liby\n    mode: archive\n" + base),
+          "a sister has no archive mode");
+}
+
 void testCaches() {
   const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
   // A flow list of bare cache names.
@@ -347,6 +380,7 @@ void testCiWorkflow() {
   testPagesWorkflow();
   testSisters();
   testCaches();
+  testCheckoutOptions();
   testRejections();
   testBounds();
   testReferenceDocMatchesConstants();

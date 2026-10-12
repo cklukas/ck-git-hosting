@@ -92,6 +92,65 @@ bool isValidCiName(std::string_view name) {
          });
 }
 
+// A YYYY-MM-DD calendar date, as git --shallow-since takes it.
+bool isValidIsoDate(std::string_view value) {
+  if (value.size() != 10 || value[4] != '-' || value[7] != '-') return false;
+  for (const std::size_t index : {0u, 1u, 2u, 3u, 5u, 6u, 8u, 9u}) {
+    if (value[index] < '0' || value[index] > '9') return false;
+  }
+  const int month = (value[5] - '0') * 10 + (value[6] - '0');
+  const int day = (value[8] - '0') * 10 + (value[9] - '0');
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+bool interpretBoolean(const Node& node, const char* what) {
+  const std::string& value = requireKind(node, Node::Kind::Scalar, what).scalar;
+  if (value == "true") return true;
+  if (value == "false") return false;
+  malformed(std::string(what) + " (true or false)", node.line);
+}
+
+// The history keys shared by `checkout:` and a sister mapping: depth, since,
+// and tags. `depth` and `since` are two ways to say how deep, so only one may
+// be given.
+void interpretHistory(const Node& mapping, CiCheckout* checkout) {
+  const Node* depth = findEntry(mapping, "depth");
+  const Node* since = findEntry(mapping, "since");
+  if (depth != nullptr && since != nullptr) malformed("give either 'depth' or 'since', not both", mapping.line);
+  if (depth != nullptr) {
+    const std::string& text = requireKind(*depth, Node::Kind::Scalar, "depth to be a number").scalar;
+    unsigned value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (text.empty() || error != std::errc{} || end != text.data() + text.size() ||
+        value > kMaximumCiCheckoutDepth) {
+      malformed("depth must be 0 (full history) to " + std::to_string(kMaximumCiCheckoutDepth), mapping.line);
+    }
+    checkout->depth = value;
+  }
+  if (since != nullptr) {
+    const std::string& text = requireKind(*since, Node::Kind::Scalar, "since to be a date").scalar;
+    if (!isValidIsoDate(text)) malformed("since must be a date like 2026-01-31", mapping.line);
+    checkout->since = text;
+  }
+  if (const Node* tags = findEntry(mapping, "tags")) checkout->tags = interpretBoolean(*tags, "tags must be a boolean");
+}
+
+CiCheckout interpretCheckout(const Node& node) {
+  requireKind(node, Node::Kind::Mapping, "checkout to be a mapping");
+  rejectUnknownKeys(node, {"depth", "since", "tags", "mode"});
+  CiCheckout checkout;
+  interpretHistory(node, &checkout);
+  if (const Node* mode = findEntry(node, "mode")) {
+    const std::string& value = requireKind(*mode, Node::Kind::Scalar, "checkout mode to be a scalar").scalar;
+    if (value == "archive") {
+      checkout.archive = true;
+    } else if (value != "git") {
+      malformed("checkout mode must be 'git' or 'archive'", node.line);
+    }
+  }
+  return checkout;
+}
+
 CiEnv interpretEnv(const Node& node) {
   requireKind(node, Node::Kind::Mapping, "env to be a mapping of name: value");
   if (node.entries.size() > kMaximumCiEnvEntries) tooLarge("env has too many entries");
@@ -209,7 +268,7 @@ CiJob interpretJob(const Node& node) {
 
 CiWorkflow interpret(const Node& root) {
   requireKind(root, Node::Kind::Mapping, "the workflow to be a mapping");
-  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "cache", "jobs", "pages"});
+  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "checkout", "cache", "jobs", "pages"});
 
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the workflow is missing 'version'", root.line);
@@ -263,7 +322,7 @@ CiWorkflow interpret(const Node& root) {
       if (item.kind == Node::Kind::Scalar) {
         sister.name = item.scalar;
       } else if (item.kind == Node::Kind::Mapping) {
-        rejectUnknownKeys(item, {"name", "ref"});
+        rejectUnknownKeys(item, {"name", "ref", "depth", "since", "tags"});
         const Node* name = findEntry(item, "name");
         if (name == nullptr) malformed("a sister needs a 'name'", item.line);
         sister.name = requireKind(*name, Node::Kind::Scalar, "a sister name to be a scalar").scalar;
@@ -271,6 +330,7 @@ CiWorkflow interpret(const Node& root) {
           sister.ref = requireKind(*ref, Node::Kind::Scalar, "a sister ref to be a scalar").scalar;
           if (!isValidSisterRef(sister.ref)) malformed("invalid sister ref '" + sister.ref + "'", item.line);
         }
+        interpretHistory(item, &sister.checkout);
       } else {
         malformed("each sister to be a name or a { name, ref } mapping", item.line);
       }
@@ -279,6 +339,8 @@ CiWorkflow interpret(const Node& root) {
       workflow.sisters.push_back(std::move(sister));
     }
   }
+
+  if (const Node* checkout = findEntry(root, "checkout")) workflow.checkout = interpretCheckout(*checkout);
 
   if (const Node* caches = findEntry(root, "cache")) {
     requireKind(*caches, Node::Kind::Sequence, "cache to be a list");

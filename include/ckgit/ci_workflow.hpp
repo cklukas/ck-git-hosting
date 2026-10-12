@@ -65,6 +65,8 @@ inline constexpr std::size_t kMaximumCiCacheEnv = 8;
 // A parser sanity bound on a workflow's retention_days; the runner clamps the
 // effective value to the server's configured maximum.
 inline constexpr unsigned kMaximumCiRetentionDaysCap = 3650;
+// The deepest finite history a checkout may ask for (0 means full history).
+inline constexpr unsigned kMaximumCiCheckoutDepth = 100000;
 
 // How the shared YAML subset is bounded and named when it reads a workflow:
 // the limits above, applied by the parser, plus the "ci workflow: ..." wording
@@ -119,13 +121,29 @@ struct CiJob {
   std::optional<CiArtifact> artifact;
 };
 
+// How much Git history a checkout carries. Every checkout is a shallow Git
+// clone of exactly the commit under build, `depth` commits deep (1 = only that
+// commit, 0 = the full history), or with `since` set, every commit since that
+// date (YYYY-MM-DD) instead. `tags` also fetches the tags inside that history,
+// for `git describe`. `archive` drops the .git directory afterwards: the plain
+// tree a runner produced before checkouts were Git clones.
+struct CiCheckout {
+  unsigned depth = 1;
+  std::string since;
+  bool tags = false;
+  bool archive = false;
+};
+
 // One sister project a workflow depends on: another project hosted on this same
 // server whose source is materialised beside the checkout. `ref` pins it to a
 // branch, tag, or commit; empty means the project's current default branch.
 // The project may name itself, but only with a `ref` (another of its branches).
+// `checkout` sets how much of the sister's history comes along (its `archive`
+// is never set: a sister is always a Git clone like the main checkout).
 struct CiSister {
   std::string name;
   std::string ref;  // empty = default-branch HEAD
+  CiCheckout checkout;
 };
 
 // One build cache a workflow keeps across runs: a persistent, project-scoped
@@ -157,6 +175,9 @@ struct CiWorkflow {
   // `CKGIT_SISTER_<NAME>`. Nothing leaves the server and no network is used —
   // see runCiWorkflow. Empty means none.
   std::vector<CiSister> sisters;
+  // How the commit under build is checked out (see CiCheckout); the default is
+  // a depth-1 Git clone.
+  CiCheckout checkout;
   // Persistent build caches this workflow keeps across runs. See CiCache and
   // runCiWorkflow.
   std::vector<CiCache> caches;

@@ -116,6 +116,7 @@ struct CiSandboxReport {
 struct CiResolvedSister {
   std::string name;
   std::string commit;
+  CiCheckout checkout;  // the history the workflow asked for
 };
 
 // A queued job as the main host has prepared it for whichever runner executes
@@ -147,16 +148,38 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
 
 // --- executing a job (on any runner) ----------------------------------------
 
-// Where a run's source comes from. The primary reads the server's own bare
-// repositories; a remote runner fetches through the server.
+// One checkout a run needs: the project and the exact commit, how much history
+// to bring along, and -- for the run's own project only -- the ref under build,
+// so a tag build also gets its tag and a branch build an origin/<branch> ref.
+struct CiCheckoutRequest {
+  std::string project;
+  std::string commit;
+  CiCheckout spec;
+  std::string ref;  // empty for a sister
+};
+
+// Where a run's source comes from. The primary fetches from the server's own
+// bare repositories; a remote runner fetches through the server. Either way a
+// checkout is a shallow Git clone made by cloneCiCheckout.
 class CiSourceProvider {
  public:
   virtual ~CiSourceProvider() = default;
-  // Materialises `commit` of `project` into the empty directory `destination`.
-  // Throws std::runtime_error with a short reason when it cannot.
-  virtual void checkout(const std::string& project, const std::string& commit,
-                        const std::filesystem::path& destination) = 0;
+  // Materialises the request into the empty directory `destination`. Throws
+  // std::runtime_error with a short reason when it cannot.
+  virtual void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) = 0;
 };
+
+// Makes the shallow clone a CiSourceProvider promises: `git init`, a fetch of
+// exactly `request.commit` from `url` at the requested depth (plus the build's
+// tag, or every tag when asked), a detached checkout, and for a branch build
+// refs/remotes/origin/<branch>. No hooks, submodules, or user or system Git
+// configuration take part. `environment` adds KEY=VALUE pairs to every git
+// process (a remote runner's GIT_SSH_COMMAND); `upload_pack` replaces the
+// remote's git-upload-pack command (the primary uses it to allow fetching any
+// reachable commit by hash). With spec.archive the .git directory is removed
+// afterwards.
+void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                     const std::vector<std::string>& environment = {}, const std::string& upload_pack = {});
 
 // Where a run's progress and results go. The primary writes the server's state
 // root directly; a remote runner relays everything to the server. The executor
@@ -223,8 +246,7 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
 class LocalCiSource : public CiSourceProvider {
  public:
   LocalCiSource(std::filesystem::path repository, std::string project_name);
-  void checkout(const std::string& project, const std::string& commit,
-                const std::filesystem::path& destination) override;
+  void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) override;
 
  private:
   std::filesystem::path repository_;

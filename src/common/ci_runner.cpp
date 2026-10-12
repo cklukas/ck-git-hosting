@@ -156,25 +156,6 @@ std::optional<std::string> readWorkflowBlob(const std::filesystem::path& reposit
   return result.output;
 }
 
-// Materialises the commit's tree into `scratch` via `git archive | tar -x`,
-// which runs no checkout hooks and pulls in no submodules.
-void checkoutCommit(const std::filesystem::path& repository, const std::string& commit,
-                    const std::filesystem::path& scratch, const std::filesystem::path& tar_path) {
-  ProcessOptions options;
-  options.timeout = std::chrono::seconds(120);
-  const ProcessResult archive = runProcess(
-      {"git", "--git-dir", repository.string(), "archive", "--format=tar", "--output", tar_path.string(),
-       commit},
-      options);
-  if (archive.exit_code != 0 || archive.timed_out) {
-    throw std::runtime_error("git archive failed for commit " + commit);
-  }
-  const ProcessResult extract =
-      runProcess({"tar", "-xf", tar_path.string(), "-C", scratch.string()}, options);
-  if (extract.exit_code != 0 || extract.timed_out) throw std::runtime_error("unpacking the commit failed");
-  std::error_code error;
-  std::filesystem::remove(tar_path, error);
-}
 
 // Base + workflow + job + caller env, later definitions winning, as KEY=VALUE.
 std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& ci_job, const CiJobRequest& job,
@@ -190,10 +171,12 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& ci_jo
       {"CKGIT_CI", "1"},
       {"CI", "true"},
       // The commit and ref under build, so a step can stamp a reliable version
-      // into the artifacts (the sandbox has no .git for `git describe`).
+      // into the artifacts even from a depth-1 checkout or `mode: archive`.
       {"CKGIT_COMMIT", job.commit_id},
       {"CKGIT_REF", job.ref},
   };
+  if (job.ref.rfind("refs/heads/", 0) == 0) ordered.emplace_back("CKGIT_BRANCH", job.ref.substr(11));
+  if (job.ref.rfind("refs/tags/", 0) == 0) ordered.emplace_back("CKGIT_TAG", job.ref.substr(10));
   const auto put = [&ordered](const std::string& key, const std::string& value) {
     for (auto& entry : ordered) {
       if (entry.first == key) { entry.second = value; return; }
@@ -798,6 +781,71 @@ CacheProvision provisionCaches(const CiWorkflow& workflow, const std::string& pr
 
 }  // namespace
 
+void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                     const std::vector<std::string>& environment, const std::string& upload_pack) {
+  if (!isValidObjectId(request.commit)) throw std::runtime_error("invalid commit for checkout");
+  // Every git process runs with a scrubbed configuration: no system or user
+  // config, no prompts, and no hooks (fetch and checkout run none here anyway).
+  std::vector<std::string> base = {"env", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+                                   "GIT_TERMINAL_PROMPT=0", "LANG=C"};
+  base.insert(base.end(), environment.begin(), environment.end());
+  base.insert(base.end(), {"git", "-c", "core.hooksPath=/dev/null", "-c", "advice.detachedHead=false"});
+  const auto git = [&](std::vector<std::string> arguments, std::chrono::seconds timeout, const std::string& what) {
+    std::vector<std::string> command = base;
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    ProcessOptions options;
+    options.timeout = timeout;
+    options.output_limit = 64 * 1024;
+    const ProcessResult result = runProcess(command, options);
+    if (result.timed_out || result.exit_code != 0) {
+      std::string reason = result.output;
+      while (!reason.empty() && (reason.back() == '\n' || reason.back() == '\r')) reason.pop_back();
+      const std::size_t last = reason.rfind('\n');
+      if (last != std::string::npos) reason = reason.substr(last + 1);
+      throw std::runtime_error(what + (result.timed_out ? " timed out" : " failed") +
+                               (reason.empty() ? "" : ": " + reason.substr(0, 200)));
+    }
+  };
+  const std::string dir = destination.string();
+  git({"init", "--quiet", "--initial-branch=ckgit-ci", dir}, std::chrono::seconds(30), "git init");
+  std::vector<std::string> fetch = {"-C", dir, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules"};
+  if (!request.spec.since.empty()) {
+    fetch.push_back("--shallow-since=" + request.spec.since);
+  } else if (request.spec.depth != 0) {
+    fetch.push_back("--depth=" + std::to_string(request.spec.depth));
+  }
+  if (!upload_pack.empty()) fetch.push_back("--upload-pack=" + upload_pack);
+  fetch.push_back("--end-of-options");
+  fetch.push_back(url);
+  fetch.push_back(request.commit);
+  if (request.spec.tags) fetch.push_back("+refs/tags/*:refs/tags/*");
+  git(fetch, std::chrono::seconds(1800), "git fetch of " + request.project);
+  if (!request.spec.tags && request.ref.rfind("refs/tags/", 0) == 0) {
+    // The build's own tag too, so `git describe` names it even at depth 1.
+    // Best-effort: the commit is what the run needs, and the tag may already
+    // have been deleted or moved since the push.
+    fetch.pop_back();
+    fetch.push_back("+" + request.ref + ":" + request.ref);
+    try {
+      git(fetch, std::chrono::seconds(300), "git fetch of " + request.ref);
+    } catch (const std::exception&) {
+    }
+  }
+  git({"-C", dir, "checkout", "--quiet", "--detach", request.commit}, std::chrono::seconds(600), "git checkout");
+  if (request.ref.rfind("refs/heads/", 0) == 0) {
+    const std::string branch = request.ref.substr(11);
+    if (isValidBranchName(branch)) {
+      git({"-C", dir, "update-ref", "refs/remotes/origin/" + branch, request.commit}, std::chrono::seconds(30),
+          "git update-ref");
+    }
+  }
+  if (request.spec.archive) {
+    std::error_code error;
+    std::filesystem::remove_all(destination / ".git", error);
+    if (error) throw std::runtime_error("could not drop .git for an archive checkout");
+  }
+}
+
 bool ciSandboxCompiledIn() {
 #if defined(__linux__)
   return true;
@@ -885,7 +933,7 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
       std::string commit = resolved.output;
       while (!commit.empty() && (commit.back() == '\n' || commit.back() == '\r')) commit.pop_back();
       if (!isValidObjectId(commit)) throw std::runtime_error("sister project '" + sister.name + "' did not resolve");
-      prepared.sisters.push_back(CiResolvedSister{sister.name, commit});
+      prepared.sisters.push_back(CiResolvedSister{sister.name, commit, sister.checkout});
     }
   } catch (const std::exception& error) {
     return outcome(CiRunStatus::Error, std::string("sisters: ") + error.what());
@@ -973,7 +1021,7 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
     std::filesystem::remove_all(scratch, error);
     std::filesystem::create_directories(scratch / "src", error);
     if (error) throw std::runtime_error("could not create the scratch workspace");
-    source.checkout(job.project_name, job.commit_id, scratch / "src");
+    source.checkout(CiCheckoutRequest{job.project_name, job.commit_id, workflow.checkout, job.ref}, scratch / "src");
   } catch (const std::exception& error) {
     removeScratch();
     return finish(CiRunStatus::Error, std::string("setup: ") + error.what());
@@ -1011,7 +1059,7 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       std::error_code error;
       std::filesystem::create_directories(destination, error);
       if (error) throw std::runtime_error("could not create the sister workspace for '" + sister.name + "'");
-      source.checkout(sister.name, sister.commit, destination);
+      source.checkout(CiCheckoutRequest{sister.name, sister.commit, sister.checkout, {}}, destination);
       run_env.push_back(sisterEnvName(sister.name) + "=" + (visible_root / sister.name).string());
     }
   } catch (const std::exception& error) {
@@ -1187,12 +1235,15 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
 LocalCiSource::LocalCiSource(std::filesystem::path repository, std::string project_name)
     : repository_(std::move(repository)), project_name_(std::move(project_name)) {}
 
-void LocalCiSource::checkout(const std::string& project, const std::string& commit,
-                             const std::filesystem::path& destination) {
-  if (!isValidProjectName(project) || !isValidObjectId(commit)) throw std::runtime_error("invalid checkout request");
+void LocalCiSource::checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) {
+  if (!isValidProjectName(request.project)) throw std::runtime_error("invalid checkout request");
   const std::filesystem::path repository =
-      project == project_name_ ? repository_ : repository_.parent_path() / (project + ".git");
-  checkoutCommit(repository, commit, destination, destination.parent_path() / ("." + project + ".checkout.tar"));
+      request.project == project_name_ ? repository_ : repository_.parent_path() / (request.project + ".git");
+  // file:// rather than a plain path: only a transport honours --depth. The
+  // repository's upload-pack is allowed to serve any reachable commit by hash,
+  // so the run gets exactly its commit even after the branch moved on.
+  cloneCiCheckout("file://" + std::filesystem::absolute(repository).string(), request, destination, {},
+                  "git -c uploadpack.allowAnySHA1InWant=true upload-pack");
 }
 
 LocalCiSink::LocalCiSink(const CiRunnerOptions& options, const CiPreparedJob& prepared)

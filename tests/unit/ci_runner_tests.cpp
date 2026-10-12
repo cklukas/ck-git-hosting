@@ -689,6 +689,82 @@ void testPrepareOnMainHost() {
   require(!tag.prepared.has_value() && tag.status == ckgit::CiRunStatus::Skipped,
           "a tag the workflow does not list is skipped");
 }
+// R2a: the checkout is a shallow Git clone of exactly the commit under build,
+// as deep as the workflow asks, with the build's ref available.
+void testCheckoutIsShallowClone() {
+  RunnerFixture fixture;
+  fixture.commit("one\n", "a.txt");
+  fixture.commit("two\n", "b.txt");
+  const std::string shallow = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: test -d .git && test \"$(git rev-list --count HEAD)\" = 1 && "
+      "test \"$(git rev-parse HEAD)\" = \"$CKGIT_COMMIT\" && git rev-parse -q --verify origin/main && "
+      "test \"$CKGIT_BRANCH\" = main\n");
+  const ckgit::CiRunRecord one = ckgit::runCiWorkflow(fixture.options(shallow));
+  require(one.status == ckgit::CiRunStatus::Success,
+          "the default checkout is a depth-1 clone of the commit with origin/main (detail=" + one.detail + ")");
+
+  const std::string deeper = fixture.commit(
+      "version: 1\n"
+      "checkout: { depth: 3 }\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: test \"$(git rev-list --count HEAD)\" = 3\n");
+  require(ckgit::runCiWorkflow(fixture.options(deeper)).status == ckgit::CiRunStatus::Success,
+          "checkout.depth brings exactly that many commits");
+
+  const std::string full = fixture.commit(
+      "version: 1\n"
+      "checkout: { depth: 0 }\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: test \"$(git rev-list --count HEAD)\" -ge 5 && test ! -f .git/shallow\n");
+  require(ckgit::runCiWorkflow(fixture.options(full)).status == ckgit::CiRunStatus::Success,
+          "depth 0 brings the full history");
+
+  const std::string archive = fixture.commit(
+      "version: 1\n"
+      "checkout: { mode: archive }\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: test ! -e .git && test -f a.txt\n");
+  require(ckgit::runCiWorkflow(fixture.options(archive)).status == ckgit::CiRunStatus::Success,
+          "archive mode leaves a plain tree");
+}
+
+// R2a: a tag build sees its own tag (git describe works at depth 1), and a
+// sister can bring more of its history than the default single commit.
+void testCheckoutTagAndSisterDepth() {
+  RunnerFixture fixture;
+  fixture.commit("other-1\n", "marker.txt");
+  fixture.commit("other-2\n", "marker.txt");
+  fixture.git({"branch", "other"});
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "on: { branches: [main], tags: ['v*'] }\n"
+      "sisters:\n"
+      "  - name: demo\n"
+      "    ref: other\n"
+      "    depth: 2\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: test \"$(git describe --tags --exact-match)\" = v3.1 && test \"$CKGIT_TAG\" = v3.1 && "
+      "test \"$(git -C ../demo rev-list --count HEAD)\" = 2 && grep -q other-2 ../demo/marker.txt\n");
+  fixture.git({"-c", "user.email=t@example.invalid", "-c", "user.name=Test", "tag", "-a", "v3.1", "-m", "notes"});
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.ref = "refs/tags/v3.1";
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Success,
+          "a tag build describes its tag and the sister has the requested depth (detail=" + record.detail + ")");
+}
+
 }  // namespace
 
 void testCiRunner() {
@@ -714,4 +790,6 @@ void testCiRunner() {
   testPagesNotPublishedOnFeatureBranch();
   testPagesPublishFailureFailsRun();
   testPrepareOnMainHost();
+  testCheckoutIsShallowClone();
+  testCheckoutTagAndSisterDepth();
 }
