@@ -243,6 +243,7 @@ int heartbeat(const ServerConfig& config, const std::string& runner, const CiRun
     writeAll(out, "lease-lost\n");
     return 0;
   }
+  noteCiRunnerSeen(state, runner, {});
   writeAll(out, isCiCancelRequested(state, claim->job.project_name, claim->job.job_id) ? "cancel\n" : "ok\n");
   return 0;
 }
@@ -318,7 +319,7 @@ class StreamSession {
  public:
   StreamSession(const ServerConfig& config, const std::string& runner, const CiRunnerCommand& command,
                 const CiClaim& claim, int out)
-      : config_(config), command_(command), job_(claim.job), out_(out), state_(stateRoot(config)) {
+      : config_(config), runner_(runner), command_(command), job_(claim.job), out_(out), state_(stateRoot(config)) {
     max_log_ = config.ci_max_log_bytes.value_or(1u << 20);
     if (std::optional<CiRunRecord> existing = loadCiRun(state_, job_.project_name, job_.job_id)) {
       record_ = *existing;
@@ -488,6 +489,13 @@ class StreamSession {
         return false;
       }
       write(false);
+      // A busy runner is in contact too: keep its last-seen current for the
+      // runners page, at most once a minute.
+      const std::uint64_t now = nowEpoch();
+      if (now - last_seen_note_ >= 60) {
+        last_seen_note_ = now;
+        noteCiRunnerSeen(state_, runner_, {});
+      }
     } else if (kind == "progress" && tokens.size() == 2) {
       const std::optional<std::string> detail = fromHexOrDash(tokens[1], kMaximumCiDetailBytes);
       if (!detail.has_value()) throw std::runtime_error("malformed progress");
@@ -500,6 +508,7 @@ class StreamSession {
   }
 
   const ServerConfig& config_;
+  std::string runner_;
   const CiRunnerCommand& command_;
   CiJobRequest job_;
   int out_;
@@ -508,6 +517,7 @@ class StreamSession {
   CiRunRecord record_;
   std::uint64_t max_log_ = 0;
   std::uint64_t last_write_ = 0;
+  std::uint64_t last_seen_note_ = 0;
   bool cancel_sent_ = false;
 };
 

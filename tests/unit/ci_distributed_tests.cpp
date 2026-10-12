@@ -601,6 +601,9 @@ void testGatewayRun() {
   require(stolen == "lease-lost\n", "another runner cannot use the lease");
   require(gateway(config, "uconsole", "ckgit-runner 1 heartbeat " + tail, "", fixture) == "ok\n",
           "the holder's heartbeat renews the lease");
+  const auto seen = ckgit::loadCiRunnerRecord(fixture.state, "uconsole");
+  require(seen.has_value() && seen->last_seen_epoch_seconds >= epochNow() - 5,
+          "a busy runner's heartbeat keeps its last contact current");
 
   const std::string frames = "started 1700000000\nstep-start 0 " + ckgit::hexEncode("build") +
                              "\nlog 0 0 6\nhello\nlog 0 3 7\nlo\nbye\nstep-end 0 0 0 0 " +
