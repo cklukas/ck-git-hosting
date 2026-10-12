@@ -750,6 +750,47 @@ void testStreamEdges() {
           "a requeued job's stream is refused at once");
 }
 
+
+// R6: the runner registry, and a disabled (draining) runner claims nothing.
+void testRunnerRegistry() {
+  Fixture fixture;
+  const std::string commit = hostProject(fixture, "version: 1\njobs:\n  - name: a\n    steps:\n      - run: [true]\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  require(ckgit::loadCiRunnerRecords(fixture.state).empty(), "no runner is registered at first");
+  ckgit::CiRunnerRecord record;
+  record.name = "uconsole";
+  record.enabled = false;
+  ckgit::writeCiRunnerRecord(fixture.state, record);
+  require(throws([&]() {
+            ckgit::CiRunnerRecord primary;
+            primary.name = ckgit::kCiPrimaryRunnerName;
+            ckgit::writeCiRunnerRecord(fixture.state, primary);
+          }),
+          "the primary's name cannot be registered");
+  ckgit::CiJobRequest job = sampleJob(ckgit::generateCiId());
+  job.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, job);
+  require(gateway(config, "uconsole", "ckgit-runner 1 claim 0", "", fixture) == "none\n",
+          "a disabled runner claims nothing");
+  require(gateway(config, "uconsole", "ckgit-runner 1 hello " + ckgit::hexEncode("0.6.0-test"), "", fixture)
+              .rfind("ok\n", 0) == 0,
+          "hello answers");
+  const auto seen = ckgit::loadCiRunnerRecord(fixture.state, "uconsole");
+  require(seen.has_value() && !seen->enabled && seen->version == "0.6.0-test" && seen->last_seen_epoch_seconds > 0,
+          "hello records the runner's version and last contact without enabling it");
+  record.enabled = true;
+  ckgit::writeCiRunnerRecord(fixture.state, record);
+  const auto claimed = ckgit::parseCiClaimResponse(gateway(config, "uconsole", "ckgit-runner 1 claim 0", "", fixture));
+  require(claimed.has_value(), "an enabled runner claims the job");
+  const auto claims = ckgit::listCiClaims(fixture.state);
+  require(claims.size() == 1 && claims[0].lease.runner == "uconsole" && claims[0].job.job_id == job.job_id,
+          "the registry shows what each runner is working on");
+  require(ckgit::removeCiRunnerRecord(fixture.state, "uconsole") && !ckgit::removeCiRunnerRecord(fixture.state, "uconsole"),
+          "a runner record can be removed once");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -771,4 +812,5 @@ void testCiDistributed() {
   testRunnerKeyLine();
   testRunnerConfig();
   testStreamEdges();
+  testRunnerRegistry();
 }

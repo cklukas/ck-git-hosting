@@ -1196,6 +1196,124 @@ void clearCiCancel(const std::filesystem::path& state_root, std::string_view pro
   }
 }
 
+namespace {
+
+std::string serializeRunnerRecord(const CiRunnerRecord& record) {
+  return "schema_version=1\n"
+         "enabled=" + std::string(record.enabled ? "true" : "false") + "\n"
+         "last_seen_epoch=" + std::to_string(record.last_seen_epoch_seconds) + "\n"
+         "version_hex=" + hexEncode(record.version) + "\n";
+}
+
+CiRunnerRecord parseRunnerRecord(std::string_view name, std::string_view content) {
+  const std::vector<std::string_view> lines = frame(content);
+  if (lines.size() != 4 || lines[0] != "schema_version=1") fail("a runner record has the wrong shape");
+  CiRunnerRecord record;
+  record.name = std::string(name);
+  const std::string_view enabled = expectField(lines[1], "enabled=");
+  if (enabled != "true" && enabled != "false") fail("a runner record has an invalid flag");
+  record.enabled = enabled == "true";
+  record.last_seen_epoch_seconds = parseEpoch(expectField(lines[2], "last_seen_epoch="));
+  record.version = fromHex(expectField(lines[3], "version_hex="), 128);
+  return record;
+}
+
+}  // namespace
+
+void writeCiRunnerRecord(const std::filesystem::path& state_root, const CiRunnerRecord& record) {
+  if (!isValidClientId(record.name) || record.name == kCiPrimaryRunnerName || record.version.size() > 128) {
+    fail("refusing to write an invalid runner record");
+  }
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor runners_fd(ensureDirAt(ci_fd, "runners"));
+  atomicWriteAt(runners_fd, record.name + ".ini", serializeRunnerRecord(record));
+}
+
+std::optional<CiRunnerRecord> loadCiRunnerRecord(const std::filesystem::path& state_root, std::string_view name) {
+  if (!isValidClientId(name)) return std::nullopt;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return std::nullopt;
+    Descriptor runners_fd(openDirAt(ci_fd, "runners", &missing));
+    if (missing) return std::nullopt;
+    bool absent = false;
+    const std::string content = readCappedAt(runners_fd, std::string(name) + ".ini", 4096, &absent);
+    if (absent) return std::nullopt;
+    return parseRunnerRecord(name, content);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::vector<CiRunnerRecord> loadCiRunnerRecords(const std::filesystem::path& state_root) {
+  std::vector<CiRunnerRecord> records;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return records;
+    Descriptor runners_fd(openDirAt(ci_fd, "runners", &missing));
+    if (missing) return records;
+    for (const std::string& file : listNames(runners_fd)) {
+      if (!endsWith(file, ".ini")) continue;
+      const std::string name = file.substr(0, file.size() - 4);
+      if (std::optional<CiRunnerRecord> record = loadCiRunnerRecord(state_root, name)) records.push_back(*record);
+    }
+  } catch (const std::exception&) {
+  }
+  std::sort(records.begin(), records.end(),
+            [](const CiRunnerRecord& a, const CiRunnerRecord& b) { return a.name < b.name; });
+  return records;
+}
+
+bool removeCiRunnerRecord(const std::filesystem::path& state_root, std::string_view name) {
+  if (!isValidClientId(name)) return false;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  std::error_code error;
+  return std::filesystem::remove(root / "ci" / "runners" / (std::string(name) + ".ini"), error);
+}
+
+void noteCiRunnerSeen(const std::filesystem::path& state_root, std::string_view name, std::string_view version) {
+  try {
+    CiRunnerRecord record;
+    if (std::optional<CiRunnerRecord> existing = loadCiRunnerRecord(state_root, name)) record = *existing;
+    record.name = std::string(name);
+    record.last_seen_epoch_seconds = currentEpoch();
+    if (!version.empty()) record.version = std::string(version.substr(0, 128));
+    writeCiRunnerRecord(state_root, record);
+  } catch (const std::exception&) {
+  }
+}
+
+std::vector<CiClaim> listCiClaims(const std::filesystem::path& state_root) {
+  std::vector<CiClaim> claims;
+  try {
+    const std::filesystem::path root = validatedMetadataRoot(state_root);
+    Descriptor root_fd(openDir(root));
+    bool missing = false;
+    Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+    if (missing) return claims;
+    Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+    if (missing) return claims;
+    for (const std::string& file : listNames(working_fd)) {
+      if (!endsWith(file, ".ini")) continue;
+      if (std::optional<CiClaim> claim = loadCiClaim(state_root, file.substr(0, file.size() - 4))) {
+        claims.push_back(std::move(*claim));
+      }
+    }
+  } catch (const std::exception&) {
+  }
+  std::sort(claims.begin(), claims.end(),
+            [](const CiClaim& a, const CiClaim& b) { return a.job.job_id < b.job.job_id; });
+  return claims;
+}
+
 void setProjectCiEnabled(const std::filesystem::path& state_root, std::string_view project_name,
                          bool enabled) {
   if (!isValidProjectName(project_name)) fail("invalid project name for CI opt-in");

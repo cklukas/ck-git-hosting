@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <exception>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -21,6 +22,7 @@
 #include "ckgit/pages_store.hpp"
 #include "ckgit/install_layout.hpp"
 #include "ckgit/repository_store.hpp"
+#include "ckgit/validation.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/recovery.hpp"
 #include "ckgit/server_config.hpp"
@@ -49,6 +51,8 @@ void usage(std::ostream& output) {
          << "  ckgit-admin ci runs NAME (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin ci log NAME RUN [STEP] [--follow] (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin ci cancel NAME RUN (--config FILE | --state-root ROOT)\n"
+         << "  ckgit-admin runner add NAME --public-key FILE (--config FILE | --state-root ROOT) [--shell PATH]\n"
+         << "  ckgit-admin runner (list | enable NAME | disable NAME | remove NAME) (--config FILE | --state-root ROOT)\n"
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
          << "              optionally --hook-directory PATH to select destination post-receive hooks.\n"
@@ -61,6 +65,8 @@ void usage(std::ostream& output) {
          << "ci commands read and write the private state root, so run them as the service account that owns\n"
          << "it, for example: sudo -u ckgit ckgit-admin ci enable NAME --config /etc/ck-git-hosting/server.ini\n"
          << "Paired devices inspect runs and cancel them with ckgit ci; enabling CI stays here.\n"
+         << "runner add registers a remote CI runner and prints its restricted authorized_keys line (it may only\n"
+         << "claim and run CI jobs); disable drains a runner: it finishes its job but claims no new one.\n"
          << "default-branch shows NAME's default branch, or points it at BRANCH, which must already exist on\n"
          << "the server. CI workflows without on: and ck-git Pages follow the default branch. Run it as the\n"
          << "service account too: sudo -u ckgit ckgit-admin default-branch NAME BRANCH --config FILE\n"
@@ -541,6 +547,143 @@ int ciLog(const std::filesystem::path& state_root, const std::string& name, cons
   return 0;
 }
 
+// Formats an age like "42s ago" / "7m ago" / "3h ago" / "2d ago".
+std::string ageText(std::uint64_t then) {
+  if (then == 0) return "never";
+  const auto now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+  const std::uint64_t age = now > then ? now - then : 0;
+  if (age < 120) return std::to_string(age) + "s ago";
+  if (age < 7200) return std::to_string(age / 60) + "m ago";
+  if (age < 172800) return std::to_string(age / 3600) + "h ago";
+  return std::to_string(age / 86400) + "d ago";
+}
+
+// ckgit-admin runner ...: the main host's registry of remote CI runners.
+int runnerCommand(int argc, char* argv[]) {
+  if (argc < 3) { usage(std::cerr); return kUsage; }
+  const std::string action = argv[2];
+  if (action != "add" && action != "list" && action != "enable" && action != "disable" && action != "remove") {
+    std::cerr << "ckgit-admin: runner action must be add, list, enable, disable, or remove\n";
+    return kUsage;
+  }
+  std::optional<std::filesystem::path> config;
+  std::filesystem::path state_root;
+  std::optional<std::filesystem::path> public_key;
+  std::filesystem::path shell(ckgit::kInstalledShellPath);
+  std::vector<std::string> positional;
+  for (int index = 3; index < argc; ++index) {
+    const std::string argument = argv[index];
+    if ((argument == "--config" || argument == "--state-root" || argument == "--public-key" ||
+         argument == "--shell") && index + 1 < argc) {
+      const std::string value = argv[++index];
+      if (argument == "--config") config = value;
+      else if (argument == "--state-root") state_root = value;
+      else if (argument == "--public-key") public_key = value;
+      else shell = value;
+    } else if (!argument.empty() && argument.front() != '-') {
+      positional.push_back(argument);
+    } else {
+      std::cerr << "ckgit-admin: invalid runner option: " << argument << "\n";
+      return kUsage;
+    }
+  }
+  std::optional<ckgit::ServerConfig> server;
+  if (config.has_value()) {
+    if (!state_root.empty()) {
+      std::cerr << "ckgit-admin: --config cannot be combined with --state-root\n";
+      return kUsage;
+    }
+    server = ckgit::loadServerConfig(*config);
+    state_root = server->state_root.value_or(std::filesystem::path{});
+  }
+  if (state_root.empty()) {
+    std::cerr << "ckgit-admin: runner requires --config with state_root, or --state-root\n";
+    return kUsage;
+  }
+  if (action == "list") {
+    const auto records = ckgit::loadCiRunnerRecords(state_root);
+    const auto claims = ckgit::listCiClaims(state_root);
+    std::vector<std::string> names;
+    for (const auto& record : records) names.push_back(record.name);
+    for (const auto& claim : claims) {
+      if (std::find(names.begin(), names.end(), claim.lease.runner) == names.end()) names.push_back(claim.lease.runner);
+    }
+    std::sort(names.begin(), names.end());
+    if (names.empty()) std::cout << "No CI runners registered; the primary runs every job.\n";
+    for (const std::string& name : names) {
+      const auto record = std::find_if(records.begin(), records.end(),
+                                       [&](const ckgit::CiRunnerRecord& r) { return r.name == name; });
+      std::cout << name;
+      if (name == ckgit::kCiPrimaryRunnerName) {
+        std::cout << "  (the server's own runner)";
+      } else if (record != records.end()) {
+        std::cout << "  " << (record->enabled ? "enabled" : "disabled") << ", last seen "
+                  << ageText(record->last_seen_epoch_seconds);
+        if (!record->version.empty()) std::cout << ", " << record->version;
+      } else {
+        std::cout << "  (not registered)";
+      }
+      for (const auto& claim : claims) {
+        if (claim.lease.runner == name) {
+          std::cout << "\n    running " << claim.job.project_name << " " << claim.job.job_id << " (attempt "
+                    << claim.job.attempt << ")";
+        }
+      }
+      std::cout << "\n";
+    }
+    return 0;
+  }
+  if (positional.size() != 1) {
+    std::cerr << "ckgit-admin: runner " << action << " requires one runner name\n";
+    return kUsage;
+  }
+  const std::string& name = positional[0];
+  if (!ckgit::isValidClientId(name) || name == ckgit::kCiPrimaryRunnerName) {
+    std::cerr << "ckgit-admin: invalid runner name: " << name << "\n";
+    return kUsage;
+  }
+  if (action == "add") {
+    if (!public_key.has_value()) {
+      std::cerr << "ckgit-admin: runner add requires --public-key FILE\n";
+      return kUsage;
+    }
+    ckgit::ForcedCommandLayout layout{shell, std::filesystem::path(ckgit::kInstalledRepositoryRoot),
+                                      std::filesystem::path(ckgit::kInstalledControlSocket), state_root};
+    layout.runner_config = config.has_value() ? *config : std::filesystem::path(ckgit::kInstalledServerConfig);
+    if (server.has_value()) {
+      layout.repo_root = server->repo_root;
+      if (!server->control_socket.empty()) layout.control_socket = server->control_socket;
+    }
+    const std::string line = ckgit::renderAuthorizedKeyLine(name, readPublicKeyFile(*public_key), layout);
+    ckgit::CiRunnerRecord record;
+    if (const auto existing = ckgit::loadCiRunnerRecord(state_root, name)) record = *existing;
+    record.name = name;
+    record.enabled = true;
+    ckgit::writeCiRunnerRecord(state_root, record);
+    std::cout << line;
+    std::cerr << "ckgit-admin: registered runner " << name
+              << "; append the line above to the ckgit account's authorized_keys (as root)\n";
+    return 0;
+  }
+  if (action == "remove") {
+    if (!ckgit::removeCiRunnerRecord(state_root, name)) {
+      std::cerr << "ckgit-admin: no runner named " << name << "\n";
+      return 1;
+    }
+    std::cout << "removed runner " << name << "; delete its line from authorized_keys to revoke its key\n";
+    return 0;
+  }
+  ckgit::CiRunnerRecord record;
+  if (const auto existing = ckgit::loadCiRunnerRecord(state_root, name)) record = *existing;
+  record.name = name;
+  record.enabled = action == "enable";
+  ckgit::writeCiRunnerRecord(state_root, record);
+  std::cout << name << ": " << (record.enabled ? "enabled" : "disabled (finishes its current job, claims no new one)")
+            << "\n";
+  return 0;
+}
+
 int ciCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
@@ -700,6 +843,9 @@ int main(int argc, char* argv[]) {
     }
     if (argc >= 2 && std::string(argv[1]) == "ci") {
       return ciCommand(argc, argv);
+    }
+    if (argc >= 2 && std::string(argv[1]) == "runner") {
+      return runnerCommand(argc, argv);
     }
     usage(std::cerr);
     return kUsage;

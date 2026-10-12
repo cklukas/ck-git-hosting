@@ -137,13 +137,16 @@ CiPreparedJob preparedOrMinimal(const ServerConfig& config, const CiJobRequest& 
   return minimal;
 }
 
-int hello(const ServerConfig& config, const std::string& runner, int out) {
+int hello(const ServerConfig& config, const std::string& runner, const CiRunnerCommand& command, int out) {
   try {
     const std::filesystem::path state = stateRoot(config);
     static_cast<void>(validatedMetadataRoot(state));
   } catch (const std::exception& error) {
     return refuse(out, error.what());
   }
+  std::string version;
+  if (std::optional<std::string> decoded = hexDecode(command.version_hex, 128)) version = *decoded;
+  noteCiRunnerSeen(stateRoot(config), runner, version);
   writeAll(out, "ok\nprotocol=" + std::to_string(kCiRunnerProtocolVersion) + "\nrunner=" + runner +
                     "\nserver_version_hex=" + hexEncode(buildVersion()) + "\n");
   return 0;
@@ -160,6 +163,7 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
     return refuse(out, error.what());
   }
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(command.wait_seconds);
+  noteCiRunnerSeen(state, runner, {});
   CiClaimOptions options;
   options.runner = runner;
   options.lease_seconds = leaseSeconds(config);
@@ -171,8 +175,11 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
     } catch (const std::exception&) {
     }
     std::optional<CiClaim> claimed;
+    // A disabled runner is drained: it finishes what it holds, claims nothing.
+    const std::optional<CiRunnerRecord> registered = loadCiRunnerRecord(state, runner);
+    const bool enabled = !registered.has_value() || registered->enabled;
     try {
-      claimed = claimCiJob(state, options);
+      if (enabled) claimed = claimCiJob(state, options);
     } catch (const std::exception& error) {
       return refuse(out, error.what());
     }
@@ -542,7 +549,7 @@ int runCiGateway(const ServerConfig& config, const std::string& runner, const Ci
   if (!isValidClientId(runner) || runner == kCiPrimaryRunnerName) return refuse(out, "invalid runner name");
   try {
     switch (command.op) {
-      case CiRunnerOp::kHello: return hello(config, runner, out);
+      case CiRunnerOp::kHello: return hello(config, runner, command, out);
       case CiRunnerOp::kClaim: return claim(config, runner, command, out);
       case CiRunnerOp::kUploadPack: return uploadPack(config, runner, command, out);
       case CiRunnerOp::kStream: return stream(config, runner, command, in, out);

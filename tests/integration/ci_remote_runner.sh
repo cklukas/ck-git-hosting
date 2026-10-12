@@ -76,15 +76,19 @@ pages_root=$test_root/pages
 INI
 "$CKGIT_ADMIN" ci enable demo --config "$test_root/server.ini" >/dev/null || fail "ci enable failed"
 
-# The runner key's forced command, exactly as ckgit-admin prints it.
+# Register the runner; its key's forced command is exactly what ckgit-admin
+# prints.
 printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOz6m3Iv7uX1rX5dJZp1fZ3v1nA0qkGqk1xQmvE7ZbBc uconsole\n' > "$test_root/key.pub"
-line=$("$CKGIT_ADMIN" authorized-key --runner --runner-config "$test_root/server.ini" --client-id uconsole \
-  --public-key "$test_root/key.pub" --shell "$CK_GIT_SHELL" --repo-root "$repos" \
-  --control-socket "$test_root/control.sock" --state-root "$state") || fail "authorized-key --runner failed"
+line=$("$CKGIT_ADMIN" runner add uconsole --public-key "$test_root/key.pub" --config "$test_root/server.ini" \
+  --shell "$CK_GIT_SHELL" 2>/dev/null) || fail "runner add failed"
 case "$line" in
-  *"--runner-config $test_root/server.ini"*) ;;
+  *"--client-id uconsole"*"--runner-config $test_root/server.ini"*) ;;
   *) fail "the runner key line lacks the runner role: $line" ;;
 esac
+"$CKGIT_ADMIN" runner list --config "$test_root/server.ini" | grep -q '^uconsole  enabled, last seen never' ||
+  fail "runner list does not show the registered runner"
+"$CKGIT_ADMIN" runner add primary --public-key "$test_root/key.pub" --config "$test_root/server.ini" >/dev/null 2>&1 &&
+  fail "the primary's name was accepted for a remote runner"
 
 # The stand-in for ssh: its last argument is the remote command line, which
 # sshd would hand to the forced command as SSH_ORIGINAL_COMMAND.
@@ -121,6 +125,13 @@ printf '%s %s refs/heads/main\n' "$(printf '0%.0s' $(seq 1 40))" "$commit" | \
   env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
       CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE" || fail "post-receive hook failed"
 
+# A disabled (draining) runner leaves the job queued.
+"$CKGIT_ADMIN" runner disable uconsole --config "$test_root/server.ini" >/dev/null || fail "runner disable failed"
+"$CK_CI_RUNNER" serve --remote --config "$test_root/runner.ini" --once > "$test_root/runner.log" 2>&1 ||
+  fail "the disabled runner failed"
+ls "$state"/ci/spool/*.ini >/dev/null 2>&1 || fail "a disabled runner took a job"
+"$CKGIT_ADMIN" runner enable uconsole --config "$test_root/server.ini" >/dev/null || fail "runner enable failed"
+
 "$CK_CI_RUNNER" serve --remote --config "$test_root/runner.ini" --once > "$test_root/runner.log" 2>&1 ||
   fail "the remote runner failed"
 
@@ -138,5 +149,7 @@ grep -rq "remote-site" "$test_root/pages/demo/versions" || fail "the published s
 [ -z "$(ls -A "$state/ci/working" 2>/dev/null || true)" ] || fail "the job was not released"
 [ -z "$(ls -A "$runner_build" 2>/dev/null || true)" ] || fail "the runner kept data after the job: $(ls -A "$runner_build")"
 grep -q "ci-claimed" "$state"/events/*.log 2>/dev/null || fail "the claim was not recorded as an event"
+"$CKGIT_ADMIN" runner list --config "$test_root/server.ini" | grep -q '^uconsole  enabled, last seen [0-9]*s ago' ||
+  fail "runner list does not show the runner's last contact"
 
 echo "remote runner integration test passed"

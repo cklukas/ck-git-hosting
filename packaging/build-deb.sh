@@ -2,11 +2,16 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 #
-# Builds three Debian packages from a finished build directory:
+# Builds four Debian packages from a finished build directory:
 #   ck-git-hosting_VERSION_ARCH.deb  server daemon, dispatcher, admin tool, hook,
 #                                    systemd unit, sshd drop-in, server.ini
 #   ckgit_VERSION_ARCH.deb           the client
 #   ckdocs_VERSION_ARCH.deb          the documentation-site generator
+#   ck-git-runner_VERSION_ARCH.deb   a remote CI runner for another machine
+#                                    (its own runner binary path, account and
+#                                    unit, so it never makes that machine a
+#                                    second server, and installs beside the
+#                                    server package without file conflicts)
 # The server tree is produced by packaging/install.sh in staging mode so a
 # package and a script installation lay out identical files.  Account
 # creation, ownership, systemd, and sshd handling live in the maintainer
@@ -98,7 +103,8 @@ mkdir -p "$output"
 server_root="$output/ck-git-hosting"
 client_root="$output/ckgit"
 docs_root="$output/ckdocs"
-rm -rf "$server_root" "$client_root" "$docs_root"
+runner_root="$output/ck-git-runner"
+rm -rf "$server_root" "$client_root" "$docs_root" "$runner_root"
 
 write_copyright() {  # write_copyright PACKAGE
   install -d -m 0755 "$1/usr/share/doc/$2"
@@ -304,8 +310,85 @@ Description: documentation-site generator for Markdown
 CONTROL
 chmod 0644 "$docs_root/DEBIAN/control"
 
+# ---- remote runner package ------------------------------------------------
+install -d -m 0755 "$runner_root/usr/lib/ck-git-runner" "$runner_root/usr/bin" "$runner_root/usr/lib/systemd/system"
+install -m 0755 "$build_dir/bin/ck-ci-runnerd" "$runner_root/usr/lib/ck-git-runner/ck-ci-runnerd"
+ln -s ../lib/ck-git-runner/ck-ci-runnerd "$runner_root/usr/bin/ck-git-runner"
+install -m 0644 "$script_dir/systemd/ck-git-runner.service" "$runner_root/usr/lib/systemd/system/ck-git-runner.service"
+write_copyright "$runner_root" ck-git-runner
+install -d -m 0755 "$runner_root/DEBIAN"
+cat >"$runner_root/DEBIAN/control" <<CONTROL
+Package: ck-git-runner
+Version: $version
+Section: vcs
+Priority: optional
+Architecture: $arch
+Maintainer: $maintainer
+Depends: git, openssh-client, tar, systemd
+Description: remote CI runner for a ck-git-hosting server
+ ck-git-runner runs CI jobs for a main ck-git-hosting server it reaches over
+ SSH with its own restricted runner key, so several machines share the
+ server's CI load: it claims queued jobs, checks out the source as shallow Git
+ clones, runs each step in the same unprivileged namespace sandbox, relays
+ progress and logs live, uploads its results, and keeps nothing between jobs.
+CONTROL
+cat >"$runner_root/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+case "$1" in
+  configure)
+    if ! getent passwd ckgit-runner >/dev/null 2>&1; then
+      useradd --system --user-group --home-dir /var/lib/ck-git-runner --no-create-home \
+        --shell /usr/sbin/nologin --comment 'ck-git-hosting remote CI runner' ckgit-runner
+    fi
+    install -d -m 0700 -o ckgit-runner -g ckgit-runner /var/lib/ck-git-runner /var/lib/ck-git-runner/ci-build
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+      if [ -e /etc/ck-git-hosting/runner.ini ] && systemctl is-enabled --quiet ck-git-runner.service; then
+        systemctl restart ck-git-runner.service || true
+      fi
+    fi
+    if [ ! -e /etc/ck-git-hosting/runner.ini ]; then
+      echo "ck-git-runner: register with: ck-git-runner register --server ckgit@MAIN-HOST --name NAME"
+    fi
+    ;;
+esac
+exit 0
+POSTINST
+cat >"$runner_root/DEBIAN/prerm" <<'PRERM'
+#!/bin/sh
+set -e
+case "$1" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl disable --now ck-git-runner.service >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+exit 0
+PRERM
+cat >"$runner_root/DEBIAN/postrm" <<'POSTRM'
+#!/bin/sh
+set -e
+case "$1" in
+  remove)
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+    ;;
+  purge)
+    rm -rf /var/lib/ck-git-runner
+    rm -f /etc/ck-git-hosting/runner.ini
+    rmdir /etc/ck-git-hosting 2>/dev/null || true
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+    echo "ck-git-runner: the ckgit-runner account was kept; remove it manually if wanted" >&2
+    ;;
+esac
+exit 0
+POSTRM
+chmod 0755 "$runner_root/DEBIAN/postinst" "$runner_root/DEBIAN/prerm" "$runner_root/DEBIAN/postrm"
+chmod 0644 "$runner_root/DEBIAN/control"
+
 if [ "$stage_only" -eq 1 ]; then
-  printf 'Staged package roots: %s %s %s\n' "$server_root" "$client_root" "$docs_root"
+  printf 'Staged package roots: %s %s %s %s\n' "$server_root" "$client_root" "$docs_root" "$runner_root"
   exit 0
 fi
 
@@ -316,9 +399,11 @@ write_md5sums() {
 write_md5sums "$server_root"
 write_md5sums "$client_root"
 write_md5sums "$docs_root"
+write_md5sums "$runner_root"
 dpkg-deb --root-owner-group --build "$server_root" "$output/ck-git-hosting_${version}_${arch}.deb" >/dev/null
 dpkg-deb --root-owner-group --build "$client_root" "$output/ckgit_${version}_${arch}.deb" >/dev/null
 dpkg-deb --root-owner-group --build "$docs_root" "$output/ckdocs_${version}_${arch}.deb" >/dev/null
-rm -rf "$server_root" "$client_root" "$docs_root"
-printf 'Built %s, %s, and %s\n' "$output/ck-git-hosting_${version}_${arch}.deb" "$output/ckgit_${version}_${arch}.deb" \
-  "$output/ckdocs_${version}_${arch}.deb"
+dpkg-deb --root-owner-group --build "$runner_root" "$output/ck-git-runner_${version}_${arch}.deb" >/dev/null
+rm -rf "$server_root" "$client_root" "$docs_root" "$runner_root"
+printf 'Built %s, %s, %s, and %s\n' "$output/ck-git-hosting_${version}_${arch}.deb" "$output/ckgit_${version}_${arch}.deb" \
+  "$output/ckdocs_${version}_${arch}.deb" "$output/ck-git-runner_${version}_${arch}.deb"

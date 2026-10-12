@@ -220,6 +220,20 @@ sh "$packaging/build-deb.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root
 [ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-git-hosting-deploy" ] || fail "staged server package lacks ck-git-hosting-deploy"
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting-deploy.service" ] || fail "packaged deploy unit is not under /usr/lib/systemd/system"
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting-deploy.timer" ] || fail "packaged deploy timer is not under /usr/lib/systemd/system"
+# The remote runner package: its own binary path (no file shared with the
+# server package), its own unit, never a server.ini or the server's units.
+runner_pkg="$test_root/deb/ck-git-runner"
+[ -x "$runner_pkg/usr/lib/ck-git-runner/ck-ci-runnerd" ] || fail "the runner package lacks its runner binary"
+[ -L "$runner_pkg/usr/bin/ck-git-runner" ] || fail "the runner package lacks the ck-git-runner command"
+[ -f "$runner_pkg/usr/lib/systemd/system/ck-git-runner.service" ] || fail "the runner package lacks its unit"
+grep -q '^User=ckgit-runner$' "$runner_pkg/usr/lib/systemd/system/ck-git-runner.service" ||
+  fail "the runner unit does not run as the runner account"
+grep -q 'serve --remote --config /etc/ck-git-hosting/runner.ini$' "$runner_pkg/usr/lib/systemd/system/ck-git-runner.service" ||
+  fail "the runner unit does not start the remote runner"
+[ ! -e "$runner_pkg/usr/bin/ck-ci-runnerd" ] && [ ! -e "$runner_pkg/etc/ck-git-hosting/server.ini" ] ||
+  fail "the runner package overlaps the server package"
+grep -q 'useradd --system --user-group --home-dir /var/lib/ck-git-runner' "$runner_pkg/DEBIAN/postinst" ||
+  fail "the runner package does not create its account"
 # The enable loop reads systemctl enable "$unit" for whatever it iterates,
 # so the real risk is the deploy unit joining that iterated list, not the
 # literal text "enable" beside its name.

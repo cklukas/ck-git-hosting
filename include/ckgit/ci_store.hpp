@@ -409,6 +409,32 @@ std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state
 void removeCiRelease(const std::filesystem::path& state_root, std::string_view project_name,
                      std::string_view tag);
 
+// --- registered runners -----------------------------------------------------
+
+// A remote runner the administrator registered (ckgit-admin runner add), at
+// ci/runners/<name>.ini. Its key in authorized_keys decides whether it can
+// connect at all; the record lets an administrator drain it (disabled: it
+// finishes its current job but claims no new one) and shows when it was last
+// seen and which build it runs.
+struct CiRunnerRecord {
+  std::string name;
+  bool enabled = true;
+  std::uint64_t last_seen_epoch_seconds = 0;
+  std::string version;  // the runner's build version, as it reported it
+};
+
+void writeCiRunnerRecord(const std::filesystem::path& state_root, const CiRunnerRecord& record);
+std::optional<CiRunnerRecord> loadCiRunnerRecord(const std::filesystem::path& state_root, std::string_view name);
+std::vector<CiRunnerRecord> loadCiRunnerRecords(const std::filesystem::path& state_root);
+// Removes a runner's record; false when there was none.
+bool removeCiRunnerRecord(const std::filesystem::path& state_root, std::string_view name);
+// Updates last-seen (and the version, when given) of a known runner, creating
+// its record when there is none. Best-effort.
+void noteCiRunnerSeen(const std::filesystem::path& state_root, std::string_view name, std::string_view version);
+
+// Every claimed job with its lease: what each runner is working on now.
+std::vector<CiClaim> listCiClaims(const std::filesystem::path& state_root);
+
 // --- per-project opt-in -----------------------------------------------------
 
 // Records whether a project runs CI, at ci/projects/<project>.ini. CI is

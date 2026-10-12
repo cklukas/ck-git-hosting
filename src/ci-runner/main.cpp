@@ -12,6 +12,9 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <fstream>
+#include <sstream>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -25,6 +28,8 @@
 #include "ckgit/dir_watch.hpp"
 #include "ckgit/runtime_status.hpp"
 #include "ckgit/server_config.hpp"
+#include "ckgit/validation.hpp"
+#include "ckgit/process.hpp"
 #include "ckgit/text.hpp"
 
 namespace {
@@ -36,6 +41,8 @@ int usage(std::ostream& out, int code) {
   out << "usage:\n"
          "  ck-ci-runnerd serve --config FILE [--once]\n"
          "  ck-ci-runnerd serve --remote --config RUNNER.INI [--once]\n"
+         "  ck-ci-runnerd register --server USER@HOST --name NAME [--config RUNNER.INI]\n"
+         "                         [--home DIR] [--account USER] [--force]\n"
          "  ck-ci-runnerd gateway --config FILE --runner ID --command 'ckgit-runner 1 ...'\n"
          "  ck-ci-runnerd run --repo DIR --commit ID --project NAME --state-root DIR\n"
          "                    --build-root DIR [--ref REF] [--timeout SECONDS]\n"
@@ -412,6 +419,88 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
   return 0;
 }
 
+// Prepares this machine as a remote runner (run as root, after installing the
+// ck-git-runner package): an SSH key for the runner account, the main host's
+// pinned host key, and runner.ini; then prints what the main host's
+// administrator runs to admit the key.
+int registerRunner(const std::string& server, const std::string& name, const std::filesystem::path& config_path,
+                   const std::filesystem::path& home, const std::string& account, bool force) {
+  if (!ckgit::isValidSshCloneTarget(server) || !ckgit::isValidClientId(name) || name == ckgit::kCiPrimaryRunnerName) {
+    std::cerr << "ck-ci-runnerd: register needs --server user@host and a valid --name\n";
+    return 2;
+  }
+  const struct passwd* user = ::getpwnam(account.c_str());
+  if (user == nullptr) {
+    std::cerr << "ck-ci-runnerd: the account '" << account << "' does not exist (install the ck-git-runner package)\n";
+    return 1;
+  }
+  const uid_t uid = user->pw_uid;
+  const gid_t gid = user->pw_gid;
+  const auto own = [&](const std::filesystem::path& path, mode_t mode) {
+    if (::chown(path.c_str(), uid, gid) != 0 || ::chmod(path.c_str(), mode) != 0) {
+      throw std::runtime_error("could not secure " + path.string());
+    }
+  };
+  if (std::filesystem::exists(config_path) && !force) {
+    std::cerr << "ck-ci-runnerd: " << config_path << " already exists (use --force to replace it)\n";
+    return 1;
+  }
+  const std::filesystem::path ssh_dir = home / ".ssh";
+  const std::filesystem::path identity = ssh_dir / "id_ed25519";
+  const std::filesystem::path known_hosts = ssh_dir / "known_hosts";
+  const std::filesystem::path build_root = home / "ci-build";
+  std::filesystem::create_directories(ssh_dir);
+  std::filesystem::create_directories(build_root);
+  own(home, 0700);
+  own(ssh_dir, 0700);
+  own(build_root, 0700);
+  if (!std::filesystem::exists(identity)) {
+    const auto keygen = ckgit::runProcess(
+        {"ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "ck-git-runner " + name, "-f", identity.string()},
+        std::chrono::seconds(30));
+    if (keygen.exit_code != 0) throw std::runtime_error("ssh-keygen failed: " + keygen.output);
+  }
+  own(identity, 0600);
+  own(std::filesystem::path(identity.string() + ".pub"), 0644);
+  // Pin the main host's key now, so the runner never accepts another one.
+  const std::string host = server.substr(server.find('@') + 1);
+  const auto scan = ckgit::runProcess({"ssh-keyscan", "-T", "10", "-t", "ed25519,ecdsa,rsa", host},
+                                      std::chrono::seconds(30));
+  bool pinned = false;
+  if (scan.exit_code == 0 && scan.output.find(' ') != std::string::npos) {
+    std::string lines;
+    std::istringstream in(scan.output);
+    for (std::string line; std::getline(in, line);) {
+      if (!line.empty() && line.front() != '#') lines += line + "\n";
+    }
+    if (!lines.empty()) {
+      std::ofstream(known_hosts, std::ios::trunc) << lines;
+      own(known_hosts, 0644);
+      pinned = true;
+    }
+  }
+  ckgit::RunnerConfig config;
+  config.server = server;
+  config.name = name;
+  config.build_root = build_root;
+  config.identity = identity;
+  if (pinned) config.known_hosts = known_hosts;
+  std::filesystem::create_directories(config_path.parent_path());
+  std::ofstream(config_path, std::ios::trunc) << ckgit::renderRunnerConfig(config);
+  ::chmod(config_path.c_str(), 0644);
+  std::ifstream public_key(identity.string() + ".pub");
+  std::string key;
+  std::getline(public_key, key);
+  std::cout << "Wrote " << config_path.string() << (pinned ? "" : " (the main host's key was not pinned: "
+                                                                 "it is accepted on first use)")
+            << ".\n\nOn the main host, admit this runner's key (as root):\n\n"
+            << "  printf '%s\\n' '" << key << "' > /tmp/" << name << ".pub\n"
+            << "  sudo -u ckgit ckgit-admin runner add " << name << " --public-key /tmp/" << name
+            << ".pub --config /etc/ck-git-hosting/server.ini >> /etc/ck-git-hosting/authorized_keys\n\n"
+            << "Then start the runner here:\n\n  systemctl enable --now ck-git-runner.service\n";
+  return 0;
+}
+
 std::string need(int& index, int argc, char** argv, const std::string& option) {
   if (++index >= argc) throw std::runtime_error(option + " requires a value");
   return argv[index];
@@ -441,6 +530,25 @@ int main(int argc, char** argv) {
         return usage(std::cerr, 2);
       }
       return remote ? serveRemote(config_path, once) : serve(config_path, once);
+    }
+    if (command == "register") {
+      std::string server;
+      std::string name;
+      std::filesystem::path config_path = "/etc/ck-git-hosting/runner.ini";
+      std::filesystem::path home = "/var/lib/ck-git-runner";
+      std::string account = "ckgit-runner";
+      bool force = false;
+      for (int i = 2; i < argc; ++i) {
+        const std::string option = argv[i];
+        if (option == "--server") server = need(i, argc, argv, option);
+        else if (option == "--name") name = need(i, argc, argv, option);
+        else if (option == "--config") config_path = need(i, argc, argv, option);
+        else if (option == "--home") home = need(i, argc, argv, option);
+        else if (option == "--account") account = need(i, argc, argv, option);
+        else if (option == "--force") force = true;
+        else throw std::runtime_error("unknown register option: " + option);
+      }
+      return registerRunner(server, name, config_path, home, account, force);
     }
     if (command == "ssh-shim") {
       // What GIT_SSH_COMMAND runs while a remote runner fetches a job's source.
