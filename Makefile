@@ -56,6 +56,7 @@ COMMON_SOURCES := \
 	src/common/client_config.cpp \
 	src/common/client_state.cpp \
 	src/common/control_rpc.cpp \
+	src/common/dir_watch.cpp \
 	src/common/git_repository.cpp \
 	src/common/hash.cpp \
 	src/common/http_request.cpp \
@@ -104,7 +105,7 @@ MERMAID_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR_ABS)/obj/%.o,$(MERMAID_SOURCES))
 MERMAID_TEST_SOURCES := $(wildcard tests/mermaid/*.cpp)
 MERMAID_TEST_BIN := $(BUILD_DIR_ABS)/bin/ckdocs-mermaid-tests
 $(MERMAID_OBJECTS): CPPFLAGS += $(MERMAID_CPPFLAGS)
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_distributed_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/docs_site_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin

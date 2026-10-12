@@ -466,6 +466,15 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
   }
 }
 
+CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root) {
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  Descriptor working_fd(ensureDirAt(ci_fd, "working"));
+  return CiQueuePaths{root / "ci" / "spool", root / "ci" / "working"};
+}
+
 std::optional<CiJobRequest> claimNextCiJob(const std::filesystem::path& state_root) {
   const std::filesystem::path root = validatedMetadataRoot(state_root);
   Descriptor root_fd(openDir(root));

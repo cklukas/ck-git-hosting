@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
+#include "ckgit/dir_watch.hpp"
 #include "ckgit/runtime_status.hpp"
 #include "ckgit/server_config.hpp"
 
@@ -40,9 +42,11 @@ int usage(std::ostream& out, int code) {
 }
 
 // Consumes the spool: claim the oldest job, resolve its bare repository from the
-// configured repo root, run it, then release it; sleep when the spool is empty.
-// Stops promptly on SIGTERM/SIGINT. With `once`, drains the current spool and
-// returns instead of waiting (a cron-style single pass, and how tests drive it).
+// configured repo root, run it, then release it. When the spool is empty it
+// waits for a change notification on the queue directories (inotify), with a
+// slow safety rescan behind it, instead of polling. Stops promptly on
+// SIGTERM/SIGINT. With `once`, drains the current spool and returns instead of
+// waiting (a cron-style single pass, and how tests drive it).
 int serve(const std::filesystem::path& config_path, bool once) {
   const ckgit::ServerConfig config = ckgit::loadServerConfig(config_path);
   if (!config.state_root.has_value() || config.state_root->empty()) {
@@ -57,7 +61,9 @@ int serve(const std::filesystem::path& config_path, bool once) {
   ckgit::recordRuntimeComponent(state_root, "ck-ci-runnerd", ckgit::buildVersion());
   const std::filesystem::path repo_root = config.repo_root;
   const std::filesystem::path build_root = *config.ci_build_root;
-  const unsigned poll = config.ci_poll_seconds.value_or(5);
+  // Where notifications are unavailable the rescan is the only way to notice a
+  // job, so it falls back to the old, short poll interval.
+  const unsigned fallback_poll = config.ci_poll_seconds.value_or(5);
   const unsigned cleanup_interval = config.ci_cleanup_interval_seconds.value_or(3600);
 
   const auto nowEpoch = []() {
@@ -88,6 +94,39 @@ int serve(const std::filesystem::path& config_path, bool once) {
   std::signal(SIGTERM, onStop);
   std::signal(SIGINT, onStop);
 
+  ckgit::DirectoryWatch watch;
+  try {
+    const ckgit::CiQueuePaths queue = ckgit::ensureCiQueueDirectories(state_root);
+    watch.add(queue.spool);
+    watch.add(queue.working);
+  } catch (const std::exception& error) {
+    std::cerr << "ck-ci-runnerd: could not prepare the CI queue: " << error.what() << "\n";
+  }
+  const unsigned rescan = watch.active() ? config.ci_rescan_seconds.value_or(300) : fallback_poll;
+  if (!once && !watch.active()) {
+    std::cerr << "ck-ci-runnerd: warning: spool notifications unavailable — rescanning every " << rescan
+              << "s\n";
+  }
+  // Waits until the queue changes, the next safety rescan or maintenance sweep
+  // is due, or a stop is requested. Waiting happens in short slices only so a
+  // signal is noticed promptly; the spool itself is not read while waiting.
+  const auto waitForWork = [&]() {
+    const auto start = std::chrono::steady_clock::now();
+    auto deadline = start + std::chrono::seconds(rescan);
+    if (last_sweep != 0) {
+      const std::uint64_t now = nowEpoch();
+      const std::uint64_t due = last_sweep + cleanup_interval;
+      const auto sweep_in = std::chrono::seconds(due > now ? due - now : 0);
+      if (start + sweep_in < deadline) deadline = start + sweep_in;
+    }
+    while (g_stop == 0) {
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+      if (remaining <= std::chrono::milliseconds::zero()) return;
+      if (watch.wait(std::min(remaining, std::chrono::milliseconds(500)))) return;
+    }
+  };
+
   bool warned_degraded = false;
   bool warned_loopback = false;
   bool warned_unmasked = false;
@@ -104,9 +143,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
         break;
       }
       maybeSweep(false);
-      for (unsigned tick = 0; tick < poll * 10 && g_stop == 0; ++tick) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
+      waitForWork();
       continue;
     }
     ckgit::CiRunnerOptions options;

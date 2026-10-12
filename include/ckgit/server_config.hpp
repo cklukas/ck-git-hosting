@@ -31,7 +31,12 @@ struct ServerConfig {
   std::optional<std::filesystem::path> ci_cache_root;
   std::optional<unsigned> ci_timeout_seconds;
   std::optional<unsigned long long> ci_max_log_bytes;
+  // Deprecated and ignored since the runner is notified of spool changes
+  // (inotify) instead of polling; still accepted so older configurations load.
   std::optional<unsigned> ci_poll_seconds;
+  // A safety rescan of the spool behind the notifications, in case one was
+  // missed (default 300 s).
+  std::optional<unsigned> ci_rescan_seconds;
   bool ci_allow_network = false;
 
   // Artifact retention, enforced by the runner's periodic sweep. Days default

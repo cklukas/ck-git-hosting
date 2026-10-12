@@ -1110,6 +1110,7 @@ void testYamlSubset();
 void testCiWorkflow();
 void testCiStore();
 void testCiRunner();
+void testCiDistributed();
 void testCiWeb();
 void testCiControl();
 void testPagesStore();
@@ -1138,6 +1139,7 @@ int main(int argc, char** argv) {
     testCiWorkflow();
     testCiStore();
     testCiRunner();
+    testCiDistributed();
     testCiWeb();
     testPagesStore();
     failures += testRecovery();

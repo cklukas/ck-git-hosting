@@ -151,6 +151,16 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
 
 // --- runner side ------------------------------------------------------------
 
+// The two queue directories a runner watches for changes: a new job appears in
+// spool/ and a claimed one leaves working/ when its run ends. Both are created
+// (private, daemon-owned) when absent, so a watch can be set up before the
+// first push ever queued anything.
+struct CiQueuePaths {
+  std::filesystem::path spool;
+  std::filesystem::path working;
+};
+CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root);
+
 // Claims the oldest queued job by atomically renaming it into ci/working, then
 // returns it. Returns std::nullopt when the spool is empty. A malformed spool
 // entry is moved aside (never executed) and skipped.
