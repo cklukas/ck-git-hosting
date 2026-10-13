@@ -971,6 +971,24 @@ static std::vector<CiArtifactRecord> loadArtifactsFor(int run_fd) {
   return artifacts;
 }
 
+std::vector<CiRunRecord> ciRunsToShow(const std::vector<CiRunRecord>& newest_first, std::size_t* queued) {
+  std::vector<CiRunRecord> shown;
+  std::size_t pending = 0;
+  const CiRunRecord* newest_pending = nullptr;
+  for (const CiRunRecord& run : newest_first) {
+    if (run.status == CiRunStatus::Running) {
+      shown.push_back(run);
+    } else if (run.status == CiRunStatus::Pending) {
+      if (newest_pending == nullptr) newest_pending = &run;
+      ++pending;
+    }
+  }
+  if (newest_pending != nullptr) shown.push_back(*newest_pending);
+  if (shown.empty() && !newest_first.empty()) shown.push_back(newest_first.front());
+  if (queued != nullptr) *queued = pending;
+  return shown;
+}
+
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
                                     std::string_view project_name, std::size_t maximum) {
   std::vector<CiRunRecord> runs;

@@ -883,6 +883,38 @@ void testLogTail() {
   require(!ckgit::readCiRunLogTail(fixture.state, "demo", job.job_id, 1, 64).has_value(), "a missing step log has no tail");
 }
 
+
+// The projects table shows running and queued runs side by side.
+void testRunsToShow() {
+  const auto run = [](const std::string& id, ckgit::CiRunStatus status) {
+    ckgit::CiRunRecord record;
+    record.run_id = id;
+    record.project_name = "demo";
+    record.ref = "refs/heads/main";
+    record.commit_id = std::string(40, 'a');
+    record.status = status;
+    return record;
+  };
+  require(ckgit::ciRunsToShow({}).empty(), "no runs, nothing to show");
+  std::size_t queued = 0;
+  const auto shown = ckgit::ciRunsToShow({run("d", ckgit::CiRunStatus::Pending), run("c", ckgit::CiRunStatus::Pending),
+                                          run("b", ckgit::CiRunStatus::Running), run("a", ckgit::CiRunStatus::Success)},
+                                         &queued);
+  require(shown.size() == 2 && shown[0].run_id == "b" && shown[1].run_id == "d" && queued == 2,
+          "the running run and the newest queued run are both shown");
+  const auto idle = ckgit::ciRunsToShow({run("b", ckgit::CiRunStatus::Failure), run("a", ckgit::CiRunStatus::Success)});
+  require(idle.size() == 1 && idle[0].run_id == "b", "with nothing active the newest run is shown");
+
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  project.shown_ci_runs = shown;
+  project.queued_ci_runs = queued;
+  const std::string table = ckgit::renderProjectTable({project}, false);
+  require(table.find("ci-status ci-running") != std::string::npos &&
+              table.find("2 pending") != std::string::npos,
+          "the projects table shows a running pill and a '2 pending' pill");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -907,4 +939,5 @@ void testCiDistributed() {
   testRunnerRegistry();
   testRunnerShownOnRuns();
   testLogTail();
+  testRunsToShow();
 }

@@ -127,16 +127,25 @@ std::string renderCloneInfo(const ckgit::ProjectSummary& project) {
   return out + "</section>";
 }
 
+// One pill per run the table shows: each running run, and the newest queued
+// run (as "3 pending" when more are queued), else the newest run.
 std::string renderLastCi(const ckgit::ProjectSummary& project) {
-  if (!project.last_ci_run.has_value()) return "<span class=\"muted\">none</span>";
-  const auto& run = *project.last_ci_run;
-  const ckgit::CiRunDisplay display = ckgit::ciRunDisplay(run);
-  const std::string timing = ckgit::ciRunTiming(display);
-  std::string cell = "<a class=\"ci-status ci-" + std::string(display.name) + "\" href=\"/project/" +
-      ckgit::htmlEscape(project.name) + "/ci/" + ckgit::htmlEscape(run.run_id) +
-      "\"><span class=\"ci-icon\" aria-hidden=\"true\">" + std::string(display.icon) + "</span> " +
-      std::string(display.name) + "</a>";
-  if (!timing.empty()) cell += " <span class=\"muted\">(" + ckgit::htmlEscape(timing) + ")</span>";
+  if (project.shown_ci_runs.empty()) return "<span class=\"muted\">none</span>";
+  std::string cell;
+  for (const ckgit::CiRunRecord& run : project.shown_ci_runs) {
+    const ckgit::CiRunDisplay display = ckgit::ciRunDisplay(run);
+    const std::string timing = ckgit::ciRunTiming(display);
+    std::string label(display.name);
+    if (run.status == ckgit::CiRunStatus::Pending && project.queued_ci_runs > 1) {
+      label = std::to_string(project.queued_ci_runs) + " pending";
+    }
+    if (!cell.empty()) cell += "<br>";
+    cell += "<a class=\"ci-status ci-" + std::string(display.name) + "\" href=\"/project/" +
+            ckgit::htmlEscape(project.name) + "/ci/" + ckgit::htmlEscape(run.run_id) +
+            "\"><span class=\"ci-icon\" aria-hidden=\"true\">" + std::string(display.icon) + "</span> " + label +
+            "</a>";
+    if (!timing.empty()) cell += " <span class=\"muted\">(" + ckgit::htmlEscape(timing) + ")</span>";
+  }
   return cell;
 }
 
@@ -171,12 +180,14 @@ std::string renderProjectTable(const std::vector<ProjectSummary>& projects, bool
       std::string(sort_by_name ? " aria-current=\"true\"" : "") + ">by name</a></p>"
       "<div class=\"project-table\"><table><thead><tr><th>Project</th><th>Default branch</th><th>Branches</th><th>Tags</th>"
       "<th title=\"Latest commit across every published branch and tag\">Last commit</th>"
-      "<th title=\"Newest CI run: status and how long it took, or has been running\">Last CI</th>"
+      "<th title=\"Runs in progress and the newest queued run, else the newest run: status and how long it took, or has been running\">Last CI</th>"
       "<th>Last reported checkout</th></tr></thead><tbody>";
   if (projects.empty()) html += "<tr><td colspan=\"7\">No projects</td></tr>";
   bool any_live = false;
   for (const auto& project : projects) {
-    if (project.last_ci_run.has_value() && ciRunDisplay(*project.last_ci_run).active) any_live = true;
+    for (const ckgit::CiRunRecord& run : project.shown_ci_runs) {
+      if (ciRunDisplay(run).active) any_live = true;
+    }
     html += "<tr><td class=\"project-name\"><a href=\"/project/" + htmlEscape(project.name) + "\">" +
             htmlEscape(project.name) + "</a></td><td class=\"project-default " +
             (project.valid_head ? "ok\">" : "warn\">") +

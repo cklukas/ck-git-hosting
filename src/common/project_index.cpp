@@ -519,9 +519,9 @@ class ProjectIndex::Impl {
         row.generated_epoch_seconds = record.generated_epoch_seconds;
         row.indexing = record.indexing;
         row.index_error = record.index_error;
-        // Carry only the newest run so the index page can show a compact CI
-        // status without copying every run's steps into every row.
-        if (!record.ci_runs.empty()) row.last_ci_run = record.ci_runs.front();
+        // Carry only the runs the index page shows (running ones and the
+        // newest queued one), not every run's steps in every row.
+        row.shown_ci_runs = ciRunsToShow(record.ci_runs, &row.queued_ci_runs);
         records.push_back(std::move(row));
       }
     }

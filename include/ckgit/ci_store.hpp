@@ -311,6 +311,13 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
 
 // --- dashboard side ---------------------------------------------------------
 
+// What a compact status (the projects table) shows for a project, from its
+// runs newest first: every run executing right now (one per busy runner) and
+// the newest queued run, so a queued run never hides a running one and vice
+// versa; with nothing active, just the newest run. `queued` receives how many
+// runs are queued, so the queued pill can say "3 pending".
+std::vector<CiRunRecord> ciRunsToShow(const std::vector<CiRunRecord>& newest_first, std::size_t* queued = nullptr);
+
 // Loads up to `maximum` newest run records for a project, newest first. A
 // missing runs directory means no runs; a malformed record is skipped.
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,

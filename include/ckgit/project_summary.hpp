@@ -46,10 +46,12 @@ struct ProjectSummary {
   // Newest-first CI run records (status, timing, per-step results). Loaded on
   // the metadata-revision channel, since CI status changes without a ref move.
   std::vector<CiRunRecord> ci_runs{};
-  // The newest CI run only, carried on the lightweight project-table snapshot
-  // (which omits the full ci_runs vector) so the index page can show a compact
-  // last-CI status without copying every run's steps into every row.
-  std::optional<CiRunRecord> last_ci_run{};
+  // The CI runs the project table shows (see ciRunsToShow): the running ones
+  // and the newest queued one, else the newest run. Carried on the lightweight
+  // table snapshot (which omits the full ci_runs vector) so the index page can
+  // show a compact CI status without copying every run's steps into every row.
+  std::vector<CiRunRecord> shown_ci_runs{};
+  std::size_t queued_ci_runs{0};
   // Newest-first durable releases (tag + assets), loaded on the same channel.
   std::vector<CiReleaseRecord> releases{};
   std::optional<CommitSummary> last_commit{};
