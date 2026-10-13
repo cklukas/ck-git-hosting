@@ -1083,7 +1083,14 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         const std::size_t live_step = run->steps.size();
         std::optional<std::string> live_log;
         const std::string nonce = display.active ? generateNonce() : std::string();
-        if (display.active) live_log = index.readCiLog(route.project, route.run_id, live_step);
+        // Only the end of the running step's log is shown (and the live
+        // stream follows from there), so read just that: a step log may be
+        // far larger than a whole-file read allows.
+        if (display.active) {
+          if (const auto tail = index.readCiLogTail(route.project, route.run_id, live_step, 64 * 1024)) {
+            live_log = tail->bytes;
+          }
+        }
         ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
         response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI run",
             ckgit::renderCiRunDetail(*project, *run, live_log, live_step, nonce), &*project, &ci_context,
@@ -1110,8 +1117,18 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         response.body = *blob;
       } else if (route.kind == ckgit::RouteKind::kCiLog) {
         const int step = std::max(0, route.step);
-        const auto log = index.readCiLog(route.project, route.run_id, static_cast<std::size_t>(step));
-        if (!log) throw ckgit::WebError(404, "CI log was not found.");
+        // A step log can exceed what one page holds (up to ci_max_log_bytes);
+        // show its last part, and say how much was left out.
+        const auto tail =
+            index.readCiLogTail(route.project, route.run_id, static_cast<std::size_t>(step), ckgit::kProjectIndexCiLogLimit);
+        if (!tail) throw ckgit::WebError(404, "CI log was not found.");
+        std::optional<std::string> log = tail->bytes;
+        if (tail->total > tail->bytes.size()) {
+          const std::size_t newline = log->find('\n');
+          if (newline != std::string::npos) log->erase(0, newline + 1);  // start at a whole line
+          log->insert(0, "[earlier output omitted: showing the last " + std::to_string(log->size() >> 10) +
+                             " KiB of " + std::to_string(tail->total >> 10) + " KiB]\n");
+        }
         const std::string nonce = generateNonce();
         ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
         response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI log",

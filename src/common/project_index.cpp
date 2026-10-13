@@ -545,6 +545,12 @@ class ProjectIndex::Impl {
     return readCiRunLog(*state_root_, project, run_id, step, kProjectIndexCiLogLimit);
   }
 
+  std::optional<CiLogTail> readCiLogTail(std::string_view project, std::string_view run_id, std::size_t step,
+                                         std::size_t max_bytes) const {
+    if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
+    return readCiRunLogTail(*state_root_, project, run_id, step, max_bytes);
+  }
+
   // Reads only the bytes appended past `offset`, for live SSE tailing.
   std::optional<std::string> readCiLogChunk(std::string_view project, std::string_view run_id,
                                             std::size_t step, std::uint64_t offset, std::size_t cap) const {
@@ -814,6 +820,10 @@ std::optional<ProjectSummary> ProjectIndex::find(std::string_view name) const { 
 std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std::string_view run_id,
                                                    std::size_t step_index) const {
   return impl_->readCiLog(project, run_id, step_index);
+}
+std::optional<CiLogTail> ProjectIndex::readCiLogTail(std::string_view project, std::string_view run_id,
+                                                     std::size_t step_index, std::size_t max_bytes) const {
+  return impl_->readCiLogTail(project, run_id, step_index, max_bytes);
 }
 std::optional<CiRunRecord> ProjectIndex::readCiRun(std::string_view project,
                                                    std::string_view run_id) const {

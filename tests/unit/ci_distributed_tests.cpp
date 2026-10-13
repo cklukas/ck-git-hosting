@@ -861,6 +861,28 @@ void testRunnerShownOnRuns() {
   require(ckgit::parseHttpRoute("/ci/runners").kind == ckgit::RouteKind::kCiRunners, "the runners page has a route");
 }
 
+
+// A page showing the end of a step log reads only that end, however large the
+// log grew (the live view of a long build).
+void testLogTail() {
+  Fixture fixture;
+  ckgit::CiJobRequest job = sampleJob(ckgit::generateCiId());
+  ckgit::enqueueCiJob(fixture.state, job);
+  const std::filesystem::path log = fixture.state / "ci" / "runs" / "demo" / job.job_id / "steps" / "0.log";
+  {
+    std::ofstream out(log, std::ios::binary);
+    out << std::string(3u << 20, 'x') << "last line\n";
+  }
+  require(chmod(log.c_str(), 0600) == 0, "could not secure the log");
+  require(!ckgit::readCiRunLog(fixture.state, "demo", job.job_id, 0, 1u << 20).has_value(),
+          "a whole-file read refuses a log over its cap");
+  const auto tail = ckgit::readCiRunLogTail(fixture.state, "demo", job.job_id, 0, 64);
+  require(tail.has_value() && tail->bytes.size() == 64 && tail->total == (3u << 20) + 10 &&
+              tail->bytes.substr(tail->bytes.size() - 10) == "last line\n",
+          "the tail of a large log is read with its full size");
+  require(!ckgit::readCiRunLogTail(fixture.state, "demo", job.job_id, 1, 64).has_value(), "a missing step log has no tail");
+}
+
 }  // namespace
 
 void testCiDistributed() {
@@ -884,4 +906,5 @@ void testCiDistributed() {
   testStreamEdges();
   testRunnerRegistry();
   testRunnerShownOnRuns();
+  testLogTail();
 }

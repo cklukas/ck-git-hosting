@@ -330,6 +330,16 @@ std::optional<std::string> readCiRunLog(const std::filesystem::path& state_root,
                                         std::string_view project_name, std::string_view run_id,
                                         std::size_t step_index, std::size_t cap);
 
+// The last `max_bytes` of a step's log and the log's full size: what a page
+// that shows only the end of a possibly very large log needs (a step log may
+// grow to ci_max_log_bytes). std::nullopt when the step log is absent.
+struct CiLogTail {
+  std::string bytes;
+  std::uint64_t total = 0;
+};
+std::optional<CiLogTail> readCiRunLogTail(const std::filesystem::path& state_root, std::string_view project_name,
+                                          std::string_view run_id, std::size_t step_index, std::size_t max_bytes);
+
 // Reads up to `cap` bytes of a step's log starting at byte `offset`, for live
 // tailing: only the bytes appended since `offset` are returned. An empty string
 // means the log exists but has not grown past `offset` yet; std::nullopt means

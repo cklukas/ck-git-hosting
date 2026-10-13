@@ -53,6 +53,10 @@ class ProjectIndex {
   // touches only the private state root and never runs Git.
   std::optional<std::string> readCiLog(std::string_view project_name, std::string_view run_id,
                                        std::size_t step_index) const;
+  // Reads only the last `max_bytes` of a step log (and its full size): for a
+  // page that shows the end of a log that may be far larger than it can hold.
+  std::optional<CiLogTail> readCiLogTail(std::string_view project_name, std::string_view run_id,
+                                         std::size_t step_index, std::size_t max_bytes) const;
   // Reads one run fresh from disk (with artifacts), bypassing the cached
   // snapshot so the live status page reflects the run's current bytes.
   std::optional<CiRunRecord> readCiRun(std::string_view project_name, std::string_view run_id) const;
