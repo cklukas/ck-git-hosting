@@ -23,6 +23,16 @@ endif
 CXX ?= c++
 CPPFLAGS := -D_GNU_SOURCE -Iinclude
 CXXFLAGS ?= -std=c++20 -Wall -Wextra -Wpedantic -Werror -O2
+# GCC on 64-bit ARM (the Raspberry Pi server) notes, for every function that
+# takes or returns a std::pair<double, double>, that GCC 10.1 changed how such
+# values are passed. That only matters when linking code built by a GCC older
+# than 10.1; this build compiles everything with one compiler, so the notes are
+# noise in every build log. Only GCC knows the flag (clang would reject it under
+# -Werror), and `override` keeps it when a caller passes CXXFLAGS of its own.
+CXX_IS_CLANG := $(shell $(CXX) -dM -E -x c++ /dev/null 2>/dev/null | grep -c __clang__)
+ifeq ($(CXX_IS_CLANG),0)
+override CXXFLAGS += -Wno-psabi
+endif
 LDFLAGS ?= -pthread
 
 # Source archives retain their release version; Git checkouts additionally
