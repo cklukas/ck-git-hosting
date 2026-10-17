@@ -1,3 +1,6 @@
+---
+description: "A Mermaid flowchart example rendered by ckdocs: nodes, shapes, edges, and subgraphs."
+---
 # Flowchart
 
 [All diagram examples](../mermaid.md#diagram-examples)

@@ -1,3 +1,6 @@
+---
+description: "A Mermaid block diagram example rendered by ckdocs: blocks laid out in columns with connections."
+---
 # Block diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

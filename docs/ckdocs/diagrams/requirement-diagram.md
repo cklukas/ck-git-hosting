@@ -1,3 +1,6 @@
+---
+description: "A Mermaid requirement diagram example rendered by ckdocs: requirements and the elements that satisfy them."
+---
 # Requirement diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

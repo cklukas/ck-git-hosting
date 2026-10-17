@@ -1,3 +1,6 @@
+---
+description: A ZenUML sequence diagram example rendered by ckdocs, written in ZenUML's code-like syntax.
+---
 # ZenUML sequence
 
 [All diagram examples](../mermaid.md#diagram-examples)

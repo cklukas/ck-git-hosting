@@ -1,3 +1,6 @@
+---
+description: Follow CI builds from any paired device with ckgit ci, and download build artifacts and release packages.
+---
 # Follow builds and download releases
 
 ## Follow a build

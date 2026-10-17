@@ -1,3 +1,6 @@
+---
+description: Build, publish, and deploy releases entirely on your own hardware, including the server deploying itself from a tag.
+---
 # Self-hosted releases and deployment
 
 `ck-git-hosting` ships two independent release channels for the same tag, and

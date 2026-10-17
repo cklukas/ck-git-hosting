@@ -1,3 +1,6 @@
+---
+description: "Worked .ckgit/ci.yml examples: a make project, CMake with a cache and a sister, and a docs site with releases."
+---
 # CI workflow examples
 
 ## Worked examples

@@ -1,3 +1,6 @@
+---
+description: The Markdown ckdocs renders, the inline HTML it allows, and how links, images, and files are resolved and checked.
+---
 # Markdown, links, and assets
 
 ## Markdown

@@ -1,3 +1,6 @@
+---
+description: "A Mermaid user journey example rendered by ckdocs: the steps of a task, scored by how each one feels."
+---
 # User journey
 
 [All diagram examples](../mermaid.md#diagram-examples)

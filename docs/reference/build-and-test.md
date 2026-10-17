@@ -1,3 +1,6 @@
+---
+description: Compile ck-git-hosting from source, run the test suite, and choose where build products go.
+---
 # Build from source
 
 ## Compile and test

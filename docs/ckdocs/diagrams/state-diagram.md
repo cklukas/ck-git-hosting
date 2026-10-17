@@ -1,3 +1,6 @@
+---
+description: "A Mermaid state diagram example rendered by ckdocs: states and the transitions between them."
+---
 # State diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

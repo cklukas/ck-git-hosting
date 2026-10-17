@@ -1,3 +1,6 @@
+---
+description: "A Mermaid timeline example rendered by ckdocs: events grouped by period."
+---
 # Timeline
 
 [All diagram examples](../mermaid.md#diagram-examples)

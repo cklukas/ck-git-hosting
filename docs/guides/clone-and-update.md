@@ -1,3 +1,6 @@
+---
+description: List hosted projects, clone them onto another device, and fetch or fast-forward local checkouts.
+---
 # Clone and update projects
 
 ## Find projects

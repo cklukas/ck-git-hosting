@@ -1,3 +1,6 @@
+---
+description: Publish a ckdocs site on ck-git Pages and GitHub Pages from the same source.
+---
 # Publish a documentation site
 
 ## Publishing on ck-git Pages and GitHub Pages

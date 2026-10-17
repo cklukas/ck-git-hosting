@@ -1,3 +1,6 @@
+---
+description: A Mermaid pie chart example rendered by ckdocs, with values shown on the slices.
+---
 # Pie chart
 
 [All diagram examples](../mermaid.md#diagram-examples)

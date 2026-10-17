@@ -1,3 +1,6 @@
+---
+description: Back up hosted repositories and server state, verify the backup, restore a whole server, or recover a removed project.
+---
 # Backup and recovery
 
 Run these commands as the account that owns the hosted repositories and private

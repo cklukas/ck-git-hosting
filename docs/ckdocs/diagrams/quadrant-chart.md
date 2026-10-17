@@ -1,3 +1,6 @@
+---
+description: "A Mermaid quadrant chart example rendered by ckdocs: points placed in four labelled quadrants."
+---
 # Quadrant chart
 
 [All diagram examples](../mermaid.md#diagram-examples)

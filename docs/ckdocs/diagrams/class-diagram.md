@@ -1,3 +1,6 @@
+---
+description: "A Mermaid class diagram example rendered by ckdocs: classes, members, and inheritance."
+---
 # Class diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

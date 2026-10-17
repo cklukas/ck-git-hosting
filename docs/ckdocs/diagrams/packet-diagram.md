@@ -1,3 +1,6 @@
+---
+description: "A Mermaid packet diagram example rendered by ckdocs: the bit layout of a network packet header."
+---
 # Packet diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

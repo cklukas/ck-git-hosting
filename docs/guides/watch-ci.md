@@ -1,3 +1,6 @@
+---
+description: "Read CI results in the dashboard and the terminal: run status, step logs, live output, and cancelling a run."
+---
 # Read CI results and logs
 
 ## Push and read results

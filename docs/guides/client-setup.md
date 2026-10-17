@@ -1,3 +1,6 @@
+---
+description: Install ckgit on a device, pair it with your server, and check the connection with ckgit setup and ckgit doctor.
+---
 # Set up the client
 
 Install [the client package](../operations/02-packages-and-releases.md), then [pair its SSH key](../operations/01-installation.md#pair-a-device) with your server.

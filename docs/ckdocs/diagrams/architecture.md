@@ -1,3 +1,6 @@
+---
+description: "A Mermaid architecture diagram example rendered by ckdocs: services and groups with their connections."
+---
 # Architecture
 
 [All diagram examples](../mermaid.md#diagram-examples)

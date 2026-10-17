@@ -1,3 +1,6 @@
+---
+description: "A Mermaid radar chart example rendered by ckdocs: several values compared on radial axes."
+---
 # Radar chart
 
 [All diagram examples](../mermaid.md#diagram-examples)

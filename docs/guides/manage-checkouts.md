@@ -1,3 +1,6 @@
+---
+description: See which local checkout each project uses, read the status table, and select, move, or forget checkouts.
+---
 # Manage local checkouts
 
 ## Main checkout

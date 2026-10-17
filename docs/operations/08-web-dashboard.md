@@ -1,3 +1,6 @@
+---
+description: "A tour of the web dashboard: projects, source browsing, commit history, and CI runs, and how to open it with ckgit web or ckgit open."
+---
 # Web dashboard tour
 
 The dashboard is a small web view of the Git repositories hosted by

@@ -1,3 +1,6 @@
+---
+description: "Configure and operate the server's own CI runner: settings, leases, sizing on a Raspberry Pi, and the step sandbox."
+---
 # Configure and operate the CI runner
 
 ## What the package installs

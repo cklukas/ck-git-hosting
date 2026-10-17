@@ -1,3 +1,6 @@
+---
+description: "A Mermaid entity-relationship diagram example rendered by ckdocs: entities and their cardinalities."
+---
 # Entity-relationship
 
 [All diagram examples](../mermaid.md#diagram-examples)

@@ -1,3 +1,6 @@
+---
+description: Publish a static site from a project's CI build and serve it to your LAN with ck-git Pages.
+---
 # Host project sites with Pages
 
 ## Pages

@@ -1,3 +1,6 @@
+---
+description: Create hosted repositories, change a project's default branch, manage checkout registrations, and remove projects.
+---
 # Manage hosted projects
 
 ## Create a repository

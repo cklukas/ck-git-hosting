@@ -1,3 +1,6 @@
+---
+description: "A Mermaid Git graph example rendered by ckdocs: commits, branches, and merges."
+---
 # Git graph
 
 [All diagram examples](../mermaid.md#diagram-examples)

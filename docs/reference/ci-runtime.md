@@ -1,3 +1,6 @@
+---
+description: "How CI jobs run: step order, the sandbox, environment variables, the checkout, timeouts, and logs."
+---
 # CI execution environment
 
 ## Execution

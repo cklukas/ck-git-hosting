@@ -1,3 +1,6 @@
+---
+description: Every ckgit, ckgit-admin, server, runner, and ckdocs command with its options and exit codes.
+---
 # Command-line reference
 
 For guided examples, start with [client setup](../guides/client-setup.md) or [publishing a project](../guides/publish-and-sync.md).

@@ -1,3 +1,6 @@
+---
+description: Render Mermaid diagrams to light and dark SVG images at build time, with no browser script, plus a gallery of every supported type.
+---
 # Mermaid diagrams
 
 A fenced code block with the language `mermaid` becomes a standalone SVG

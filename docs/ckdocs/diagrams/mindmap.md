@@ -1,3 +1,6 @@
+---
+description: "A Mermaid mindmap example rendered by ckdocs: a central idea with branching topics."
+---
 # Mindmap
 
 [All diagram examples](../mermaid.md#diagram-examples)

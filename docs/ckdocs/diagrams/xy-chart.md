@@ -1,3 +1,6 @@
+---
+description: "A Mermaid XY chart example rendered by ckdocs: bars and lines over shared axes, with automatic label rotation."
+---
 # XY chart
 
 [All diagram examples](../mermaid.md#diagram-examples)

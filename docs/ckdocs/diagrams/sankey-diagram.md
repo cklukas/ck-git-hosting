@@ -1,3 +1,6 @@
+---
+description: "A Mermaid Sankey diagram example rendered by ckdocs: flows between nodes, sized by their values."
+---
 # Sankey diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

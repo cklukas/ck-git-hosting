@@ -1,3 +1,6 @@
+---
+description: "The complete .ckgit/ci.yml syntax: triggers, jobs, steps, checkout depth, sisters, caches, artifacts, Pages, runner labels, and limits."
+---
 # `.ckgit/ci.yml` reference
 
 Workflow syntax, triggers, outputs, and limits. For a first workflow, see

@@ -1,3 +1,6 @@
+---
+description: Build a documentation site from Markdown with ckdocs, preview it with live rebuilds, and check it for broken links.
+---
 # Get started with ckdocs
 
 `ckdocs` turns Markdown into a static documentation site with navigation,

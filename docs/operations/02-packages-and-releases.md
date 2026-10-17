@@ -1,3 +1,6 @@
+---
+description: Which packages are built where, installing on Debian, Raspberry Pi, other Linux and macOS (Homebrew), and cutting a release.
+---
 # Packages, continuous integration, and releases
 
 ## What is built where

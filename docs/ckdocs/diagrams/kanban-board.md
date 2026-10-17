@@ -1,3 +1,6 @@
+---
+description: "A Mermaid kanban board example rendered by ckdocs: tasks in columns by status."
+---
 # Kanban board
 
 [All diagram examples](../mermaid.md#diagram-examples)

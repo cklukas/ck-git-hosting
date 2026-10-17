@@ -1,3 +1,6 @@
+---
+description: "What the dashboard shows and how it behaves: the project table, revisions, Markdown and source views, limits, and the SSH tunnel."
+---
 # Dashboard behavior and limits
 
 For a visual introduction, see the [dashboard tour](../operations/08-web-dashboard.md).

@@ -1,3 +1,6 @@
+---
+description: "A Mermaid Gantt chart example rendered by ckdocs: tasks and milestones on a timeline."
+---
 # Gantt chart
 
 [All diagram examples](../mermaid.md#diagram-examples)

@@ -1,3 +1,6 @@
+---
+description: Enable CI for a project and add a first .ckgit/ci.yml workflow that builds and tests every push.
+---
 # Run your first CI workflow
 
 Add a `.ckgit/ci.yml` workflow to a hosted project to build and test every push.

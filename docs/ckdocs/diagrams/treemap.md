@@ -1,3 +1,6 @@
+---
+description: "A Mermaid treemap example rendered by ckdocs: nested rectangles sized by their values."
+---
 # Treemap
 
 [All diagram examples](../mermaid.md#diagram-examples)

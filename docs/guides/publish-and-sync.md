@@ -1,3 +1,6 @@
+---
+description: Create projects on your server, publish existing repositories, and keep their branches and tags in sync without force pushes.
+---
 # Publish and sync projects
 
 ## Publish a project

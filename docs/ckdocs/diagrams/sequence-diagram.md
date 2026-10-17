@@ -1,3 +1,6 @@
+---
+description: "A Mermaid sequence diagram example rendered by ckdocs: participants exchanging messages over time."
+---
 # Sequence diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

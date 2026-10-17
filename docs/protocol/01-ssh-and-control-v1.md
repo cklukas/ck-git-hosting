@@ -1,3 +1,6 @@
+---
+description: The restricted SSH commands and control protocol between devices, runners, and the server, with every operation's grammar.
+---
 # SSH and control protocol version 1
 
 This document defines the first restricted-command boundary.  It is intentionally

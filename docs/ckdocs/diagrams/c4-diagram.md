@@ -1,3 +1,6 @@
+---
+description: "A Mermaid C4 context diagram example rendered by ckdocs: people, systems, and their relationships."
+---
 # C4 diagram
 
 [All diagram examples](../mermaid.md#diagram-examples)

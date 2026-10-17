@@ -1,3 +1,6 @@
+---
+description: "Let other Linux machines run CI jobs for the server: register remote runners, label them, and manage them."
+---
 # Share CI load with remote runners
 
 A ck-git-hosting server runs CI jobs itself, with `ck-ci-runnerd` on the same

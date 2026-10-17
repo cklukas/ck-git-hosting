@@ -1,3 +1,6 @@
+---
+description: Install the ck-git-hosting server on Debian 13 or a Raspberry Pi, pair the first device, and uninstall without losing repositories.
+---
 # Server installation and pairing
 
 This guide installs the `ck-git-hosting` server on a Debian 13 host with
