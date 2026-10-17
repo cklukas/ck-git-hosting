@@ -127,6 +127,7 @@ In the server's `server.ini`:
 
 ```text
 # ci_claim_delay_ms=1000      # the primary leaves a new job this long for a free remote runner (0..60000)
+# ci_runner_labels=arm64,linux # the server's own runner's labels for runs_on: (besides its name, primary)
 # ci_lease_seconds=90         # a claim lapses without renewal after this long (10..3600)
 # ci_max_attempts=2           # attempts before a job whose runner keeps getting lost is an error (1..10)
 # ci_rescan_seconds=300       # safety rescan behind the queue notifications (10..3600)
@@ -144,6 +145,28 @@ sudo -u ckgit ckgit-admin runner remove uconsole --config /etc/ck-git-hosting/se
 `disable` drains a runner: it finishes its current job but claims no new one.
 `remove` deletes its record; delete its line from `authorized_keys` to revoke
 its key.
+
+### Labels
+
+A workflow can ask for a kind of runner with
+[`runs_on:`](06-ci-yml-reference.md#choose-a-runner-runs_on), such as a Mac
+for macOS builds or a machine with a big disk. Give runners labels on the
+server:
+
+```text
+sudo -u ckgit ckgit-admin runner labels mac-mini macos,arm64 --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner labels uconsole - --config /etc/ck-git-hosting/server.ini
+```
+
+The first command sets a runner's labels, and `-` removes them all. `runner
+add NAME --public-key FILE --labels a,b` sets them when the runner is
+registered. Set `ci_runner_labels` in `server.ini` for the server's own runner
+and restart `ck-ci-runner.service`. A runner's name always counts as a label
+too. `runner list` and the dashboard's Runners page show every runner's
+labels.
+
+Labels come only from the server's records, never from the runner, so a
+runner cannot take jobs meant for another kind of machine by claiming a label.
 
 ## Security
 

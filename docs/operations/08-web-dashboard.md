@@ -4,6 +4,20 @@ The dashboard is a small web view of the Git repositories hosted by
 ck-git-hosting. It shows project activity, source files, commit history, and
 continuous integration without a separate database or web application.
 
+Run `ckgit web` to open it through an SSH tunnel. From inside a published
+checkout, `ckgit open` goes straight to that project's page:
+
+```sh
+ckgit open                  # the project's overview
+ckgit open src/main.cpp     # a file or folder, at the current branch
+ckgit open --commit HEAD    # a commit
+ckgit open --ci             # the project's CI runs
+```
+
+Keep the command running while you browse; Ctrl+C closes the tunnel. The
+dashboard only shows what reached the server, so publish a commit or branch
+before you open it.
+
 ## Projects at a glance
 
 The project list shows the default branch, most recent commit, and latest CI

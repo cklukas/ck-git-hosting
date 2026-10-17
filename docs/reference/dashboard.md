@@ -30,7 +30,10 @@ READMEs render a built-in Markdown subset in the overview and in directories.
 Other Markdown files also open rendered, with a Source mode and heading links.
 GitHub-flavoured tables, alerts (`> [!NOTE]`), task lists, and strikethrough
 render as on GitHub, and YAML front matter is kept out of the rendered view.
-Raw HTML is escaped, comments outside code are hidden, and relative document
+Raw HTML is escaped except for a short attribute-free allow-list (`<kbd>`,
+`<sub>`, `<sup>`, `<mark>`, `<ins>`, `<small>`, `<br>`, `<wbr>`, and
+`<details>`/`<summary>` disclosures; see
+[ckdocs Markdown](../ckdocs/markdown.md)), comments outside code are hidden, and relative document
 links retain the selected branch or tag. Directory links also work without a
 trailing slash. Images, including SVG, load through an immutable protected raw
 route. Source views have line numbers, highlighted line links, optional

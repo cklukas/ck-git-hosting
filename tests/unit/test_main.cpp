@@ -488,6 +488,26 @@ void testServerConfig() {
       try { ckgit::loadServerConfig(bad_path); } catch (const std::exception&) { rejected = true; }
       expect(rejected, "pages_public_url rejects unsafe or non-http(s) values");
     }
+    // ci_runner_labels: the primary runner's labels, sorted and deduplicated.
+    const auto labels_path = directory / "labels.ini";
+    {
+      std::ofstream f(labels_path);
+      f << "schema_version=1\nrepo_root=/srv/repos\ncontrol_socket=/run/control.sock\nci_runner_labels=linux,arm64,linux\n";
+    }
+    const auto labelled = ckgit::loadServerConfig(labels_path);
+    expect(labelled.ci_runner_labels == std::vector<std::string>{"arm64", "linux"} &&
+               ckgit::renderServerConfig(labelled).find("ci_runner_labels=arm64,linux\n") != std::string::npos,
+           "ci_runner_labels round-trips");
+    for (const std::string& bad : {std::string("Linux"), std::string("a b"), std::string("a,,b"), std::string(",a"),
+                                  std::string("-x"), std::string(33, 'a')}) {
+      {
+        std::ofstream f(labels_path);
+        f << "schema_version=1\nrepo_root=/srv/repos\ncontrol_socket=/run/control.sock\nci_runner_labels=" << bad << "\n";
+      }
+      bool rejected = false;
+      try { ckgit::loadServerConfig(labels_path); } catch (const std::exception&) { rejected = true; }
+      expect(rejected, "ci_runner_labels rejects " + bad);
+    }
     for (const auto* target : {"ckgit@rpi4", "git_user@git-server", "git.user@git.example.test", "ckgit@192.0.2.1"}) {
       expect(ckgit::isValidSshCloneTarget(target), "safe SSH aliases, DNS names, and IPv4 targets are accepted");
     }

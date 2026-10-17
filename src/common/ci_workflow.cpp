@@ -268,7 +268,7 @@ CiJob interpretJob(const Node& node) {
 
 CiWorkflow interpret(const Node& root) {
   requireKind(root, Node::Kind::Mapping, "the workflow to be a mapping");
-  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "checkout", "cache", "jobs", "pages"});
+  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "checkout", "runs_on", "cache", "jobs", "pages"});
 
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the workflow is missing 'version'", root.line);
@@ -341,6 +341,27 @@ CiWorkflow interpret(const Node& root) {
   }
 
   if (const Node* checkout = findEntry(root, "checkout")) workflow.checkout = interpretCheckout(*checkout);
+
+  if (const Node* runs_on = findEntry(root, "runs_on")) {
+    std::vector<std::string> labels;
+    if (runs_on->kind == Node::Kind::Scalar) {
+      labels.push_back(runs_on->scalar);
+    } else {
+      requireKind(*runs_on, Node::Kind::Sequence, "runs_on to be a label or a list of labels");
+      if (runs_on->items.size() > kMaximumCiLabels) tooLarge("too many runs_on labels");
+      for (const Node& item : runs_on->items) {
+        labels.push_back(requireKind(item, Node::Kind::Scalar, "each runs_on label to be a scalar").scalar);
+      }
+    }
+    for (const auto& label : labels) {
+      if (!isValidCiLabel(label)) {
+        malformed("invalid runs_on label '" + label + "' (lowercase letters, digits, '.', '_', '-'; at most 32)", runs_on->line);
+      }
+    }
+    std::sort(labels.begin(), labels.end());
+    labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
+    workflow.runs_on = std::move(labels);
+  }
 
   if (const Node* caches = findEntry(root, "cache")) {
     requireKind(*caches, Node::Kind::Sequence, "cache to be a list");

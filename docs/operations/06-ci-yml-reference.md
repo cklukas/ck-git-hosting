@@ -115,6 +115,7 @@ exact same subset — one syntax, two schemas.
 | `checkout.since` | date | no | — | `YYYY-MM-DD`; every commit since that date instead of a fixed depth; not together with `depth` |
 | `checkout.tags` | boolean | no | `false` | `true` also fetches the tags inside that history (for `git describe`) |
 | `checkout.mode` | `git` or `archive` | no | `git` | `archive` removes `.git` after the checkout: the plain tree earlier runners produced |
+| `runs_on` | a label, or a list of up to 16 labels | no | any runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
 | `jobs[]` | list of mappings | required, non-empty | — | unique `name` per job |
@@ -186,6 +187,34 @@ waits while its project already has a run in progress on the same ref (so runs
 of one ref finish in push order), and the server's own runner leaves a new job
 for `ci_claim_delay_ms` to a free remote runner first (see
 [Share CI load with remote runners](ci-remote-runners.md)).
+
+### Choose a runner: `runs_on`
+
+`runs_on:` sends the workflow's runs only to a runner that carries every
+label it names. Without it, any runner takes them.
+
+```yaml
+version: 1
+runs_on: [macos, arm64]   # or a single label: runs_on: uconsole
+jobs:
+  - name: build
+    steps:
+      - run: make
+```
+
+A runner's labels are set on the server, never by the runner itself: the
+server's own runner has `ci_runner_labels` in `server.ini`, and an
+administrator gives a remote runner its labels with `ckgit-admin runner
+labels` (see [Labels](ci-remote-runners.md#labels)). Every runner's name
+also counts as a label, so `runs_on: uconsole` picks that one runner and
+`runs_on: primary` the server's own.
+
+The labels are read from the pushed commit's workflow when the push queues
+the run. Until a runner with all of them is free, the run stays pending, and
+its detail line says which labels it waits for. Other runners skip it and
+take later jobs. A run that no runner can take waits until an administrator
+gives a runner the labels or cancels the run. `ckgit ci lint` shows the
+labels a workflow asks for.
 
 ## Checkout and history
 

@@ -178,6 +178,8 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
     // A disabled runner is drained: it finishes what it holds, claims nothing.
     const std::optional<CiRunnerRecord> registered = loadCiRunnerRecord(state, runner);
     const bool enabled = !registered.has_value() || registered->enabled;
+    // Its labels come from the server's registry, never from the runner.
+    options.labels = registered.has_value() ? registered->labels : std::vector<std::string>{};
     try {
       if (enabled) claimed = claimCiJob(state, options);
     } catch (const std::exception& error) {

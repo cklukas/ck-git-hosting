@@ -131,4 +131,43 @@ bool isSafeRelativePath(std::string_view path) {
   return true;
 }
 
+bool isValidCiLabel(std::string_view label) {
+  if (label.empty() || label.size() > kMaximumCiLabelBytes) return false;
+  const auto lower_or_digit = [](unsigned char byte) { return (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9'); };
+  if (!lower_or_digit(static_cast<unsigned char>(label.front()))) return false;
+  return std::all_of(label.begin(), label.end(), [&](unsigned char byte) {
+    return lower_or_digit(byte) || byte == '.' || byte == '_' || byte == '-';
+  });
+}
+
+std::optional<std::vector<std::string>> parseCiLabelList(std::string_view text) {
+  std::vector<std::string> labels;
+  if (text.empty()) return labels;
+  for (std::size_t start = 0;;) {
+    const std::size_t comma = text.find(',', start);
+    const std::string_view label = text.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+    if (!isValidCiLabel(label)) return std::nullopt;
+    labels.emplace_back(label);
+    if (comma == std::string_view::npos) break;
+    start = comma + 1;
+  }
+  std::sort(labels.begin(), labels.end());
+  labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
+  if (labels.size() > kMaximumCiLabels) return std::nullopt;
+  return labels;
+}
+
+std::string formatCiLabelList(const std::vector<std::string>& labels) {
+  std::string text;
+  for (const auto& label : labels) text += (text.empty() ? "" : ",") + label;
+  return text;
+}
+
+bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
+                     const std::vector<std::string>& runs_on) {
+  return std::all_of(runs_on.begin(), runs_on.end(), [&](const std::string& wanted) {
+    return wanted == name || std::find(labels.begin(), labels.end(), wanted) != labels.end();
+  });
+}
+
 }  // namespace ckgit

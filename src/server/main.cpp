@@ -78,6 +78,7 @@ struct Options {
   std::optional<std::filesystem::path> pages_root;
   std::optional<unsigned short> pages_http_port;
   std::optional<std::string> pages_public_url;
+  std::vector<std::string> ci_runner_labels;  // the primary runner's, shown on the runners page
 };
 
 void requestStop(int) {
@@ -166,6 +167,7 @@ void applyServerConfig(Options* options) {
   options->pages_root = config.pages_root;
   options->pages_http_port = config.pages_http_port;
   options->pages_public_url = config.pages_public_url;
+  options->ci_runner_labels = config.ci_runner_labels;
 }
 
 ckgit::ServerConfig effectiveConfig(const Options& options) {
@@ -947,7 +949,8 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
                       const std::string& ssh_clone_target, const std::optional<std::filesystem::path>& state_root,
                       const std::optional<std::filesystem::path>& pages_root,
                       const std::optional<unsigned short>& pages_http_port,
-                      const std::optional<std::string>& pages_public_url) {
+                      const std::optional<std::string>& pages_public_url,
+                      const std::vector<std::string>& primary_labels) {
   // Refresh the versions the About dialog lists, so every page shows the running
   // host and service builds. Best-effort and per request (the dashboard is
   // loopback-only and low-traffic), reflecting a service restart immediately.
@@ -993,7 +996,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       }
       response.body = ckgit::pageLayout(
           "CI runners",
-          ckgit::renderCiRunners(runners, claims, static_cast<std::uint64_t>(std::time(nullptr))));
+          ckgit::renderCiRunners(runners, claims, static_cast<std::uint64_t>(std::time(nullptr)), primary_labels));
     } else {
       project = index.find(route.project);
       if (route.kind == ckgit::RouteKind::kNotFound || !project) throw ckgit::WebError(404, "Page was not found.");
@@ -1171,7 +1174,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
 void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,
                 const std::string& ssh_clone_target, std::optional<std::filesystem::path> state_root,
                 std::optional<std::filesystem::path> pages_root, std::optional<unsigned short> pages_http_port,
-                std::optional<std::string> pages_public_url) {
+                std::optional<std::string> pages_public_url, std::vector<std::string> primary_labels) {
   // Live log streams (SSE) hold a worker for their duration, bounded by
   // kMaxLogStreams; the extra workers keep ordinary requests responsive.
   constexpr std::size_t kHttpWorkerCount = 8;
@@ -1191,7 +1194,7 @@ void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIn
         if (stopping) return;
         client = queue.front(); queue.pop_front();
       }
-      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target, state_root, pages_root, pages_http_port, pages_public_url); } catch (...) {}
+      try { handleHttpClient(client.descriptor, root, index, client.deadline, ssh_clone_target, state_root, pages_root, pages_http_port, pages_public_url, primary_labels); } catch (...) {}
       close(client.descriptor);
     }
   });
@@ -1234,7 +1237,7 @@ int serve(const Options& options) {
   std::thread http_thread;
   if (http_listener >= 0) {
     std::cout << "ck-git-hostingd: loopback HTTP ready on " << bound_http_port << "\n" << std::flush;
-    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""), state_root, options.pages_root, options.pages_http_port, options.pages_public_url);
+    http_thread = std::thread(serveHttp, http_listener, repository_root, std::ref(index), options.ssh_clone_target.value_or(""), state_root, options.pages_root, options.pages_http_port, options.pages_public_url, options.ci_runner_labels);
   }
   while (!stop_requested) {
     pollfd ready{listener, POLLIN, 0};

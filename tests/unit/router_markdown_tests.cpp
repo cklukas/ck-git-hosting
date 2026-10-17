@@ -214,6 +214,33 @@ void testRouterMarkdown() {
   const auto safe = renderMarkdown("<script>alert('x')</script>\n\n<img src=x onerror=evil>\n\n[bad](javascript:alert(1)) ![bad](data:image/svg+xml,x)\n[bad](JaVaScRiPt:alert)\n[good](https://example.test/?a=1&b=2 \"title\")\n<https://example.test/> <person@example.test>\n", root_context);
   check(!contains(safe, "<script>") && !contains(safe, "<img src=x") && contains(safe, "&lt;script&gt;"), "raw HTML is text");
   check(!contains(safe, "href=\"javascript:") && !contains(safe, "href=\"JaVa") && !contains(safe, "src=\"data:"), "active URL schemes blocked");
+
+  // The attribute-free HTML allow-list: inline tags balance within their
+  // paragraph, anything with attributes or another name stays text, and a
+  // <details> block wraps Markdown until its closing line.
+  const auto tags = renderMarkdown("Press <kbd>Ctrl</kbd>+<kbd>C</kbd>, H<sub>2</sub>O, x<sup>2</sup>, <mark>hot</mark>,\n"
+                                   "<ins>new</ins> <small>fine</small> a<br>b<br/>c<br />d<wbr>e\n\n"
+                                   "<kbd class=\"x\">k</kbd> <KBD>u</KBD> <span>s</span> </sub> <kbd>open\n\nafter\n",
+                                   root_context);
+  check(contains(tags, "<kbd>Ctrl</kbd>+<kbd>C</kbd>") && contains(tags, "H<sub>2</sub>O") && contains(tags, "x<sup>2</sup>") &&
+            contains(tags, "<mark>hot</mark>") && contains(tags, "<ins>new</ins>") && contains(tags, "<small>fine</small>") &&
+            contains(tags, "a<br>b<br>c<br>d<wbr>e"),
+        "allowed inline tags render");
+  check(contains(tags, "&lt;kbd class=&quot;x&quot;&gt;k") && contains(tags, "&lt;KBD&gt;u&lt;/KBD&gt;") &&
+            contains(tags, "&lt;span&gt;s&lt;/span&gt;") && contains(tags, "&lt;/sub&gt;"),
+        "attributes, other spellings, other tags, and stray closers stay text");
+  check(contains(tags, "<kbd>open</kbd></p>") && contains(tags, "<p>after</p>"), "an open tag is closed at the end of its paragraph");
+  const auto details = renderMarkdown("<details>\n<summary>More <kbd>x</kbd></summary>\n\nInside **bold**.\n\n"
+                                      "<details open>\n\n```text\n</details>\n```\n\n</details>\n</details>\n\nOutside\n",
+                                      root_context);
+  check(details == "<details><summary>More <kbd>x</kbd></summary>\n<p>Inside <strong>bold</strong>.</p>\n"
+                   "<details open>\n<pre><code class=\"language-text\">&lt;/details&gt;\n</code></pre>\n</details>\n</details>\n"
+                   "<p>Outside</p>\n",
+        "details nest, take a summary, and skip fenced closers: " + details);
+  const auto unclosed = renderMarkdown("<details>\n\ntext\n", root_context);
+  check(contains(unclosed, "&lt;details&gt;") && !contains(unclosed, "<details>"), "an unclosed details stays text");
+  check(contains(renderMarkdown("<details onclick=x>\n\n</details>\n", root_context), "&lt;details onclick=x&gt;"),
+        "a details opener with attributes stays text");
   check(contains(safe, "href=\"https://example.test/?a=1&amp;b=2\" title=\"title\"") &&
         contains(safe, "href=\"mailto:person@example.test\""), "safe links, titles, and autolinks");
   check(renderMarkdown("<!-- header comment -->\n\nbefore <!-- hidden -->after", root_context) ==

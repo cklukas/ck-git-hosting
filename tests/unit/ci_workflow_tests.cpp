@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -313,6 +314,24 @@ void testCheckoutOptions() {
           "a sister has no archive mode");
 }
 
+// runs_on: one label or a list, validated, sorted and deduplicated.
+void testRunsOn() {
+  const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
+  require(ckgit::parseCiWorkflow("version: 1" + base).runs_on.empty(), "no runs_on: any runner");
+  require(ckgit::parseCiWorkflow("version: 1\nruns_on: macos" + base).runs_on == std::vector<std::string>{"macos"},
+          "a single label");
+  require(ckgit::parseCiWorkflow("version: 1\nruns_on: [x86_64, macos, macos]" + base).runs_on ==
+              std::vector<std::string>{"macos", "x86_64"},
+          "a list is sorted and deduplicated");
+  require(rejected("version: 1\nruns_on: MacOS" + base), "uppercase rejected");
+  require(rejected("version: 1\nruns_on: [a b]" + base), "a space rejected");
+  require(rejected("version: 1\nruns_on: { os: mac }" + base), "a mapping rejected");
+  require(rejected("version: 1\nruns_on: " + std::string(33, 'a') + base), "an overlong label rejected");
+  std::string many = "version: 1\nruns_on: [";
+  for (int i = 0; i < 17; ++i) many += (i ? ", l" : "l") + std::to_string(i);
+  require(rejected(many + "]" + base), "more than 16 labels rejected");
+}
+
 void testCaches() {
   const std::string base = "\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
   // A flow list of bare cache names.
@@ -381,6 +400,7 @@ void testCiWorkflow() {
   testSisters();
   testCaches();
   testCheckoutOptions();
+  testRunsOn();
   testRejections();
   testBounds();
   testReferenceDocMatchesConstants();

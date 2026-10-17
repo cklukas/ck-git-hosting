@@ -179,6 +179,18 @@ const std::vector<Command>& commands() {
         {"--no-open", "", "Print the dashboard URL without opening a browser."}},
        {{"ADMIN-HOST", "SSH host alias or user@host with forwarding permission.", ValueKind::kHost}},
        {"ckgit web", "ckgit web --no-open", "ckgit web --project my-project", "ckgit web --port 8421 --remote-port 8420 admin@server"}},
+      {{"open"}, "Open this checkout's project, a file, a commit, or its CI in the web dashboard.",
+       "The hosted project the current repository (or --repo PATH) is paired with. Without arguments, its overview; PATH shows a file or folder of the checkout at the current branch (at the commit, with a detached HEAD); --commit REV that commit; --ci the project's CI runs; --run RUN one run.",
+       "Starts the same loopback-only SSH tunnel as ckgit web, prints the page's URL, and opens a browser. Keep this command running while browsing; Ctrl+C closes the tunnel. The dashboard shows only what reached the server, so a page for an unpublished commit or branch is missing; open says so for a commit no remote branch contains.",
+       {kRepo,
+        {"--commit", "REV", "Open this commit's page (for example HEAD or a branch name).", ValueKind::kRevision},
+        {"--ci", "", "Open the project's CI runs."},
+        {"--run", "RUN", "Open this CI run, as ckgit ci list prints it.", ValueKind::kRunId},
+        {"--port", "PORT", "Local port (default: 8420 if free, otherwise an available port).", ValueKind::kPort},
+        {"--remote-port", "PORT", "Dashboard port on the server (default: configured web_port, otherwise 8420).", ValueKind::kPort},
+        {"--no-open", "", "Print the page's URL without opening a browser."}},
+       {{"PATH", "A file or folder of the checkout, relative to the current directory.", ValueKind::kPath}},
+       {"ckgit open", "ckgit open README.md", "ckgit open src/", "ckgit open --commit HEAD", "ckgit open --ci", "ckgit open --repo /path/to/project --no-open"}},
       {{"release"}, "Inspect and download a project's durable, tag-triggered releases.",
        "A release is created on the server by a `.ckgit/ci.yml` package step running against a pushed tag; it is kept until the tag is deleted.",
        "Use list to see a project's releases and their assets, or download to fetch one asset.",
@@ -557,7 +569,8 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
               "  ckgit status                Inspect managed projects on this device.\n"
               "  ckgit sync --dry-run        Preview uploading committed branches and tags.\n"
               "  ckgit ci status             Check CI for this repository's hosted project.\n"
-              "  ckgit web                   Open the dashboard.\n\n"
+              "  ckgit web                   Open the dashboard.\n"
+              "  ckgit open README.md        Open this checkout's file in the dashboard.\n\n"
               "Defaults and scope:\n"
               "  Configuration: ~/.config/ck-git-hosting/client.ini; override with --config PATH.\n"
               "  The configuration selects the target server, device identity, and remote name.\n"

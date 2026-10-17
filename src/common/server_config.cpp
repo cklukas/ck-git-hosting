@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/server_config.hpp"
+#include "ckgit/validation.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -201,6 +202,13 @@ ServerConfig loadServerConfig(const std::filesystem::path& path) {
       }
       if (key == "ci_allow_network") config.ci_allow_network = value == "true";
       else config.ci_artifact_keep_latest = value == "true";
+    } else if (key == "ci_runner_labels") {
+      const auto labels = parseCiLabelList(value);
+      if (!labels.has_value()) {
+        configError(path, line_number,
+                    "ci_runner_labels must be comma-separated labels of lowercase letters, digits, '.', '_', '-'");
+      }
+      config.ci_runner_labels = *labels;
     } else if (key == "ssh_clone_target") {
       if (!isValidSshCloneTarget(value)) {
         configError(path, line_number, "ssh_clone_target must be user@host; use an SSH alias for custom ports or IPv6");
@@ -272,6 +280,9 @@ std::string renderServerConfig(const ServerConfig& config) {
   }
   if (config.ci_claim_delay_ms.has_value()) {
     rendered += "ci_claim_delay_ms=" + std::to_string(*config.ci_claim_delay_ms) + "\n";
+  }
+  if (!config.ci_runner_labels.empty()) {
+    rendered += "ci_runner_labels=" + formatCiLabelList(config.ci_runner_labels) + "\n";
   }
   if (config.ci_max_attempts.has_value()) {
     rendered += "ci_max_attempts=" + std::to_string(*config.ci_max_attempts) + "\n";

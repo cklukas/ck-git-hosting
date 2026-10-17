@@ -382,11 +382,12 @@ std::string renderReleases(const ProjectSummary& project) {
 }
 
 std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const std::vector<CiClaim>& claims,
-                            std::uint64_t now) {
+                            std::uint64_t now, const std::vector<std::string>& primary_labels) {
   std::string out = "<h1>CI runners</h1><p class=\"muted\">The server runs a queued job itself when no remote "
-                    "runner takes it within a second; remote runners pull jobs while they are online.</p>";
+                    "runner takes it within a second; remote runners pull jobs while they are online. A workflow's "
+                    "<code>runs_on:</code> sends its jobs only to runners carrying every label it names.</p>";
   out += "<table class=\"ci-runners\"><thead><tr><th>Runner</th><th>State</th><th>Last seen</th><th>Version</th>"
-         "<th>Working on</th></tr></thead><tbody>";
+         "<th>Labels</th><th>Working on</th></tr></thead><tbody>";
   std::vector<std::string> names = {kCiPrimaryRunnerName};
   for (const CiRunnerRecord& runner : runners) names.push_back(runner.name);
   for (const CiClaim& claim : claims) {
@@ -414,6 +415,14 @@ std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const st
       out += "&mdash;";
     }
     out += "</td><td>" + (record != runners.end() ? htmlEscape(record->version) : std::string()) + "</td><td>";
+    // A runner's name is always one of its labels; runs_on: may ask for any of them.
+    const std::vector<std::string>& labels =
+        name == kCiPrimaryRunnerName ? primary_labels : record != runners.end() ? record->labels : primary_labels;
+    out += "<code>" + htmlEscape(name) + "</code>";
+    if (name == kCiPrimaryRunnerName || record != runners.end()) {
+      for (const auto& label : labels) out += " <code>" + htmlEscape(label) + "</code>";
+    }
+    out += "</td><td>";
     bool any = false;
     for (const CiClaim& claim : claims) {
       if (claim.lease.runner != name) continue;

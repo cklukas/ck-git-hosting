@@ -31,7 +31,7 @@ std::string renderCiRuns(const ProjectSummary& project);
 // The runners page: the server's own runner, every registered remote runner
 // (state, last contact, version), and what each is working on now.
 std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const std::vector<CiClaim>& claims,
-                            std::uint64_t now);
+                            std::uint64_t now, const std::vector<std::string>& primary_labels = {});
 // The live status page for one run: overall status with elapsed/total time,
 // per-step results, the running step's log tail, artifacts, and the cancel
 // affordances. `live_log` is the current step's captured output while the run

@@ -4,6 +4,7 @@
 #include "ckgit/markdown.hpp"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cctype>
 #include <exception>
@@ -345,6 +346,53 @@ std::optional<TaskMarker> taskMarker(std::string_view line) {
   return TaskMarker{state != ' ', std::string(rest)};
 }
 
+// The raw HTML a document may write: a few attribute-free inline tags and the
+// <details>/<summary> disclosure block. Without attributes none of them can
+// carry a URL, a style, or a script, so they are as safe on the dashboard's
+// origin as on a docs site; every other tag stays escaped text.
+constexpr std::array<std::string_view, 6> kInlineHtmlTags{"kbd", "sub", "sup", "mark", "ins", "small"};
+constexpr std::array<std::string_view, 2> kVoidHtmlTags{"br", "wbr"};
+
+struct InlineHtmlTag {
+  std::string_view name;
+  bool closing = false;
+  bool empty = false;  // <br>, <wbr>: no closing tag
+  std::size_t length = 0;
+};
+
+// An allowed tag at the start of `text`, in exactly one spelling: lowercase,
+// no attributes, `<br>`/`<br/>`/`<br />` for the void ones.
+std::optional<InlineHtmlTag> inlineHtmlTag(std::string_view text) {
+  if (!text.starts_with('<')) return std::nullopt;
+  const bool closing = text.size() > 1 && text[1] == '/';
+  const std::size_t name_start = closing ? 2 : 1;
+  for (const auto name : kInlineHtmlTags) {
+    if (text.substr(name_start).starts_with(name) && text.size() > name_start + name.size() &&
+        text[name_start + name.size()] == '>') {
+      return InlineHtmlTag{name, closing, false, name_start + name.size() + 1};
+    }
+  }
+  if (closing) return std::nullopt;
+  for (const auto name : kVoidHtmlTags) {
+    const auto rest = text.substr(1);
+    if (!rest.starts_with(name)) continue;
+    for (const std::string_view ending : {">", "/>", " />"}) {
+      if (rest.substr(name.size()).starts_with(ending)) return InlineHtmlTag{name, false, true, 1 + name.size() + ending.size()};
+    }
+  }
+  return std::nullopt;
+}
+
+// `<details>` or `<details open>` alone on a line opens a disclosure block.
+std::optional<bool> detailsOpener(std::string_view line) {
+  const auto text = trim(line);
+  if (text == "<details>") return false;
+  if (text == "<details open>") return true;
+  return std::nullopt;
+}
+
+bool detailsCloser(std::string_view line) { return trim(line) == "</details>"; }
+
 class Renderer {
  public:
   Renderer(const LinkContext& context, std::size_t input_size, std::vector<MarkdownHeading>* outline,
@@ -427,6 +475,31 @@ class Renderer {
       } else if (thematic(lines[index])) {
         append(output, "<hr>\n");
         ++index;
+      } else if (const auto end = detailsEnd(lines, index); end.has_value()) {
+        // <details>, an optional <summary>…</summary> line, Markdown blocks,
+        // then </details> on a line of its own, nested ones counted.
+        const bool open = *detailsOpener(lines[index]);
+        std::size_t inner = index + 1;
+        while (inner < *end && trim(lines[inner]).empty()) ++inner;
+        std::string summary;
+        if (inner < *end) {
+          const auto text = trim(lines[inner]);
+          if (text.starts_with("<summary>") && text.ends_with("</summary>") && text.size() >= 19) {
+            enterBlock(numbers, inner, inner + 1);
+            summary = inlineText(withoutComments(text.substr(9, text.size() - 19)), 0);
+            ++inner;
+          }
+        }
+        append(output, open ? "<details open>" : "<details>");
+        if (!summary.empty()) append(output, "<summary>" + summary + "</summary>");
+        append(output, "\n");
+        append(output, blocks(Lines(lines.begin() + static_cast<std::ptrdiff_t>(inner),
+                                    lines.begin() + static_cast<std::ptrdiff_t>(*end)),
+                              LineNumbers(numbers.begin() + static_cast<std::ptrdiff_t>(inner),
+                                          numbers.begin() + static_cast<std::ptrdiff_t>(*end)),
+                              depth + 1));
+        append(output, "</details>\n");
+        index = *end + 1;
       } else if (trim(lines[index]).starts_with('>')) {
         Lines quoted;
         LineNumbers quoted_numbers;
@@ -646,7 +719,31 @@ class Renderer {
 
   bool beginsBlock(std::string_view line) {
     return headingLevel(line) != 0 || thematic(line) || fenceStart(line).has_value() ||
-           listMarker(line).has_value() || (indentation(line) <= 3 && trim(line).starts_with('>'));
+           listMarker(line).has_value() || (indentation(line) <= 3 && trim(line).starts_with('>')) ||
+           detailsOpener(line).has_value() || detailsCloser(line);
+  }
+
+  // The index of the `</details>` line that closes a <details> opener at
+  // `index`, skipping fenced code and counting nested ones; nothing when the
+  // line opens no block or the block is never closed (it then stays text).
+  std::optional<std::size_t> detailsEnd(const Lines& lines, std::size_t index) {
+    if (indentation(lines[index]) > 3 || !detailsOpener(lines[index]).has_value()) return std::nullopt;
+    std::size_t open = 1;
+    std::optional<Fence> fence;
+    for (std::size_t at = index + 1; at < lines.size(); ++at) {
+      spend(lines[at].size() + 1);
+      if (fence.has_value()) {
+        const auto closing = trim(lines[at]);
+        std::size_t count = 0;
+        while (count < closing.size() && closing[count] == fence->marker) ++count;
+        if (count >= fence->length && trim(closing.substr(count)).empty()) fence.reset();
+        continue;
+      }
+      if ((fence = fenceStart(lines[at]))) continue;
+      if (detailsOpener(lines[at]).has_value()) ++open;
+      if (detailsCloser(lines[at]) && --open == 0) return at;
+    }
+    return std::nullopt;
   }
 
   // The heading's unique id and its plain text (for an outline).
@@ -727,6 +824,9 @@ class Renderer {
   std::string inlineText(std::string_view value, std::size_t depth, bool allow_links = true) {
     if (depth >= kMaximumMarkdownDepth) return escaped(value);
     std::string output;
+    // Allowed inline tags opened in this run of text; any still open at its
+    // end are closed there, so one never leaks into the rest of the page.
+    std::vector<std::string_view> open_tags;
     for (std::size_t index = 0; index < value.size();) {
       spend(1);
       if (value[index] == '\\' && index + 1 < value.size() && (punctuation(value[index + 1]) || value[index + 1] == '\n')) {
@@ -816,6 +916,24 @@ class Renderer {
           }
         }
       }
+      if (value[index] == '<') {
+        if (const auto tag = inlineHtmlTag(value.substr(index))) {
+          spend(tag->length);
+          if (tag->empty) {
+            append(output, "<" + std::string(tag->name) + ">");
+          } else if (!tag->closing) {
+            append(output, "<" + std::string(tag->name) + ">");
+            open_tags.push_back(tag->name);
+          } else if (!open_tags.empty() && open_tags.back() == tag->name) {
+            append(output, "</" + std::string(tag->name) + ">");
+            open_tags.pop_back();
+          } else {
+            escape(output, value.substr(index, tag->length));  // closes nothing open here
+          }
+          index += tag->length;
+          continue;
+        }
+      }
       if (value[index] == '<' && allow_links) {
         const auto end = find(value, ">", index + 1);
         if (end != std::string_view::npos) {
@@ -890,6 +1008,10 @@ class Renderer {
         }
       }
       escape(output, value.substr(index++, 1));
+    }
+    while (!open_tags.empty()) {
+      append(output, "</" + std::string(open_tags.back()) + ">");
+      open_tags.pop_back();
     }
     return output;
   }

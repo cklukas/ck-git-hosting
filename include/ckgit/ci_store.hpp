@@ -67,6 +67,9 @@ struct CiJobRequest {
   // 1 for a fresh job; incremented each time the job is requeued because the
   // runner holding it was lost (see reapCiLeases).
   unsigned attempt = 1;
+  // The labels the commit's workflow asks for (`runs_on:`), recorded when the
+  // job is queued; only a runner carrying all of them claims it. Empty: any.
+  std::vector<std::string> runs_on;
 };
 
 struct CiStepResult {
@@ -219,6 +222,9 @@ struct CiClaimOptions {
   // never publish after a newer one. Other projects and refs still run in
   // parallel on other runners.
   bool one_per_ref = true;
+  // The claiming runner's labels besides its name: a job whose `runs_on`
+  // asks for a label the runner lacks stays queued for another runner.
+  std::vector<std::string> labels;
 };
 
 // Claims the oldest eligible queued job and records a fresh lease for
@@ -450,6 +456,9 @@ struct CiRunnerRecord {
   bool enabled = true;
   std::uint64_t last_seen_epoch_seconds = 0;
   std::string version;  // the runner's build version, as it reported it
+  // Labels an administrator gave the runner (`ckgit-admin runner labels`),
+  // matched against a workflow's `runs_on:`; its name counts as one too.
+  std::vector<std::string> labels;
 };
 
 void writeCiRunnerRecord(const std::filesystem::path& state_root, const CiRunnerRecord& record);

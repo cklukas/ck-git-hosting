@@ -11,6 +11,7 @@
 // rendering it drives.
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cerrno>
 #include <csignal>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -31,6 +33,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -57,7 +60,7 @@ void usage(std::ostream& out) {
          "               [--strict] [--quiet]\n"
          "  ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]\n"
          "  ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT]\n"
-         "               [--quiet]\n"
+         "               [--no-watch] [--quiet]\n"
          "  ckdocs --version\n"
          "  ckdocs --help\n"
          "\n"
@@ -86,8 +89,11 @@ void usage(std::ostream& out) {
          "  before publishing, when only the outcome matters. serve builds like build --out\n"
          "  is given (replacing a previous ckdocs site there the way --clean would), or into\n"
          "  a private directory removed on exit otherwise, then serves it on 127.0.0.1:--port\n"
-         "  the same way a published Pages site is served, until Ctrl+C; there is no rebuild\n"
-         "  on change in this version -- edit, then rerun the command.\n"
+         "  the same way a published Pages site is served, until Ctrl+C. While it serves, it\n"
+         "  watches the configuration, the pages, and the source tree, and rebuilds the site\n"
+         "  in place about a second after a change settles (reload the browser to see it);\n"
+         "  a rebuild that fails keeps the last good site. Inside a Git work tree a new page\n"
+         "  appears once Git tracks it (git add). --no-watch serves the first build only.\n"
          "\n"
          "Several sites:\n"
          "  A configuration with a sites: list builds a portal: a welcome page at the output\n"
@@ -110,6 +116,7 @@ void usage(std::ostream& out) {
          "                  removed-on-exit directory for serve). build, serve.\n"
          "  --clean         Replace an existing site already at --out. build only.\n"
          "  --port PORT     Loopback port to serve on (default: 8422). serve only.\n"
+         "  --no-watch      Do not rebuild when the sources change. serve only.\n"
          "  --strict        Fail (exit 1) on any warning: a broken link or heading fragment\n"
          "                  (reported as page:line), a front matter key that is neither\n"
          "                  ckdocs's own nor listed in front_matter.foreign_keys, an\n"
@@ -147,6 +154,7 @@ struct Options {
   bool clean = false;
   bool strict = false;
   bool quiet = false;
+  bool no_watch = false;
 };
 
 // Parses the options for `command`, starting at argv[start]. Each option is
@@ -202,6 +210,9 @@ bool parseOptions(int argc, char** argv, int start, Command command, Options& op
         return false;
       }
       options.port = static_cast<unsigned short>(parsed);
+    } else if (argument == "--no-watch") {
+      if (command != Command::kServe) { error = "--no-watch is only valid for serve"; return false; }
+      options.no_watch = true;
     } else if (argument == "--strict") {
       options.strict = true;
     } else if (argument == "--quiet") {
@@ -336,10 +347,64 @@ void handleServeConnection(int fd, const fs::path& site) {
   sendServeResponse(fd, 200, "OK", page->content_type, page->content, head_only);
 }
 
+// The files and directories a build read, as a cheap change fingerprint for
+// serve's rebuild-on-change: the configuration, every page, and every entry
+// (with its size and modification time) under the watched trees, skipping
+// dot-names (so .git) and the output directory. A new or removed file
+// changes its directory's entry list, so it is noticed too.
+struct WatchSet {
+  std::vector<fs::path> files;
+  std::vector<fs::path> trees;
+  fs::path out;
+};
+
+std::uint64_t fingerprint(const WatchSet& watch) {
+  std::uint64_t hash = 1469598103934665603ull;  // FNV-1a over names, sizes, times
+  const auto mix = [&hash](std::string_view bytes) {
+    for (const unsigned char byte : bytes) {
+      hash ^= byte;
+      hash *= 1099511628211ull;
+    }
+  };
+  const auto mixEntry = [&](const fs::path& path) {
+    std::error_code error;
+    const auto status = fs::symlink_status(path, error);
+    mix(path.native());
+    if (error || !fs::exists(status)) {
+      mix("-");
+      return;
+    }
+    const auto time = fs::last_write_time(path, error).time_since_epoch().count();
+    mix(std::string_view(reinterpret_cast<const char*>(&time), sizeof(time)));
+    if (fs::is_regular_file(status)) {
+      const auto size = fs::file_size(path, error);
+      mix(std::string_view(reinterpret_cast<const char*>(&size), sizeof(size)));
+    }
+  };
+  for (const auto& file : watch.files) mixEntry(file);
+  for (const auto& tree : watch.trees) {
+    std::error_code error;
+    mixEntry(tree);
+    fs::recursive_directory_iterator walk(tree, fs::directory_options::skip_permission_denied, error);
+    for (; !error && walk != fs::recursive_directory_iterator(); walk.increment(error)) {
+      const fs::path& path = walk->path();
+      const std::string name = path.filename().string();
+      if ((!name.empty() && name.front() == '.') || (!watch.out.empty() && path == watch.out)) {
+        walk.disable_recursion_pending();
+        continue;
+      }
+      mixEntry(path);
+    }
+  }
+  return hash;
+}
+
 // Serves `site` on 127.0.0.1:`port` (0 = an OS-chosen port) until SIGINT or
 // SIGTERM. Prints the bound port once listening, in the same "<program>:
-// ... ready on <port>" shape ck-git-hostingd and ck-pagesd already use.
-int runServe(const fs::path& site, unsigned short port) {
+// ... ready on <port>" shape ck-git-hostingd and ck-pagesd already use. With
+// `rebuild`, it checks `watch` about twice a second between requests and,
+// once a change has settled, calls `rebuild` to refresh the site in place.
+int runServe(const fs::path& site, unsigned short port, const std::function<void()>& rebuild, const WatchSet& watch) {
   const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
   if (listener < 0) throw std::runtime_error("could not create the listening socket");
   const int enabled = 1;
@@ -367,20 +432,40 @@ int runServe(const fs::path& site, unsigned short port) {
     bound_port = ntohs(bound.sin_port);
   }
   std::cout << "ckdocs: serve ready on " << bound_port << "\n" << std::flush;
+  using Clock = std::chrono::steady_clock;
+  constexpr auto kScanInterval = std::chrono::milliseconds(500);
+  std::uint64_t built = rebuild ? fingerprint(watch) : 0;
+  std::optional<std::uint64_t> pending;  // a changed fingerprint waiting to settle
+  auto next_scan = Clock::now() + kScanInterval;
   while (g_serve_stop == 0) {
-    const int client = ::accept(listener, nullptr, nullptr);
-    if (client < 0) {
-      if (errno == EINTR) continue;
-      break;
+    pollfd waiting{listener, POLLIN, 0};
+    const int ready = ::poll(&waiting, 1, rebuild ? 250 : -1);
+    if (ready < 0 && errno != EINTR) break;
+    if (ready > 0) {
+      const int client = ::accept(listener, nullptr, nullptr);
+      if (client >= 0) {
+        const timeval timeout{10, 0};
+        ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        try {
+          handleServeConnection(client, site);
+        } catch (const std::exception&) {
+        }
+        ::close(client);
+      }
     }
-    const timeval timeout{10, 0};
-    ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    try {
-      handleServeConnection(client, site);
-    } catch (const std::exception&) {
+    if (!rebuild || Clock::now() < next_scan) continue;
+    next_scan = Clock::now() + kScanInterval;
+    const std::uint64_t now = fingerprint(watch);
+    if (now == built) {
+      pending.reset();
+    } else if (pending != now) {
+      pending = now;  // wait one more scan: an editor may still be writing
+    } else {
+      pending.reset();
+      built = now;
+      rebuild();
     }
-    ::close(client);
   }
   ::close(listener);
   return kOk;
@@ -401,32 +486,10 @@ int run(const std::string& command_name, int argc, char** argv) {
   std::error_code error;
   const auto root = fs::absolute(options.root, error);
   if (error) { std::cerr << "ckdocs: cannot resolve '" << options.root.string() << "'\n"; return kFailed; }
-
-  ckgit::DocsConfig config =
-      options.config ? ckgit::parseDocsConfig(readWholeFile(*options.config)) : ckgit::readDocsConfig(root);
-  const bool several = !config.sites.empty();
-  if (several && options.source) {
-    std::cerr << "ckdocs: --source does not apply to a configuration with sites; set source in each site's own configuration\n";
-    return kUsage;
-  }
-  if (!several && !options.ref_trees.empty()) {
-    std::cerr << "ckdocs: --ref-tree only applies to a configuration with sites\n";
-    return kUsage;
-  }
-  if (options.source) config.source = options.source->generic_string();
-
-  std::vector<std::string> problems;
-  std::optional<ckgit::DocsSiteModel> model;
-  std::optional<ckgit::DocsPortalModel> portal;
-  if (several) {
-    ckgit::DocsPortalOptions portal_options;
-    for (const auto& [ref, directory] : options.ref_trees) {
-      portal_options.ref_trees.emplace(ref, fs::absolute(directory, error));
-      if (error) { std::cerr << "ckdocs: cannot resolve '" << directory.string() << "'\n"; return kFailed; }
-    }
-    portal = ckgit::loadDocsPortal(root, config, portal_options, &problems);
-  } else {
-    model = ckgit::loadDocsSite(root, config, &problems);
+  std::map<std::string, fs::path> ref_trees;
+  for (const auto& [ref, directory] : options.ref_trees) {
+    ref_trees.emplace(ref, fs::absolute(directory, error));
+    if (error) { std::cerr << "ckdocs: cannot resolve '" << directory.string() << "'\n"; return kFailed; }
   }
 
   const bool strict = options.strict || command == Command::kCheck;  // check always implies --strict
@@ -445,44 +508,100 @@ int run(const std::string& command_name, int argc, char** argv) {
   } else {
     target = options.out ? fs::absolute(*options.out, error) : root / "public";
     // serve with an explicit --out always behaves as if --clean were given
-    // too (there is no flag for it): "rerun the command" after an edit is
-    // the whole workflow, so a second run must be able to replace the site
-    // --out already holds instead of refusing it.
+    // too (there is no flag for it): it rebuilds the site --out holds on
+    // every change, and a second run must be able to replace it as well.
     build_options.clean = options.clean || command == Command::kServe;
   }
+  if (command == Command::kServe) build_options.clean = true;  // rebuilds replace the served site
 
-  ckgit::DocsBuildReport report;
-  if (portal) {
-    ckgit::buildDocsPortal(*portal, target, build_options, &report);
-  } else {
-    ckgit::buildDocsSite(*model, target, build_options, &report);
-  }
-  // Extracted ref trees are only read while building; serve must not keep them.
-  const std::size_t sites = portal ? portal->sites.size() : 0;
-  portal.reset();
-  for (const auto& broken : report.broken_links) problems.push_back(broken);
-  for (const auto& broken : report.broken_anchors) problems.push_back(broken);
-  for (const auto& warning : report.warnings) problems.push_back(warning);
-
-  if (!problems.empty() && strict) {
-    for (const auto& problem : problems) std::cerr << "ckdocs: " << problem << "\n";
-    std::cerr << "ckdocs: " << problems.size() << " warning(s) failed under --strict\n";
-    return kFailed;
-  }
-  if (!options.quiet) {
-    for (const auto& problem : problems) std::cout << "warning: " << problem << "\n";
-    const std::string in_sites = sites > 0 ? " in " + std::to_string(sites) + " site(s)" : std::string();
-    if (command == Command::kCheck) {
-      std::cout << "Checked " << report.pages_written << " page(s)" << in_sites << ": nothing to report.\n";
-    } else {
-      std::cout << "Built " << report.pages_written << " page(s)" << in_sites << ", "
-                << report.assets_copied + report.assets_generated << " asset(s), ";
-      if (report.redirects_written > 0) std::cout << report.redirects_written << " redirect(s), ";
-      std::cout << report.bytes_written << " byte(s) to " << target.string() << ".\n";
+  // One complete build: configuration, model, site, report. Throws on
+  // anything that must stop a build; returns the exit status otherwise and
+  // records what a rebuild must watch.
+  WatchSet watch;
+  watch.out = target;
+  const auto buildOnce = [&](bool rebuilding) -> int {
+    const fs::path config_path = options.config ? fs::absolute(*options.config) : root / "ckdocs.yml";
+    ckgit::DocsConfig config =
+        options.config ? ckgit::parseDocsConfig(readWholeFile(*options.config)) : ckgit::readDocsConfig(root);
+    const bool several = !config.sites.empty();
+    if (several && options.source) {
+      std::cerr << "ckdocs: --source does not apply to a configuration with sites; set source in each site's own configuration\n";
+      return kUsage;
     }
+    if (!several && !options.ref_trees.empty()) {
+      std::cerr << "ckdocs: --ref-tree only applies to a configuration with sites\n";
+      return kUsage;
+    }
+    if (options.source) config.source = options.source->generic_string();
+
+    std::vector<std::string> problems;
+    std::optional<ckgit::DocsSiteModel> model;
+    std::optional<ckgit::DocsPortalModel> portal;
+    watch.files = {config_path};
+    watch.trees.clear();
+    if (several) {
+      ckgit::DocsPortalOptions portal_options;
+      portal_options.ref_trees = ref_trees;
+      portal = ckgit::loadDocsPortal(root, config, portal_options, &problems);
+      watch.trees.push_back(root);  // every site's tree and configuration lives below it
+    } else {
+      model = ckgit::loadDocsSite(root, config, &problems);
+      watch.trees.push_back(model->source.empty() ? root : root / model->source);
+      for (const auto& page : model->pages) watch.files.push_back(root / page.source);
+      if (!config.logo.empty()) watch.files.push_back(root / config.logo);
+      if (!config.stylesheet.empty()) watch.files.push_back(root / config.stylesheet);
+    }
+
+    ckgit::DocsBuildReport report;
+    if (portal) {
+      ckgit::buildDocsPortal(*portal, target, build_options, &report);
+    } else {
+      ckgit::buildDocsSite(*model, target, build_options, &report);
+    }
+    // Extracted ref trees are only read while building; serve must not keep them.
+    const std::size_t sites = portal ? portal->sites.size() : 0;
+    portal.reset();
+    for (const auto& broken : report.broken_links) problems.push_back(broken);
+    for (const auto& broken : report.broken_anchors) problems.push_back(broken);
+    for (const auto& warning : report.warnings) problems.push_back(warning);
+
+    if (!problems.empty() && strict) {
+      for (const auto& problem : problems) std::cerr << "ckdocs: " << problem << "\n";
+      std::cerr << "ckdocs: " << problems.size() << " warning(s) failed under --strict\n";
+      return kFailed;
+    }
+    if (!options.quiet) {
+      for (const auto& problem : problems) std::cout << "warning: " << problem << "\n";
+      const std::string in_sites = sites > 0 ? " in " + std::to_string(sites) + " site(s)" : std::string();
+      if (command == Command::kCheck) {
+        std::cout << "Checked " << report.pages_written << " page(s)" << in_sites << ": nothing to report.\n";
+      } else {
+        std::cout << (rebuilding ? "Rebuilt " : "Built ") << report.pages_written << " page(s)" << in_sites << ", "
+                  << report.assets_copied + report.assets_generated << " asset(s), ";
+        if (report.redirects_written > 0) std::cout << report.redirects_written << " redirect(s), ";
+        std::cout << report.bytes_written << " byte(s) to " << target.string() << ".\n";
+      }
+      std::cout << std::flush;
+    }
+    return problems.empty() ? kOk : kWarnings;
+  };
+
+  const int status = buildOnce(false);
+  if (command != Command::kServe) return status;
+  if (status == kUsage || status == kFailed) return status;
+  std::function<void()> rebuild;
+  if (!options.no_watch) {
+    rebuild = [&]() {
+      // A failed rebuild keeps serving the last good site and says why.
+      try {
+        buildOnce(true);
+      } catch (const std::exception& failure) {
+        const std::string_view text = failure.what();
+        std::cerr << (text.starts_with("ckdocs: ") ? "" : "ckdocs: ") << text << "; still serving the last build\n";
+      }
+    };
   }
-  if (command == Command::kServe) return runServe(target, options.port.value_or(kDefaultServePort));
-  return problems.empty() ? kOk : kWarnings;
+  return runServe(target, options.port.value_or(kDefaultServePort), rebuild, watch);
 }
 
 }  // namespace

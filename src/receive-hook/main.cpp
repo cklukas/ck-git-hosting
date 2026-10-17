@@ -8,12 +8,14 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unistd.h>
 
+#include "ckgit/ci_runner.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/control_rpc.hpp"
@@ -99,7 +101,7 @@ void validateUpdates(std::string_view input) {
 // deleted tag instead drops that tag's release and its assets. Like a dashboard
 // event, a failure here must never fail an already-accepted push.
 void enqueueCiJobs(const char* state_root, const std::string& project, const std::string& client_id,
-                   std::string_view updates) {
+                   std::string_view updates, const std::filesystem::path& repository) {
   if (state_root == nullptr || !ckgit::isProjectCiEnabled(state_root, project)) return;
   const auto now = static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::seconds>(
@@ -136,6 +138,7 @@ void enqueueCiJobs(const char* state_root, const std::string& project, const std
     job.commit_id = std::string(new_id);
     job.client_id = client_id;
     job.queued_epoch_seconds = now;
+    job.runs_on = ckgit::ciWorkflowRunsOn(repository, job.commit_id);
     ckgit::enqueueCiJob(state_root, job);
   }
 }
@@ -170,7 +173,11 @@ int run() {
       }
     }
     try {
-      enqueueCiJobs(state_root, project_name, client_id, updates);
+      // The hosted repository, or the one the hook runs inside.
+      const std::filesystem::path repository = repository_root != nullptr
+                                                   ? std::filesystem::path(repository_root) / (std::string(project_name) + ".git")
+                                                   : std::filesystem::path(".");
+      enqueueCiJobs(state_root, project_name, client_id, updates, repository);
     } catch (const std::exception& error) {
       std::cerr << "ckgit post-receive: CI enqueue failed: " << error.what() << "\n";
     }

@@ -16,10 +16,25 @@ files, so a page looks the same wherever it is read.
 | Alerts | a blockquote whose first line is exactly `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, or `[!CAUTION]` | Renders as a titled, coloured callout; a marker with trailing text, in lowercase, or with nothing below it stays an ordinary blockquote. |
 | Task lists | `- [ ] text` / `- [x] text` | A disabled checkbox; the list gets a distinct class for styling. |
 | Strikethrough | `~~text~~` | Exactly two tildes; one or three are literal. |
+| Inline HTML | `<kbd>`, `<sub>`, `<sup>`, `<mark>`, `<ins>`, `<small>`, `<br>`, `<wbr>` | Lowercase and without attributes only. A closing tag with no matching open tag stays text, and a tag still open at the end of its paragraph is closed there. |
+| Disclosures | `<details>` (or `<details open>`) alone on a line, an optional `<summary>…</summary>` line, Markdown blocks, then `</details>` alone on a line | Nests; a fenced `</details>` does not close it. Without its closing line the opener stays text. |
 
-**Unsupported:** raw HTML, footnotes, definition lists, emoji shortcodes,
-and math. HTML is displayed as escaped text; HTML comments outside code
-blocks are omitted.
+**Unsupported:** any other raw HTML, footnotes, definition lists, emoji
+shortcodes, and math. Other HTML, including an allowed tag with attributes,
+is displayed as escaped text; HTML comments outside code blocks are omitted.
+Because no allowed tag takes attributes, none can carry a link, a style, or a
+script, so the same Markdown is safe on the dashboard and on a docs site.
+
+```markdown
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop. H<sub>2</sub>O, x<sup>2</sup>.
+
+<details>
+<summary>Full log</summary>
+
+Collapsed **Markdown** content.
+
+</details>
+```
 
 ## Links and assets
 

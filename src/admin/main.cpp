@@ -52,6 +52,8 @@ void usage(std::ostream& output) {
          << "  ckgit-admin ci log NAME RUN [STEP] [--follow] (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin ci cancel NAME RUN (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin runner add NAME --public-key FILE (--config FILE | --state-root ROOT) [--shell PATH]\n"
+         << "                     [--labels LABEL[,LABEL...]]\n"
+         << "  ckgit-admin runner labels NAME LABEL[,LABEL...]|- (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin runner (list | enable NAME | disable NAME | remove NAME) (--config FILE | --state-root ROOT)\n"
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
@@ -67,6 +69,8 @@ void usage(std::ostream& output) {
          << "Paired devices inspect runs and cancel them with ckgit ci; enabling CI stays here.\n"
          << "runner add registers a remote CI runner and prints its restricted authorized_keys line (it may only\n"
          << "claim and run CI jobs); disable drains a runner: it finishes its job but claims no new one.\n"
+         << "runner labels sets the labels a workflow's runs_on: can ask for (- clears them); a runner's name\n"
+         << "is always one of its labels, and the primary's come from ci_runner_labels in the server config.\n"
          << "default-branch shows NAME's default branch, or points it at BRANCH, which must already exist on\n"
          << "the server. CI workflows without on: and ck-git Pages follow the default branch. Run it as the\n"
          << "service account too: sudo -u ckgit ckgit-admin default-branch NAME BRANCH --config FILE\n"
@@ -563,24 +567,29 @@ std::string ageText(std::uint64_t then) {
 int runnerCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
-  if (action != "add" && action != "list" && action != "enable" && action != "disable" && action != "remove") {
-    std::cerr << "ckgit-admin: runner action must be add, list, enable, disable, or remove\n";
+  if (action != "add" && action != "list" && action != "enable" && action != "disable" && action != "remove" &&
+      action != "labels") {
+    std::cerr << "ckgit-admin: runner action must be add, list, labels, enable, disable, or remove\n";
     return kUsage;
   }
   std::optional<std::filesystem::path> config;
   std::filesystem::path state_root;
   std::optional<std::filesystem::path> public_key;
   std::filesystem::path shell(ckgit::kInstalledShellPath);
+  std::optional<std::string> labels_text;
   std::vector<std::string> positional;
   for (int index = 3; index < argc; ++index) {
     const std::string argument = argv[index];
     if ((argument == "--config" || argument == "--state-root" || argument == "--public-key" ||
-         argument == "--shell") && index + 1 < argc) {
+         argument == "--shell" || argument == "--labels") && index + 1 < argc) {
       const std::string value = argv[++index];
       if (argument == "--config") config = value;
       else if (argument == "--state-root") state_root = value;
       else if (argument == "--public-key") public_key = value;
+      else if (argument == "--labels") labels_text = value;
       else shell = value;
+    } else if (argument == "-" && action == "labels") {
+      positional.push_back(argument);
     } else if (!argument.empty() && argument.front() != '-') {
       positional.push_back(argument);
     } else {
@@ -617,10 +626,14 @@ int runnerCommand(int argc, char* argv[]) {
       std::cout << name;
       if (name == ckgit::kCiPrimaryRunnerName) {
         std::cout << "  (the server's own runner)";
+        if (server.has_value() && !server->ci_runner_labels.empty()) {
+          std::cout << ", labels " << ckgit::formatCiLabelList(server->ci_runner_labels);
+        }
       } else if (record != records.end()) {
         std::cout << "  " << (record->enabled ? "enabled" : "disabled") << ", last seen "
                   << ageText(record->last_seen_epoch_seconds);
         if (!record->version.empty()) std::cout << ", " << record->version;
+        if (!record->labels.empty()) std::cout << ", labels " << ckgit::formatCiLabelList(record->labels);
       } else {
         std::cout << "  (not registered)";
       }
@@ -633,6 +646,29 @@ int runnerCommand(int argc, char* argv[]) {
       std::cout << "\n";
     }
     return 0;
+  }
+  if (labels_text.has_value() && action != "add") {
+    std::cerr << "ckgit-admin: --labels belongs to runner add; use runner labels NAME LABELS to change them\n";
+    return kUsage;
+  }
+  if (action == "labels") {
+    if (positional.size() != 2) {
+      std::cerr << "ckgit-admin: runner labels requires a runner name and LABEL[,LABEL...] or -\n";
+      return kUsage;
+    }
+    labels_text = positional[1] == "-" ? std::string() : positional[1];
+    positional.pop_back();
+  }
+  std::vector<std::string> labels;
+  if (labels_text.has_value()) {
+    const auto parsed = ckgit::parseCiLabelList(*labels_text);
+    if (!parsed.has_value()) {
+      std::cerr << "ckgit-admin: labels must be up to " << ckgit::kMaximumCiLabels
+                << " comma-separated names of lowercase letters, digits, '.', '_', '-' (at most "
+                << ckgit::kMaximumCiLabelBytes << " each)\n";
+      return kUsage;
+    }
+    labels = *parsed;
   }
   if (positional.size() != 1) {
     std::cerr << "ckgit-admin: runner " << action << " requires one runner name\n";
@@ -660,10 +696,24 @@ int runnerCommand(int argc, char* argv[]) {
     if (const auto existing = ckgit::loadCiRunnerRecord(state_root, name)) record = *existing;
     record.name = name;
     record.enabled = true;
+    if (labels_text.has_value()) record.labels = labels;
     ckgit::writeCiRunnerRecord(state_root, record);
     std::cout << line;
     std::cerr << "ckgit-admin: registered runner " << name
               << "; append the line above to the ckgit account's authorized_keys (as root)\n";
+    return 0;
+  }
+  if (action == "labels") {
+    const auto existing = ckgit::loadCiRunnerRecord(state_root, name);
+    if (!existing.has_value()) {
+      std::cerr << "ckgit-admin: no runner named " << name << "; register it with runner add first\n";
+      return 1;
+    }
+    ckgit::CiRunnerRecord record = *existing;
+    record.labels = labels;
+    ckgit::writeCiRunnerRecord(state_root, record);
+    std::cout << name << ": labels " << (labels.empty() ? std::string("none") : ckgit::formatCiLabelList(labels))
+              << " (and its name)\n";
     return 0;
   }
   if (action == "remove") {

@@ -689,6 +689,59 @@ void testFindingsAndLeftOutPages() {
           "a site cannot leave its home page out");
 }
 
+// site.url: validated and given a trailing slash; with it a build writes
+// sitemap.xml (absolute, encoded URLs in nav order, front matter dates as
+// lastmod) and llms.txt with absolute links; nav-less pages go under Optional.
+void testListings() {
+  const auto parse = [](const std::string& url) {
+    return ckgit::parseDocsConfig("version: 1\nsite:\n  title: T\n  url: " + url + "\n");
+  };
+  require(parse("https://example.test/docs").url == "https://example.test/docs/", "a trailing slash is added");
+  for (const auto* bad : {"ftp://example.test/", "mailto:a@example.test", "/docs/", "https://example.test/?q=1",
+                          "https://example.test/#top", "\"https://exa mple.test/\""}) {
+    bool rejected = false;
+    try {
+      parse(bad);
+    } catch (const std::exception&) {
+      rejected = true;
+    }
+    require(rejected, std::string("site.url is rejected: ") + bad);
+  }
+
+  Scratch scratch;
+  write(scratch.root / "docs/index.md", "# Home\n");
+  write(scratch.root / "docs/guide.md", "---\ndescription: How to [start]\ndate: 2026-10-01\n---\n# Guide & more\n");
+  write(scratch.root / "docs/my page.md", "# Spaced\n");
+  write(scratch.root / "docs/hidden.md", "---\nnav_exclude: true\n---\n# Hidden\n");
+  write(scratch.root / "ckdocs.yml", "version: 1\nsite:\n  title: Listed\n  description: All the pages\n"
+                                     "  url: https://example.test/docs\n");
+  const auto model = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
+  ckgit::buildDocsSite(model, scratch.root / "site", ckgit::DocsBuildOptions{}, nullptr);
+  const auto sitemap = slurp(scratch.root / "site/sitemap.xml");
+  require(sitemap.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">") &&
+              contains(sitemap, "<url><loc>https://example.test/docs/index.html</loc></url>") &&
+              contains(sitemap, "<url><loc>https://example.test/docs/guide.html</loc><lastmod>2026-10-01</lastmod></url>") &&
+              contains(sitemap, "<loc>https://example.test/docs/my%20page.html</loc>") &&
+              contains(sitemap, "<loc>https://example.test/docs/hidden.html</loc>") && !contains(sitemap, "site-index"),
+          "the sitemap lists every page by absolute URL: " + sitemap);
+  const auto llms = slurp(scratch.root / "site/llms.txt");
+  require(llms.starts_with("# Listed\n\n> All the pages\n") &&
+              contains(llms, "- [Guide & more](https://example.test/docs/guide.html): How to \\[start\\]\n") &&
+              contains(llms, "## Optional\n\n- [Hidden](https://example.test/docs/hidden.html)\n"),
+          "llms.txt lists tabs, absolute links, descriptions and Optional pages: " + llms);
+
+  write(scratch.root / "ckdocs.yml", "version: 1\nsite:\n  title: Listed\n");
+  write(scratch.root / "docs/llms.txt", "mine\n");
+  write(scratch.root / "docs/index.md", "# Home\n\n[mine](llms.txt)\n");
+  const auto relative = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(relative, scratch.root / "site2", ckgit::DocsBuildOptions{}, &report);
+  require(!fs::exists(scratch.root / "site2/sitemap.xml") && contains(slurp(scratch.root / "site2/llms.txt"), "(guide.html)"),
+          "without site.url: no sitemap, relative llms.txt links");
+  require(report.broken_links.size() == 1 && contains(report.broken_links[0], "would overwrite the generated 'llms.txt'"),
+          "a linked file cannot replace a generated one");
+}
+
 void testSearch() {
   Scratch scratch;
   std::string long_paragraph;
@@ -1068,6 +1121,12 @@ void testPortalBuild() {
                            "python/search-index.json"}) {
     require(fs::is_regular_file(out / file), std::string("portal output: ") + file);
   }
+  const auto portal_llms = slurp(out / "llms.txt");
+  require(portal_llms.starts_with("# Portal\n\n> Both editions\n") && contains(portal_llms, "## C++ edition: ") &&
+              contains(portal_llms, "(cpp/index.html)") && contains(portal_llms, "## Python edition: ") &&
+              contains(portal_llms, "(python/guide.html)") && !fs::exists(out / "sitemap.xml") &&
+              !fs::exists(out / "cpp/llms.txt"),
+          "a portal writes one llms.txt for every site and no sitemap without site.url");
   require(!fs::exists(out / "search-index.json") && !fs::exists(out / "site-index.html") && !fs::exists(out / "cpp/search-index.json") &&
               !fs::exists(out / "cpp/.ckdocs") && !fs::exists(out / "python/.ckdocs"),
           "one marker; search only where a site asked for it");
@@ -1200,6 +1259,7 @@ void testDocsSite() {
   testEdges();
   testBuild();
   testFindingsAndLeftOutPages();
+  testListings();
   testMermaidArtifacts();
   testSearch();
   testPortalConfig();

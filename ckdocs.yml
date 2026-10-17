@@ -3,6 +3,7 @@ version: 1
 site:
   title: ck-git-hosting
   description: Private Git hosting, continuous integration, and documentation for your server.
+  url: https://cklukas.github.io/ck-git-hosting/
   footer: "© 2026 C. Klukas · MIT License"
   links:
     - title: GitHub

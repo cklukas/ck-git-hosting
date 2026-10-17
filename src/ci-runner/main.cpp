@@ -191,6 +191,7 @@ int serve(const std::filesystem::path& config_path, bool once) {
     std::string lease_token;
     try {
       ckgit::CiClaimOptions claim_options;
+      claim_options.labels = config.ci_runner_labels;
       claim_options.lease_seconds = lease_seconds;
       claim_options.min_age = claim_delay;
       if (std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(state_root, claim_options, &claim_retry)) {

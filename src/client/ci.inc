@@ -857,7 +857,11 @@ int ciLintCommand(const CiOptions& options) {
   triggers += workflow.tags.empty() ? "; no tags"
               : workflow.tags == std::vector<std::string>{"*"} ? "; every tag (a release)"
                                                               : "; tags " + joined(workflow.tags) + " (releases)";
-  std::cout << "  triggers: " << terminalText(triggers) << "\n  jobs: " << workflow.jobs.size() << "\n";
+  std::cout << "  triggers: " << terminalText(triggers) << "\n";
+  if (!workflow.runs_on.empty()) {
+    std::cout << "  runs on: a runner labelled " << ckgit::formatCiLabelList(workflow.runs_on) << "\n";
+  }
+  std::cout << "  jobs: " << workflow.jobs.size() << "\n";
   for (const auto& job : workflow.jobs) {
     std::cout << "    " << terminalText(job.name) << ": " << job.steps.size()
               << (job.steps.size() == 1 ? " step" : " steps");
@@ -892,6 +896,7 @@ int ciLintCommand(const CiOptions& options) {
     unchecked.push_back("which branch is the repository's default branch on the server");
   }
   if (!workflow.sisters.empty()) unchecked.push_back("whether the sister projects exist on the server");
+  if (!workflow.runs_on.empty()) unchecked.push_back("whether a registered runner carries those labels");
   unchecked.push_back("the server's limits (step timeout, log and artifact sizes, retention cap, network policy)");
   std::cout << "Not checked locally: " << joined(unchecked) << ".\n";
   return 0;

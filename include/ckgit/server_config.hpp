@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ckgit {
 
@@ -45,6 +46,9 @@ struct ServerConfig {
   // How long the primary runner leaves a newly queued job for a free secondary
   // runner before it claims the job itself (default 1000 ms).
   std::optional<unsigned> ci_claim_delay_ms;
+  // The primary runner's labels besides its name "primary" (comma-separated
+  // in the file), matched against a workflow's `runs_on:`.
+  std::vector<std::string> ci_runner_labels;
   bool ci_allow_network = false;
 
   // Artifact retention, enforced by the runner's periodic sweep. Days default

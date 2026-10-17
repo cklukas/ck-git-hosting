@@ -211,20 +211,23 @@ std::string_view expectField(std::string_view line, std::string_view key) {
 // schema_version 2 adds the attempt counter after queued_epoch; parseJob still
 // reads a version-1 job (attempt 1) queued by an earlier build.
 std::string serializeJob(const CiJobRequest& job) {
-  return "schema_version=2\n"
+  return "schema_version=3\n"
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
          "ref_hex=" + hexEncode(job.ref) + "\n"
          "commit=" + job.commit_id + "\n"
          "client_id=" + job.client_id + "\n"
          "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n"
-         "attempt=" + std::to_string(job.attempt) + "\n";
+         "attempt=" + std::to_string(job.attempt) + "\n"
+         "runs_on=" + formatCiLabelList(job.runs_on) + "\n";
 }
 
 CiJobRequest parseJob(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  const bool v2 = !lines.empty() && lines[0] == "schema_version=2";
-  if (!((v2 && lines.size() == 8) || (lines.size() == 7 && lines[0] == "schema_version=1"))) {
+  const bool v3 = !lines.empty() && lines[0] == "schema_version=3";
+  const bool v2 = v3 || (!lines.empty() && lines[0] == "schema_version=2");
+  if (!((v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
+        (lines.size() == 7 && lines[0] == "schema_version=1"))) {
     fail("a CI job record has the wrong shape");
   }
   CiJobRequest job;
@@ -238,6 +241,11 @@ CiJobRequest parseJob(std::string_view content) {
     const std::uint64_t attempt = parseEpoch(expectField(lines[7], "attempt="));
     if (attempt < 1 || attempt > 1000) fail("a CI job record has an invalid attempt");
     job.attempt = static_cast<unsigned>(attempt);
+  }
+  if (v3) {
+    std::optional<std::vector<std::string>> runs_on = parseCiLabelList(expectField(lines[8], "runs_on="));
+    if (!runs_on.has_value()) fail("a CI job record has invalid runs_on labels");
+    job.runs_on = std::move(*runs_on);
   }
   if (!isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
       !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
@@ -462,7 +470,9 @@ std::string generateCiId() {
 
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request) {
   if (!isValidCiId(request.job_id) || !isValidProjectName(request.project_name) ||
-      !isValidClientId(request.client_id) || !isValidObjectId(request.commit_id)) {
+      !isValidClientId(request.client_id) || !isValidObjectId(request.commit_id) ||
+      request.runs_on.size() > kMaximumCiLabels ||
+      !std::all_of(request.runs_on.begin(), request.runs_on.end(), [](const std::string& label) { return isValidCiLabel(label); })) {
     fail("refusing to queue an invalid CI job");
   }
   const std::filesystem::path root = validatedMetadataRoot(state_root);
@@ -485,6 +495,9 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
     pending.ref = request.ref;
     pending.commit_id = request.commit_id;
     pending.status = CiRunStatus::Pending;
+    if (!request.runs_on.empty()) {
+      pending.detail = "waiting for a runner labelled " + formatCiLabelList(request.runs_on);
+    }
     prepareCiRunDirectory(state_root, request.project_name, request.job_id);
     writeCiRunRecord(state_root, pending);
   } catch (const std::exception&) {
@@ -699,9 +712,10 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
   for (const std::string& name : names) {
     // Eligibility is decided on the spool copy before the claim; a job that
     // cannot be read here goes through the claim below, which sets it aside.
-    if (options.one_per_ref || options.min_age.count() > 0) {
+    {
       if (std::optional<CiJobRequest> queued = readJobAt(spool_fd, name)) {
-        if (busy.count({queued->project_name, queued->ref}) != 0) continue;
+        if (!ciRunnerMatches(options.runner, options.labels, queued->runs_on)) continue;  // another runner's job
+        if (options.one_per_ref && busy.count({queued->project_name, queued->ref}) != 0) continue;
         if (options.min_age.count() > 0) {
           struct stat status {};
           if (::fstatat(spool_fd, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0) {
@@ -1298,15 +1312,17 @@ void clearCiCancel(const std::filesystem::path& state_root, std::string_view pro
 namespace {
 
 std::string serializeRunnerRecord(const CiRunnerRecord& record) {
-  return "schema_version=1\n"
+  return "schema_version=2\n"
          "enabled=" + std::string(record.enabled ? "true" : "false") + "\n"
          "last_seen_epoch=" + std::to_string(record.last_seen_epoch_seconds) + "\n"
-         "version_hex=" + hexEncode(record.version) + "\n";
+         "version_hex=" + hexEncode(record.version) + "\n"
+         "labels=" + formatCiLabelList(record.labels) + "\n";
 }
 
 CiRunnerRecord parseRunnerRecord(std::string_view name, std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  if (lines.size() != 4 || lines[0] != "schema_version=1") fail("a runner record has the wrong shape");
+  const bool v2 = lines.size() == 5 && lines[0] == "schema_version=2";
+  if (!v2 && (lines.size() != 4 || lines[0] != "schema_version=1")) fail("a runner record has the wrong shape");
   CiRunnerRecord record;
   record.name = std::string(name);
   const std::string_view enabled = expectField(lines[1], "enabled=");
@@ -1314,6 +1330,11 @@ CiRunnerRecord parseRunnerRecord(std::string_view name, std::string_view content
   record.enabled = enabled == "true";
   record.last_seen_epoch_seconds = parseEpoch(expectField(lines[2], "last_seen_epoch="));
   record.version = fromHex(expectField(lines[3], "version_hex="), 128);
+  if (v2) {
+    std::optional<std::vector<std::string>> labels = parseCiLabelList(expectField(lines[4], "labels="));
+    if (!labels.has_value()) fail("a runner record has invalid labels");
+    record.labels = std::move(*labels);
+  }
   return record;
 }
 

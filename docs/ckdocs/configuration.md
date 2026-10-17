@@ -18,6 +18,7 @@ at once instead — see [Several sites in one build](#several-sites-in-one-build
 | `site.footer` | string, ≤ 1024 bytes | none | Footer text, alongside "Built with ckdocs `<version>`". |
 | `site.links` | list of `{title, url}` | none | Up to 8 header links; `url` must be `http://`, `https://`, or `mailto:`. |
 | `site.stylesheet` | path | none | An extra stylesheet, copied as-is and linked after the built-in one. |
+| `site.url` | absolute `http://` or `https://` URL | none | Where the site is published, such as `https://example.github.io/project/`; a missing trailing `/` is added. With it, the build also writes `sitemap.xml`, and `llms.txt` links are absolute. See [Sitemap and llms.txt](#sitemap-and-llmstxt). |
 | `source` | path | `docs/` if it exists, else the repository root | The page tree, relative to the repository root. |
 | `home` | path to a Markdown page | see [page discovery](pages.md#how-pages-are-found-named-and-ordered) | Overrides which page becomes the site's `index.html`. |
 | `exclude` | list of patterns | none | Each entry is a path (a whole subtree) or a prefix ending in one `*`; matched against both the repository-relative and the source-relative form of every candidate, so `docs/drafts` and, with `source: docs`, plain `drafts` both work. Up to 64 entries. |
@@ -66,6 +67,32 @@ the no-script answer that already exists. The index itself is capped at
 fit and drops the rest from the end, reported as a build warning rather
 than failing the build — in practice, thousands of pages would be needed
 to get there.
+
+## Sitemap and llms.txt
+
+Every build writes `llms.txt` at the output root: a plain-text index of the
+site for AI tools, in the [llms.txt](https://llmstxt.org/) format. It holds
+the site title, `site.description` as a quote, one section per tab with each
+page as a Markdown link and its front matter `description`, and the pages
+outside the navigation under an `Optional` section.
+
+```text
+# ck-git-hosting
+
+> Private Git hosting, continuous integration, and documentation for your server.
+
+## Guides
+
+- [Set up the client](https://cklukas.github.io/ck-git-hosting/guides/client-setup.html)
+```
+
+With `site.url` set, the build also writes `sitemap.xml`, listing every page's
+absolute URL in navigation order, with a page's front matter `date` as its
+`<lastmod>`. A sitemap needs absolute URLs, so without `site.url` there is
+none, and `llms.txt` links stay relative to the site root. A portal writes
+one of each at its root, covering every site, with its own `site.url`. A
+linked file that would be copied to one of these generated names is
+reported as a broken link instead.
 
 ## Several sites in one build
 

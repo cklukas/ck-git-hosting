@@ -433,4 +433,46 @@ findings_status=$?
 set -e
 [ "$findings_status" -eq 1 ] || { echo "check should fail on a left-out page, got $findings_status" >&2; exit 1; }
 
+# serve rebuilds on change: an edited page, a new page, and a broken
+# configuration (which keeps the last good site) while it runs.
+watch_log="$test_root/watch.log"
+"$CKDOCS" serve --root "$findings_fixture" --port 0 >"$watch_log" 2>&1 &
+serve_pid=$!
+serve_port=''
+attempt=0
+while [ -z "$serve_port" ]; do
+  kill -0 "$serve_pid" 2>/dev/null || { cat "$watch_log" >&2; serve_pid=''; echo "watching serve exited" >&2; exit 1; }
+  serve_port=$(sed -n 's/^ckdocs: serve ready on \([0-9][0-9]*\)$/\1/p' "$watch_log")
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 100 ] || { cat "$watch_log" >&2; echo "watching serve never became ready" >&2; exit 1; }
+  [ -n "$serve_port" ] || sleep .1
+done
+wait_served() {  # wait_served PATH TEXT: until the served page contains TEXT
+  attempt=0
+  until curl --max-time 4 --silent "http://127.0.0.1:$serve_port$1" | grep -q "$2"; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 100 ] || { cat "$watch_log" >&2; echo "serve did not rebuild $1 with '$2'" >&2; exit 1; }
+    sleep .1
+  done
+}
+wait_served /guide.html 'Guide'
+printf '# Guide\n\nEdited-while-serving.\n' > "$findings_fixture/docs/guide.md"
+wait_served /guide.html 'Edited-while-serving'
+printf '# Fresh\n\nA new page.\n' > "$findings_fixture/docs/fresh.md"
+wait_served /fresh.html 'A new page'
+grep -q '^Rebuilt ' "$watch_log" || { cat "$watch_log" >&2; echo "serve did not report its rebuild" >&2; exit 1; }
+printf 'version: 2\n' > "$findings_fixture/ckdocs.yml"
+attempt=0
+until grep -q 'still serving the last build' "$watch_log"; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 100 ] || { cat "$watch_log" >&2; echo "a failed rebuild was not reported" >&2; exit 1; }
+  sleep .1
+done
+wait_served /fresh.html 'A new page'
+kill "$serve_pid" 2>/dev/null || true
+wait "$serve_pid" 2>/dev/null || true
+serve_pid=''
+rm -f "$findings_fixture/ckdocs.yml"
+echo "docs_site watch check passed"
+
 echo "docs_site integration test passed"

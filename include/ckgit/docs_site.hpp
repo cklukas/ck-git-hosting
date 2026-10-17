@@ -81,6 +81,10 @@ struct DocsSiteEntry {
 // no backslash). Unknown keys are rejected: this file is ours.
 struct DocsConfig {
   std::string title;  // site.title; empty when there is no config file
+  // site.url: where the site is published, an absolute http(s) URL ending in
+  // `/` (one is added). With it, a build also writes sitemap.xml and uses
+  // absolute links in llms.txt; without it, llms.txt links stay relative.
+  std::string url;
   std::string brand;  // header wordmark; empty = title
   std::string logo;   // an image file shown before the brand
   std::string description;
@@ -175,6 +179,13 @@ std::string docsTitleFromFilename(std::string_view name);
 // output directory it wrote from one it must not touch.
 inline constexpr std::string_view kDocsSiteMarker = ".ckdocs";
 inline constexpr std::string_view kDocsSiteIndexPage = "site-index.html";
+// Generated at the output root for crawlers and AI tools: a sitemap of every
+// page (only with site.url, since a sitemap needs absolute URLs) and an
+// llms.txt index (llmstxt.org): the title, the description, and each tab's
+// pages as Markdown links with their descriptions, pages outside the nav
+// under "Optional". In a portal one of each covers every site.
+inline constexpr std::string_view kDocsSitemapFile = "sitemap.xml";
+inline constexpr std::string_view kDocsLlmsFile = "llms.txt";
 
 // Opt-in search (`search: true` in ckdocs.yml): a generated index, read by a
 // small inline script the theme embeds. `kMaximumDocsSearchIndexBytes` bounds

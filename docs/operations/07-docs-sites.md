@@ -25,8 +25,12 @@ ckdocs serve --root .
 ```
 
 Open `http://127.0.0.1:8422`. Use `--port` to choose another port and press
-Ctrl+C to stop. Rerun the command after editing pages; this version does not
-automatically rebuild them.
+Ctrl+C to stop. While it runs, `serve` watches the configuration, the pages,
+and the source tree and rebuilds the site about a second after you save a
+change; reload the browser page to see it. A rebuild that fails, for example
+on a configuration error, prints the error and keeps serving the last good
+site. Inside a Git repository a new page appears once Git tracks it
+(`git add`). Use `--no-watch` to serve the first build only.
 
 Use `--out public` to keep the generated files. An existing ckdocs output is
 replaced by `serve`; with `build`, add `--clean` to replace it explicitly.

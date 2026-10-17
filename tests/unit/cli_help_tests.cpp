@@ -40,7 +40,7 @@ void expectError(const std::vector<std::string>& arguments, const std::string& d
 void testCliHelp() {
   const std::vector<std::vector<std::string>> command_paths{
       {"setup"}, {"doctor"}, {"projects"}, {"fetch"}, {"update"}, {"checkout", "forget"},
-      {"publish"}, {"sync"}, {"status"}, {"clone"}, {"scan"}, {"web"},
+      {"publish"}, {"sync"}, {"status"}, {"clone"}, {"scan"}, {"web"}, {"open"},
       {"release"}, {"release", "list"}, {"release", "download"},
       {"checkout"}, {"checkout", "list"}, {"checkout", "set-canonical"},
       {"checkout", "migrate"}, {"register"}, {"create"}, {"default-branch"}, {"config"},
@@ -126,6 +126,10 @@ void testCliHelp() {
   expectError({"web", "--port", "65536"}, "--port must be a port between 1 and 65535", " web");
   expectError({"web", "--remote-port=0"}, "--remote-port must be a port", " web");
   expectError({"web", "bad@@host"}, "ADMIN-HOST must be an SSH host", " web");
+  expectError({"open", "--run", "bad/run"}, "--run", " open");
+  expectError({"open", "a", "b"}, "unexpected argument 'b'", " open");
+  const auto opened = ckgit::prepareClientInvocation({"open", "--commit", "HEAD~1", "--no-open"});
+  require(!opened.exit_code && opened.command == "open", "ckgit open accepts a revision");
   expectError({"publish", "--yes=false"}, "--yes does not take a value", " publish");
   expectError({"sync", "--repo", ".", "--scan"}, "--repo and --scan", " sync");
   expectError({"status", "--repo", ".", "--scan"}, "--repo and --scan", " status");

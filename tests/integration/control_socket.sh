@@ -622,6 +622,46 @@ if PATH="$test_root/web-bin:$PATH" TEST_ROOT="$test_root" CKGIT_HOSTINGD="$CKGIT
   exit 1
 fi
 
+# ckgit open: the paired checkout's own pages through the same tunnel.
+open_url() {  # open_url ARGS...: start ckgit open, print the announced URL, stop it
+  (cd "$test_root/work" && PATH="$test_root/web-bin:$PATH" TEST_ROOT="$test_root" CKGIT_HOSTINGD="$CKGIT_HOSTINGD" \
+    exec "$CKGIT" open --config "$test_root/client.ini" --no-open --port 18421 "$@") >"$test_root/open.out" 2>&1 &
+  open_pid=$!
+  attempt=0
+  while ! grep -q '^Dashboard: ' "$test_root/open.out" 2>/dev/null; do
+    kill -0 "$open_pid" 2>/dev/null || { cat "$test_root/open.out" >&2; echo "ckgit open exited early" >&2; exit 1; }
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 20 ] || { cat "$test_root/open.out" >&2; echo "ckgit open announced no URL" >&2; exit 1; }
+    sleep 1
+  done
+  opened=$(sed -n 's/^Dashboard: //p' "$test_root/open.out")
+  opened_status=$(curl --max-time 3 --silent -o /dev/null -w '%{http_code}' "$opened")
+  kill -INT "$open_pid"
+  wait "$open_pid" 2>/dev/null || true
+  sleep 1
+}
+open_url
+[ "$opened" = 'http://127.0.0.1:18421/project/alpha' ] && [ "$opened_status" = 200 ] ||
+  { echo "ckgit open did not open the project overview: $opened ($opened_status)" >&2; exit 1; }
+open_url .
+[ "$opened" = 'http://127.0.0.1:18421/project/alpha/tree/main:' ] && [ "$opened_status" = 200 ] ||
+  { echo "ckgit open . did not open the checkout's tree: $opened ($opened_status)" >&2; exit 1; }
+open_head=$(git -C "$test_root/work" rev-parse HEAD)
+open_url --commit HEAD
+[ "$opened" = "http://127.0.0.1:18421/project/alpha/commit/$open_head" ] ||
+  { echo "ckgit open --commit did not resolve HEAD: $opened" >&2; exit 1; }
+open_url --ci
+[ "$opened" = 'http://127.0.0.1:18421/project/alpha/ci' ] || { echo "ckgit open --ci: $opened" >&2; exit 1; }
+set +e
+(cd "$test_root/work" && "$CKGIT" open --config "$test_root/client.ini" --no-open --ci --commit HEAD) >/dev/null 2>&1
+[ $? -eq 2 ] || { echo "ckgit open accepted two targets" >&2; exit 1; }
+(cd "$test_root/work" && "$CKGIT" open --config "$test_root/client.ini" --no-open --commit no-such-rev) \
+  >/dev/null 2>"$test_root/open.err"
+[ $? -eq 1 ] && grep -q 'names no commit' "$test_root/open.err" || { echo "ckgit open accepted an unknown commit" >&2; exit 1; }
+(cd "$test_root" && "$CKGIT" open --config "$test_root/client.ini" --no-open /etc) >/dev/null 2>"$test_root/open.err"
+[ $? -eq 1 ] || { echo "ckgit open outside a repository should fail" >&2; exit 1; }
+set -e
+
 ping=$(SSH_ORIGINAL_COMMAND='ckgit-rpc 1 ping' "$CK_GIT_SHELL" \
   --client-id mac-studio --repo-root "$test_root" --control-socket "$test_root/control.sock")
 [ "$ping" = 'ok' ]

@@ -1384,6 +1384,16 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
   return commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
 }
 
+std::vector<std::string> ciWorkflowRunsOn(const std::filesystem::path& repository, const std::string& commit) {
+  try {
+    if (const std::optional<std::string> text = readWorkflowBlob(repository, commit)) {
+      return parseCiWorkflow(*text).runs_on;
+    }
+  } catch (const std::exception&) {
+  }
+  return {};
+}
+
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
   if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
   CiJobRequest job;

@@ -36,6 +36,7 @@
 #include "ckgit/hash.hpp"
 #include "ckgit/pages_store.hpp"
 #include "ckgit/dir_watch.hpp"
+#include "ckgit/validation.hpp"
 
 namespace {
 
@@ -64,6 +65,15 @@ class Fixture {
   std::filesystem::path root;
   std::filesystem::path state;
 };
+
+// A fresh CI id that sorts after `previous`. Ids order by a microsecond
+// timestamp; two made within the same microsecond are ordered by their random
+// suffix, which a test that relies on queue order must not leave to chance.
+std::string idAfter(const std::string& previous) {
+  std::string id = ckgit::generateCiId();
+  while (!(previous < id)) id = ckgit::generateCiId();
+  return id;
+}
 
 ckgit::CiJobRequest sampleJob(const std::string& id, const std::string& ref = "refs/heads/main") {
   ckgit::CiJobRequest job;
@@ -243,6 +253,59 @@ void testReleaseNeedsTheLease() {
   require(!ckgit::loadCiClaim(fixture.state, id).has_value(), "the released job is gone");
 }
 
+// R10: a job whose workflow asks for runs_on labels is claimed only by a
+// runner carrying all of them (its name counts as one); others skip it and
+// take later jobs. Labels survive the job file, a requeue, and the registry.
+void testLabelRouting() {
+  Fixture fixture;
+  ckgit::CiJobRequest mac_job = sampleJob(ckgit::generateCiId());
+  mac_job.runs_on = {"macos"};
+  ckgit::enqueueCiJob(fixture.state, mac_job);
+  ckgit::CiJobRequest named = sampleJob(ckgit::generateCiId(), "refs/heads/other");
+  named.runs_on = {"uconsole"};
+  ckgit::enqueueCiJob(fixture.state, named);
+  const auto pending = ckgit::loadCiRun(fixture.state, "demo", mac_job.job_id);
+  require(pending.has_value() && pending->detail == "waiting for a runner labelled macos",
+          "a labelled job says what it waits for");
+
+  ckgit::CiClaimOptions primary;
+  primary.labels = {"arm64", "linux"};
+  require(!ckgit::claimCiJob(fixture.state, primary).has_value(), "the primary has neither label");
+  ckgit::CiClaimOptions uconsole;
+  uconsole.runner = "uconsole";
+  uconsole.labels = {"arm64"};
+  const auto by_name = ckgit::claimCiJob(fixture.state, uconsole);
+  require(by_name.has_value() && by_name->job.job_id == named.job_id && by_name->job.runs_on == named.runs_on,
+          "a runner's name is a label; it skips the older job it cannot run");
+  ckgit::CiClaimOptions mac;
+  mac.runner = "mac-mini";
+  mac.labels = {"arm64", "macos"};
+  const auto by_label = ckgit::claimCiJob(fixture.state, mac);
+  require(by_label.has_value() && by_label->job.job_id == mac_job.job_id, "a runner with the label claims the job");
+  require(ckgit::abandonCiJob(fixture.state, mac_job.job_id, by_label->lease.token, "mac-mini"), "it hands it back");
+  require(!ckgit::claimCiJob(fixture.state, primary).has_value(), "the requeued job keeps its labels");
+
+  ckgit::CiRunnerRecord record;
+  record.name = "mac-mini";
+  record.labels = {"arm64", "macos"};
+  ckgit::writeCiRunnerRecord(fixture.state, record);
+  const auto loaded = ckgit::loadCiRunnerRecord(fixture.state, "mac-mini");
+  require(loaded.has_value() && loaded->labels == record.labels, "runner labels survive the registry");
+  bool rejected = false;
+  try {
+    ckgit::CiJobRequest bad = sampleJob(ckgit::generateCiId());
+    bad.runs_on = {"Not Valid"};
+    ckgit::enqueueCiJob(fixture.state, bad);
+  } catch (const std::exception&) {
+    rejected = true;
+  }
+  require(rejected, "an invalid label is never queued");
+  require(ckgit::parseCiLabelList("b,a,b") == std::vector<std::string>{"a", "b"} && !ckgit::parseCiLabelList("a,").has_value() &&
+              ckgit::parseCiLabelList("")->empty() && ckgit::ciRunnerMatches("uconsole", {}, {"uconsole"}) &&
+              !ckgit::ciRunnerMatches("primary", {"linux"}, {"linux", "macos"}),
+          "label lists parse and match");
+}
+
 // R1: a job queued by an earlier build (schema 1, no attempt line) still runs.
 void testVersionOneJobStillClaims() {
   Fixture fixture;
@@ -391,7 +454,7 @@ void testPagesOrderingGuard() {
   policy.pages_root = fixture.root / "pages";
   const std::string text = "version: 1\npages: { path: public }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n";
   const std::string older = ckgit::generateCiId();
-  const std::string newer = ckgit::generateCiId();
+  const std::string newer = idAfter(older);
   const std::filesystem::path site = fixture.root / "site";
   std::filesystem::create_directories(site);
   std::ofstream(site / "index.html") << "newer";
@@ -419,7 +482,7 @@ void testPagesOrderingGuard() {
   require(page.has_value() && page->content == "newer", "the live site is still the newer one");
 
   // A newer run's staged tar is unpacked and published.
-  const std::string newest = ckgit::generateCiId();
+  const std::string newest = idAfter(newer);
   ckgit::appendCiStagedUpload(fixture.state, "demo", newest, ckgit::CiUploadKind::kPages, ckgit::kCiPagesUploadName,
                               bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1u << 20);
   const auto newest_job = preparedJob(newest, "refs/heads/main", true, text);
@@ -461,8 +524,8 @@ void testClaimDelay() {
 void testOneRunPerRef() {
   Fixture fixture;
   const std::string first = ckgit::generateCiId();
-  const std::string second = ckgit::generateCiId();
-  const std::string other = ckgit::generateCiId();
+  const std::string second = idAfter(first);
+  const std::string other = idAfter(second);
   ckgit::enqueueCiJob(fixture.state, sampleJob(first));
   ckgit::enqueueCiJob(fixture.state, sampleJob(second));
   ckgit::enqueueCiJob(fixture.state, sampleJob(other, "refs/heads/feature"));
@@ -955,6 +1018,7 @@ void testCiDistributed() {
   testReaperRequeuesThenGivesUp();
   testRestartAndAbandon();
   testReleaseNeedsTheLease();
+  testLabelRouting();
   testVersionOneJobStillClaims();
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();

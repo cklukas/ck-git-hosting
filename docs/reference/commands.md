@@ -35,6 +35,7 @@ ckgit checkout set-canonical NAME PATH
 ckgit checkout migrate [--dry-run]
 ckgit checkout forget NAME [--dry-run] [--yes]
 ckgit web [--config PATH] [--port PORT] [--remote-port PORT] [--project NAME] [--no-open] [ADMIN-HOST]
+ckgit open [PATH | --commit REV | --ci | --run RUN] [--repo PATH] [--port PORT] [--remote-port PORT] [--no-open]
 ckgit release list PROJECT [--json]
 ckgit release download PROJECT [--tag TAG] [--asset NAME] [--into DIR]
 ckgit ci status [--project NAME | --all] [--json]
@@ -62,7 +63,8 @@ ckgit-admin ci enable|disable|status NAME --config SERVER-CONFIG
 ckgit-admin ci runs NAME --config SERVER-CONFIG
 ckgit-admin ci log NAME RUN [STEP] [--follow] --config SERVER-CONFIG
 ckgit-admin ci cancel NAME RUN --config SERVER-CONFIG
-ckgit-admin runner add NAME --public-key FILE --config SERVER-CONFIG [--shell PATH]
+ckgit-admin runner add NAME --public-key FILE --config SERVER-CONFIG [--shell PATH] [--labels LABEL[,LABEL...]]
+ckgit-admin runner labels NAME LABEL[,LABEL...]|- --config SERVER-CONFIG
 ckgit-admin runner list|enable NAME|disable NAME|remove NAME --config SERVER-CONFIG
 ck-git-hostingd --repo-root ROOT --control-socket PATH [--state-root ROOT] [--hook-directory PATH] [--http-port PORT] [--check]
 ck-git-hostingd --config /etc/ck-git-hosting/server.ini [--check]
@@ -76,7 +78,7 @@ ck-pagesd check --config /etc/ck-git-hosting/server.ini
 
 ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean] [--strict] [--quiet]
 ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]
-ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT] [--quiet]
+ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT] [--no-watch] [--quiet]
 ```
 
 `--config` defaults to `~/.config/ck-git-hosting/client.ini` (or the
@@ -103,11 +105,19 @@ points it at another branch that already exists on the server. On the server,
 it is also the way to select a branch whose name contains `/`, which the
 restricted SSH channel does not carry.
 
+`ckgit open` opens the dashboard page of the project the current checkout (or
+`--repo PATH`) is paired with, through the same tunnel as `ckgit web`: the
+overview, `PATH` (a file or folder of the checkout, at the current branch),
+`--commit REV`, `--ci`, or `--run RUN`. It warns when a commit is in no
+branch of the paired remote that the checkout knows of, since the dashboard
+then has no page for it.
+
 `ckgit-admin runner` manages the remote CI runners that share the server's CI
 load ([Share CI load with remote runners](../operations/ci-remote-runners.md)):
 `add` registers one and prints its restricted `authorized_keys` line, `disable`
-drains it, `list` shows each runner's state, last contact, version and current
-job. `ck-git-runner` (from the `ck-git-runner` package) is the runner itself;
+drains it, `labels` sets the labels a workflow's `runs_on:` can ask for (`-`
+clears them), `list` shows each runner's state, last contact, version, labels
+and current job. `ck-git-runner` (from the `ck-git-runner` package) is the runner itself;
 `ck-ci-runnerd gateway` is what a runner key's forced command runs on the
 server.
 

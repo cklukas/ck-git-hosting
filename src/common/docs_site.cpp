@@ -570,7 +570,16 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
   const Node* site = findEntry(root, "site");
   if (site == nullptr) malformed("the config is missing 'site'", root.line);
   requireKind(*site, Node::Kind::Mapping, "site to be a mapping");
-  rejectUnknownKeys(*site, {"title", "brand", "logo", "description", "footer", "links", "stylesheet"});
+  rejectUnknownKeys(*site, {"title", "brand", "logo", "description", "footer", "links", "stylesheet", "url"});
+  if (const Node* url = findEntry(*site, "url")) {
+    config.url = scalarOf(*url, "site.url");
+    const auto lowered = lowerAscii(config.url.substr(0, 8));
+    if (!isValidLinkUrl(config.url) || (!lowered.starts_with("http://") && !lowered.starts_with("https://")) ||
+        config.url.find_first_of("?#") != std::string::npos) {
+      malformed("site.url must be an absolute http(s) URL without a query or fragment", url->line);
+    }
+    if (config.url.back() != '/') config.url += '/';
+  }
   const Node* title = findEntry(*site, "title");
   if (title == nullptr) malformed("site needs a 'title'", site->line);
   config.title = titleOf(*title, "site.title");
@@ -1611,6 +1620,10 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     const auto path = assetOutputPath(model, root_relative);
     if (options.mermaid_renderer && diagramPath(path)) return "uses the reserved _ckdocs-mermaid output directory";
     if (page_by_output.count(path) != 0) return "would overwrite the page '" + path + "'";
+    if (prefix.empty() && (path == kDocsSitemapFile || path == kDocsLlmsFile || path == kDocsSearchIndexPage ||
+                           path == kDocsSiteIndexPage)) {
+      return "would overwrite the generated '" + path + "'";
+    }
     const auto [existing, inserted] = assets.try_emplace(path, root_relative);
     if (!inserted && existing->second != root_relative) {
       return "would be written to '" + path + "', like '" + existing->second + "'";
@@ -1853,6 +1866,110 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
   }
 }
 
+// One site's pages as sitemap.xml and llms.txt list them, below `prefix`
+// ("" or "<id>/"): a section per tab in nav order, then the pages outside the
+// nav under "Optional".
+struct ListingPage {
+  std::string title;
+  std::string path;  // output-root-relative
+  std::string description;
+  std::string date;
+};
+struct ListingSection {
+  std::string title;
+  std::vector<ListingPage> pages;
+};
+
+std::vector<ListingSection> siteListing(const DocsSiteModel& model, const std::string& prefix,
+                                        const std::string& title_prefix, bool with_unlisted) {
+  std::vector<ListingSection> sections;
+  const auto entry = [&](std::size_t index) {
+    const DocsPage& page = model.pages[index];
+    return ListingPage{page.title, prefix + page.output,
+                       page.description.empty() && page.home ? model.config.description : page.description, page.date};
+  };
+  for (const auto& tab : model.nav) {
+    std::vector<std::size_t> order;
+    collectReadingOrder(tab, order);
+    ListingSection section{title_prefix + tab.title, {}};
+    for (const auto index : order) section.pages.push_back(entry(index));
+    if (!section.pages.empty()) sections.push_back(std::move(section));
+  }
+  if (with_unlisted && !model.unlisted.empty()) {
+    ListingSection optional{"Optional", {}};
+    for (const auto index : model.unlisted) optional.pages.push_back(entry(index));
+    sections.push_back(std::move(optional));
+  }
+  return sections;
+}
+
+std::string escapeXml(std::string_view value) {
+  std::string out;
+  for (const char byte : value) {
+    switch (byte) {
+      case '&': out += "&amp;"; break;
+      case '<': out += "&lt;"; break;
+      case '>': out += "&gt;"; break;
+      case '"': out += "&quot;"; break;
+      case '\'': out += "&apos;"; break;
+      default: out += byte;
+    }
+  }
+  return out;
+}
+
+// Markdown link text and descriptions on one line, with the characters that
+// would end a link label escaped.
+std::string llmsText(std::string_view value) {
+  std::string out;
+  for (const char byte : value) {
+    if (byte == '\n' || byte == '\r') {
+      out += ' ';
+    } else {
+      if (byte == '[' || byte == ']' || byte == '\\') out += '\\';
+      out += byte;
+    }
+  }
+  return out;
+}
+
+// sitemap.xml (only with a base URL) and llms.txt at the output root.
+void writeListings(OutputTree& tree, const std::string& title, const std::string& description, const std::string& base_url,
+                   const std::vector<ListingSection>& sections) {
+  const auto href = [&](const std::string& path) {
+    const std::string encoded = encodePathSegment(path);
+    return base_url.empty() ? encoded : base_url + encoded;
+  };
+  for (const std::string_view name : {kDocsSitemapFile, kDocsLlmsFile}) {
+    if (tree.written(std::string(name))) siteError("'" + std::string(name) + "' would overwrite another output");
+  }
+  if (!base_url.empty()) {
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
+    std::set<std::string> listed;
+    for (const auto& section : sections) {
+      for (const auto& page : section.pages) {
+        if (!listed.insert(page.path).second) continue;
+        xml += "  <url><loc>" + escapeXml(href(page.path)) + "</loc>";
+        if (!page.date.empty()) xml += "<lastmod>" + page.date + "</lastmod>";
+        xml += "</url>\n";
+      }
+    }
+    xml += "</urlset>\n";
+    tree.write(std::string(kDocsSitemapFile), xml);
+  }
+  std::string text = "# " + llmsText(title) + "\n";
+  if (!description.empty()) text += "\n> " + llmsText(description) + "\n";
+  for (const auto& section : sections) {
+    text += "\n## " + llmsText(section.title) + "\n\n";
+    for (const auto& page : section.pages) {
+      text += "- [" + llmsText(page.title) + "](" + href(page.path) + ")";
+      if (!page.description.empty()) text += ": " + llmsText(page.description);
+      text += "\n";
+    }
+  }
+  tree.write(std::string(kDocsLlmsFile), text);
+}
+
 }  // namespace
 
 void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const DocsBuildOptions& options,
@@ -1863,6 +1980,7 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
   if (model.pages.empty()) siteError("the site has no pages");
   OutputTree tree(out_path, options.clean, result);
   renderSite(model, tree, "", nullptr, options, result);
+  writeListings(tree, model.title, model.config.description, model.config.url, siteListing(model, "", "", true));
   tree.commit(buildVersion());
 }
 
@@ -2204,6 +2322,22 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
       ++result.redirects_written;
     }
   }
+  std::vector<ListingSection> sections;
+  for (const auto& site : portal.sites) {
+    // Each site's pages outside its nav join one "Optional" section below.
+    for (auto& section : siteListing(site.model, site.entry.id + "/", site.entry.title + ": ", false)) {
+      sections.push_back(std::move(section));
+    }
+  }
+  ListingSection optional{"Optional", {}};
+  for (const auto& site : portal.sites) {
+    for (const auto index : site.model.unlisted) {
+      const DocsPage& page = site.model.pages[index];
+      optional.pages.push_back({site.entry.title + ": " + page.title, site.entry.id + "/" + page.output, page.description, page.date});
+    }
+  }
+  if (!optional.pages.empty()) sections.push_back(std::move(optional));
+  writeListings(tree, portal.config.title, portal.config.description, portal.config.url, sections);
   tree.commit(version);
 }
 

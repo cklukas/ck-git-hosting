@@ -178,6 +178,10 @@ struct CiWorkflow {
   // How the commit under build is checked out (see CiCheckout); the default is
   // a depth-1 Git clone.
   CiCheckout checkout;
+  // `runs_on:` -- the runner labels this workflow needs (`runs_on: macos` or
+  // `runs_on: [arm64, big-disk]`): only a runner carrying every one of them
+  // (a runner's name counts as a label) takes its jobs. Empty: any runner.
+  std::vector<std::string> runs_on;
   // Persistent build caches this workflow keeps across runs. See CiCache and
   // runCiWorkflow.
   std::vector<CiCache> caches;

@@ -18,7 +18,9 @@
 #     main host's files; nothing ever connects to the runner);
 #   - the secondary's build root is empty after every job;
 #   - a primary stopped mid-run (a restart or package upgrade) hands its job
-#     back instead of failing it, and the job completes as attempt 2.
+#     back instead of failing it, and the job completes as attempt 2;
+#   - a workflow's runs_on: label keeps its job from the primary until the
+#     runner an administrator labelled takes it.
 
 set -eu
 
@@ -312,5 +314,28 @@ wait_status "$run7" success 40
   fail "the handed-back job did not complete on the secondary as attempt 2"
 stop_pid "$secondary_pid"; secondary_pid=''
 build_root_empty "after a handed-back job"
+
+# --- 8: runs_on sends a job only to a runner carrying its labels -----------
+"$CKGIT_ADMIN" runner labels uconsole big-disk --config "$test_root/server.ini" >/dev/null ||
+  fail "runner labels failed"
+"$CKGIT_ADMIN" runner list --config "$test_root/server.ini" | grep -q '^uconsole .*labels big-disk' ||
+  fail "runner list does not show the labels"
+routed=$(publish "version: 1
+runs_on: [big-disk]
+jobs:
+  - name: build
+    steps:
+      - run: echo routed")
+start_primary
+run8=$(queue "$routed" refs/heads/main)
+sleep 3
+[ "$(field "$run8" status)" = pending ] || fail "the primary took a job labelled for another runner"
+[ "$(field "$run8" detail_hex)" = "$(printf 'waiting for a runner labelled big-disk' | od -An -tx1 | tr -d ' \n')" ] ||
+  fail "the waiting job does not say which label it needs"
+start_secondary
+wait_status "$run8" success 30
+[ "$(field "$run8" runner)" = uconsole ] || fail "the labelled job did not run on the labelled runner"
+stop_pid "$secondary_pid"; secondary_pid=''
+stop_pid "$primary_pid"; primary_pid=''
 
 echo "shared runners integration test passed"

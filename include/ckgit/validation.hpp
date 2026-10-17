@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
+#include <optional>
 
 namespace ckgit {
 
@@ -28,5 +30,21 @@ bool isValidSha256Hex(std::string_view digest);
 // workflows (artifact and pages paths) and ckdocs configuration.
 inline constexpr std::size_t kMaximumSafeRelativePathBytes = 1024;
 bool isSafeRelativePath(std::string_view path);
+
+// A CI runner label (`arm64`, `macos`, `big-disk`): 1 to 32 bytes of
+// lowercase letters, digits, `.`, `_` and `-`, starting with a letter or
+// digit. A runner's own name always counts as one of its labels.
+inline constexpr std::size_t kMaximumCiLabelBytes = 32;
+inline constexpr std::size_t kMaximumCiLabels = 16;
+bool isValidCiLabel(std::string_view label);
+// A comma-separated label list ("a,b", or empty for none): at most
+// kMaximumCiLabels valid labels, duplicates removed, sorted. std::nullopt
+// when any part is invalid.
+std::optional<std::vector<std::string>> parseCiLabelList(std::string_view text);
+std::string formatCiLabelList(const std::vector<std::string>& labels);
+// Whether a runner with `labels` (plus its `name`) may run a job that asks
+// for `runs_on`: every requested label must be among them.
+bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
+                     const std::vector<std::string>& runs_on);
 
 }  // namespace ckgit

@@ -42,6 +42,7 @@
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/git_repository.hpp"
 #include "ckgit/hash.hpp"
+#include "ckgit/http_router.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/ref_status.hpp"
@@ -2265,7 +2266,9 @@ int openBrowser(const std::string& url) {
   }
 }
 
-int webCommand(const std::vector<std::string>& arguments) {
+// `page`, when given, is the dashboard path to open (ckgit open) instead of
+// the overview or --project.
+int webCommand(const std::vector<std::string>& arguments, const std::string& page = {}) {
   std::optional<std::filesystem::path> config_path;
   std::optional<unsigned short> local_port;
   unsigned short remote_port = kDefaultDashboardPort;
@@ -2322,7 +2325,7 @@ int webCommand(const std::vector<std::string>& arguments) {
   }
   const unsigned short port = pickLocalPort(local_port);
   const std::string url = "http://127.0.0.1:" + std::to_string(port) +
-      (project.has_value() ? "/project/" + *project : "/");
+      (!page.empty() ? page : project.has_value() ? "/project/" + *project : "/");
   const std::string forward = "127.0.0.1:" + std::to_string(port) + ":127.0.0.1:" + std::to_string(remote_port);
 
   struct sigaction action {};
@@ -2791,6 +2794,7 @@ int releaseDownloadCommand(const std::vector<std::string>& arguments) {
 #include "incoming.inc"
 #include "ci.inc"
 #include "default_branch.inc"
+#include "open.inc"
 
 // `ckgit version`: the local build plus the versions running on the server, so
 // the operator sees all four suite versions at once and can spot a service left
@@ -2904,6 +2908,9 @@ int main(int argc, char* argv[]) {
     }
     if (command == "web") {
       return webCommand(arguments);
+    }
+    if (command == "open") {
+      return openCommand(arguments);
     }
     if (command == "release") {
       if (!arguments.empty() && arguments.front() == "list") {

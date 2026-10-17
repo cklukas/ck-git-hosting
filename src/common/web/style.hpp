@@ -21,6 +21,8 @@ a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(
 /* GitHub-flavoured alerts and task lists in rendered Markdown. */
 .alert{--alert:var(--accent);margin:1rem 0;padding:.7rem 1rem;border-left:4px solid var(--alert);border-radius:.25rem;background:var(--tint)}.alert>:last-child{margin-bottom:0}.alert-title{margin:0 0 .35rem;font-weight:600;color:var(--alert)}
 .alert-note{--alert:#0969da}.alert-tip{--alert:#1a7f37}.alert-important{--alert:#8250df}.alert-warning{--alert:#9a6700}.alert-caution{--alert:#cf222e}
+.readme kbd{font:.85em ui-monospace,SFMono-Regular,Consolas,monospace;padding:.1em .4em;border:1px solid var(--line);border-bottom-width:2px;border-radius:.3em;background:var(--tint)}
+.readme details{margin:1rem 0;padding:.5rem 1rem;border:1px solid var(--line);border-radius:.4rem}.readme details>summary{cursor:pointer;font-weight:600}
 .contains-task-list{list-style:none;padding-left:.4rem}.task-list-item input{margin:0 .45rem 0 0;vertical-align:-.1rem}
 @media(prefers-color-scheme:dark){.alert-note{--alert:#4493f8}.alert-tip{--alert:#3fb950}.alert-important{--alert:#ab7df8}.alert-warning{--alert:#d29922}.alert-caution{--alert:#f85149}}
 /* Server-side syntax highlighting (highlight.hpp); the same classes serve ckdocs sites. */
