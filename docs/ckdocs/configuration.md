@@ -1,3 +1,6 @@
+---
+description: "Every ckdocs.yml setting: site details, navigation, search, sitemap and llms.txt, and portals with several sites."
+---
 # Site configuration
 
 ## `ckdocs.yml` reference
@@ -56,7 +59,9 @@ URL, and one entry per top-level heading with a plain-text excerpt of that
 section, up to 200 bytes) and a small inline script — under 2 KiB, part of
 the site itself, never fetched from anywhere else — that fetches the index
 on first use, filters it client-side as you type, and lists matching
-sections linking straight to their heading. It runs only on the page it
+sections linking straight to their heading. A page whose title or
+[description](front-matter.md#page-descriptions) matches is listed itself
+first, with its description as the summary. It runs only on the page it
 ships with, the Pages origin, never the dashboard.
 
 The box starts hidden and only that script reveals it, so a visitor with
@@ -73,8 +78,12 @@ to get there.
 Every build writes `llms.txt` at the output root: a plain-text index of the
 site for AI tools, in the [llms.txt](https://llmstxt.org/) format. It holds
 the site title, `site.description` as a quote, one section per tab with each
-page as a Markdown link and its front matter `description`, and the pages
-outside the navigation under an `Optional` section.
+page as a Markdown link and its front matter
+[`description`](front-matter.md#page-descriptions), and the pages outside
+the navigation under an `Optional` section. A page without a description
+gets the first sentence of its text instead (at most 200 bytes), so no
+entry is a bare link. Explicit descriptions are better, because they also
+appear in the site index and in search results.
 
 ```text
 # ck-git-hosting

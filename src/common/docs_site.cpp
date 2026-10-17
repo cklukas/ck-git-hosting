@@ -1464,9 +1464,11 @@ std::vector<SearchSection> pageSearchSections(std::string_view article, const st
 }
 
 // One page's title/url/sections, serialized as one JSON object.
-std::string searchPageEntryJson(const std::string& title, const std::string& url,
+std::string searchPageEntryJson(const std::string& title, const std::string& url, const std::string& description,
                                 const std::vector<SearchSection>& sections) {
-  std::string entry = "{\"title\":\"" + jsonEscape(title) + "\",\"url\":\"" + jsonEscape(url) + "\",\"sections\":[";
+  std::string entry = "{\"title\":\"" + jsonEscape(title) + "\",\"url\":\"" + jsonEscape(url) + "\",";
+  if (!description.empty()) entry += "\"description\":\"" + jsonEscape(description) + "\",";
+  entry += "\"sections\":[";
   for (std::size_t index = 0; index < sections.size(); ++index) {
     if (index) entry += ',';
     entry += "{\"heading\":\"" + jsonEscape(sections[index].heading) + "\",\"anchor\":\"" +
@@ -1587,8 +1589,21 @@ class OutputTree {
 // Renders one site's pages, site index, search index and assets into `tree`
 // below `prefix` ("" for a single site, "<id>/" in a portal), counting into
 // `result`.
+// The opening of a page's text for a listing that has no description for it:
+// the first sentence of its first non-empty section, else that excerpt as is.
+std::string pageLead(const std::vector<SearchSection>& sections) {
+  for (const auto& section : sections) {
+    if (section.excerpt.empty()) continue;
+    const auto stop = section.excerpt.find(". ");
+    return stop == std::string::npos ? section.excerpt : section.excerpt.substr(0, stop + 1);
+  }
+  return {};
+}
+
+// `leads`, when given, receives each page's opening text (pageLead), indexed
+// like model.pages, for llms.txt entries of pages without a description.
 void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string& prefix, const PortalShell* portal,
-                const DocsBuildOptions& options, DocsBuildReport& result) {
+                const DocsBuildOptions& options, DocsBuildReport& result, std::vector<std::string>* leads = nullptr) {
   std::error_code error;
   SiteContext context;
   context.model = &model;
@@ -1765,8 +1780,15 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     }
     broken_links.appendTo(result.broken_links);
     scanArticle(article, ids[index], links[index]);
+    if (leads != nullptr) {
+      leads->resize(model.pages.size());
+      (*leads)[index] = pageLead(pageSearchSections(article, context.outlines[index]));
+    }
     if (model.config.search) {
-      search_entries.push_back(searchPageEntryJson(page.title, page.output, pageSearchSections(article, context.outlines[index])));
+      search_entries.push_back(searchPageEntryJson(page.title, page.output,
+                                                   page.description.empty() && page.home ? model.config.description
+                                                                                         : page.description,
+                                                   pageSearchSections(article, context.outlines[index])));
     }
     ShellInput input;
     input.title = page.title;
@@ -1820,6 +1842,9 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     const auto pageEntry = [&](std::size_t index) {
       const auto& page = model.pages[index];
       std::string entry = "<a href=\"" + escapeHtml(relativeUrl(from_dir, page.output)) + "\">" + escapeHtml(page.title) + "</a>";
+      // The page's front matter description, as a one-line summary under its link.
+      const std::string& summary = page.description.empty() && page.home ? model.config.description : page.description;
+      if (!summary.empty()) entry += "<p class=\"index-description\">" + escapeHtml(summary) + "</p>";
       std::string headings;
       for (const auto& heading : context.outlines[index]) {
         if (heading.level != 2 && heading.level != 3) continue;
@@ -1880,13 +1905,16 @@ struct ListingSection {
   std::vector<ListingPage> pages;
 };
 
+// Pages without a description fall back to their opening text, `leads`.
 std::vector<ListingSection> siteListing(const DocsSiteModel& model, const std::string& prefix,
-                                        const std::string& title_prefix, bool with_unlisted) {
+                                        const std::string& title_prefix, bool with_unlisted,
+                                        const std::vector<std::string>& leads) {
   std::vector<ListingSection> sections;
   const auto entry = [&](std::size_t index) {
     const DocsPage& page = model.pages[index];
-    return ListingPage{page.title, prefix + page.output,
-                       page.description.empty() && page.home ? model.config.description : page.description, page.date};
+    std::string summary = page.description.empty() && page.home ? model.config.description : page.description;
+    if (summary.empty() && index < leads.size()) summary = leads[index];
+    return ListingPage{page.title, prefix + page.output, summary, page.date};
   };
   for (const auto& tab : model.nav) {
     std::vector<std::size_t> order;
@@ -1979,8 +2007,9 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
   result = DocsBuildReport{};
   if (model.pages.empty()) siteError("the site has no pages");
   OutputTree tree(out_path, options.clean, result);
-  renderSite(model, tree, "", nullptr, options, result);
-  writeListings(tree, model.title, model.config.description, model.config.url, siteListing(model, "", "", true));
+  std::vector<std::string> leads;
+  renderSite(model, tree, "", nullptr, options, result, &leads);
+  writeListings(tree, model.title, model.config.description, model.config.url, siteListing(model, "", "", true, leads));
   tree.commit(buildVersion());
 }
 
@@ -2225,6 +2254,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
   if (!portal.config.stylesheet.empty()) shell.stylesheet_output = addPortalAsset(portal.config.stylesheet, "site.stylesheet");
 
   // Every site below its id, its findings prefixed with it.
+  std::vector<std::vector<std::string>> site_leads(portal.sites.size());
   for (std::size_t index = 0; index < portal.sites.size(); ++index) {
     const auto& site = portal.sites[index];
     shell.current = index;
@@ -2232,7 +2262,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     const auto anchors_before = result.broken_anchors.size();
     const auto warnings_before = result.warnings.size();
     try {
-      renderSite(site.model, tree, site.entry.id + "/", &shell, options, result);
+      renderSite(site.model, tree, site.entry.id + "/", &shell, options, result, &site_leads[index]);
     } catch (const std::exception& failure) {
       rethrowForSite(site.entry.id, failure);
     }
@@ -2323,17 +2353,21 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     }
   }
   std::vector<ListingSection> sections;
-  for (const auto& site : portal.sites) {
+  for (std::size_t index = 0; index < portal.sites.size(); ++index) {
+    const auto& site = portal.sites[index];
     // Each site's pages outside its nav join one "Optional" section below.
-    for (auto& section : siteListing(site.model, site.entry.id + "/", site.entry.title + ": ", false)) {
+    for (auto& section : siteListing(site.model, site.entry.id + "/", site.entry.title + ": ", false, site_leads[index])) {
       sections.push_back(std::move(section));
     }
   }
   ListingSection optional{"Optional", {}};
-  for (const auto& site : portal.sites) {
+  for (std::size_t site_index = 0; site_index < portal.sites.size(); ++site_index) {
+    const auto& site = portal.sites[site_index];
     for (const auto index : site.model.unlisted) {
       const DocsPage& page = site.model.pages[index];
-      optional.pages.push_back({site.entry.title + ": " + page.title, site.entry.id + "/" + page.output, page.description, page.date});
+      const auto& leads = site_leads[site_index];
+      const std::string summary = !page.description.empty() ? page.description : index < leads.size() ? leads[index] : "";
+      optional.pages.push_back({site.entry.title + ": " + page.title, site.entry.id + "/" + page.output, summary, page.date});
     }
   }
   if (!optional.pages.empty()) sections.push_back(std::move(optional));

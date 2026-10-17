@@ -1,3 +1,6 @@
+---
+description: Set a page's title, description, author, date, and navigation order with front matter.
+---
 # Page titles and metadata
 
 ## Front matter
@@ -20,11 +23,37 @@ nav_order: 1
 | Key | Type | Effect |
 |---|---|---|
 | `title` | string, ≤ 128 bytes | This page's title, overriding the [automatically derived title](pages.md). |
-| `description` | string, ≤ 1024 bytes | A one-line summary, used as the page's `<meta name="description">`. |
+| `description` | string, ≤ 1024 bytes | A one-line summary of the page: its `<meta name="description">`, its line under the link in the site index, its search result, and its entry in `llms.txt` (see [Page descriptions](#page-descriptions)). |
 | `author` | string, ≤ 128 bytes | The page's `<meta name="author">`, and the first part of its byline. |
 | `date` | `YYYY-MM-DD` | A calendar date that exists (`2024-02-29` does, `2026-02-29` does not): the page's `<meta name="date">`, and the second part of its byline. |
 | `nav_order` | integer | This page's (or, on a directory's index page, that directory's) order among its siblings. |
 | `nav_exclude` | `true`/`false` | Keep this page out of the sidebar and tabs (still built, still linked from the site index). |
+
+### Page descriptions
+
+A `description` is the page's answer to "what is this page for?", in one
+sentence. ckdocs shows it in four places:
+
+- **Site index:** as a muted line under the page's link, so the index reads
+  as an annotated table of contents.
+- **Search results:** with [search](configuration.md#search) on, a query that
+  matches a page's title or description lists the page itself, with the
+  description as its summary, ahead of its matching sections.
+- **`llms.txt`:** as the text after the page's link (see
+  [Sitemap and llms.txt](configuration.md#sitemap-and-llmstxt)).
+- **The page's `<meta name="description">`:** what search engines and link
+  previews show.
+
+It is not shown on the page itself, which usually opens with its own
+introduction. The home page falls back to `site.description` when it has
+none. Keep it to one plain sentence that says what a reader finds or can do
+there, not a repeat of the title:
+
+```yaml
+---
+description: Pair a device with the server, check the connection, and fix the usual setup problems.
+---
+```
 
 A page with an `author` or a `date` shows a small byline, such as
 "C. Klukas · 2026-08-09" — only the parts present — right under its

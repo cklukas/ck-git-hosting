@@ -711,7 +711,7 @@ void testListings() {
   Scratch scratch;
   write(scratch.root / "docs/index.md", "# Home\n");
   write(scratch.root / "docs/guide.md", "---\ndescription: How to [start]\ndate: 2026-10-01\n---\n# Guide & more\n");
-  write(scratch.root / "docs/my page.md", "# Spaced\n");
+  write(scratch.root / "docs/my page.md", "# Spaced\n\nFirst sentence here. Second sentence.\n");
   write(scratch.root / "docs/hidden.md", "---\nnav_exclude: true\n---\n# Hidden\n");
   write(scratch.root / "ckdocs.yml", "version: 1\nsite:\n  title: Listed\n  description: All the pages\n"
                                      "  url: https://example.test/docs\n");
@@ -727,6 +727,7 @@ void testListings() {
   const auto llms = slurp(scratch.root / "site/llms.txt");
   require(llms.starts_with("# Listed\n\n> All the pages\n") &&
               contains(llms, "- [Guide & more](https://example.test/docs/guide.html): How to \\[start\\]\n") &&
+              contains(llms, "- [Spaced](https://example.test/docs/my%20page.html): First sentence here.\n") &&
               contains(llms, "## Optional\n\n- [Hidden](https://example.test/docs/hidden.html)\n"),
           "llms.txt lists tabs, absolute links, descriptions and Optional pages: " + llms);
 
@@ -752,7 +753,8 @@ void testSearch() {
         "## Alpha\n\nAlpha section body.\n\n"
         "## Beta\n\n" + long_paragraph + "\n");
   write(scratch.root / "hidden.md", "---\nnav_exclude: true\n---\n# Hidden page\n\nHidden body text.\n");
-  write(scratch.root / "notes/extra.md", "# Extra notes\n\nA nested page, for checking a relative data-index.\n");
+  write(scratch.root / "notes/extra.md", "---\ndescription: Checks a \"relative\" data-index\n---\n"
+                                         "# Extra notes\n\nA nested page, for checking a relative data-index.\n");
 
   ckgit::DocsConfig config;
   config.title = "Fixture";
@@ -775,6 +777,16 @@ void testSearch() {
           "the page's own h1 starts an ordinary section, keyed by its own slug");
   require(contains(json, "{\"heading\":\"Alpha\",\"anchor\":\"alpha\",\"excerpt\":\"Alpha section body.\"}"),
           "a heading section's excerpt is the text after that heading, not repeating the heading's own text");
+  require(contains(json, "\"title\":\"Extra notes\",\"url\":\"notes/extra.html\","
+                         "\"description\":\"Checks a \\\"relative\\\" data-index\",\"sections\":["),
+          "a page's front matter description travels in its search entry");
+  require(contains(json, "\"title\":\"Home\",\"url\":\"index.html\",\"sections\":["),
+          "a page without a description has no description field");
+  const auto index_page = slurp(site / "site-index.html");
+  require(contains(index_page, "notes/extra.html\">Extra notes</a><p class=\"index-description\">Checks a &quot;relative&quot; data-index</p>"),
+          "the site index shows a page's description under its link, escaped");
+  require(!contains(between(index_page, "index.html\">Home</a>", "</li>"), "index-description"),
+          "a page without a description shows none");
   require(contains(json, "\"title\":\"Hidden page\",\"url\":\"hidden.html\""),
           "a page excluded from navigation (nav_exclude) still gets a search entry -- it is still part of the site");
 

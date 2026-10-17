@@ -1,3 +1,6 @@
+---
+description: How ckdocs finds pages, names and orders them, and builds the tabs, sidebar, and site index.
+---
 # Pages and navigation
 
 ## How pages are found, named, and ordered
@@ -55,3 +58,7 @@
   directly; every page it does not mention is still built and reachable
   from the generated site index, so nothing tracked ever silently
   disappears.
+- **The site index.** `site-index.html` lists every tab, page, and second-
+  and third-level heading as plain nested lists, with each page's
+  [`description`](front-matter.md#page-descriptions) as a short line under
+  its link.
