@@ -23,6 +23,7 @@
 #     runner an administrator labelled takes it.
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 
 test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in
@@ -34,10 +35,7 @@ server_pid=''
 primary_pid=''
 secondary_pid=''
 stop_pid() {
-  if [ -n "$1" ]; then
-    kill -TERM "$1" 2>/dev/null || true
-    wait "$1" 2>/dev/null || true
-  fi
+  stop_process "$1" || true
 }
 cleanup() {
   stop_pid "$secondary_pid"

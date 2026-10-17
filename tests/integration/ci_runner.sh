@@ -7,6 +7,7 @@
 # records the result. No server or network is involved.
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 
 test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in
@@ -18,10 +19,7 @@ server_pid=''
 runner_pid=''
 cleanup() {
   for pid in "$runner_pid" "$server_pid"; do
-    if [ -n "$pid" ]; then
-      kill -TERM "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-    fi
+    stop_process "$pid" || true
   done
   rm -rf "$test_root"
 }

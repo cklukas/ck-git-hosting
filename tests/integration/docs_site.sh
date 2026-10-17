@@ -18,6 +18,7 @@
 # index, a nested page, and a 404, then stopped.
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 
 : "${CKDOCS:?CKDOCS must name the built ckdocs binary}"
 [ -x "$CKDOCS" ] || { echo "CKDOCS=$CKDOCS is not executable" >&2; exit 1; }
@@ -31,8 +32,39 @@ case "${TMPDIR:-}" in
 esac
 test_root=$(mktemp -d "$test_root_parent/ckdocs-site.XXXXXX")
 serve_pid=''
+# Stops the running `ckdocs serve` (see stop_process.sh: never an unbounded
+# wait); fails when it had to be killed.
+stop_serve() {
+  [ -n "$serve_pid" ] || return 0
+  stop_serve_status=0
+  stop_process "$serve_pid" || stop_serve_status=1
+  serve_pid=''
+  return "$stop_serve_status"
+}
+# Waits for `ckdocs serve` writing to log $1 to announce its port; sets
+# serve_port. The log appears only once the background job has opened it.
+await_serve() {
+  serve_port=''
+  ready_attempt=0
+  while [ -z "$serve_port" ]; do
+    if ! kill -0 "$serve_pid" 2>/dev/null; then
+      cat "$1" >&2 2>/dev/null || true
+      serve_pid=''
+      echo "ckdocs serve exited before it became ready" >&2
+      exit 1
+    fi
+    [ ! -f "$1" ] || serve_port=$(sed -n 's/^ckdocs: serve ready on \([0-9][0-9]*\)$/\1/p' "$1")
+    ready_attempt=$((ready_attempt + 1))
+    if [ "$ready_attempt" -ge 100 ]; then
+      cat "$1" >&2 2>/dev/null || true
+      echo "ckdocs serve never printed its ready banner" >&2
+      exit 1
+    fi
+    [ -n "$serve_port" ] || sleep .1
+  done
+}
 cleanup() {
-  [ -z "$serve_pid" ] || { kill "$serve_pid" 2>/dev/null || true; wait "$serve_pid" 2>/dev/null || true; }
+  stop_serve || true
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
@@ -357,24 +389,7 @@ serve_log="$test_root/serve.log"
 "$CKDOCS" serve --root "$repo_root" --port 0 --quiet >"$serve_log" 2>&1 &
 serve_pid=$!
 
-serve_port=''
-attempt=0
-while [ -z "$serve_port" ]; do
-  if ! kill -0 "$serve_pid" 2>/dev/null; then
-    echo "ckdocs serve exited before it became ready:" >&2
-    cat "$serve_log" >&2
-    serve_pid=''
-    exit 1
-  fi
-  serve_port=$(sed -n 's/^ckdocs: serve ready on \([0-9][0-9]*\)$/\1/p' "$serve_log")
-  attempt=$((attempt + 1))
-  if [ "$attempt" -ge 100 ]; then
-    echo "ckdocs serve never printed its ready banner:" >&2
-    cat "$serve_log" >&2
-    exit 1
-  fi
-  [ -n "$serve_port" ] || sleep .1
-done
+await_serve "$serve_log"
 
 check_serve() {  # check_serve PATH 'HTTP STATUS LINE' [CONTENT-TYPE PATTERN]
   headers="$test_root/serve-headers"
@@ -402,9 +417,7 @@ diagram_asset=$(basename "$(find "$site/_ckdocs-mermaid" -name '*.svg' | head -n
 check_serve "/_ckdocs-mermaid/$diagram_asset" "HTTP/1.1 200 OK" "image/svg+xml"
 check_serve "/nope.html" "HTTP/1.1 404 Not Found"
 
-kill "$serve_pid" 2>/dev/null || true
-wait "$serve_pid" 2>/dev/null || true
-serve_pid=''
+stop_serve || exit 1
 echo "docs_site serve check passed"
 
 # One unusable file does not stop a build: an oversized page is left out with
@@ -438,15 +451,7 @@ set -e
 watch_log="$test_root/watch.log"
 "$CKDOCS" serve --root "$findings_fixture" --port 0 >"$watch_log" 2>&1 &
 serve_pid=$!
-serve_port=''
-attempt=0
-while [ -z "$serve_port" ]; do
-  kill -0 "$serve_pid" 2>/dev/null || { cat "$watch_log" >&2; serve_pid=''; echo "watching serve exited" >&2; exit 1; }
-  serve_port=$(sed -n 's/^ckdocs: serve ready on \([0-9][0-9]*\)$/\1/p' "$watch_log")
-  attempt=$((attempt + 1))
-  [ "$attempt" -lt 100 ] || { cat "$watch_log" >&2; echo "watching serve never became ready" >&2; exit 1; }
-  [ -n "$serve_port" ] || sleep .1
-done
+await_serve "$watch_log"
 wait_served() {  # wait_served PATH TEXT: until the served page contains TEXT
   attempt=0
   until curl --max-time 4 --silent "http://127.0.0.1:$serve_port$1" | grep -q "$2"; do
@@ -469,9 +474,7 @@ until grep -q 'still serving the last build' "$watch_log"; do
   sleep .1
 done
 wait_served /fresh.html 'A new page'
-kill "$serve_pid" 2>/dev/null || true
-wait "$serve_pid" 2>/dev/null || true
-serve_pid=''
+stop_serve || exit 1
 rm -f "$findings_fixture/ckdocs.yml"
 echo "docs_site watch check passed"
 

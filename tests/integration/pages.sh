@@ -6,6 +6,7 @@
 # it, and the separate ck-pagesd serves it on its own port with traversal denied.
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 
 test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 case "${TMPDIR:-}" in
@@ -15,10 +16,7 @@ esac
 test_root=$(mktemp -d "$test_root_parent/ckpages.XXXXXX")
 pages_pid=''
 cleanup() {
-  if [ -n "$pages_pid" ]; then
-    kill -TERM "$pages_pid" 2>/dev/null || true
-    wait "$pages_pid" 2>/dev/null || true
-  fi
+  stop_process "$pages_pid" || true
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
@@ -72,7 +70,9 @@ pages_pid=$!
 attempt=0; port=''
 while [ -z "$port" ]; do
   kill -0 "$pages_pid" 2>/dev/null || { cat "$test_root/pages.log" >&2; fail "ck-pagesd exited"; }
-  port=$(sed -n 's/^ck-pagesd: pages ready on \([0-9][0-9]*\)$/\1/p' "$test_root/pages.log")
+  # The log exists only once the background job opened it; under set -e a
+  # failed read here would end the test silently.
+  port=$(sed -n 's/^ck-pagesd: pages ready on \([0-9][0-9]*\)$/\1/p' "$test_root/pages.log" 2>/dev/null || true)
   attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail "ck-pagesd never became ready"
   [ -n "$port" ] || sleep .1
 done

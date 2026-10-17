@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 test_root_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_root_parent" ] || { echo "Approved temporary volume is unavailable" >&2; exit 1; }
 case "${TMPDIR:-}" in
@@ -14,12 +15,8 @@ test_root=$(mktemp -d "$test_root_parent/ckd.XXXXXX")
 server_pid=''
 slow_pids=''
 cleanup() {
-  for pid in $slow_pids; do kill "$pid" 2>/dev/null || true; done
-  for pid in $slow_pids; do wait "$pid" 2>/dev/null || true; done
-  if [ -n "$server_pid" ]; then
-    kill -TERM "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  for pid in $slow_pids; do stop_process "$pid" || true; done
+  stop_process "$server_pid" || true
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM

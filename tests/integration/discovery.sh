@@ -2,13 +2,14 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 test_parent=${CKGIT_TEST_ROOT:-${TMPDIR:-/tmp}}
 [ -d "$test_parent" ] || exit 1
 case "${TMPDIR:-}" in "$test_parent"/*) ;; *) exit 1 ;; esac
 root=$(mktemp -d "$test_parent/ckd.XXXXXX")
 server_pid=''
 cleanup() {
-  if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; fi
+  stop_process "$server_pid" || true
   rm -rf "$root"
 }
 trap cleanup EXIT HUP INT TERM

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 set -eu
+. "$(dirname "$0")/stop_process.sh"
 
 # The Makefile exports the approved build root (this Mac's local.mk pins it to
 # /Volumes/PRO-BLADE/tmp; the portable default otherwise is TMPDIR, or /tmp);
@@ -23,10 +24,7 @@ test_root=$(mktemp -d "$test_root_parent/ckg.XXXXXX")
 server_pid=''
 
 cleanup() {
-  if [ -n "$server_pid" ]; then
-    kill -TERM "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  stop_process "$server_pid" || true
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
