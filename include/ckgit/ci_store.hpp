@@ -266,6 +266,13 @@ CiReapResult reapCiLeases(const std::filesystem::path& state_root, const CiReapO
 bool abandonCiJob(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token,
                   std::string_view runner);
 
+// Releases a leased job once its run has been recorded, like releaseCiJob, but
+// only while `token` still holds the lease. A runner whose lease lapsed (or
+// that gave the job back) must not release it: the job is queued again or
+// already claimed by another runner, whose working entry and lease it would
+// otherwise remove. False when the job is no longer claimed under `token`.
+bool releaseCiClaim(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token);
+
 // Ensures <state_root>/ci/runs/<project>/<run_id>/steps exists (private) and
 // returns the run directory, so the runner can stream step logs into it.
 std::filesystem::path prepareCiRunDirectory(const std::filesystem::path& state_root,

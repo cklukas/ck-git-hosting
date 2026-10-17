@@ -19,8 +19,11 @@ inline constexpr std::size_t kMaximumMarkdownDepth = 8;
 
 // Where a document's relative links point. Without a `resolver`, they become
 // dashboard routes inside `project` at `commit_id` (documents keep `ref`,
-// images pin the snapshot), relative to `directory`.
-using MarkdownLinkResolver = std::function<std::optional<std::string>(std::string_view target, bool image)>;
+// images pin the snapshot), relative to `directory`. A resolver also learns
+// the 1-based source line the link is written on (0 when unknown), so a
+// caller can point at a link it cannot resolve.
+using MarkdownLinkResolver =
+    std::function<std::optional<std::string>(std::string_view target, bool image, std::size_t line)>;
 
 // An application-owned renderer for fenced code. Its result is trusted HTML;
 // nullopt keeps the ordinary escaped code block. Never supplied by Markdown.
@@ -42,6 +45,9 @@ struct LinkContext {
   // same outcome an invalid target has. `image` says whether the target is
   // an image source. `project` and `commit_id` may then be empty.
   MarkdownLinkResolver resolver{};
+  // The source line the rendered text starts on, for the resolver's `line`:
+  // a document rendered without its front matter starts further down.
+  std::size_t first_line = 1;
 };
 
 // One heading of a rendered document, as a table of contents needs it: the

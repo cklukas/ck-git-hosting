@@ -675,6 +675,10 @@ void testSshCommandGrammar() {
   const auto ci_run = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-run cworks " + run, &reason);
   expect(ci_run.has_value() && ci_run->rpc_arguments == std::vector<std::string>{"cworks", run},
          "ci-run RPC is accepted with a project and run id");
+  const auto ci_placement = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-placement cworks " + run, &reason);
+  expect(ci_placement.has_value() && ci_placement->rpc_operation == "ci-placement" &&
+             ci_placement->rpc_arguments == std::vector<std::string>{"cworks", run},
+         "ci-placement RPC is accepted with a project and run id");
   const auto ci_cancel = ckgit::parseSshOriginalCommand("ckgit-rpc 1 ci-cancel cworks " + run, &reason);
   expect(ci_cancel.has_value() && ci_cancel->rpc_operation == "ci-cancel",
          "ci-cancel RPC is accepted with a project and run id");
@@ -693,6 +697,9 @@ void testSshCommandGrammar() {
            "ckgit-rpc 1 ci-run cworks",
            "ckgit-rpc 1 ci-run cworks run/../x",
            "ckgit-rpc 1 ci-run cworks " + run + " extra",
+           "ckgit-rpc 1 ci-placement cworks",
+           "ckgit-rpc 1 ci-placement cworks " + run + " extra",
+           "ckgit-rpc 1 ci-placement ../cworks " + run,
            "ckgit-rpc 1 ci-cancel cworks " + std::string(65, 'a'),
            "ckgit-rpc 1 ci-log cworks " + run + " 1",
            "ckgit-rpc 1 ci-log cworks " + run + " 1 0 extra",

@@ -85,6 +85,9 @@ grep -q '^ReadWritePaths=/var/lib/ck-git-hosting /srv/ck-git-hosting/repos$' "$u
 grep -q '^ExecStart=/usr/bin/ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini$' "$runner_unit"
 grep -q '^User=ckgit$' "$runner_unit"
 grep -q '^RestrictNamespaces=user mnt net$' "$runner_unit"
+# A stop must reach only the runner, which hands its job back to the queue;
+# the default control-group kill would fail the running step instead.
+grep -q '^KillMode=mixed$' "$runner_unit" || fail "the CI runner unit does not let the runner hand its job back"
 grep -q '^ExecCondition=/usr/bin/ck-pagesd check --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^ExecStart=/usr/bin/ck-pagesd serve --config /etc/ck-git-hosting/server.ini$' "$pages_unit"
 grep -q '^User=ckgit$' "$pages_unit"
@@ -230,6 +233,8 @@ grep -q '^User=ckgit-runner$' "$runner_pkg/usr/lib/systemd/system/ck-git-runner.
   fail "the runner unit does not run as the runner account"
 grep -q 'serve --remote --config /etc/ck-git-hosting/runner.ini$' "$runner_pkg/usr/lib/systemd/system/ck-git-runner.service" ||
   fail "the runner unit does not start the remote runner"
+grep -q '^KillMode=mixed$' "$runner_pkg/usr/lib/systemd/system/ck-git-runner.service" ||
+  fail "the remote runner unit does not let the runner hand its job back"
 [ ! -e "$runner_pkg/usr/bin/ck-ci-runnerd" ] && [ ! -e "$runner_pkg/etc/ck-git-hosting/server.ini" ] ||
   fail "the runner package overlaps the server package"
 grep -q 'useradd --system --user-group --home-dir /var/lib/ck-git-runner' "$runner_pkg/DEBIAN/postinst" ||

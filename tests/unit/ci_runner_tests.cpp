@@ -3,10 +3,12 @@
 
 #include "ckgit/ci_runner.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -767,6 +769,126 @@ void testCheckoutTagAndSisterDepth() {
 
 }  // namespace
 
+// A runner shutting down mid-run (a restart, or the package upgrade a
+// self-deploy performs) hands the job back to the queue instead of recording
+// a failure: the run is Pending again and the job is claimable on its next
+// attempt. Here the runner notices the stop itself and kills the step.
+void testStopHandsJobBack() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [sleep, '30']\n");
+  ckgit::CiJobRequest job;
+  job.job_id = ckgit::generateCiId();
+  job.project_name = "demo";
+  job.ref = "refs/heads/main";
+  job.commit_id = id;
+  job.client_id = "test";
+  ckgit::enqueueCiJob(fixture.state, job);
+  const std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(claim.has_value(), "the queued job is claimed");
+
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.run_id = job.job_id;
+  const auto stop_at = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  opts.stop_requested = [stop_at]() { return std::chrono::steady_clock::now() >= stop_at; };
+  const std::string token = claim->lease.token;
+  opts.give_back = [&fixture, &job, token]() {
+    return ckgit::abandonCiJob(fixture.state, job.job_id, token, ckgit::kCiPrimaryRunnerName);
+  };
+  const auto started = std::chrono::steady_clock::now();
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(std::chrono::steady_clock::now() - started < std::chrono::seconds(15),
+          "the stop ends the running step promptly");
+  require(record.status == ckgit::CiRunStatus::Pending && record.detail.find("handed back") != std::string::npos,
+          "the run is handed back, not failed (detail=" + record.detail + ")");
+  const auto stored = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
+  require(stored.has_value() && stored->status == ckgit::CiRunStatus::Pending,
+          "the stored run waits in the queue again");
+  require(!ckgit::releaseCiClaim(fixture.state, job.job_id, token), "the old lease no longer releases the job");
+  const std::optional<ckgit::CiClaim> again = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(again.has_value() && again->job.job_id == job.job_id && again->job.attempt == 2,
+          "the job is claimable again on its next attempt");
+}
+
+// The service manager may signal the step before the runner notices the stop
+// (a control-group kill): the step then dies with 143 on its own. That is the
+// shutdown's doing, not the build's, so the job is still handed back.
+void testStepKilledByShutdownHandsJobBack() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: echo stopping; kill -TERM $$; sleep 30\n");
+  ckgit::CiJobRequest job;
+  job.job_id = ckgit::generateCiId();
+  job.project_name = "demo";
+  job.ref = "refs/heads/main";
+  job.commit_id = id;
+  job.client_id = "test";
+  ckgit::enqueueCiJob(fixture.state, job);
+  const std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(claim.has_value(), "the queued job is claimed");
+
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.run_id = job.job_id;
+  const std::filesystem::path log =
+      fixture.state / "ci" / "runs" / "demo" / job.job_id / "steps" / "0.log";
+  // The stop arrives together with the signal: once the step has said so.
+  opts.stop_requested = [log]() { return readFile(log).find("stopping") != std::string::npos; };
+  const std::string token = claim->lease.token;
+  opts.give_back = [&fixture, &job, token]() {
+    return ckgit::abandonCiJob(fixture.state, job.job_id, token, ckgit::kCiPrimaryRunnerName);
+  };
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Pending,
+          "a step the shutdown killed does not fail the run (detail=" + record.detail + ")");
+  const std::optional<ckgit::CiClaim> again = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(again.has_value() && again->job.attempt == 2, "the job runs again");
+}
+
+// An operator's cancel still wins over a shutdown: the run is Cancelled, not
+// requeued to run once more.
+void testCancelDuringShutdownStaysCancelled() {
+  RunnerFixture fixture;
+  const std::string id = fixture.commit(
+      "version: 1\n"
+      "jobs:\n"
+      "  - name: build\n"
+      "    steps:\n"
+      "      - run: [sleep, '30']\n");
+  ckgit::CiJobRequest job;
+  job.job_id = ckgit::generateCiId();
+  job.project_name = "demo";
+  job.ref = "refs/heads/main";
+  job.commit_id = id;
+  job.client_id = "test";
+  ckgit::enqueueCiJob(fixture.state, job);
+  const std::optional<ckgit::CiClaim> claim = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(claim.has_value(), "the queued job is claimed");
+
+  ckgit::CiRunnerOptions opts = fixture.options(id);
+  opts.run_id = job.job_id;
+  // The cancel arrives together with the stop, once the run is under way.
+  opts.stop_requested = [&fixture, &job]() {
+    ckgit::requestCiCancel(fixture.state, "demo", job.job_id);
+    return true;
+  };
+  bool gave_back = false;
+  opts.give_back = [&gave_back]() {
+    gave_back = true;
+    return true;
+  };
+  const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
+  require(record.status == ckgit::CiRunStatus::Cancelled, "the cancel is recorded");
+  require(!gave_back, "a cancelled run is not handed back");
+}
+
 void testCiRunner() {
   testSuccess();
   testFailureStops();
@@ -778,6 +900,9 @@ void testCiRunner() {
   testSkippedWithoutWorkflow();
   testRunIdReusedFromOptions();
   testCancelledBeforeStart();
+  testStopHandsJobBack();
+  testStepKilledByShutdownHandsJobBack();
+  testCancelDuringShutdownStaysCancelled();
   testBranchTrigger();
   testDefaultBranchTrigger();
   testSelfSister();

@@ -25,6 +25,7 @@ struct CiOptions {
   std::size_t limit{kCiListDefaultLimit};
   std::chrono::seconds interval{kCiWatchDefaultInterval};
   bool all{false};
+  bool enabled_only{false};
   bool json{false};
   bool follow{false};
   bool yes{false};
@@ -66,6 +67,8 @@ CiOptions parseCiOptions(const std::vector<std::string>& arguments) {
       options.interval = std::chrono::seconds(schemaNumber(arguments[++index]));
     } else if (argument == "--all") {
       options.all = true;
+    } else if (argument == "--enabled") {
+      options.enabled_only = true;
     } else if (argument == "--json") {
       options.json = true;
     } else if (argument == "--follow") {
@@ -91,10 +94,17 @@ class ControlReplyError : public std::runtime_error {
   std::string code_;
 };
 
+// An older server that does not know the operation at all.
+class UnsupportedOperationError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 // Runs one control operation and returns its `ok` reply. A daemon error is
 // raised as ControlReplyError; a refusal by an older server's SSH dispatcher,
-// which does not know the operation, says so instead of an opaque denial.
-// `action` completes "could not ..." for any other failure.
+// which does not know the operation, is raised as UnsupportedOperationError
+// and says so instead of an opaque denial. `action` completes "could not ..."
+// for any other failure.
 std::string checkedControlReply(const ckgit::ClientConfig& config, std::string_view operation,
                                 const std::vector<std::string>& arguments, std::string_view action) {
   const auto result = controlRpc(config, operation, arguments);
@@ -106,8 +116,8 @@ std::string checkedControlReply(const ckgit::ClientConfig& config, std::string_v
                        space == std::string::npos ? line : line.substr(space + 1));
   }
   if (result.output.find("denied: command is not an allowed") != std::string::npos) {
-    throw std::runtime_error("the server at " + config.server + " does not offer " + std::string(operation) +
-                             "; upgrade ck-git-hosting on the server to this client's version");
+    throw UnsupportedOperationError("the server at " + config.server + " does not offer " + std::string(operation) +
+                                    "; upgrade ck-git-hosting on the server to this client's version");
   }
   throw std::runtime_error("could not " + std::string(action) + " on " + config.server + " (" +
                            describeProcessFailure(result, kControlTimeout) + ")");
@@ -225,6 +235,18 @@ ckgit::CiRunReport fetchCiRun(const ckgit::ClientConfig& config, const std::stri
   return report;
 }
 
+// The runner and attempt of a run, or nothing from a server older than the
+// `ci-placement` operation; the run's detail line then keeps the placement
+// note that server folds into it.
+std::optional<ckgit::CiRunPlacement> fetchCiPlacement(const ckgit::ClientConfig& config, const std::string& project,
+                                                      const std::string& run_id) {
+  try {
+    return ckgit::parseCiPlacementControlResponse(ciControlReply(config, "ci-placement", {project, run_id}));
+  } catch (const UnsupportedOperationError&) {
+    return std::nullopt;
+  }
+}
+
 // --- text and JSON renderings ------------------------------------------------
 
 std::string ciRunJson(const ckgit::CiRunRecord& run, std::size_t completed_steps, std::uint64_t now) {
@@ -267,6 +289,10 @@ std::pair<const ckgit::CiRunSummary*, const ckgit::CiRunSummary*> ciLatestAndAct
 int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   ckgit::CiStatusReport report;
   std::string project;
+  if (options.enabled_only && !options.all) {
+    std::cerr << "ckgit: --enabled selects among every hosted project; combine it with --all\n";
+    return kUsage;
+  }
   if (!options.all) {
     const auto selected = resolveCiProject(config, options);
     if (!selected.has_value()) return kUsage;
@@ -279,6 +305,9 @@ int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options)
     return reportControlReplyError(error, project, {});
   }
   const std::uint64_t now = report.server_epoch_seconds;
+  if (options.enabled_only) {
+    std::erase_if(report.projects, [](const ckgit::CiProjectStatus& status) { return !status.ci_enabled; });
+  }
   if (options.json) {
     std::cout << "{\"schema_version\":1,\"server_epoch\":" << now << ",\"projects\":[";
     for (std::size_t index = 0; index < report.projects.size(); ++index) {
@@ -292,7 +321,14 @@ int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options)
     std::cout << "\n  ]}\n";
     return 0;
   }
+  // Across every project, one without CI and without any run has nothing to
+  // report beyond its name: those names share one closing line instead.
+  std::vector<std::string> quiet;
   for (const auto& status : report.projects) {
+    if (options.all && !status.ci_enabled && status.runs.empty()) {
+      quiet.push_back(status.project_name);
+      continue;
+    }
     std::cout << status.project_name << ": CI " << (status.ci_enabled ? "enabled" : "disabled")
               << (status.ci_enabled || options.all ? "" : " (an administrator enables it with ckgit-admin on the server)")
               << "\n";
@@ -306,7 +342,24 @@ int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options)
       std::cout << "  active  " << ciRunLine(active->run, active->completed_steps, now) << "\n";
     }
   }
-  if (report.projects.empty()) std::cout << "No hosted projects on " << config.server << ".\n";
+  if (!quiet.empty()) {
+    std::cout << "CI disabled, no runs (" << quiet.size() << "):";
+    std::size_t column = 80;  // wrap the names like a paragraph
+    for (std::size_t index = 0; index < quiet.size(); ++index) {
+      const std::string name = quiet[index] + (index + 1 < quiet.size() ? "," : "");
+      if (column + 1 + name.size() > 78) {
+        std::cout << "\n ";
+        column = 1;
+      }
+      std::cout << " " << name;
+      column += 1 + name.size();
+    }
+    std::cout << "\n";
+  }
+  if (report.projects.empty()) {
+    std::cout << (options.enabled_only ? "No hosted project has CI enabled on " : "No hosted projects on ")
+              << config.server << ".\n";
+  }
   return 0;
 }
 
@@ -377,11 +430,14 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   if (!project.has_value()) return kUsage;
   const std::string& run_id = options.positional.at(0);
   ckgit::CiRunReport report;
+  std::optional<ckgit::CiRunPlacement> placement;
   try {
     report = fetchCiRun(config, *project, run_id);
+    placement = fetchCiPlacement(config, *project, run_id);
   } catch (const ControlReplyError& error) {
     return reportControlReplyError(error, *project, run_id);
   }
+  if (placement.has_value()) report.run.detail = ckgit::strippedCiPlacementDetail(report.run.detail, *placement);
   const auto& run = report.run;
   const std::uint64_t now = report.server_epoch_seconds;
   const auto display = ckgit::ciRunDisplayAt(run, now);
@@ -389,7 +445,10 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   if (options.json) {
     std::cout << "{\"schema_version\":1,\"project\":\"" << *project << "\",\"server_epoch\":" << now
               << ",\"run\":" << ciRunJson(run, run.steps.size(), now) << ",\"detail\":\"" << jsonText(run.detail)
-              << "\",\"steps\":[";
+              << "\",\"runner\":"
+              << (placement.has_value() && !placement->runner.empty() ? "\"" + placement->runner + "\"" : "null")
+              << ",\"attempt\":" << (placement.has_value() ? std::to_string(placement->attempt) : "null")
+              << ",\"steps\":[";
     for (std::size_t index = 0; index < run.steps.size(); ++index) {
       const auto& step = run.steps[index];
       std::cout << (index == 0 ? "" : ",") << "\n    {\"index\":" << index << ",\"name\":\"" << jsonText(step.name)
@@ -416,6 +475,13 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
     std::cout << "  finished:  " << ckgit::formatUtcTimestamp(run.finished_epoch_seconds) << "\n";
   }
   if (!timing.empty()) std::cout << "  " << (display.active ? "elapsed:   " : "duration:  ") << timing << "\n";
+  if (placement.has_value()) {
+    std::cout << "  runner:    "
+              << (placement->runner.empty() ? std::string("not yet claimed")
+                  : placement->runner == ckgit::kCiPrimaryRunnerName ? std::string("primary (the server's own runner)")
+                                                                     : placement->runner)
+              << (placement->attempt > 1 ? ", attempt " + std::to_string(placement->attempt) : std::string()) << "\n";
+  }
   if (!run.detail.empty()) std::cout << "  detail:    " << terminalText(run.detail) << "\n";
   if (display.name == "interrupted") {
     std::cout << "  note:      the runner stopped reporting progress; the next runner sweep settles the status\n";

@@ -22,8 +22,10 @@ User=ckgit-runner
 Group=ckgit-runner
 ExecStart=/usr/lib/ck-git-runner/ck-ci-runnerd serve --remote --config /etc/ck-git-hosting/runner.ini
 # A stop hands a job in progress back to the main host's queue, so another
-# runner takes it at once instead of waiting for the lease to lapse.
+# runner takes it at once instead of waiting for the lease to lapse. Only the
+# runner itself gets the signal; it kills the running step's process group.
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=90s
 Restart=always
 RestartSec=10s

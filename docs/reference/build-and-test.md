@@ -23,7 +23,13 @@ make BUILD_DIR=/tmp/ck-git-hosting-my-build check
 To pin a different default for one particular checkout instead of typing
 `BUILD_ROOT=` every time — for example to keep build products off a
 network-mounted source volume — copy `local.mk.example` to `local.mk`
-(gitignored) and set `BUILD_ROOT` there.
+(gitignored) and set `BUILD_ROOT` there. `BUILD_ROOT` may name several
+approved roots separated by spaces, such as two scratch volumes; `BUILD_DIR`
+can then be beneath any of them:
+
+```text
+BUILD_ROOT := /Volumes/S8T/tmp /Volumes/PRO-BLADE/tmp
+```
 
 `ckgit --version` identifies the release version and Git revision, including
 tracked changes. A source archive with no `.git` (a `git archive` export, or

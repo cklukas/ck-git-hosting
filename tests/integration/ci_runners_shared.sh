@@ -16,7 +16,9 @@
 #   - checkout.depth and a sister pinned to a commit with depth work remotely;
 #   - the dashboard's live log stream follows a remote run (it reads only the
 #     main host's files; nothing ever connects to the runner);
-#   - the secondary's build root is empty after every job.
+#   - the secondary's build root is empty after every job;
+#   - a primary stopped mid-run (a restart or package upgrade) hands its job
+#     back instead of failing it, and the job completes as attempt 2.
 
 set -eu
 
@@ -291,5 +293,24 @@ stop_pid "$primary_pid"; primary_pid=''
 "$CK_CI_RUNNER" serve --remote --config "$test_root/runner.ini" --once >> "$test_root/secondary.log" 2>&1 ||
   fail "the secondary did not restart"
 build_root_empty "after a restart following a kill"
+
+# --- 7: a primary stopped mid-run hands the job back -------------------------
+start_primary
+run7=$(queue "$slow" refs/heads/main)
+wait_status "$run7" running 20
+[ "$(field "$run7" runner)" = primary ] || fail "the stopped run was not the primary's"
+sleep 1
+stop_pid "$primary_pid"; primary_pid=''
+[ "$(field "$run7" status)" = pending ] ||
+  fail "a stopped primary did not hand its job back (status $(field "$run7" status))"
+[ "$(field "$run7" attempt)" = 2 ] || fail "the handed-back job is not on its next attempt"
+grep -q "demo $run7 handed back" "$test_root/primary.log" || fail "the primary did not report the hand-back"
+[ -f "$state/ci/spool/$run7.ini" ] || fail "the handed-back job is not queued again"
+start_secondary
+wait_status "$run7" success 40
+[ "$(field "$run7" runner)" = uconsole ] && [ "$(field "$run7" attempt)" = 2 ] ||
+  fail "the handed-back job did not complete on the secondary as attempt 2"
+stop_pid "$secondary_pid"; secondary_pid=''
+build_root_empty "after a handed-back job"
 
 echo "shared runners integration test passed"

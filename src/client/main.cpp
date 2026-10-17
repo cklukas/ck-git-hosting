@@ -862,7 +862,25 @@ std::vector<ckgit::CiReleaseRecord> fetchReleases(const ckgit::ClientConfig& con
   return ckgit::parseReleasesControlResponse(result.output);
 }
 
-bool printPairedStatus(const ckgit::RepositoryAudit& audit, const ckgit::ClientConfig& config) {
+// One checkout's place in `ckgit status`: how its committed refs compare with
+// the paired server, or why they could not be compared.
+struct PairedStatus {
+  enum class State { kInSync, kUnpublished, kDiffers, kUnpaired, kProblem };
+  std::filesystem::path path;
+  std::string project;  // empty when the checkout is not paired with one project
+  std::string remote_url;
+  State state{State::kProblem};
+  std::size_t equal{0};
+  std::size_t local_only{0};
+  std::size_t server_only{0};
+  std::size_t mismatched{0};
+  std::string problem;  // why the refs could not be compared
+  bool attention{false};
+};
+
+PairedStatus collectPairedStatus(const ckgit::RepositoryAudit& audit, const ckgit::ClientConfig& config) {
+  PairedStatus status;
+  status.path = audit.path;
   std::map<std::string, std::string> projects;
   bool configured_remote_seen = false;
   for (const auto& remote : audit.remotes) {
@@ -876,57 +894,161 @@ bool printPairedStatus(const ckgit::RepositoryAudit& audit, const ckgit::ClientC
     }
   }
   if (projects.empty()) {
-    std::cout << audit.path.string() << "\n  pairing: "
-              << (configured_remote_seen ? "configured remote does not match paired server" : "not configured")
-              << "\n";
-    return configured_remote_seen;
+    status.state = PairedStatus::State::kUnpaired;
+    status.problem = configured_remote_seen ? "configured remote does not match paired server" : "not configured";
+    status.attention = configured_remote_seen;
+    return status;
   }
   if (projects.size() != 1) {
-    std::cout << audit.path.string() << "\n  pairing: ambiguous configured remote URLs\n";
-    return true;
+    status.state = PairedStatus::State::kUnpaired;
+    status.problem = "ambiguous configured remote URLs";
+    status.attention = true;
+    return status;
   }
 
-  const auto& [project, remote_url] = *projects.begin();
+  std::tie(status.project, status.remote_url) = *projects.begin();
   try {
-    const auto server_refs = fetchServerRefs(config, project);
-    const auto comparison = ckgit::compareRefTips(localRefTips(audit), server_refs);
-    std::size_t equal = 0;
-    std::size_t local_only = 0;
-    std::size_t server_only = 0;
-    std::size_t mismatched = 0;
-    for (const auto& ref : comparison) {
+    const auto server_refs = fetchServerRefs(config, status.project);
+    for (const auto& ref : ckgit::compareRefTips(localRefTips(audit), server_refs)) {
       switch (ref.relation) {
-        case ckgit::RefRelation::kEqual: ++equal; break;
-        case ckgit::RefRelation::kLocalOnly: ++local_only; break;
-        case ckgit::RefRelation::kServerOnly: ++server_only; break;
-        case ckgit::RefRelation::kMismatched: ++mismatched; break;
+        case ckgit::RefRelation::kEqual: ++status.equal; break;
+        case ckgit::RefRelation::kLocalOnly: ++status.local_only; break;
+        case ckgit::RefRelation::kServerOnly: ++status.server_only; break;
+        case ckgit::RefRelation::kMismatched: ++status.mismatched; break;
       }
     }
-    std::cout << audit.path.string() << "\n"
-              << "  project: " << project << "\n"
-              << "  paired remote: " << remote_url << "\n"
-              << "  refs: " << equal << " equal, " << local_only << " local-only, "
-              << server_only << " server-only, " << mismatched << " mismatched\n";
     // Without server objects locally, a different object ID is intentionally
     // never guessed to be a fast-forward.  It requires manual review or sync's
     // later explicit preflight.
-    return mismatched != 0 || server_only != 0;
+    status.attention = status.mismatched != 0 || status.server_only != 0;
+    status.state = status.attention         ? PairedStatus::State::kDiffers
+                   : status.local_only != 0 ? PairedStatus::State::kUnpublished
+                                            : PairedStatus::State::kInSync;
   } catch (const std::exception& error) {
-    std::cout << audit.path.string() << "\n  pairing: server ref query failed: " << error.what() << "\n";
-    return true;
+    status.state = PairedStatus::State::kProblem;
+    status.problem = std::string("server ref query failed: ") + error.what();
+    status.attention = true;
   }
+  return status;
+}
+
+// The detailed form: one block per checkout (--repo, and --verbose).
+void printPairedStatusBlock(const PairedStatus& status) {
+  if (status.project.empty() || status.state == PairedStatus::State::kProblem) {
+    std::cout << status.path.string() << "\n  pairing: " << status.problem << "\n";
+  } else {
+    std::cout << status.path.string() << "\n"
+              << "  project: " << status.project << "\n"
+              << "  paired remote: " << status.remote_url << "\n"
+              << "  refs: " << status.equal << " equal, " << status.local_only << " local-only, "
+              << status.server_only << " server-only, " << status.mismatched << " mismatched\n";
+  }
+}
+
+// One row of the compact table: a project (or, for an unpaired checkout,
+// its folder name), its state, the non-zero ref counts, and the checkout.
+struct StatusTableRow {
+  std::string name;
+  PairedStatus::State kind{PairedStatus::State::kProblem};
+  std::string state;
+  std::string refs;
+  std::string checkout;
+  bool attention{false};
+};
+
+StatusTableRow statusTableRow(const PairedStatus& status, const std::string& fallback_name) {
+  StatusTableRow row;
+  row.name = status.project.empty() ? fallback_name : status.project;
+  row.kind = status.state;
+  row.checkout = status.path.string();
+  row.attention = status.attention;
+  switch (status.state) {
+    case PairedStatus::State::kInSync: row.state = "✓ in sync"; break;
+    case PairedStatus::State::kUnpublished: row.state = "↑ unpublished"; break;
+    case PairedStatus::State::kDiffers: row.state = "! differs"; break;
+    case PairedStatus::State::kUnpaired: row.state = status.attention ? "! unpaired" : "- unpaired"; break;
+    case PairedStatus::State::kProblem: row.state = "! unavailable"; break;
+  }
+  if (status.state == PairedStatus::State::kUnpaired || status.state == PairedStatus::State::kProblem) {
+    row.refs = status.problem;
+    return row;
+  }
+  const auto add = [&row](std::size_t count, const char* label) {
+    if (count == 0) return;
+    row.refs += (row.refs.empty() ? "" : ", ") + std::to_string(count) + " " + label;
+  };
+  add(status.equal, "equal");
+  add(status.local_only, "local-only");
+  add(status.server_only, "server-only");
+  add(status.mismatched, "mismatched");
+  if (row.refs.empty()) row.refs = "no refs";
+  return row;
+}
+
+// Display width of UTF-8 text, counting code points (the table's marks are
+// single-width).
+std::size_t displayWidth(const std::string& text) {
+  return static_cast<std::size_t>(std::count_if(text.begin(), text.end(), [](char character) {
+    return (static_cast<unsigned char>(character) & 0xc0) != 0x80;
+  }));
+}
+
+// `text` followed by spaces up to `width`, plus a two-space column gap.
+std::string paddedTo(const std::string& text, std::size_t width) {
+  const std::size_t shown = displayWidth(text);
+  return text + std::string((shown >= width ? 0 : width - shown) + 2, ' ');
+}
+
+// The compact form: one line per project, attention rows emphasized on a
+// terminal, then a one-line summary.
+void printStatusTable(const std::vector<StatusTableRow>& rows) {
+  if (rows.empty()) return;
+  std::size_t name_width = 7;  // "PROJECT"
+  std::size_t state_width = 5;
+  std::size_t refs_width = 4;
+  for (const auto& row : rows) {
+    name_width = std::max(name_width, displayWidth(row.name));
+    state_width = std::max(state_width, displayWidth(row.state));
+    refs_width = std::max(refs_width, displayWidth(row.refs));
+  }
+  const bool color = isatty(STDOUT_FILENO) != 0 && std::getenv("NO_COLOR") == nullptr;
+  std::cout << paddedTo("PROJECT", name_width) << paddedTo("STATE", state_width) << paddedTo("REFS", refs_width)
+            << "CHECKOUT\n";
+  std::size_t in_sync = 0;
+  std::size_t unpublished = 0;
+  std::size_t attention = 0;
+  for (const auto& row : rows) {
+    const std::string line = paddedTo(row.name, name_width) + paddedTo(row.state, state_width) +
+                             paddedTo(row.refs, refs_width) + row.checkout;
+    std::cout << (row.attention && color ? "\033[1;33m" + line + "\033[0m" : line) << "\n";
+    if (row.attention) {
+      ++attention;
+    } else if (row.kind == PairedStatus::State::kInSync) {
+      ++in_sync;
+    } else if (row.kind == PairedStatus::State::kUnpublished) {
+      ++unpublished;
+    }
+  }
+  std::cout << rows.size() << " checkout(s): " << in_sync << " in sync";
+  if (unpublished != 0) std::cout << ", " << unpublished << " unpublished";
+  std::cout << ", " << attention << " need attention";
+  if (attention != 0) std::cout << " (!); ckgit status --repo PATH shows one in full";
+  std::cout << "\n";
 }
 
 int statusCommand(const std::vector<std::string>& arguments) {
   std::optional<std::filesystem::path> config_path;
   std::optional<std::filesystem::path> repository_path;
   bool scan = false;
+  bool verbose = false;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     if ((arguments[index] == "--config" || arguments[index] == "--repo") && index + 1 < arguments.size()) {
       const auto option = arguments[index++];
       (option == "--config" ? config_path : repository_path) = arguments[index];
     } else if (arguments[index] == "--scan") {
       scan = true;
+    } else if (arguments[index] == "--verbose") {
+      verbose = true;
     } else {
       std::cerr << "ckgit: invalid status option; see ckgit status --help\n";
       return kUsage;
@@ -941,14 +1063,29 @@ int statusCommand(const std::vector<std::string>& arguments) {
     const auto inventory = managedInventory(config);
     printManagedScope(inventory, config);
     bool attention = inventory.attention;
+    std::vector<StatusTableRow> rows;
     for (const auto& [project, checkout] : inventory.projects) {
       if (!checkout.audit.has_value()) {
-        printUnavailableCheckout(project, checkout);
-      } else {
+        if (verbose) {
+          printUnavailableCheckout(project, checkout);
+        } else {
+          rows.push_back({project, PairedStatus::State::kProblem, "! missing", checkout.problem,
+                          checkout.path.string(), true});
+        }
+        continue;
+      }
+      const PairedStatus status = collectPairedStatus(*checkout.audit, config);
+      attention = status.attention || attention;
+      if (verbose) {
         std::cout << "Main checkout on this device" << (checkout.legacy ? " (legacy registration)" : "") << ":\n";
-        attention = printPairedStatus(*checkout.audit, config) || attention;
+        printPairedStatusBlock(status);
+      } else {
+        StatusTableRow row = statusTableRow(status, project);
+        if (checkout.legacy) row.checkout += " (legacy registration)";
+        rows.push_back(std::move(row));
       }
     }
+    printStatusTable(rows);
     return attention ? kPartial : 0;
   }
   std::cout << "Scope: " << (scan ? "discovered repositories under configured scan roots" : "requested repository")
@@ -965,16 +1102,26 @@ int statusCommand(const std::vector<std::string>& arguments) {
       attention = true;
     }
   }
+  // A single requested repository is always shown in full.
+  const bool detailed = verbose || repository_path.has_value();
+  std::vector<StatusTableRow> rows;
   for (const auto& path : paths) {
     try {
       const auto audit = repository_path.has_value() ? ckgit::inspectRepository(path)
                                                    : ckgit::inspectDiscoveredRepository(path);
-      attention = printPairedStatus(audit, config) || attention;
+      const PairedStatus status = collectPairedStatus(audit, config);
+      attention = status.attention || attention;
+      if (detailed) {
+        printPairedStatusBlock(status);
+      } else {
+        rows.push_back(statusTableRow(status, audit.path.filename().string()));
+      }
     } catch (const std::exception& error) {
       std::cerr << "ckgit: " << path.string() << ": " << error.what() << "\n";
       attention = true;
     }
   }
+  printStatusTable(rows);
   if (paths.empty()) {
     std::cout << "No repositories found in this scope.\n";
   }

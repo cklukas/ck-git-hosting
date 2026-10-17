@@ -482,9 +482,10 @@ std::string versionsResponse(const std::optional<std::filesystem::path>& state_r
   return response;
 }
 
-// `ci-run` and `ci-cancel` for a hosted project: the run's full record, or a
-// cancel request for a run that is still pending or running. A cancel only
-// writes the marker the runner polls; it is attributed in the event log.
+// `ci-run`, `ci-placement`, and `ci-cancel` for a hosted project: the run's
+// full record, the runner and attempt it is on, or a cancel request for a run
+// that is still pending or running. A cancel only writes the marker the runner
+// polls; it is attributed in the event log.
 void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const std::filesystem::path& repository_root,
                         const std::filesystem::path& state_root, ckgit::ProjectIndex& index) {
   const std::string& project = request.arguments[0];
@@ -493,6 +494,8 @@ void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const 
     sendError(client, "norun", "no such CI run");
   } else if (request.operation == "ci-run") {
     sendAll(client, ckgit::formatCiRunControlResponse({currentEpochSeconds(), *run}));
+  } else if (request.operation == "ci-placement") {
+    sendAll(client, ckgit::formatCiPlacementControlResponse(*run));
   } else if (!ckgit::ciRunStatusIsActive(run->status)) {
     sendError(client, "finished", "the CI run already finished");
   } else if (!ckgit::requestCiCancel(state_root, project, run->run_id)) {
@@ -596,7 +599,8 @@ void answerControlRequest(int client, const ckgit::ControlRequest& request,
     sendAll(client, releasesResponse(requireState(), arguments[0]));
   } else if (operation == "ci-overview") {
     sendAll(client, ciOverviewResponse(repository_root, requireState()));
-  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-log" || operation == "ci-cancel") {
+  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-placement" || operation == "ci-log" ||
+             operation == "ci-cancel") {
     const auto& state = requireState();
     const std::string& project = arguments[0];
     if (!isHostedProject(repository_root, project)) {

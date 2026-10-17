@@ -37,6 +37,7 @@ ckgit-rpc 1 releases project
 ckgit-rpc 1 ci-overview
 ckgit-rpc 1 ci-status project
 ckgit-rpc 1 ci-run project run-id
+ckgit-rpc 1 ci-placement project run-id
 ckgit-rpc 1 ci-log project run-id step offset
 ckgit-rpc 1 ci-cancel project run-id
 ```
@@ -111,7 +112,8 @@ operation, and at most four arguments.
 For version 1, `operation` is `ping`, `version`, `versions`, `list-projects`,
 `checkouts`, `refs`, `refresh`, `create`, `default-branch`,
 `set-default-branch`, `register`, `replace-checkout`, `forget-checkout`,
-`releases`, `ci-overview`, `ci-status`, `ci-run`, `ci-log`, or `ci-cancel`,
+`releases`, `ci-overview`, `ci-status`, `ci-run`, `ci-placement`, `ci-log`, or
+`ci-cancel`,
 each with exactly the arguments the SSH forms above
 show. `ping`, `version`, `versions`, `list-projects`, `checkouts`, and
 `ci-overview` take none.
@@ -222,7 +224,7 @@ unchanged selection, and end to end by `ckgit default-branch` and
 
 ### CI operations
 
-The five `ci-*` operations serve `ckgit ci` on a paired device: read-only
+The six `ci-*` operations serve `ckgit ci` on a paired device: read-only
 inspection of runs, and cancellation. Enabling or disabling CI for a
 project, rerunning or triggering a run, and CI secrets are deliberately not
 control operations: they stay administrator-only, through `ckgit-admin` on
@@ -251,6 +253,9 @@ detail <detail-hex>
 step <index> <exit-code> <timed-out 0|1> <truncated 0|1> <name-hex>
 artifact <name> <bytes> <sha256|-> <created> <expires> <note-hex>
 
+ci-placement:
+ok <runner|-> <attempt>
+
 ci-log:
 ok <more|end> <offset> <byte-count>
 <hex bytes>
@@ -270,6 +275,19 @@ ok <more|end> <offset> <byte-count>
   `artifact` lines (`expires` is `0` for a durable bundle; a note means the
   bundle was not stored). A record too large for the response limit -- only
   possible with thousands of steps -- is refused with `error internal`.
+- `ci-run` also folds the run's placement into its `detail` line, so clients
+  without `ci-placement` still show it: ` (on <runner>, attempt <n>)` is
+  appended (or the note alone for an empty detail) when the runner is not
+  `primary` or the attempt is above 1, and the result is cut at the detail
+  limit.
+- `ci-placement project run-id` returns which runner executes or executed
+  the run -- `primary` for the server's own runner, a remote runner's name
+  (the client-ID grammar) otherwise, `-` while the run is queued -- and its
+  attempt, a canonical decimal of at least 1. A client that knows both strips
+  exactly the note `ci-run` appended. It reads only the run record, like
+  `ci-run`, and answers `noproject` and `norun` the same way; a server older
+  than this operation refuses it at the SSH dispatcher, and clients then fall
+  back to the folded detail.
 - `ci-log project run-id step offset` returns up to 114688 (112 KiB) bytes of
   that step's log from `offset`, hex-encoded on one line (absent when
   `byte-count` is 0), so the reply stays under the response limit. The daemon

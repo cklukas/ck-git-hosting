@@ -10,5 +10,7 @@
 #   cp local.mk.example local.mk
 #   edit local.mk to taste
 #
-# Example: keep build products off a network-mounted source volume.
-#BUILD_ROOT := /Volumes/PRO-BLADE/tmp
+# Example: keep build products off a network-mounted source volume. Several
+# approved roots may be listed, separated by spaces; BUILD_DIR may then be
+# beneath any of them.
+#BUILD_ROOT := /Volumes/S8T/tmp /Volumes/PRO-BLADE/tmp

@@ -137,7 +137,7 @@ and entry limits apply to the whole build.
 
 Each site's links are checked within that site, as in a single-site build,
 and its broken links, broken heading fragments, and warnings are reported
-with its id as a prefix, for example `python: docs/guide.md: link target
+with its id as a prefix, for example `python: docs/guide.md:3: link target
 'nope.md' is not a page of this site`. The intro page's links may point to a
 file under the work tree root, which is copied, or to a page of a site as
 `<id>/<page>.html` — written from the root, for example

@@ -296,6 +296,41 @@ case "$registered_output" in
     ;;
 esac
 
+# Managed status is one table row per project and a summary line: in sync,
+# unpublished (local-only refs), or marked ! when it needs attention (exit 3);
+# --verbose keeps the detailed blocks.
+managed_status() {
+  PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" status --config "$test_root/rootless.ini" "$@"
+}
+table_output=$(managed_status) || { echo "status of two synced projects needed attention" >&2; exit 1; }
+case "$table_output" in
+  *"Scope: 2 managed project(s)"*PROJECT*STATE*REFS*CHECKOUT*"✓ in sync"*"✓ in sync"*"2 checkout(s): 2 in sync, 0 need attention") ;;
+  *) echo "managed status did not print the table: $table_output" >&2; exit 1 ;;
+esac
+git -C "$test_root/work" tag status-local-only
+git -C "$test_root/publish-work" commit -q --allow-empty -m status-differs
+set +e
+table_output=$(managed_status); table_status=$?
+set -e
+[ "$table_status" -eq 3 ] || { echo "a differing project did not return exit 3: $table_status" >&2; exit 1; }
+printf '%s\n' "$table_output" | grep -q "↑ unpublished .*local-only.*$test_root/work\$" ||
+  { echo "a local-only tag was not shown as unpublished: $table_output" >&2; exit 1; }
+printf '%s\n' "$table_output" | grep -q "! differs .*1 mismatched.*$test_root/publish-work\$" ||
+  { echo "a diverged branch was not marked: $table_output" >&2; exit 1; }
+case "$table_output" in
+  *"2 checkout(s): 0 in sync, 1 unpublished, 1 need attention (!)"*) ;;
+  *) echo "managed status summary is wrong: $table_output" >&2; exit 1 ;;
+esac
+set +e
+verbose_output=$(managed_status --verbose)
+set -e
+case "$verbose_output" in
+  *"Main checkout on this device:"*"paired remote:"*"1 mismatched"*) ;;
+  *) echo "status --verbose did not print the detailed blocks: $verbose_output" >&2; exit 1 ;;
+esac
+git -C "$test_root/work" tag -d status-local-only >/dev/null
+PATH="$test_root/test-bin:$PATH" TEST_ROOT="$test_root" "$CKGIT" sync --config "$test_root/rootless.ini" >/dev/null
+
 # Publish scope flags: a limited push leaves other branches and tags out.
 git init -q --initial-branch=main "$test_root/scoped"
 git -C "$test_root/scoped" config user.email 'tests@example.test'
@@ -719,14 +754,15 @@ ci_overview=$(rpc 'ckgit-rpc 1 ci-overview')
 printf '%s\n' "$ci_overview" | grep -qx 'project alpha disabled 0' &&
   printf '%s\n' "$ci_overview" | grep -qx 'project beta disabled 0' ||
   { echo "ci-overview did not list every hosted project: $ci_overview" >&2; exit 1; }
-for request in "ci-status nosuch" "ci-run nosuch $ci_run_id" "ci-log nosuch $ci_run_id 0 0" \
-               "ci-cancel nosuch $ci_run_id"; do
+for request in "ci-status nosuch" "ci-run nosuch $ci_run_id" "ci-placement nosuch $ci_run_id" \
+               "ci-log nosuch $ci_run_id 0 0" "ci-cancel nosuch $ci_run_id"; do
   if reply=$(rpc "ckgit-rpc 1 $request"); then
     echo "an unknown project was accepted: $request" >&2; exit 1
   fi
   [ "$reply" = 'error noproject no such project' ] || { echo "unexpected reply to $request: $reply" >&2; exit 1; }
 done
-for request in "ci-run alpha $ci_run_id" "ci-log alpha $ci_run_id 0 0" "ci-cancel alpha $ci_run_id"; do
+for request in "ci-run alpha $ci_run_id" "ci-placement alpha $ci_run_id" "ci-log alpha $ci_run_id 0 0" \
+               "ci-cancel alpha $ci_run_id"; do
   if reply=$(rpc "ckgit-rpc 1 $request"); then
     echo "an unknown run was accepted: $request" >&2; exit 1
   fi
@@ -738,7 +774,8 @@ dry_log=$(SSH_ORIGINAL_COMMAND="ckgit-rpc 1 ci-log alpha $ci_run_id 4096 1844674
 [ "$dry_log" = "rpc ci-log alpha $ci_run_id 4096 18446744073709551615 for mac-studio" ] ||
   { echo "dispatcher did not forward the four ci-log arguments: $dry_log" >&2; exit 1; }
 for request in "ci-overview alpha" "ci-status" "ci-status alpha extra" "ci-run alpha" \
-               "ci-run alpha $ci_run_id extra" "ci-log alpha $ci_run_id 0" "ci-log alpha $ci_run_id 0 0 extra" \
+               "ci-run alpha $ci_run_id extra" "ci-placement alpha" "ci-placement alpha $ci_run_id extra" \
+               "ci-log alpha $ci_run_id 0" "ci-log alpha $ci_run_id 0 0 extra" \
                "ci-log alpha $ci_run_id 01 0" "ci-log alpha $ci_run_id 4097 0" \
                "ci-log alpha $ci_run_id 0 18446744073709551616" "ci-cancel alpha bad.id" \
                "cancel alpha $ci_run_id" "ci-enable alpha"; do

@@ -48,6 +48,14 @@ struct CiRunReport {
   CiRunRecord run;
 };
 
+// `ci-placement`: the runner that executes (or executed) a run -- "primary"
+// for the server's own, a remote runner's name otherwise, empty while the run
+// is queued -- and which attempt the run is on.
+struct CiRunPlacement {
+  std::string runner;
+  unsigned attempt = 1;
+};
+
 // `ci-log`: up to kMaximumControlLogChunkBytes of one step's log starting at
 // `offset`. `complete` means the step's log has ended and this chunk reaches
 // its last byte; otherwise the caller asks again from offset + bytes.size().
@@ -71,6 +79,16 @@ CiStatusReport parseCiStatusControlResponse(std::string_view response);
 std::string formatCiRunControlResponse(const CiRunReport& report);
 // `project_name` is the project the request named; it fills run.project_name.
 CiRunReport parseCiRunControlResponse(std::string_view response, std::string_view project_name);
+
+std::string formatCiPlacementControlResponse(const CiRunRecord& run);
+CiRunPlacement parseCiPlacementControlResponse(std::string_view response);
+
+// The placement note `ci-run` folds into a run's detail line ("on uconsole,
+// attempt 2"), for clients older than `ci-placement`; empty for a first
+// attempt on the primary. strippedCiPlacementDetail removes exactly that note
+// from a received detail line again, once the placement is known separately.
+std::string ciPlacementNote(const CiRunPlacement& placement);
+std::string strippedCiPlacementDetail(const std::string& detail, const CiRunPlacement& placement);
 
 std::string formatCiLogControlResponse(const CiLogChunk& chunk);
 // Rejects a response for any other offset than the one requested.

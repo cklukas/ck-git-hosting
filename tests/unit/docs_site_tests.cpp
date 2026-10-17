@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "ckgit/http_router.hpp"
+#include "ckgit/markdown.hpp"
 #include "ckgit/process.hpp"
 
 namespace {
@@ -549,7 +550,7 @@ void testBuild() {
           "page, directory, absolute, file, fragment and encoded links resolve relative to the page");
   require(contains(x, "[missing](nope.md)") && contains(x, "[outside](../../CONTRIBUTING.md)") && !contains(x, "nope.html"),
           "links to nothing stay text");
-  require(report.broken_links.size() == 2 && contains(report.broken_links[0], "docs/a/01-x.md: link target 'nope.md' is not a page") &&
+  require(report.broken_links.size() == 2 && contains(report.broken_links[0], "docs/a/01-x.md:3: link target 'nope.md' is not a page") &&
               contains(report.broken_links[1], "'../../CONTRIBUTING.md' is not a page"),
           "broken links are reported with their page");
   require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "docs/a/01-x.md: '02-y.html#nope' names no heading on docs/a/02-y.md"),
@@ -636,6 +637,58 @@ void testBuild() {
 // searchPageEntryJson/buildSearchIndexJson emit -- these tests intentionally
 // have no JSON parser available, so shape is checked as substrings, the same
 // way the rest of this file checks generated HTML.
+// One unusable file does not stop a site: a page over the 512 KiB limit or
+// not UTF-8 is left out with a warning (and dropped from nav), and links to it
+// say why. Broken links are reported once per page and target with the lines
+// they are on, counted past front matter; a linked file that would overwrite
+// a page is that link's problem; repeated bad fragments are counted.
+void testFindingsAndLeftOutPages() {
+  Scratch scratch;
+  write(scratch.root / "docs/index.md", "# Home\n\n[links](links.md)\n");
+  write(scratch.root / "docs/big.md", "# Big\n\n" + std::string(ckgit::kMaximumMarkdownInputBytes, 'x') + "\n");
+  write(scratch.root / "docs/bad.md", "# Bad \xff\n");
+  write(scratch.root / "docs/page.md", "# Page\n");
+  write(scratch.root / "docs/page.html", "<p>generated</p>\n");
+  write(scratch.root / "docs/links.md",
+        "---\ntitle: Links\n---\n"
+        "# Links\n"
+        "[a](nope.md) and [b](nope.md)\n"
+        "[big](big.md)\n"
+        "[again](nope.md) [frag](page.md#none) [frag](page.md#none)\n"
+        "[raw](page.html)\n");
+  write(scratch.root / "ckdocs.yml",
+        "version: 1\nsite:\n  title: Findings\nnav:\n  - title: Home\n    page: docs/index.md\n  - title: Big\n    page: docs/big.md\n"
+        "  - title: Rest\n    pages: [docs/links.md, docs/page.md]\n  - title: Broken\n    pages: [docs/bad.md]\n");
+  std::vector<std::string> warnings;
+  const auto model = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), &warnings);
+  require(model.skipped.size() == 2 && model.skipped.at("docs/big.md") == "exceeds the 512 KiB page limit" &&
+              model.skipped.at("docs/bad.md") == "is not valid UTF-8",
+          "the unusable files are left out with their reasons");
+  require(std::any_of(warnings.begin(), warnings.end(), [](const std::string& warning) {
+            return warning.starts_with("docs/big.md: exceeds the 512 KiB page limit; left out of the site");
+          }),
+          "leaving a page out is a warning");
+  require(model.pages.size() == 3 && model.nav.size() == 2 && model.nav[0].title == "Home" && model.nav[1].title == "Rest",
+          "nav entries for left-out pages are dropped, and a section left empty with them");
+
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(model, scratch.root / "site", ckgit::DocsBuildOptions{}, &report);
+  const std::vector<std::string> expected{
+      "docs/links.md:5: link target 'nope.md' is not a page of this site (3 links; also line 7)",
+      "docs/links.md:6: link target 'big.md' was left out of the site: it exceeds the 512 KiB page limit",
+      "docs/links.md:8: link target 'page.html' would overwrite the page 'page.html'"};
+  require(report.broken_links == expected, "broken links are grouped per target with their lines: " +
+                                               (report.broken_links.empty() ? std::string() : report.broken_links[0]));
+  require(report.broken_anchors.size() == 1 &&
+              report.broken_anchors[0] == "docs/links.md: 'page.html#none' names no heading on docs/page.md (2 links)",
+          "a repeated bad fragment is reported once with its count");
+
+  write(scratch.root / "docs/index.md", "# Home\n" + std::string(ckgit::kMaximumMarkdownInputBytes, 'x') + "\n");
+  require(contains(loadError(scratch.root, ckgit::readDocsConfig(scratch.root)),
+                   "the home page 'docs/index.md' exceeds the 512 KiB page limit"),
+          "a site cannot leave its home page out");
+}
+
 void testSearch() {
   Scratch scratch;
   std::string long_paragraph;
@@ -1020,7 +1073,7 @@ void testPortalBuild() {
           "one marker; search only where a site asked for it");
   require(report.pages_written == 5 && report.redirects_written == 1 && report.assets_copied == 1,
           "two pages per site, the welcome page, one redirect, the logo");
-  require(report.broken_links.size() == 1 && report.broken_links[0] == "python: docs/guide.md: link target 'nope.md' is not a page of this site",
+  require(report.broken_links.size() == 1 && report.broken_links[0] == "python: docs/guide.md:3: link target 'nope.md' is not a page of this site",
           "a site's broken link is reported under its id");
   require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "portal/welcome.md: '#nowhere' names no heading"),
           "the intro's own fragments are checked");
@@ -1146,6 +1199,7 @@ void testDocsSite() {
   testDiscovery();
   testEdges();
   testBuild();
+  testFindingsAndLeftOutPages();
   testMermaidArtifacts();
   testSearch();
   testPortalConfig();

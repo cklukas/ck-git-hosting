@@ -407,4 +407,30 @@ wait "$serve_pid" 2>/dev/null || true
 serve_pid=''
 echo "docs_site serve check passed"
 
+# One unusable file does not stop a build: an oversized page is left out with
+# a warning, and links are reported as page:line, once per target.
+findings_fixture="$test_root/findings"
+mkdir -p "$findings_fixture/docs"
+printf '# Home\n\n[guide](guide.md)\n' > "$findings_fixture/docs/index.md"
+printf -- '---\ntitle: Guide\n---\n# Guide\n[a](nope.md)\n\n[b](nope.md) [big](big.md)\n' > "$findings_fixture/docs/guide.md"
+{ printf '# Big\n\n'; head -c 600000 /dev/zero | tr '\0' x; printf '\n'; } > "$findings_fixture/docs/big.md"
+set +e
+"$CKDOCS" build --root "$findings_fixture" --out "$test_root/findings-site" >"$test_root/findings.log" 2>&1
+findings_status=$?
+set -e
+[ "$findings_status" -eq 3 ] || { cat "$test_root/findings.log" >&2; echo "findings should return 3, got $findings_status" >&2; exit 1; }
+grep -qx "warning: docs/big.md: exceeds the 512 KiB page limit; left out of the site (split it, or list it under exclude in ckdocs.yml)" \
+  "$test_root/findings.log" || { cat "$test_root/findings.log" >&2; echo "the oversized page was not reported as left out" >&2; exit 1; }
+grep -qx "warning: docs/guide.md:5: link target 'nope.md' is not a page of this site (2 links; also line 7)" \
+  "$test_root/findings.log" || { cat "$test_root/findings.log" >&2; echo "repeated broken links were not grouped with lines" >&2; exit 1; }
+grep -qx "warning: docs/guide.md:7: link target 'big.md' was left out of the site: it exceeds the 512 KiB page limit" \
+  "$test_root/findings.log" || { cat "$test_root/findings.log" >&2; echo "a link to the left-out page did not say why" >&2; exit 1; }
+[ -f "$test_root/findings-site/guide.html" ] && [ ! -e "$test_root/findings-site/big.html" ] ||
+  { echo "the site was not built without the oversized page" >&2; exit 1; }
+set +e
+"$CKDOCS" check --root "$findings_fixture" >"$test_root/findings-check.log" 2>&1
+findings_status=$?
+set -e
+[ "$findings_status" -eq 1 ] || { echo "check should fail on a left-out page, got $findings_status" >&2; exit 1; }
+
 echo "docs_site integration test passed"

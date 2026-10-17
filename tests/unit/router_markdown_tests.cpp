@@ -418,7 +418,7 @@ void testMarkdownExtensions() {
   // them itself); everything else is untouched.
   std::vector<std::pair<std::string, bool>> seen;
   LinkContext resolving{"example", std::string(40, 'a'), "docs"};
-  resolving.resolver = [&seen](std::string_view target, bool image) -> std::optional<std::string> {
+  resolving.resolver = [&seen](std::string_view target, bool image, std::size_t) -> std::optional<std::string> {
     seen.emplace_back(std::string(target), image);
     if (target == "missing.md") return std::nullopt;
     std::string upper(target);
@@ -443,9 +443,47 @@ void testMarkdownExtensions() {
             seen[1] == std::pair<std::string, bool>{"img/p q.png", true} && seen[2] == std::pair<std::string, bool>{"missing.md", false},
         "exactly the sanitised relative targets reach the resolver, in order");
   LinkContext standalone{};
-  standalone.resolver = [](std::string_view target, bool) -> std::optional<std::string> { return std::string(target) + ".html"; };
+  standalone.resolver = [](std::string_view target, bool, std::size_t) -> std::optional<std::string> {
+    return std::string(target) + ".html";
+  };
   check(renderMarkdown("[g](guide.md#top)", standalone) == "<p><a href=\"guide.md.html#top\">g</a></p>\n",
         "a resolver needs no project or commit identity");
   check(contains(renderMarkdown("[g](guide.md)", ctx), "href=\"/project/example/blob/" + std::string(40, 'a') + ":guide.md\""),
         "without a resolver relative links are dashboard routes as before");
+
+  // The resolver learns the source line each link is written on: inside a
+  // paragraph spanning lines, a list item, a quote, a table row, a heading,
+  // and counted from `first_line` when the text starts further down a file.
+  std::vector<std::pair<std::string, std::size_t>> lines_seen;
+  LinkContext locating{};
+  locating.resolver = [&lines_seen](std::string_view target, bool, std::size_t line) -> std::optional<std::string> {
+    lines_seen.emplace_back(std::string(target), line);
+    return std::nullopt;
+  };
+  static_cast<void>(renderMarkdown("# Title [h](head.md)\n"
+                                   "\n"
+                                   "Some text\n"
+                                   "then [p1](p1.md) and\n"
+                                   "later [p2](p2.md) [p3](p3.md).\n"
+                                   "\n"
+                                   "- item\n"
+                                   "  continued [li](li.md)\n"
+                                   "\n"
+                                   "> quoted\n"
+                                   "> [q](q.md)\n"
+                                   "\n"
+                                   "| a | b |\n"
+                                   "|---|---|\n"
+                                   "| [t](t.md) | x |\n"
+                                   "\n"
+                                   "[p1](p1.md) again\n",
+                                   locating));
+  const std::vector<std::pair<std::string, std::size_t>> expected_lines{
+      {"head.md", 1}, {"p1.md", 4}, {"p2.md", 5}, {"p3.md", 5}, {"li.md", 8},
+      {"q.md", 11},   {"t.md", 15}, {"p1.md", 17}};
+  check(lines_seen == expected_lines, "every link reaches the resolver with its source line");
+  lines_seen.clear();
+  locating.first_line = 4;
+  static_cast<void>(renderMarkdown("a\n[l](l.md)\n", locating));
+  check(lines_seen.size() == 1 && lines_seen[0].second == 5, "lines count from first_line");
 }

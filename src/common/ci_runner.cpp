@@ -1304,7 +1304,16 @@ void LocalCiSink::heartbeat(const CiRunRecord& record) {
 
 void LocalCiSink::progress(const CiRunRecord& record) { write(record, true); }
 
+bool LocalCiSink::stopping() const {
+  try {
+    return options_.stop_requested && options_.stop_requested();
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
 bool LocalCiSink::cancelRequested() {
+  if (stopping()) return true;
   try {
     return isCiCancelRequested(options_.state_root, prepared_.job.project_name, prepared_.job.job_id);
   } catch (const std::exception&) {
@@ -1340,6 +1349,28 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
   if (lease_lost_) {
     record.status = CiRunStatus::Error;
     record.detail = "this runner lost its lease on the job; it was requeued";
+    return record;
+  }
+  bool operator_cancel = false;
+  try {
+    operator_cancel = isCiCancelRequested(options_.state_root, prepared_.job.project_name, prepared_.job.job_id);
+  } catch (const std::exception&) {
+  }
+  if (stopping() && !operator_cancel && record.status != CiRunStatus::Success && options_.give_back) {
+    // Shutting down mid-run: the stop (or the service manager's signal to the
+    // step) ended the run, not the build itself. Hand the job back for the
+    // next runner instead of committing a cancel or a failure nobody caused;
+    // the requeue rewrites the run as Pending, keeps this attempt's step logs
+    // aside, and drops anything it staged.
+    bool given_back = false;
+    try {
+      given_back = options_.give_back();
+    } catch (const std::exception&) {
+    }
+    lease_lost_ = true;  // either way this runner no longer owns the job
+    record.status = CiRunStatus::Pending;
+    record.detail = given_back ? "handed back: the runner is shutting down"
+                               : "this runner lost its lease on the job; it was requeued";
     return record;
   }
   CiCommitPolicy policy;

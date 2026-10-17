@@ -852,6 +852,27 @@ bool abandonCiJob(const std::filesystem::path& state_root, std::string_view job_
   return requeueLocked(dirs, id, std::string(runner), false, 0) == RequeueOutcome::kRequeued;
 }
 
+bool releaseCiClaim(const std::filesystem::path& state_root, std::string_view job_id, std::string_view token) {
+  if (!isValidCiId(job_id) || !isValidLeaseToken(token)) return false;
+  const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+  if (missing) return false;
+  Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+  if (missing) return false;
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
+  lockExclusive(spool_fd);
+  const std::string id(job_id);
+  const std::optional<CiLease> lease = readLeaseAt(leases_fd, id);
+  if (!lease.has_value() || lease->token != token) return false;
+  const std::string name = id + ".ini";
+  if (::unlinkat(working_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI job");
+  if (::unlinkat(leases_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI lease");
+  return true;
+}
+
 void releaseCiJob(const std::filesystem::path& state_root, std::string_view job_id) {
   if (!isValidCiId(job_id)) fail("refusing to release an invalid CI job id");
   const std::filesystem::path root = validatedMetadataRoot(state_root);

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -229,9 +230,8 @@ std::string formatCiRunControlResponse(const CiRunReport& report) {
                          std::to_string(run.artifacts.size()) + "\n";
   append(response, runLine(run, run.steps.size()), kWhat);
   std::string detail = run.detail;
-  if ((!run.runner.empty() && run.runner != kCiPrimaryRunnerName) || run.attempt > 1) {
-    std::string where = run.runner.empty() ? std::string("queued") : "on " + run.runner;
-    if (run.attempt > 1) where += ", attempt " + std::to_string(run.attempt);
+  const std::string where = ciPlacementNote({run.runner, run.attempt});
+  if (!where.empty()) {
     detail = detail.empty() ? where : detail + " (" + where + ")";
     if (detail.size() > kMaximumCiDetailBytes) detail.resize(kMaximumCiDetailBytes);
   }
@@ -307,6 +307,49 @@ CiRunReport parseCiRunControlResponse(std::string_view response, std::string_vie
   }
   if (!lines.done()) invalid(kWhat, "has records beyond its declared counts");
   return report;
+}
+
+std::string ciPlacementNote(const CiRunPlacement& placement) {
+  if ((placement.runner.empty() || placement.runner == kCiPrimaryRunnerName) && placement.attempt <= 1) {
+    return std::string();
+  }
+  std::string where = placement.runner.empty() ? std::string("queued") : "on " + placement.runner;
+  if (placement.attempt > 1) where += ", attempt " + std::to_string(placement.attempt);
+  return where;
+}
+
+std::string strippedCiPlacementDetail(const std::string& detail, const CiRunPlacement& placement) {
+  const std::string where = ciPlacementNote(placement);
+  if (where.empty()) return detail;
+  if (detail == where) return std::string();
+  const std::string suffix = " (" + where + ")";
+  if (detail.size() > suffix.size() && detail.compare(detail.size() - suffix.size(), suffix.size(), suffix) == 0) {
+    return detail.substr(0, detail.size() - suffix.size());
+  }
+  return detail;  // truncated by the detail cap, or from a server that adds no note
+}
+
+std::string formatCiPlacementControlResponse(const CiRunRecord& run) {
+  if ((!run.runner.empty() && !isValidClientId(run.runner)) || run.attempt == 0) {
+    throw std::invalid_argument("a CI run's placement cannot be represented in a control response");
+  }
+  return "ok " + (run.runner.empty() ? std::string("-") : run.runner) + " " + std::to_string(run.attempt) + "\n";
+}
+
+CiRunPlacement parseCiPlacementControlResponse(std::string_view response) {
+  constexpr std::string_view kWhat = "CI placement";
+  ResponseLines lines(response, kWhat);
+  const auto fields = lines.fields("ok", 3);
+  if (!lines.done()) invalid(kWhat, "has records beyond its declared counts");
+  CiRunPlacement placement;
+  if (fields[1] != "-") {
+    if (!isValidClientId(fields[1])) invalid(kWhat, "names an invalid runner");
+    placement.runner = std::string(fields[1]);
+  }
+  const std::uint64_t attempt = parseNumber(fields[2], kWhat);
+  if (attempt == 0 || attempt > std::numeric_limits<unsigned>::max()) invalid(kWhat, "has an invalid attempt");
+  placement.attempt = static_cast<unsigned>(attempt);
+  return placement;
 }
 
 std::string formatCiLogControlResponse(const CiLogChunk& chunk) {

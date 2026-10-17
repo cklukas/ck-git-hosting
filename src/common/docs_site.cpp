@@ -426,7 +426,9 @@ std::string firstHeading(std::string_view body) {
     }
     if (fenced || !content.starts_with("# ")) continue;
     LinkContext context;
-    context.resolver = [](std::string_view target, bool) -> std::optional<std::string> { return std::string(target); };
+    context.resolver = [](std::string_view target, bool, std::size_t) -> std::optional<std::string> {
+      return std::string(target);
+    };
     std::vector<MarkdownHeading> outline;
     static_cast<void>(renderMarkdown(line, context, &outline));
     if (!outline.empty() && !outline.front().text.empty()) return outline.front().text;
@@ -506,10 +508,11 @@ void collectReadingOrder(const DocsNavItem& item, std::vector<std::size_t>& out)
 
 void resolveNav(const std::vector<DocsNavEntry>& entries, std::vector<DocsNavItem>& out,
                 const std::map<std::string, std::size_t>& by_source, const std::vector<DocsPage>& pages,
-                std::vector<bool>& mentioned) {
+                const std::map<std::string, std::string>& skipped, std::vector<bool>& mentioned) {
   for (const auto& entry : entries) {
     DocsNavItem item;
     if (!entry.page.empty()) {
+      if (skipped.count(entry.page) != 0) continue;  // already reported as left out
       const auto found = by_source.find(entry.page);
       if (found == by_source.end()) siteError("nav names '" + entry.page + "', which is not a page of the site");
       item.page = found->second;
@@ -517,7 +520,8 @@ void resolveNav(const std::vector<DocsNavEntry>& entries, std::vector<DocsNavIte
       mentioned[found->second] = true;
     } else {
       item.title = entry.title;
-      resolveNav(entry.pages, item.children, by_source, pages, mentioned);
+      resolveNav(entry.pages, item.children, by_source, pages, skipped, mentioned);
+      if (item.children.empty() && !entry.pages.empty()) continue;  // every page in it was left out
     }
     out.push_back(std::move(item));
   }
@@ -721,8 +725,20 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
     page.source = file;
     page.home = file == home;
     const auto content = readFile(root / file, kMaximumMarkdownInputBytes);
-    if (!content) siteError("cannot read '" + file + "', or it exceeds the 512 KiB page limit");
-    if (!isValidUtf8(*content)) siteError("'" + file + "' is not valid UTF-8");
+    std::string unusable;
+    if (!content) {
+      unusable = fs::file_size(root / file, error) > kMaximumMarkdownInputBytes ? "exceeds the 512 KiB page limit"
+                                                                                : "cannot be read";
+    } else if (!isValidUtf8(*content)) {
+      unusable = "is not valid UTF-8";
+    }
+    if (!unusable.empty()) {
+      // One such file must not stop the whole site; the home page must exist.
+      if (page.home) siteError("the home page '" + file + "' " + unusable);
+      warn(file + ": " + unusable + "; left out of the site (split it, or list it under exclude in ckdocs.yml)");
+      model.skipped.emplace(file, unusable);
+      continue;
+    }
     std::string body = *content;
     if (const auto front = splitFrontMatter(*content)) {
       body = content->substr(front->body_offset);
@@ -796,7 +812,7 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
   if (!config.nav.empty()) {
     std::map<std::string, std::size_t> by_source;
     for (std::size_t index = 0; index < model.pages.size(); ++index) by_source.emplace(model.pages[index].source, index);
-    resolveNav(config.nav, model.nav, by_source, model.pages, listed);
+    resolveNav(config.nav, model.nav, by_source, model.pages, model.skipped, listed);
   } else {
     model.nav.push_back(DocsNavItem{"Home", model.home, {}});
     listed[model.home] = true;
@@ -834,6 +850,82 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
 // ---- building ----------------------------------------------------------------
 
 namespace {
+
+// A page's broken links, one finding per target and reason however often the
+// page repeats the link, with the source lines it is written on.
+class LinkFindings {
+ public:
+  void add(const std::string& page, const std::string& message, std::size_t line) {
+    const auto [at, inserted] = index_.try_emplace({page, message}, findings_.size());
+    if (inserted) findings_.push_back({page, message, {}, 0});
+    Finding& finding = findings_[at->second];
+    ++finding.count;
+    if (line != 0 && std::find(finding.lines.begin(), finding.lines.end(), line) == finding.lines.end()) {
+      finding.lines.push_back(line);
+    }
+  }
+
+  // "<page>:<first line>: <message>", plus " (<n> links; also line(s) ...)"
+  // for a repeated one, in the order the findings were first met.
+  void appendTo(std::vector<std::string>& out) const {
+    constexpr std::size_t kListedLines = 8;
+    for (const Finding& finding : findings_) {
+      std::string text = finding.page;
+      if (!finding.lines.empty()) text += ":" + std::to_string(finding.lines.front());
+      text += ": " + finding.message;
+      if (finding.count > 1) {
+        text += " (" + std::to_string(finding.count) + " links";
+        if (finding.lines.size() > 1) {
+          text += finding.lines.size() == 2 ? "; also line " : "; also lines ";
+          for (std::size_t at = 1; at < finding.lines.size() && at <= kListedLines; ++at) {
+            text += (at == 1 ? "" : ", ") + std::to_string(finding.lines[at]);
+          }
+          if (finding.lines.size() > kListedLines + 1) text += ", ...";
+        }
+        text += ")";
+      }
+      out.push_back(std::move(text));
+    }
+  }
+
+ private:
+  struct Finding {
+    std::string page;
+    std::string message;
+    std::vector<std::size_t> lines;
+    std::size_t count;
+  };
+  std::vector<Finding> findings_;
+  std::map<std::pair<std::string, std::string>, std::size_t> index_;
+};
+
+// Merges repeats of the same finding from `from` on into one entry that says
+// how often it occurred, keeping first-seen order.
+void collapseRepeats(std::vector<std::string>& findings, std::size_t from, std::string_view unit) {
+  std::vector<std::string> unique;
+  std::vector<std::size_t> counts;
+  std::map<std::string, std::size_t> seen;
+  for (std::size_t at = from; at < findings.size(); ++at) {
+    const auto [found, inserted] = seen.try_emplace(findings[at], unique.size());
+    if (inserted) {
+      unique.push_back(findings[at]);
+      counts.push_back(0);
+    }
+    ++counts[found->second];
+  }
+  findings.resize(from);
+  for (std::size_t at = 0; at < unique.size(); ++at) {
+    findings.push_back(counts[at] > 1 ? unique[at] + " (" + std::to_string(counts[at]) + " " + std::string(unit) + ")"
+                                      : unique[at]);
+  }
+}
+
+// The source line a page's body starts on, after its front matter.
+std::size_t bodyFirstLine(std::string_view content) {
+  const std::string_view body = markdownBody(content);
+  const auto offset = static_cast<std::size_t>(body.data() - content.data());
+  return 1 + static_cast<std::size_t>(std::count(content.begin(), content.begin() + static_cast<std::ptrdiff_t>(offset), '\n'));
+}
 
 std::string escapeHtml(std::string_view value) {
   std::string out;
@@ -1510,19 +1602,27 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       if (diagramPath(output)) siteError("page '" + model.pages[index].source + "' uses the reserved _ckdocs-mermaid output directory");
     }
   }
-  const auto addAsset = [&](const std::string& root_relative, const char* what) {
+  // Copies a root-relative file into the site: its output path, or why it
+  // cannot be copied (empty `output`).
+  const auto placeAsset = [&](const std::string& root_relative, std::string& output) -> std::string {
     const auto full = model.root / root_relative;
-    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) {
-      siteError(std::string(what) + " '" + root_relative + "' is not a regular file");
-    }
-    if (fs::file_size(full, error) > kMaximumPagesFileBytes) siteError(std::string(what) + " '" + root_relative + "' exceeds the file size limit");
-    const auto output = assetOutputPath(model, root_relative);
-    if (options.mermaid_renderer && diagramPath(output)) siteError(std::string(what) + " '" + root_relative + "' uses the reserved _ckdocs-mermaid output directory");
-    if (page_by_output.count(output) != 0) siteError(std::string(what) + " '" + root_relative + "' would overwrite the page '" + output + "'");
-    const auto [existing, inserted] = assets.try_emplace(output, root_relative);
+    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return "is not a regular file";
+    if (fs::file_size(full, error) > kMaximumPagesFileBytes) return "exceeds the file size limit";
+    const auto path = assetOutputPath(model, root_relative);
+    if (options.mermaid_renderer && diagramPath(path)) return "uses the reserved _ckdocs-mermaid output directory";
+    if (page_by_output.count(path) != 0) return "would overwrite the page '" + path + "'";
+    const auto [existing, inserted] = assets.try_emplace(path, root_relative);
     if (!inserted && existing->second != root_relative) {
-      siteError("'" + existing->second + "' and '" + root_relative + "' would both be written to '" + output + "'");
+      return "would be written to '" + path + "', like '" + existing->second + "'";
     }
+    output = path;
+    return {};
+  };
+  // The logo and stylesheet the configuration names must be copied.
+  const auto addAsset = [&](const std::string& root_relative, const char* what) {
+    std::string output;
+    const std::string problem = placeAsset(root_relative, output);
+    if (!problem.empty()) siteError(std::string(what) + " '" + root_relative + "' " + problem);
     return output;
   };
   // In a portal the header shows the portal's brand and logo, not the site's.
@@ -1558,10 +1658,13 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     if (!content) siteError("cannot read '" + page.source + "', or it exceeds the 512 KiB page limit");
     const std::string page_dir(directoryOf(page.source));
     const std::string out_dir(directoryOf(page.output));
+    LinkFindings broken_links;
     LinkContext link_context;
-    link_context.resolver = [&](std::string_view target, bool image) -> std::optional<std::string> {
+    link_context.first_line = bodyFirstLine(*content);
+    link_context.resolver = [&](std::string_view target, bool image, std::size_t line) -> std::optional<std::string> {
       const auto broken = [&](const std::string& reason) {
-        result.broken_links.push_back(page.source + ": " + (image ? "image" : "link") + " target '" + std::string(target) + "' " + reason);
+        broken_links.add(page.source, std::string(image ? "image" : "link") + " target '" + std::string(target) + "' " + reason,
+                         line);
         return std::optional<std::string>{};
       };
       std::string joined;
@@ -1583,11 +1686,18 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
         }
       }
       if (directory_target || normalized->empty()) return broken("is a directory without an index page");
+      if (const auto left_out = model.skipped.find(*normalized); left_out != model.skipped.end()) {
+        return broken("was left out of the site: it " + left_out->second);
+      }
       if (hasMarkdownExtension(*normalized)) return broken("is not a page of this site");
       const auto full = model.root / *normalized;
       if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
       if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
-      return relativeUrl(out_dir, addAsset(*normalized, "file"));
+      // A file a link cannot bring along is that link's problem, not the site's.
+      std::string output;
+      const std::string problem = placeAsset(*normalized, output);
+      if (!problem.empty()) return broken(problem);
+      return relativeUrl(out_dir, output);
     };
     std::size_t diagram_number = 0;
     const MarkdownCodeRenderer code_renderer = [&](std::string_view language, std::string_view source) -> std::optional<std::string> {
@@ -1640,6 +1750,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     } catch (const std::length_error& bound) {
       siteError("'" + page.source + "' exceeds a rendering bound: " + bound.what());
     }
+    broken_links.appendTo(result.broken_links);
     scanArticle(article, ids[index], links[index]);
     if (model.config.search) {
       search_entries.push_back(searchPageEntryJson(page.title, page.output, pageSearchSections(article, context.outlines[index])));
@@ -1667,6 +1778,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
   }
 
   // Fragments must name a heading on their target page.
+  const std::size_t anchors_before = result.broken_anchors.size();
   for (std::size_t index = 0; index < model.pages.size(); ++index) {
     const std::string out_dir(directoryOf(model.pages[index].output));
     for (const auto& [path, fragment] : links[index]) {
@@ -1686,6 +1798,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       }
     }
   }
+  collapseRepeats(result.broken_anchors, anchors_before, "links");
 
   // The site index: every tab, page, and h2/h3, as plain nested lists.
   {
@@ -2021,10 +2134,12 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     if (!content) siteError("cannot read '" + source + "', or it exceeds the 512 KiB page limit");
     if (!isValidUtf8(*content)) siteError("'" + source + "' is not valid UTF-8");
     const std::string page_dir(directoryOf(source));
+    LinkFindings broken_links;
     LinkContext link_context;
-    link_context.resolver = [&](std::string_view target, bool image) -> std::optional<std::string> {
+    link_context.first_line = bodyFirstLine(*content);
+    link_context.resolver = [&](std::string_view target, bool image, std::size_t line) -> std::optional<std::string> {
       const auto broken = [&](const std::string& reason) {
-        result.broken_links.push_back(source + ": " + (image ? "image" : "link") + " target '" + std::string(target) + "' " + reason);
+        broken_links.add(source, std::string(image ? "image" : "link") + " target '" + std::string(target) + "' " + reason, line);
         return std::optional<std::string>{};
       };
       std::string joined;
@@ -2053,6 +2168,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     } catch (const std::length_error& bound) {
       siteError("'" + source + "' exceeds a rendering bound: " + bound.what());
     }
+    broken_links.appendTo(result.broken_links);
     std::set<std::string> ids;
     std::vector<std::pair<std::string, std::string>> links;
     scanArticle(intro, ids, links);

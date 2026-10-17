@@ -146,6 +146,10 @@ struct DocsSiteModel {
   std::vector<DocsNavItem> nav;  // the tabs, the Home tab first
   std::vector<std::size_t> reading_order;  // page indices depth-first through nav, for previous/next
   std::vector<std::size_t> unlisted;       // pages outside nav: nav_exclude, or not named by an explicit nav
+  // Markdown files left out because they cannot be pages (over the 512 KiB
+  // page limit, unreadable, or not UTF-8), each with the reason; links to
+  // them are reported with it.
+  std::map<std::string, std::string> skipped;
 };
 
 // Enumerates pages (`git ls-files` inside a Git work tree, so nothing
@@ -155,8 +159,10 @@ struct DocsSiteModel {
 // std::runtime_error ("ckdocs: ...") on anything that must stop a build;
 // appends advisory findings (front-matter keys neither ckdocs nor the
 // config's foreign keys name, front-matter values ckdocs cannot use, pages an
-// explicit nav does not mention, front matter that did not parse) to
-// `warnings`.
+// explicit nav does not mention, front matter that did not parse, and pages
+// left out because they exceed the page limit, cannot be read, or are not
+// UTF-8 -- unless that page is the home page, which stops the build) to
+// `warnings`. A nav entry naming a left-out page is dropped with it.
 DocsSiteModel loadDocsSite(const std::filesystem::path& root, const DocsConfig& config,
                            std::vector<std::string>* warnings);
 
@@ -204,8 +210,12 @@ struct DocsBuildReport {
   std::size_t assets_generated = 0;
   std::size_t bytes_written = 0;
   std::size_t redirects_written = 0;        // a portal's redirect_from_root pages
-  std::vector<std::string> broken_links;    // "<page>: link target '<target>' <reason>"
-  std::vector<std::string> broken_anchors;  // "<page>: '<href>' names no heading on <target page>"
+  // "<page>:<line>: link target '<target>' <reason>", one entry for every
+  // link of a page to the same target with the same reason; repeats add
+  // " (<n> links; also line(s) ...)".
+  std::vector<std::string> broken_links;
+  // "<page>: '<href>' names no heading on <target page>", repeats once with " (<n> links)"
+  std::vector<std::string> broken_anchors;
   std::vector<std::string> warnings;        // other build-time findings, e.g. a truncated search index
 };
 

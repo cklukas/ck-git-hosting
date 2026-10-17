@@ -42,8 +42,9 @@ image's `![alt text]` and `(destination)`:
     it, so a source tree can hold drafts and private notes without
     publishing them by accident;
   - anything else (a missing target, a directory with no index page, a
-    `.md` file outside the site) is reported and rendered as plain,
-    visible text rather than a link to nowhere.
+    `.md` file outside the site or left out of it, a file whose copy would
+    overwrite a page) is reported and rendered as plain, visible text
+    rather than a link to nowhere.
 - A `#fragment` on a page link is checked, after the whole site renders,
   against the target page's actual heading ids; a fragment that names
   nothing is reported the same way a missing target is.
@@ -52,5 +53,13 @@ image's `![alt text]` and `(destination)`:
 broken reference stays visible as text, which is usually more useful than
 an aborted build — and exits `3`. `--strict` (and `check`, which always
 implies it) turns the same reports into a build failure, exit `1`, printing
-each one naming the page and the target, so an editor's "next error"
-shortcut goes straight to it.
+each one naming the page, the line, and the target, so an editor's "next
+error" shortcut goes straight to it:
+
+```text
+warning: docs/guide.md:12: link target 'setup.md' is not a page of this site (3 links; also lines 40, 88)
+```
+
+A page that links to the same missing target several times is reported
+once, with every line it does so on; a bad `#fragment` repeated on a page
+is reported once with its count.

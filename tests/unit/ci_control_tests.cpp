@@ -250,8 +250,47 @@ void testLogChunkRoundTrip() {
 
 }  // namespace
 
+// `ci-placement`: the runner and attempt, with `-` for a run still queued;
+// and the note `ci-run` folds into the detail for older clients comes off
+// again exactly.
+void testPlacementRoundTrip() {
+  ckgit::CiRunRecord run;
+  run.run_id = "1-a";
+  run.runner = "uconsole";
+  run.attempt = 2;
+  const std::string wire = ckgit::formatCiPlacementControlResponse(run);
+  require(wire == "ok uconsole 2\n", "the placement response is as documented: " + wire);
+  const auto parsed = ckgit::parseCiPlacementControlResponse(wire);
+  require(parsed.runner == "uconsole" && parsed.attempt == 2, "the placement round trips");
+  run.runner.clear();
+  run.attempt = 1;
+  require(ckgit::formatCiPlacementControlResponse(run) == "ok - 1\n", "a queued run has no runner yet");
+  require(ckgit::parseCiPlacementControlResponse("ok - 1\n").runner.empty(), "`-` parses as no runner");
+  run.runner = "bad runner";
+  require(rejects([&] { ckgit::formatCiPlacementControlResponse(run); }), "an invalid runner is not sent");
+  for (const std::string response : {"ok uconsole 0\n", "ok uconsole\n", "ok Bad/name 1\n", "ok uconsole 01\n",
+                                     "ok uconsole 1\nextra\n", "ok uconsole 1 2\n", "error norun x\n",
+                                     "ok uconsole 99999999999\n"}) {
+    require(rejects([&] { ckgit::parseCiPlacementControlResponse(response); }), "rejected placement: " + response);
+  }
+
+  const ckgit::CiRunPlacement remote{"uconsole", 2};
+  require(ckgit::ciPlacementNote(remote) == "on uconsole, attempt 2", "the note names runner and attempt");
+  require(ckgit::ciPlacementNote({ckgit::kCiPrimaryRunnerName, 1}).empty(), "a first primary attempt has no note");
+  require(ckgit::strippedCiPlacementDetail("step 'build' exited 1 (on uconsole, attempt 2)", remote) ==
+              "step 'build' exited 1",
+          "the folded note comes off a detail line");
+  require(ckgit::strippedCiPlacementDetail("on uconsole, attempt 2", remote).empty(),
+          "a detail that is only the note becomes empty");
+  require(ckgit::strippedCiPlacementDetail("all steps passed", remote) == "all steps passed",
+          "a detail without the note is left alone");
+  require(ckgit::strippedCiPlacementDetail("x (on other)", {ckgit::kCiPrimaryRunnerName, 1}) == "x (on other)",
+          "nothing is stripped when the server folded no note");
+}
+
 void testCiControl() {
   testRunRoundTrip();
+  testPlacementRoundTrip();
   testStatusRoundTrip();
   testLogChunkRoundTrip();
 }

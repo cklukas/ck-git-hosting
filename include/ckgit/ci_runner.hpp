@@ -80,6 +80,16 @@ struct CiRunnerOptions {
   // (the one-shot `run` command, and tests).
   std::function<bool()> keep_alive;
   unsigned keep_alive_seconds = 15;
+
+  // True once the runner itself is shutting down (the serving daemon's
+  // SIGTERM). Polled with the cancel check, it stops the run the same way: the
+  // step's process group is killed. Unless an operator also asked to cancel
+  // or the run already succeeded, the run then ends through give_back, which
+  // returns the job to the queue (abandonCiJob) for the next runner, instead
+  // of being recorded as a cancel or as the failure of a step the shutdown
+  // killed. Both empty for the one-shot `run` command and most tests.
+  std::function<bool()> stop_requested;
+  std::function<bool()> give_back;
 };
 
 // Isolation the runner applied to a run. On Linux the runner confines each step
@@ -290,6 +300,7 @@ class LocalCiSink : public CiResultSink {
  private:
   void write(const CiRunRecord& record, bool force);
   void keepAlive(bool force);
+  bool stopping() const;
 
   const CiRunnerOptions& options_;
   const CiPreparedJob& prepared_;

@@ -13,6 +13,12 @@
   is used instead, skipping dotfiles, dot-directories, and symlinks.
   [`exclude:` patterns](configuration.md) remove further candidates before anything
   else happens.
+- **Files that cannot be pages.** A Markdown file over the 512 KiB page
+  limit, one that cannot be read, or one that is not valid UTF-8 is left out
+  of the site with a warning, and the build goes on; a `nav:` entry naming
+  it is dropped, and a link to it is reported with the reason. Split such a
+  file or list it under `exclude:`. Only the home page must be usable: a
+  home page that is not stops the build.
 - **The home page.** `home:` in the config; else the source tree's own
   `README.md`/`index.md`; else the repository root's `README.md`; else the
   first page in path order. The home page always becomes the site's root

@@ -4,6 +4,7 @@
 #include "ckgit/markdown.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <exception>
 #include <map>
@@ -24,6 +25,7 @@ namespace ckgit {
 namespace {
 
 using Lines = std::vector<std::string>;
+using LineNumbers = std::vector<std::size_t>;
 
 std::string_view trim(std::string_view value) {
   while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.remove_prefix(1);
@@ -120,7 +122,8 @@ std::optional<std::string> decodeUrl(std::string_view value) {
   return result;
 }
 
-std::optional<std::string> linkTarget(std::string_view original, bool image, const LinkContext& context) {
+std::optional<std::string> linkTarget(std::string_view original, bool image, const LinkContext& context,
+                                      std::size_t line) {
   const auto value = unescape(trim(original));
   if (value.empty() || std::any_of(value.begin(), value.end(), [](unsigned char byte) {
         return byte < 0x20 || byte == 0x7f || byte == '\\';
@@ -147,7 +150,7 @@ std::optional<std::string> linkTarget(std::string_view original, bool image, con
   const auto decoded = decodeUrl(std::string_view(value).substr(0, hash));
   if (!decoded || decoded->empty()) return {};
   if (context.resolver) {
-    const auto resolved = context.resolver(*decoded, image);
+    const auto resolved = context.resolver(*decoded, image, line);
     if (!resolved) return {};
     return *resolved + fragment;
   }
@@ -348,9 +351,11 @@ class Renderer {
            const MarkdownCodeRenderer& code_renderer)
       : context_(context), work_(input_size * 64 + 4096), outline_(outline), code_renderer_(code_renderer) {}
 
-  // `lead` is HTML placed at the start of the first paragraph (a task item's
+  // `numbers` holds the 1-based source line of each entry of `lines`. `lead`
+  // is HTML placed at the start of the first paragraph (a task item's
   // checkbox); it is dropped if the first block is not a paragraph.
-  std::string blocks(Lines lines, std::size_t depth = 0, bool tight = false, std::string_view lead = {}) {
+  std::string blocks(Lines lines, LineNumbers numbers, std::size_t depth = 0, bool tight = false,
+                     std::string_view lead = {}) {
     std::string output;
     if (depth >= kMaximumMarkdownDepth) {
       append(output, "<pre>");
@@ -406,6 +411,7 @@ class Renderer {
         escape(output, code);
         append(output, "</code></pre>\n");
       } else if (const auto level = headingLevel(lines[index])) {
+        enterBlock(numbers, index, index + 1);
         auto text = trim(lines[index++]);
         text = trim(text.substr(level));
         std::size_t closing = text.size();
@@ -423,7 +429,9 @@ class Renderer {
         ++index;
       } else if (trim(lines[index]).starts_with('>')) {
         Lines quoted;
+        LineNumbers quoted_numbers;
         while (index < lines.size() && indentation(lines[index]) <= 3 && trim(lines[index]).starts_with('>')) {
+          quoted_numbers.push_back(numbers[index]);
           auto line = trimLeft(lines[index++]);
           line.remove_prefix(1);
           if (!line.empty() && line.front() == ' ') line.remove_prefix(1);
@@ -431,13 +439,14 @@ class Renderer {
         }
         if (const auto* alert = alertKind(quoted)) {
           quoted.erase(quoted.begin());
+          quoted_numbers.erase(quoted_numbers.begin());
           append(output, "<div class=\"alert alert-" + std::string(alert->kind) + "\"><p class=\"alert-title\">" +
                              std::string(alert->title) + "</p>\n");
-          append(output, blocks(quoted, depth + 1));
+          append(output, blocks(quoted, quoted_numbers, depth + 1));
           append(output, "</div>\n");
         } else {
           append(output, "<blockquote>\n");
-          append(output, blocks(quoted, depth + 1));
+          append(output, blocks(quoted, quoted_numbers, depth + 1));
           append(output, "</blockquote>\n");
         }
       } else if (const auto marker = listMarker(lines[index])) {
@@ -447,6 +456,7 @@ class Renderer {
         while (index < lines.size()) {
           const auto current = listMarker(lines[index]);
           if (!current || current->ordered != ordered || current->indent != marker->indent) break;
+          LineNumbers item_numbers{numbers[index]};
           Lines item{lines[index++].substr(current->content_offset)};
           bool loose = false;
           while (index < lines.size()) {
@@ -457,12 +467,14 @@ class Renderer {
               if (indentation(lines[index + 1]) <= marker->indent) break;
               loose = true;
               item.emplace_back();
+              item_numbers.push_back(numbers[index]);
               ++index;
               continue;
             }
             const auto next = listMarker(lines[index]);
             if (next && next->indent == marker->indent) break;
             if (indentation(lines[index]) <= marker->indent && beginsBlock(lines[index])) break;
+            item_numbers.push_back(numbers[index]);
             item.push_back(removeIndent(lines[index++], current->content_indent));
           }
           // A task marker counts only when what follows it on the line is
@@ -477,7 +489,7 @@ class Renderer {
             }
           }
           append(items, item_lead.empty() ? "<li>" : "<li class=\"task-list-item\">");
-          append(items, blocks(item, depth + 1, !loose, item_lead));
+          append(items, blocks(item, item_numbers, depth + 1, !loose, item_lead));
           append(items, "</li>\n");
         }
         append(output, ordered ? "<ol" : "<ul");
@@ -489,6 +501,7 @@ class Renderer {
       } else if (index + 1 < lines.size() && lines[index].find('|') != std::string::npos && tableAlignment(lines[index + 1])) {
         const auto alignments = *tableAlignment(lines[index + 1]);
         const auto headers = tableCells(lines[index]);
+        enterBlock(numbers, index, index + 1);
         if (headers.size() != alignments.size()) {
           append(output, "<p>"); append(output, inlineText(withoutComments(lines[index++]), 0)); append(output, "</p>\n");
           continue;
@@ -499,11 +512,13 @@ class Renderer {
         index += 2;
         while (index < lines.size() && !trim(lines[index]).empty() && lines[index].find('|') != std::string::npos && !beginsBlock(lines[index])) {
           append(output, "<tr>");
+          enterBlock(numbers, index, index + 1);
           tableRow(output, tableCells(lines[index++]), alignments, false);
           append(output, "</tr>\n");
         }
         append(output, "</tbody></table>\n");
       } else {
+        const std::size_t first = index;
         std::string paragraph = lines[index++];
         while (index < lines.size() && !trim(lines[index]).empty() && !beginsBlock(lines[index])) {
           if (index + 1 < lines.size() && lines[index].find('|') != std::string::npos && tableAlignment(lines[index + 1])) break;
@@ -511,6 +526,7 @@ class Renderer {
           append(paragraph, lines[index++]);
         }
         const auto visible = withoutComments(paragraph);
+        enterBlock(numbers, first, index, visible);
         if (!trim(visible).empty()) {
           if (!tight) append(output, "<p>");
           if (!lead.empty()) {
@@ -533,6 +549,45 @@ class Renderer {
   std::map<std::string, std::size_t> heading_counts_;
   std::set<std::string> heading_ids_;
   bool comment_open_{false};
+  // Where the block whose inline text is being rendered came from: the
+  // source line of each of its lines, and, for a paragraph, the joined text
+  // the inline renderer reads, so a link is placed on the line it is written
+  // on. Newlines are counted incrementally, as links are met in order.
+  LineNumbers block_numbers_;
+  std::string_view block_text_;
+  std::size_t counted_offset_{0};
+  std::size_t counted_newlines_{0};
+
+  void enterBlock(const LineNumbers& numbers, std::size_t first, std::size_t end, std::string_view text = {}) {
+    block_numbers_.assign(numbers.begin() + static_cast<std::ptrdiff_t>(first),
+                          numbers.begin() + static_cast<std::ptrdiff_t>(end));
+    block_text_ = text;
+    counted_offset_ = 0;
+    counted_newlines_ = 0;
+  }
+
+  // The source line of a link whose destination is `written`, a view into the
+  // block's text; the block's first line when it is not (a table cell, a
+  // heading -- single lines anyway). A comment spanning lines inside a
+  // paragraph can shift the count; the result stays within the block.
+  std::size_t lineOf(std::string_view written) {
+    if (block_numbers_.empty()) return 0;
+    const char* begin = block_text_.data();
+    const std::less<const char*> before;  // a total order, even for unrelated buffers
+    if (begin == nullptr || before(written.data(), begin) || before(begin + block_text_.size(), written.data())) {
+      return block_numbers_.front();
+    }
+    const auto offset = static_cast<std::size_t>(written.data() - begin);
+    if (offset < counted_offset_) {
+      counted_offset_ = 0;
+      counted_newlines_ = 0;
+    }
+    counted_newlines_ += static_cast<std::size_t>(
+        std::count(block_text_.begin() + static_cast<std::ptrdiff_t>(counted_offset_),
+                   block_text_.begin() + static_cast<std::ptrdiff_t>(offset), '\n'));
+    counted_offset_ = offset;
+    return block_numbers_[std::min(counted_newlines_, block_numbers_.size() - 1)];
+  }
 
   void spend(std::size_t count) {
     if (count > work_) throw std::length_error("Markdown parsing work limit exceeded");
@@ -745,7 +800,7 @@ class Renderer {
             }
             const bool valid_title = title.empty() || (title.size() >= 2 &&
               ((title.front() == '"' && title.back() == '"') || (title.front() == '\'' && title.back() == '\'')));
-            const auto url = valid_title ? linkTarget(destination, image, context_) : std::nullopt;
+            const auto url = valid_title ? linkTarget(destination, image, context_, lineOf(destination)) : std::nullopt;
             if (url) {
               append(output, image ? "<img src=\"" : "<a href=\"");
               escape(output, *url); append(output, "\"");
@@ -767,7 +822,7 @@ class Renderer {
           const auto candidate = value.substr(index + 1, end - index - 1);
           const auto colon = candidate.find(':');
           const bool email = colon == std::string_view::npos && candidate.find('@') != std::string_view::npos && candidate.find_first_of(" \t\n<>\"") == std::string_view::npos;
-          const auto url = (colon != std::string_view::npos || email) ? linkTarget(email ? "mailto:" + std::string(candidate) : std::string(candidate), false, context_) : std::nullopt;
+          const auto url = (colon != std::string_view::npos || email) ? linkTarget(email ? "mailto:" + std::string(candidate) : std::string(candidate), false, context_, lineOf(candidate)) : std::nullopt;
           if (url) {
             append(output, "<a href=\""); escape(output, *url); append(output, "\">"); escape(output, candidate); append(output, "</a>");
             index = end + 1;
@@ -888,15 +943,17 @@ std::string renderMarkdown(std::string_view source, const LinkContext& context,
   if (source.size() > kMaximumMarkdownInputBytes) throw std::length_error("Markdown input exceeds 512 KiB");
   if (outline != nullptr) outline->clear();
   Lines lines;
+  LineNumbers numbers;
   for (std::size_t start = 0; start < source.size();) {
     const auto newline = source.find('\n', start);
     auto line = source.substr(start, newline == std::string_view::npos ? source.size() - start : newline - start);
     if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
     lines.emplace_back(line);
+    numbers.push_back(context.first_line + numbers.size());
     if (newline == std::string_view::npos) break;
     start = newline + 1;
   }
-  return Renderer(context, source.size(), outline, code_renderer).blocks(lines);
+  return Renderer(context, source.size(), outline, code_renderer).blocks(lines, numbers);
 }
 
 bool isValidFrontMatterKey(std::string_view key) {

@@ -25,6 +25,12 @@ Group=ckgit
 ExecStart=/usr/bin/ck-ci-runnerd serve --config /etc/ck-git-hosting/server.ini
 Restart=on-failure
 RestartSec=5s
+# A stop (a restart, or the package upgrade a self-deploy performs) hands a
+# job in progress back to the queue, so it runs again instead of ending as a
+# failure. Only the runner itself gets the stop signal: it kills the running
+# step's process group and gives the job back; whatever is left after
+# TimeoutStopSec is killed.
+KillMode=mixed
 TimeoutStopSec=30s
 UMask=0077
 Environment=HOME=/var/lib/ck-git-hosting

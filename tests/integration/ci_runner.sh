@@ -286,12 +286,12 @@ esac
 
 show_output=$(ci show "$run_id" --project demo) || fail "ckgit ci show failed"
 case "$show_output" in
-  *"Run $run_id of demo"*'status:'*success*"commit:    $commit"*'Steps:'*'0 '*build*'exit 0'*'Artifacts:'*build*sha256*) ;;
+  *"Run $run_id of demo"*'status:'*success*"commit:    $commit"*'runner:    primary'*'Steps:'*'0 '*build*'exit 0'*'Artifacts:'*build*sha256*) ;;
   *) echo "$show_output" >&2; fail "ci show did not describe the run, its step, and its artifact" ;;
 esac
 show_json=$(ci show "$run_id" --project demo --json) || fail "ckgit ci show --json failed"
 case "$show_json" in
-  *'"steps":['*'"index":0,"name":"build","exit_code":0'*'"artifacts":[{"name":"build"'*) ;;
+  *'"runner":"primary","attempt":1,"steps":['*'"index":0,"name":"build","exit_code":0'*'"artifacts":[{"name":"build"'*) ;;
   *) echo "$show_json" >&2; fail "ci show --json did not report steps and artifacts" ;;
 esac
 

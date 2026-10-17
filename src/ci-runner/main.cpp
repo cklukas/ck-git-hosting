@@ -239,6 +239,12 @@ int serve(const std::filesystem::path& config_path, bool once) {
         return ckgit::renewCiLease(state_root, job_id, lease_token, lease_seconds);
       };
       options.keep_alive_seconds = std::max(1u, lease_seconds / 6);
+      // A stop (a restart or package upgrade) hands the job back to the queue,
+      // the same as a remote runner does, rather than failing the run.
+      options.stop_requested = []() { return g_stop != 0; };
+      options.give_back = [state_root, job_id, lease_token]() {
+        return ckgit::abandonCiJob(state_root, job_id, lease_token, ckgit::kCiPrimaryRunnerName);
+      };
     }
     if (!config.control_socket.empty()) {
       // Refresh the dashboard as soon as the run publishes itself as Running, so
@@ -273,12 +279,16 @@ int serve(const std::filesystem::path& config_path, bool once) {
         warned_unmasked = true;
       }
       std::cout << "ck-ci-runnerd: " << job->project_name << " " << record.run_id << " "
-                << ckgit::ciRunStatusName(record.status) << "\n";
+                << (record.status == ckgit::CiRunStatus::Pending ? std::string("handed back")
+                                                                 : std::string(ckgit::ciRunStatusName(record.status)))
+                << "\n";
     } catch (const std::exception& error) {
       std::cerr << "ck-ci-runnerd: run failed for " << job->project_name << ": " << error.what() << "\n";
     }
     try {
-      ckgit::releaseCiJob(state_root, job->job_id);
+      // Only while this runner still holds the lease: a job it lost or gave
+      // back may already belong to another runner.
+      ckgit::releaseCiClaim(state_root, job->job_id, lease_token);
     } catch (const std::exception& error) {
       std::cerr << "ck-ci-runnerd: could not release job " << job->job_id << ": " << error.what() << "\n";
     }

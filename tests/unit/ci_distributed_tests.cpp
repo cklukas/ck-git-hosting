@@ -217,6 +217,32 @@ void testRestartAndAbandon() {
           "a job given back is requeued even past the attempt limit");
 }
 
+// A runner releases a finished job only while it still holds the lease: once
+// the job was requeued and claimed by another runner, the first runner's
+// release must leave the new claim alone.
+void testReleaseNeedsTheLease() {
+  Fixture fixture;
+  const std::string id = ckgit::generateCiId();
+  ckgit::enqueueCiJob(fixture.state, sampleJob(id));
+  const auto first = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
+  require(first.has_value(), "the job is claimed");
+  require(!ckgit::releaseCiClaim(fixture.state, id, std::string(32, 'f')), "another token cannot release it");
+  require(ckgit::loadCiClaim(fixture.state, id).has_value(), "the claim survives a foreign release");
+
+  ckgit::CiReapOptions lapse;
+  lapse.now_epoch_seconds = first->lease.expires_epoch_seconds + 1;
+  require(ckgit::reapCiLeases(fixture.state, lapse).requeued.size() == 1, "the lapsed lease is requeued");
+  ckgit::CiClaimOptions other;
+  other.runner = "uconsole";
+  const auto second = ckgit::claimCiJob(fixture.state, other);
+  require(second.has_value() && second->job.job_id == id, "another runner claims the requeued job");
+  require(!ckgit::releaseCiClaim(fixture.state, id, first->lease.token), "the lost lease releases nothing");
+  const auto still = ckgit::loadCiClaim(fixture.state, id);
+  require(still.has_value() && still->lease.token == second->lease.token, "the new claim is untouched");
+  require(ckgit::releaseCiClaim(fixture.state, id, second->lease.token), "the holder releases its job");
+  require(!ckgit::loadCiClaim(fixture.state, id).has_value(), "the released job is gone");
+}
+
 // R1: a job queued by an earlier build (schema 1, no attempt line) still runs.
 void testVersionOneJobStillClaims() {
   Fixture fixture;
@@ -837,6 +863,11 @@ void testRunnerShownOnRuns() {
   const ckgit::CiRunReport shown =
       ckgit::parseCiRunControlResponse(ckgit::formatCiRunControlResponse(report), "demo");
   require(shown.run.detail == "running (on uconsole, attempt 2)", "ckgit ci show names the runner: " + shown.run.detail);
+  const ckgit::CiRunPlacement placement =
+      ckgit::parseCiPlacementControlResponse(ckgit::formatCiPlacementControlResponse(*loaded));
+  require(placement.runner == "uconsole" && placement.attempt == 2, "ci-placement names runner and attempt");
+  require(ckgit::strippedCiPlacementDetail(shown.run.detail, placement) == "running",
+          "a client that knows the placement shows the plain detail");
 
   ckgit::ProjectSummary project;
   project.name = "demo";
@@ -923,6 +954,7 @@ void testCiDistributed() {
   testLeaseClaimRenewRelease();
   testReaperRequeuesThenGivesUp();
   testRestartAndAbandon();
+  testReleaseNeedsTheLease();
   testVersionOneJobStillClaims();
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();
