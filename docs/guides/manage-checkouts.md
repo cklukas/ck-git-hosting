@@ -19,6 +19,22 @@ directories; server reports are separate for each client ID.
 `status`, default `sync`, and `checkout list` show the same managed project set
 and effective main selection. Their output begins with the scope, device, and
 server. `--repo .` explicitly selects the current repository for status or sync.
+`status` prints one row per project, then a summary line:
+
+```text
+PROJECT         STATE          REFS                            CHECKOUT
+ck-git-hosting  ✓ in sync      19 equal                        /Users/me/git/ck-git-hosting
+notes           ↑ unpublished  3 equal, 1 local-only           /Users/me/git/notes
+website         ! differs      11 equal, 1 mismatched          /Users/me/git/website
+3 checkout(s): 1 in sync, 1 unpublished, 1 need attention (!); ckgit status --repo PATH shows one in full
+```
+
+**Unpublished** means the checkout has branches or tags the server lacks;
+`sync` uploads them. A row marked `!` needs a look: a branch differs from the
+server, the server has refs the checkout lacks, or the folder or the server
+is unavailable. `--verbose` shows every checkout in the detailed form that
+`--repo` uses for one repository, and the command exits `3` whenever a row
+needs attention.
 Discovery stays explicit: `status --scan` inspects configured roots;
 `checkout list --scan` also lists additional paired copies without selecting
 them. `sync --scan` discovers paired checkouts under those roots and obeys

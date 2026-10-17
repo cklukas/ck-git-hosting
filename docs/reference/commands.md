@@ -19,7 +19,7 @@ ckgit scan ROOT [ROOT ...]
 ckgit scan --json ROOT [ROOT ...]
 ckgit scan
 ckgit config show
-ckgit status [--repo PATH | --scan]
+ckgit status [--repo PATH | --scan] [--verbose]
 ckgit clone NAME [DESTINATION]
 ckgit clone --all --into DIR [--dry-run] [--yes]
 ckgit clone --project NAME [--project NAME ...] --into DIR [--dry-run] [--yes]
@@ -38,7 +38,7 @@ ckgit web [--config PATH] [--port PORT] [--remote-port PORT] [--project NAME] [-
 ckgit open [PATH | --commit REV | --ci | --run RUN] [--repo PATH] [--port PORT] [--remote-port PORT] [--no-open]
 ckgit release list PROJECT [--json]
 ckgit release download PROJECT [--tag TAG] [--asset NAME] [--into DIR]
-ckgit ci status [--project NAME | --all] [--json]
+ckgit ci status [--project NAME | --all [--enabled]] [--json]
 ckgit ci list [--project NAME] [--limit N] [--json]
 ckgit ci show RUN [--project NAME] [--json]
 ckgit ci log RUN [STEP] [--project NAME] [--follow]

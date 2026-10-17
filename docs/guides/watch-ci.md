@@ -51,6 +51,7 @@ A run still queued is cancelled before it starts.
   ```text
   ckgit ci status                  # CI on or off, latest and active run
   ckgit ci status --all            # the same for every hosted project
+  ckgit ci status --all --enabled  # only the projects that have CI enabled
   ckgit ci list --limit 10         # runs, newest first, with their ids
   ckgit ci show RUN                # runner, steps, exit codes, detail, artifacts
   ckgit ci log RUN --follow        # the running step's raw log, live, then the next
