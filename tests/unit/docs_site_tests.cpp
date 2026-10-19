@@ -517,11 +517,13 @@ void testBuild() {
         "# X page\n\n[to y](02-y.md#y) [home](../../README.md) [missing](nope.md) [bad anchor](02-y.md#nope) "
         "[dir](../b/) [abs](/docs/z.md) [pdf](../files/spec.pdf) [self](#install) [outside](../../CONTRIBUTING.md) "
         "[sp](my%20page.md) [ext](https://example.test/x#frag)\n\n![flow](../img/flow.png)\n\n"
+        "| Figure |\n|---|\n| [![badge](../img/badge.svg \"Badge\")](02-y.md) |\n\n"
         "## Install\n\nText.\n\n### Pair\n\nMore.\n\n## Use\n");
   write(scratch.root / "docs/a/02-y.md", "---\ntitle: Why\nnav_order: 1\n---\n# Y\n\n> [!NOTE]\n> Noted.\n\n- [ ] task\n\n```cpp\nint x;\n```\n");
   write(scratch.root / "docs/a/my page.md", "# My page\n");
   write(scratch.root / "docs/img/flow.png", "PNGDATA");
   write(scratch.root / "docs/img/unref.png", "UNREF");
+  write(scratch.root / "docs/img/badge.svg", "<svg/>");
   write(scratch.root / "docs/files/spec.pdf", "%PDF");
   write(scratch.root / "CONTRIBUTING.md", "# Contributing\n");
   write(scratch.root / "docs/site.css", "body{}");
@@ -532,9 +534,10 @@ void testBuild() {
   const auto site = scratch.root / "site";
   ckgit::DocsBuildReport report;
   ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, &report);
-  require(report.pages_written == 8 && report.assets_copied == 3, "eight pages; the logo, the stylesheet and two referenced files");
+  require(report.pages_written == 8 && report.assets_copied == 4,
+          "eight pages; the logo, the stylesheet and three referenced files (one only as a linked image)");
   for (const auto* file : {"index.html", "a/01-x.html", "a/02-y.html", "a/my page.html", "b/index.html", "b/deep/inner.html",
-                           "z.html", "hidden.html", "site-index.html", ".ckdocs", "img/flow.png", "files/spec.pdf", "site.css"}) {
+                           "z.html", "hidden.html", "site-index.html", ".ckdocs", "img/flow.png", "img/badge.svg", "files/spec.pdf", "site.css"}) {
     require(fs::is_regular_file(site / file), std::string("written: ") + file);
   }
   require(!fs::exists(site / "img/unref.png"), "an unreferenced file is not copied");
@@ -548,6 +551,8 @@ void testBuild() {
               contains(x, "href=\"../z.html\"") && contains(x, "href=\"../files/spec.pdf\"") && contains(x, "href=\"#install\"") &&
               contains(x, "href=\"my%20page.html\"") && contains(x, "src=\"../img/flow.png\" alt=\"flow\""),
           "page, directory, absolute, file, fragment and encoded links resolve relative to the page");
+  require(contains(x, "<td class=\"align-left\"><a href=\"02-y.html\"><img src=\"../img/badge.svg\" title=\"Badge\" alt=\"badge\" loading=\"lazy\"></a></td>"),
+          "a linked image in a table cell links to the page and shows the copied image");
   require(contains(x, "[missing](nope.md)") && contains(x, "[outside](../../CONTRIBUTING.md)") && !contains(x, "nope.html"),
           "links to nothing stay text");
   require(report.broken_links.size() == 2 && contains(report.broken_links[0], "docs/a/01-x.md:3: link target 'nope.md' is not a page") &&

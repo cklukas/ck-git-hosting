@@ -865,8 +865,10 @@ class Renderer {
         index += count;
         continue;
       }
+      // A link's label is rendered without links (`allow_links` is false
+      // there), but an image may still be the label: `[![alt](src)](href)`.
       const bool image = value[index] == '!' && index + 1 < value.size() && value[index + 1] == '[';
-      if (allow_links && (value[index] == '[' || image)) {
+      if (image || (allow_links && value[index] == '[')) {
         const auto label_start = index + (image ? 2 : 1);
         std::size_t label_end = label_start;
         std::size_t nested = 1;

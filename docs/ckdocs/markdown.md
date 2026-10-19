@@ -12,6 +12,7 @@ files, so a page looks the same wherever it is read.
 | Construct | Syntax | Notes |
 |---|---|---|
 | Headings, paragraphs, emphasis, inline code, links, images, autolinks | as in CommonMark | Every heading gets a GitHub-style slug `id`, deduplicated (`install`, `install-1`, …). |
+| Linked images | `[![alt text](image.svg "title")](page.md)` | An image as a link's label, in a paragraph or a table cell, with or without a title: a clickable `<img>`. Both targets resolve as described below. |
 | Blockquotes, lists | as in CommonMark | Ordered, unordered, nested, loose or tight. |
 | Fenced and indented code | ` ``` ` / four-space indent | A fence's info string (` ```cpp `) also selects syntax highlighting for C/C++, Python, shell, YAML, and JSON; an unrecognized name renders as plain code, never an error. |
 | Mermaid diagrams | ` ```mermaid ` | Native SVG rendering; see the [complete gallery](mermaid.md#mermaid-diagrams). |
@@ -42,7 +43,8 @@ Collapsed **Markdown** content.
 ## Links and assets
 
 Inside a page, an ordinary link's `[label]` and `(destination)`, or an
-image's `![alt text]` and `(destination)`:
+image's `![alt text]` and `(destination)` — both of them in a linked image,
+`[![alt text](figure.svg)](page.md)`:
 
 - `http://`, `https://`, `mailto:`, and a pure `#fragment` pass through
   unchanged.

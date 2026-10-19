@@ -475,6 +475,33 @@ void testMarkdownExtensions() {
   };
   check(renderMarkdown("[g](guide.md#top)", standalone) == "<p><a href=\"guide.md.html#top\">g</a></p>\n",
         "a resolver needs no project or commit identity");
+  // An image may be a link's label: both targets resolve, the image keeps its
+  // title and alternative text, and only the outer link is a link.
+  check(renderMarkdown("[![tsp](assets/tsp.svg \"Tour\")](examples/tsp.md)", standalone) ==
+            "<p><a href=\"examples/tsp.md.html\"><img src=\"assets/tsp.svg.html\" title=\"Tour\" alt=\"tsp\" loading=\"lazy\"></a></p>\n",
+        "a linked image renders as an img inside the link");
+  check(renderMarkdown("x [![a](i.svg)](p.md) y", standalone) ==
+            "<p>x <a href=\"p.md.html\"><img src=\"i.svg.html\" alt=\"a\" loading=\"lazy\"></a> y</p>\n",
+        "a linked image without a title sits inside running text");
+  check(contains(renderMarkdown("| A | B |\n|---|---|\n| [![a](i.svg \"t\")](p.md)<br><small>note</small> | z |\n", standalone),
+                 "<td class=\"align-left\"><a href=\"p.md.html\"><img src=\"i.svg.html\" title=\"t\" alt=\"a\" loading=\"lazy\"></a><br><small>note</small></td>"),
+        "a linked image works in a table cell beside other inline markup");
+  check(contains(renderMarkdown("[**see** ![a](i.svg)](p.md)", standalone),
+                 "<a href=\"p.md.html\"><strong>see</strong> <img src=\"i.svg.html\" alt=\"a\" loading=\"lazy\"></a>"),
+        "a label may mix text and an image");
+  const auto unsafe_linked = renderMarkdown(
+      "[![a](javascript:x)](p.md) [![b](i.svg)](javascript:y) [![c\"><script>](i.svg \"q\\\"><b>\")](p.md) "
+      "[[inner](q.md)](p.md) [<https://auto.test/>](p.md)", standalone);
+  check(contains(unsafe_linked, "<a href=\"p.md.html\">![a](javascript:x)</a>"),
+        "an image with an unsafe source stays text inside the link");
+  check(contains(unsafe_linked, "[![b](i.svg)](javascript:y)") && !contains(unsafe_linked, "href=\"javascript"),
+        "an unsafe link around an image stays text, image included");
+  check(contains(unsafe_linked, "title=\"q&quot;&gt;&lt;b&gt;\" alt=\"c&quot;&gt;&lt;script&gt;\"") && !contains(unsafe_linked, "<script>"),
+        "a linked image's title and alternative text are escaped");
+  check(!contains(unsafe_linked, "q.md.html") && !contains(unsafe_linked, "href=\"https://auto.test/"),
+        "links and autolinks still do not nest inside a link's label");
+  check(contains(renderMarkdown("# [![Logo](logo.svg)](index.md) Home\n", standalone), "<h1 id=\"logo-home\">"),
+        "a heading's id uses a linked image's alternative text");
   check(contains(renderMarkdown("[g](guide.md)", ctx), "href=\"/project/example/blob/" + std::string(40, 'a') + ":guide.md\""),
         "without a resolver relative links are dashboard routes as before");
 
