@@ -68,11 +68,11 @@ sentence. ckdocs shows it in four places:
 
 - **Site index:** as a muted line under the page's link, so the index reads
   as an annotated table of contents.
-- **Search results:** with [search](configuration.md#search) on, a query that
+- **Search results:** with [search](search.md#search) on, a query that
   matches a page's title, description or tags lists the page itself, with the
   description as its summary, ahead of its matching sections.
 - **`llms.txt`:** as the text after the page's link (see
-  [Sitemap and llms.txt](configuration.md#sitemap-and-llmstxt)).
+  [llms.txt and Markdown versions](search.md#llmstxt-and-markdown-versions)).
 - **The page's `<meta name="description">`:** what search engines and link
   previews show.
 
@@ -92,7 +92,7 @@ A page with an `author` or a `date` shows a small byline, such as
 leading `#` heading, or at the very top of the page when it does not open
 with one. It is plain markup styled by the built-in stylesheet (the date is
 a `<time datetime="…">` element), so it needs no script; it is not part of
-the [search](configuration.md#search) index.
+the [search](search.md#search) index.
 
 ### Tags
 

@@ -1,0 +1,52 @@
+# ck-git-hosting's own documentation: one site of the portal in ckdocs.yml.
+version: 1
+site:
+  title: ck-git-hosting
+  description: Private Git hosting, continuous integration, and documentation for your server.
+  footer: "© 2026 C. Klukas · MIT License"
+  links:
+    - title: GitHub
+      url: https://github.com/cklukas/ck-git-hosting
+      icon: github
+source: docs
+home: README.md
+exclude:
+  - docs/ckdocs
+search: true
+nav:
+  - title: Home
+    page: README.md
+  - title: Guides
+    pages:
+      - docs/guides/client-setup.md
+      - docs/guides/publish-and-sync.md
+      - docs/guides/clone-and-update.md
+      - docs/guides/manage-checkouts.md
+      - docs/operations/08-web-dashboard.md
+      - docs/guides/ci-and-releases.md
+      - docs/guides/watch-ci.md
+  - title: Server
+    pages:
+      - docs/operations/01-installation.md
+      - docs/operations/02-packages-and-releases.md
+      - docs/operations/manage-projects.md
+      - docs/operations/03-backup-and-recovery.md
+      - docs/operations/05-releases-and-deploy.md
+  - title: CI
+    pages:
+      - docs/operations/04-ci-cd.md
+      - docs/operations/ci-runner.md
+      - docs/operations/ci-remote-runners.md
+      - docs/operations/ci-artifacts-and-cache.md
+      - docs/operations/releases.md
+      - docs/operations/pages-hosting.md
+      - docs/operations/07-docs-sites.md
+      - docs/operations/06-ci-yml-reference.md
+      - docs/reference/ci-runtime.md
+      - docs/reference/ci-examples.md
+  - title: Reference
+    pages:
+      - docs/reference/commands.md
+      - docs/reference/dashboard.md
+      - docs/reference/build-and-test.md
+      - docs/protocol/01-ssh-and-control-v1.md

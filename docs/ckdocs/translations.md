@@ -89,6 +89,6 @@ inside the mirrored layout.
 
 ## With several sites
 
-In a [portal](configuration.md#several-sites-in-one-build), translations
+In a [portal](portals.md), translations
 belong to each site's own configuration; a site's languages are built under
 `<id>/<lang>/`, and the language menu and site selector sit side by side.

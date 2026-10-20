@@ -66,7 +66,7 @@ description: How ckdocs finds pages, names and orders them, and builds the tabs,
   directly; every page it does not mention is still built and reachable
   from the generated site index, so nothing tracked ever silently
   disappears.
-- **Markdown versions.** By default, every HTML page also has a clean `.html.md` version. Use the **Markdown** footer link to read its unrendered text. The [llms publishing setting](configuration.md#sitemap-and-llmstxt) controls these versions and discovery links together.
+- **Markdown versions.** By default, every HTML page also has a clean `.html.md` version. Use the **Markdown** footer link to read its unrendered text. The [llms publishing setting](search.md#llmstxt-and-markdown-versions) controls these versions and discovery links together.
 - **The site index.** `site-index.html` lists every tab, page, and second-
   and third-level heading as plain nested lists, with each page's
   [`description`](front-matter.md#page-descriptions) as a short line under

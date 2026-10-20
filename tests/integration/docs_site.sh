@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: MIT
 #
 # Builds this repository's own documentation with the ckdocs binary and
-# checks the result the way a reader's browser would: the task-based top-level
-# tabs are present, no absolute href/src leaked in, and every internal
+# checks the result the way a reader's browser would: its two sites (the
+# ck-git-hosting manual and the ckdocs manual) carry their task-based tabs,
+# logos and site selector, links between them resolve, the former addresses
+# redirect, no absolute href/src leaked in, and every internal
 # reference resolves to a file relative to the page that carries it. Then, on
 # a small synthetic fixture, proves a broken link fails `ckdocs check` with a
 # report naming both the offending page and its target -- the CLI wiring
@@ -80,7 +82,7 @@ fi
 
 # A publishing host override must change both indexes without editing config.
 "$CKDOCS" build --root "$repo_root" --site-url https://publish.example.test/project --out "$test_root/host-site" --strict >"$test_root/host-build.log" 2>&1
-grep -qF '(https://publish.example.test/project/index.html.md)' "$test_root/host-site/llms.txt" ||
+grep -qF '(https://publish.example.test/project/hosting/index.html.md)' "$test_root/host-site/llms.txt" ||
   { echo "--site-url did not override llms.txt URLs" >&2; exit 1; }
 grep -qF '<loc>https://publish.example.test/project/index.html</loc>' "$test_root/host-site/sitemap.xml" ||
   { echo "--site-url did not override sitemap URLs" >&2; exit 1; }
@@ -90,20 +92,44 @@ bad_url_status=$?
 set -e
 [ "$bad_url_status" -eq 2 ] || { echo "unsafe --site-url should be a usage error" >&2; exit 1; }
 
-for page in index.html index.html.md llms.txt operations/01-installation.html operations/01-installation.html.md protocol/01-ssh-and-control-v1.html site-index.html site-index.html.md .ckdocs; do
+# The repository's ckdocs.yml is a portal of two sites: ck-git-hosting under
+# hosting/ (which also takes over the root) and the ckdocs manual under ckdocs/.
+for page in index.html llms.txt sitemap.xml .ckdocs hosting/index.html hosting/index.html.md \
+  hosting/operations/01-installation.html hosting/operations/01-installation.html.md \
+  hosting/protocol/01-ssh-and-control-v1.html hosting/site-index.html hosting/site-index.html.md \
+  ckdocs/index.html ckdocs/index.html.md ckdocs/configuration.html ckdocs/site-index.html; do
   [ -f "$site/$page" ] || { echo "expected $page in the built site" >&2; exit 1; }
 done
 
-grep -qF 'rel="alternate" type="text/markdown" href="index.html.md"' "$site/index.html" ||
+# Addresses of the former single site still lead to their pages.
+grep -qF 'url=../hosting/operations/01-installation.html"' "$site/operations/01-installation.html" ||
+  { echo "the former address of a page does not redirect to it" >&2; exit 1; }
+
+grep -qF 'rel="alternate" type="text/markdown" href="index.html.md"' "$site/hosting/index.html" ||
   { echo "home page is missing v2 alternate discovery" >&2; exit 1; }
-grep -qF 'rel="describedby" href="../llms.txt"' "$site/operations/01-installation.html" ||
+grep -qF 'rel="describedby" href="../../llms.txt"' "$site/hosting/operations/01-installation.html" ||
   { echo "nested page is missing covering-index discovery" >&2; exit 1; }
 grep -qF '.html.md)' "$site/llms.txt" || { echo "llms.txt is missing Markdown page links" >&2; exit 1; }
 
-grep -q '>Home</a>' "$site/index.html" || { echo "index.html is missing the Home link" >&2; exit 1; }
-for tab in Guides Server CI ckdocs Reference; do
-  grep -q "<summary><span>$tab</span>" "$site/index.html" || { echo "index.html is missing the $tab dropdown" >&2; exit 1; }
+grep -q '>Home</a>' "$site/hosting/index.html" || { echo "hosting/index.html is missing the Home link" >&2; exit 1; }
+for tab in Guides Server CI Reference; do
+  grep -q "<summary><span>$tab</span>" "$site/hosting/index.html" || { echo "hosting/index.html is missing the $tab dropdown" >&2; exit 1; }
 done
+for tab in Guide Diagrams Reference; do
+  grep -q "<summary><span>$tab</span>" "$site/ckdocs/index.html" || { echo "ckdocs/index.html is missing the $tab dropdown" >&2; exit 1; }
+done
+
+# The site selector leads between both manuals; each carries its own logo.
+grep -qF '<a href="../ckdocs/index.html">ckdocs</a>' "$site/hosting/index.html" ||
+  { echo "the ck-git-hosting site does not offer the ckdocs manual" >&2; exit 1; }
+grep -qF '<a href="../hosting/index.html">ck-git-hosting</a>' "$site/ckdocs/index.html" ||
+  { echo "the ckdocs manual does not offer the ck-git-hosting site" >&2; exit 1; }
+grep -qF '<img src="../docs/images/ck-git-hosting.svg" alt="">' "$site/hosting/index.html" ||
+  { echo "the ck-git-hosting site is missing its logo" >&2; exit 1; }
+grep -qF '<img src="images/ckdocs.svg" alt="">' "$site/ckdocs/index.html" ||
+  { echo "the ckdocs manual is missing its own logo" >&2; exit 1; }
+grep -qF 'href="../../ckdocs/configuration.html' "$site/hosting/operations/07-docs-sites.html" ||
+  { echo "a link from one site's page into the other site did not resolve" >&2; exit 1; }
 
 # Restricted to *.html: the site legitimately carries copied non-HTML
 # assets (this guide links to this very script, which is why it is one),
@@ -166,7 +192,7 @@ for gallery in "$site"/ckdocs/diagrams/*.html; do
   diagram_count=$((diagram_count + count))
 done
 [ "$diagram_count" -eq 23 ] || { echo "expected all 23 Mermaid example pages, got $diagram_count" >&2; exit 1; }
-for svg in "$site"/_ckdocs-mermaid/*.svg; do
+for svg in "$site"/ckdocs/_ckdocs-mermaid/*.svg; do
   grep -q '<svg ' "$svg" || { echo "invalid generated SVG: $svg" >&2; exit 1; }
 done
 
@@ -430,14 +456,15 @@ check_serve() {  # check_serve PATH 'HTTP STATUS LINE' [CONTENT-TYPE PATTERN]
 
 check_serve "/" "HTTP/1.1 200 OK" "text/html"
 check_serve "/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
-check_serve "/operations/07-docs-sites.html.md" "HTTP/1.1 200 OK" "text/plain"
+check_serve "/hosting/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/hosting/operations/07-docs-sites.html.md" "HTTP/1.1 200 OK" "text/plain"
 grep -qF "#" "$test_root/serve-body" || { echo "Markdown response is missing article content" >&2; exit 1; }
 if grep -qF "<!doctype html>" "$test_root/serve-body"; then echo "Markdown URL returned the HTML shell" >&2; exit 1; fi
 check_serve "/llms.txt" "HTTP/1.1 200 OK" "text/plain"
-check_serve "/operations/08-web-dashboard.html" "HTTP/1.1 200 OK" "text/html"
-check_serve "/images/web-files.png" "HTTP/1.1 200 OK" "image/png"
-diagram_asset=$(basename "$(find "$site/_ckdocs-mermaid" -name '*.svg' | head -n 1)")
-check_serve "/_ckdocs-mermaid/$diagram_asset" "HTTP/1.1 200 OK" "image/svg+xml"
+check_serve "/hosting/operations/08-web-dashboard.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/hosting/images/web-files.png" "HTTP/1.1 200 OK" "image/png"
+diagram_asset=$(basename "$(find "$site/ckdocs/_ckdocs-mermaid" -name '*.svg' | head -n 1)")
+check_serve "/ckdocs/_ckdocs-mermaid/$diagram_asset" "HTTP/1.1 200 OK" "image/svg+xml"
 check_serve "/nope.html" "HTTP/1.1 404 Not Found"
 
 stop_serve || exit 1

@@ -38,8 +38,8 @@ inline constexpr std::size_t kMaximumDocsSiteIdBytes = 32;
 inline constexpr std::size_t kMaximumDocsLocales = 16;
 inline constexpr std::size_t kMaximumDocsPageTags = 32;      // tags (and keywords) on one page
 inline constexpr std::size_t kMaximumDocsTagBytes = 64;
-inline constexpr std::size_t kMaximumDocsHeroActions = 4;
-inline constexpr std::size_t kMaximumDocsFeatures = 24;
+inline constexpr std::size_t kMaximumDocsHeroActions = 8;   // buttons in a landing page's hero
+inline constexpr std::size_t kMaximumDocsFeatures = 16;      // cards on a landing page
 
 struct DocsLink {
   std::string title;

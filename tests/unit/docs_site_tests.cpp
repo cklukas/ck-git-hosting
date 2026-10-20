@@ -429,7 +429,7 @@ void testThisRepository() {
     require(model.source == "docs" && model.pages[model.home].source == "README.md", "this repository's docs tree and README");
     require(std::none_of(model.pages.begin(), model.pages.end(), [](const ckgit::DocsPage& page) { return contains(page.source, "planning"); }),
             "gitignored planning documents are never pages");
-    require(model.nav.size() == 6 && model.nav[0].title == "Home" && model.nav[1].title == "Ckdocs" &&
+    require(model.nav.size() == 6 && model.nav[0].title == "Home" && model.nav[1].title == "ckdocs" &&
                 model.nav[2].title == "Guides" && model.nav[3].title == "Operations" &&
                 model.nav[4].title == "Protocol" && model.nav[5].title == "Reference",
             "derived tabs follow the documentation directories");
@@ -441,37 +441,49 @@ void testThisRepository() {
     }
   }
 
-  // Exercise the task-based navigation actually published on both sites.
+  // Exercise the portal actually published on both hosts: the ck-git-hosting
+  // manual and the ckdocs manual as two sites of one portal.
   {
     const auto config = ckgit::readDocsConfig(root);
-    require(!config.title.empty(), "this repository ships its own ckdocs.yml");
+    require(config.title == "ck-git-hosting" && config.sites.size() == 2 && !config.logo.empty() &&
+                !config.favicon.empty() && config.links.size() == 1 && config.links[0].title == "GitHub" &&
+                !config.footer.empty(),
+            "this repository's ckdocs.yml is a branded portal with a header link and footer");
     std::vector<std::string> warnings;
-    const auto model = ckgit::loadDocsSite(root, config, &warnings);
-    require(model.title == "ck-git-hosting" && model.pages[model.home].source == "README.md" &&
-                model.nav.size() == 6 && model.nav[0].title == "Home" && model.nav[1].title == "Guides" &&
-                model.nav[2].title == "Server" && model.nav[3].title == "CI" &&
-                model.nav[4].title == "ckdocs" && model.nav[5].title == "Reference",
-            "the configured site: title, home, and task-based tabs");
-    require(warnings.empty(), "every documentation page belongs to the configured navigation");
-    const auto& guides = model.nav[1].children;
+    const auto portal = ckgit::loadDocsPortal(root, config, ckgit::DocsPortalOptions{}, &warnings);
+    require(warnings.empty(), "every documentation page belongs to its site's navigation");
+    require(portal.sites.size() == 2 && portal.sites[0].entry.id == "hosting" && portal.sites[1].entry.id == "ckdocs",
+            "the portal's two sites");
+
+    const auto& hosting = portal.sites[0].model;
+    require(hosting.title == "ck-git-hosting" && hosting.pages[hosting.home].source == "README.md" &&
+                hosting.nav.size() == 5 && hosting.nav[0].title == "Home" && hosting.nav[1].title == "Guides" &&
+                hosting.nav[2].title == "Server" && hosting.nav[3].title == "CI" && hosting.nav[4].title == "Reference",
+            "the ck-git-hosting site: title, home, and task-based tabs");
+    require(std::none_of(hosting.pages.begin(), hosting.pages.end(),
+                         [](const ckgit::DocsPage& page) { return page.source.starts_with("docs/ckdocs/"); }),
+            "the ckdocs manual is not part of the ck-git-hosting site");
+    const auto& guides = hosting.nav[1].children;
     require(!guides.empty() && guides[0].page.has_value() &&
-                model.pages[*guides[0].page].source == "docs/guides/client-setup.md",
+                hosting.pages[*guides[0].page].source == "docs/guides/client-setup.md",
             "the user guides begin with client setup");
-    const auto& docs = model.nav[4].children;
-    require(docs.size() == 14 && docs[0].page.has_value() &&
-                model.pages[*docs[0].page].source == "docs/operations/07-docs-sites.md",
-            "ckdocs has nine guides and five diagram categories");
+
+    const auto& manual = portal.sites[1].model;
+    require(manual.title == "ckdocs" && manual.pages[manual.home].source == "docs/ckdocs/README.md" &&
+                !manual.config.logo.empty() && manual.config.logo != config.logo,
+            "the ckdocs manual has its own home page and logo");
+    require(manual.nav.size() == 4 && manual.nav[0].title == "Home" && manual.nav[1].title == "Guide" &&
+                manual.nav[2].title == "Diagrams" && manual.nav[3].title == "Reference",
+            "the ckdocs manual's tabs");
     std::size_t diagram_pages = 0;
-    for (const auto& group : docs) {
+    for (const auto& group : manual.nav[2].children) {
       for (const auto& example : group.children) {
-        require(example.page.has_value() && model.pages[*example.page].source.starts_with("docs/ckdocs/diagrams/"),
+        require(example.page.has_value() && manual.pages[*example.page].source.starts_with("docs/ckdocs/diagrams/"),
                 "diagram categories link to individual example pages");
         ++diagram_pages;
       }
     }
     require(diagram_pages == 23, "all supported diagram examples appear in navigation");
-    require(config.links.size() == 1 && config.links[0].title == "GitHub" && !config.footer.empty(),
-            "the configured header link and footer");
   }
 }
 
@@ -1197,7 +1209,8 @@ void testPortalBuild() {
       "    ref: main\n"
       "    redirect_from_root: true\n";
   write(root / "ckdocs.yml", portal_yaml);
-  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\n  favicon: unused-child-icon.png\nllms: false\nsource: cpp-docs\n");
+  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\n  favicon: cpp-docs/icon.svg\nllms: false\nsource: cpp-docs\n");
+  write(root / "cpp-docs/icon.svg", "<svg/>");
   write(root / "cpp-docs/README.md", "# C++ home\n\nSee the [API](api.md#calls).\n");
   write(root / "cpp-docs/api.md", "# API\n\n## Calls\n");
   write(root / "portal/welcome.md", "Choose an edition, or start with the [Python guide](/python/guide.html).\n\n"
@@ -1237,8 +1250,8 @@ void testPortalBuild() {
   require(!fs::exists(out / "search-index.json") && !fs::exists(out / "site-index.html") && !fs::exists(out / "cpp/search-index.json") &&
               !fs::exists(out / "cpp/.ckdocs") && !fs::exists(out / "python/.ckdocs"),
           "one marker; search only where a site asked for it");
-  require(report.pages_written == 5 && report.redirects_written == 1 && report.assets_copied == 1,
-          "two pages per site, the welcome page, one redirect, the logo");
+  require(report.pages_written == 5 && report.redirects_written == 1 && report.assets_copied == 2,
+          "two pages per site, the welcome page, one redirect, the logo, the C++ site's favicon");
   require(report.broken_links.size() == 1 && report.broken_links[0] == "python: docs/guide.md:3: link target 'nope.md' is not a page of this site",
           "a site's broken link is reported under its id");
   require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "portal/welcome.md: '#nowhere' names no heading"),
@@ -1264,7 +1277,8 @@ void testPortalBuild() {
 
   const auto api = slurp(out / "cpp/api.html");
   checkInternalReferences(out, "cpp/api.html", api);
-  require(contains(api, "<link rel=\"icon\" href=\"../portal/logo.svg\">"), "the portal favicon replaces a child site favicon");
+  require(contains(api, "<link rel=\"icon\" href=\"icon.svg\">") && !contains(api, "href=\"../portal/logo.svg\">"),
+          "a child site's own favicon replaces the portal's on its pages");
   require(contains(api, "<summary>C++ edition</summary>") && contains(api, "<a href=\"index.html\" aria-current=\"true\">C++ edition</a>") &&
               contains(api, "<a href=\"../python/index.html\">Python edition</a>") && !contains(api, "ckdocs-search"),
           "the C++ site's selector");

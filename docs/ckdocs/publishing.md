@@ -28,7 +28,7 @@ every push.
 
 ## Several sites from several branches
 
-A [portal configuration](configuration.md#several-sites-in-one-build) can
+A [portal configuration](portals.md) can
 render a site from another branch with `ref:`. The build then needs that
 branch's tree. In a full clone with the branch fetched, ckdocs extracts it
 by itself; a CI checkout usually has neither, so give it the branch one of

@@ -212,7 +212,7 @@ DocsHome parseHome(const Node& front) {
     }
     if (const Node* actions = findEntry(*hero, "actions")) {
       requireKind(*actions, Node::Kind::Sequence, "hero.actions to be a list");
-      if (actions->items.size() > 8) malformed("hero.actions has more than 8 entries", actions->line);
+      if (actions->items.size() > kMaximumDocsHeroActions) malformed("hero.actions has more than 8 entries", actions->line);
       for (const Node& action : actions->items) {
         requireKind(action, Node::Kind::Mapping, "a hero action to be a mapping");
         rejectUnknownKeys(action, {"text", "link", "theme"});
@@ -228,7 +228,7 @@ DocsHome parseHome(const Node& front) {
   }
   if (const Node* features = findEntry(front, "features")) {
     requireKind(*features, Node::Kind::Sequence, "features to be a list");
-    if (features->items.size() > 16) malformed("features has more than 16 entries", features->line);
+    if (features->items.size() > kMaximumDocsFeatures) malformed("features has more than 16 entries", features->line);
     for (const Node& feature : features->items) {
       requireKind(feature, Node::Kind::Mapping, "a feature to be a mapping");
       rejectUnknownKeys(feature, {"title", "details", "icon", "link"});
@@ -2347,10 +2347,10 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(context.version) + "\">";
   if (portal != nullptr ? portal->portal->config.llms : model.config.llms)
     out += llmsDiscovery(portal_dir, in.output);
-  if (portal != nullptr && !portal->favicon_output.empty()) {
-    out += "<link rel=\"icon\" href=\"" + portalUrl(portal->favicon_output) + "\">";
-  } else if (!context.favicon_output.empty()) {
+  if (!context.favicon_output.empty()) {
     out += "<link rel=\"icon\" href=\"" + url(context.favicon_output) + "\">";
+  } else if (portal != nullptr && !portal->favicon_output.empty()) {
+    out += "<link rel=\"icon\" href=\"" + portalUrl(portal->favicon_output) + "\">";
   }
   out += "<style>";
   out += kDocsStyles;
@@ -2372,9 +2372,13 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   // Header: brand (the portal's, in a portal), the site selector, tabs, links.
   if (portal != nullptr) {
     const DocsConfig& portal_config = portal->portal->config;
+    // The brand leads to the welcome page; a site's own logo and brand,
+    // when it names them, show which site the reader is in.
     out += "<header class=\"site\"><a class=\"brand\" href=\"" + portalUrl("index.html") + "\">";
-    if (!portal->logo_output.empty()) out += "<img src=\"" + portalUrl(portal->logo_output) + "\" alt=\"\">";
-    out += escapeHtml(portal_config.brand.empty() ? portal_config.title : portal_config.brand) + "</a>";
+    if (!context.logo_output.empty()) out += "<img src=\"" + url(context.logo_output) + "\" alt=\"\">";
+    else if (!portal->logo_output.empty()) out += "<img src=\"" + portalUrl(portal->logo_output) + "\" alt=\"\">";
+    out += escapeHtml(!model.config.brand.empty() ? model.config.brand
+                      : portal_config.brand.empty() ? portal_config.title : portal_config.brand) + "</a>";
     out += renderSiteSelector(*portal->portal, portal->current, portal_dir, ui);
   } else {
     out += "<header class=\"site\"><a class=\"brand\" href=\"" + url(model.pages[model.home].output) + "\">";
@@ -2924,6 +2928,23 @@ std::string relativeDirectory(std::string_view from, std::string_view to) {
   return result;
 }
 
+// The portal-relative output of the page `root_relative` names in another
+// site of `portal` that is read from the same tree as `model` (a site from
+// another Git ref has its own files): the file itself, or a directory's
+// README.md / index.md.
+std::optional<std::string> otherSitePage(const DocsPortalModel& portal, const DocsSiteModel& model, const std::string& root_relative,
+                                         bool directory) {
+  for (const auto& site : portal.sites) {
+    if (&site.model == &model || site.model.root != model.root) continue;
+    for (const auto& page : site.model.pages) {
+      const bool match = (!directory && page.source == root_relative) ||
+                         page.source == joinPath(root_relative, "README.md") || page.source == joinPath(root_relative, "index.md");
+      if (match) return site.entry.id + "/" + page.output;
+    }
+  }
+  return std::nullopt;
+}
+
 // The opening of a page's text for a listing that has no description for it:
 // the first sentence of its first non-empty section, else that excerpt as is.
 std::string pageLead(const std::vector<SearchSection>& sections) {
@@ -3027,9 +3048,10 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     if (!problem.empty()) siteError(std::string(what) + " '" + root_relative + "' " + problem);
     return output;
   };
-  // In a portal the header shows the portal's brand and logo, not the site's.
-  if (portal == nullptr && !model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
-  if (portal == nullptr && !model.config.favicon.empty()) context.favicon_output = addAsset(model.config.favicon, "site.favicon");
+  // A site's own logo and favicon; in a portal they replace the portal's on
+  // the site's pages, so each site can carry its own mark.
+  if (!model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
+  if (!model.config.favicon.empty()) context.favicon_output = addAsset(model.config.favicon, "site.favicon");
   if (!model.config.stylesheet.empty()) context.stylesheet_output = addAsset(model.config.stylesheet, "site.stylesheet");
 
   const auto writeFile = [&](const std::string& site_path, const std::string& content) { tree.write(prefix + site_path, content); };
@@ -3086,6 +3108,14 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
         const auto candidate = normalized->empty() ? std::string(name) : *normalized + "/" + name;
         if (const auto found = page_by_source.find(candidate); found != page_by_source.end()) {
           return relativeUrl(out_dir, model.pages[found->second].output);
+        }
+      }
+      // In a portal, a page of another site read from the same tree is
+      // reached in that site's directory: the sites link to each other the
+      // way their files do.
+      if (portal != nullptr) {
+        if (const auto other = otherSitePage(*portal->portal, model, *normalized, directory_target)) {
+          return relativeUrl(prefix + out_dir, *other);
         }
       }
       // The source-relative clean URL lookup below also handles directories.

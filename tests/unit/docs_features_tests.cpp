@@ -378,6 +378,39 @@ void testTranslations() {
   require(contains(loadError(root), "inside the 'de/' directory of that translation"), "a default page in a translation's directory");
 }
 
+void testPortalSites() {
+  Scratch scratch;
+  const auto& root = scratch.root;
+  write(root / "ckdocs.yml",
+        "version: 1\nsite:\n  title: Portal\n  logo: images/portal.svg\n  favicon: images/portal.svg\n"
+        "sites:\n  - id: main\n    title: Main\n    config: main.yml\n  - id: tool\n    title: Tool\n    config: docs/tool/tool.yml\n");
+  write(root / "main.yml", "version: 1\nsite:\n  title: Main\nsource: docs\nexclude: [docs/tool]\n");
+  write(root / "docs/tool/tool.yml",
+        "version: 1\nsite:\n  title: Tool\n  brand: The tool\n  logo: docs/tool/tool.svg\n  favicon: docs/tool/tool.svg\nsource: docs/tool\n");
+  write(root / "images/portal.svg", "<svg/>");
+  write(root / "docs/tool/tool.svg", "<svg/>");
+  write(root / "docs/README.md", "# Main\n\n[The tool](tool/guide.md#use) and [its home](tool/).\n");
+  write(root / "docs/setup.md", "# Setup\n");
+  write(root / "docs/tool/README.md", "# Tool\n\n[Back to setup](../setup.md).\n");
+  write(root / "docs/tool/guide.md", "# Guide\n\n## Use\n");
+  std::vector<std::string> warnings;
+  const auto portal = ckgit::loadDocsPortal(root, ckgit::readDocsConfig(root), ckgit::DocsPortalOptions{}, &warnings);
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsPortal(portal, root / "site", ckgit::DocsBuildOptions{}, &report);
+  require(report.broken_links.empty(), "links between the sites resolve");
+  const auto main = slurp(root / "site/main/index.html");
+  require(contains(main, "<a href=\"../tool/guide.html#use\">The tool</a>") && contains(main, "<a href=\"../tool/index.html\">its home</a>"),
+          "a page links to another site's page and directory");
+  require(contains(slurp(root / "site/tool/index.html"), "<a href=\"../main/setup.html\">Back to setup</a>"), "and back");
+  require(contains(main, "<img src=\"../images/portal.svg\" alt=\"\">Portal</a>") &&
+              contains(main, "<link rel=\"icon\" href=\"../images/portal.svg\">"),
+          "a site without a logo of its own shows the portal's logo, brand and favicon");
+  const auto tool = slurp(root / "site/tool/guide.html");
+  require(contains(tool, "<a class=\"brand\" href=\"../index.html\"><img src=\"tool.svg\" alt=\"\">The tool</a>") &&
+              contains(tool, "<link rel=\"icon\" href=\"tool.svg\">"),
+          "a site with its own logo, brand and favicon shows them, still leading to the welcome page");
+}
+
 }  // namespace
 
 void testDocsFeatures() {
@@ -386,4 +419,5 @@ void testDocsFeatures() {
   testBuild();
   testDiagramCache();
   testTranslations();
+  testPortalSites();
 }

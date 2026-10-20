@@ -1,0 +1,72 @@
+# The ckdocs manual: one site of the portal in the repository's ckdocs.yml.
+version: 1
+site:
+  title: ckdocs
+  description: Documentation sites from Markdown, in one dependency-free binary.
+  logo: docs/ckdocs/images/ckdocs.svg
+  favicon: docs/ckdocs/images/ckdocs.svg
+  footer: "© 2026 C. Klukas · MIT License"
+  links:
+    - title: GitHub
+      url: https://github.com/cklukas/ck-git-hosting
+      icon: github
+source: docs/ckdocs
+search: true
+toc:
+  max_level: 3
+nav:
+  - title: Home
+    page: docs/ckdocs/README.md
+  - title: Guide
+    pages:
+      - docs/ckdocs/getting-started.md
+      - docs/ckdocs/pages.md
+      - docs/ckdocs/front-matter.md
+      - docs/ckdocs/markdown.md
+      - docs/ckdocs/code.md
+      - docs/ckdocs/appearance.md
+      - docs/ckdocs/translations.md
+      - docs/ckdocs/portals.md
+      - docs/ckdocs/search.md
+      - docs/ckdocs/publishing.md
+  - title: Diagrams
+    pages:
+      - docs/ckdocs/mermaid.md
+      - title: Flows and systems
+        pages:
+          - docs/ckdocs/diagrams/flowchart.md
+          - docs/ckdocs/diagrams/mindmap.md
+          - docs/ckdocs/diagrams/block-diagram.md
+          - docs/ckdocs/diagrams/architecture.md
+          - docs/ckdocs/diagrams/c4-diagram.md
+          - docs/ckdocs/diagrams/packet-diagram.md
+      - title: Software models
+        pages:
+          - docs/ckdocs/diagrams/class-diagram.md
+          - docs/ckdocs/diagrams/state-diagram.md
+          - docs/ckdocs/diagrams/entity-relationship.md
+          - docs/ckdocs/diagrams/requirement-diagram.md
+      - title: Sequences
+        pages:
+          - docs/ckdocs/diagrams/sequence-diagram.md
+          - docs/ckdocs/diagrams/zenuml-sequence.md
+      - title: Charts
+        pages:
+          - docs/ckdocs/diagrams/pie-chart.md
+          - docs/ckdocs/diagrams/xy-chart.md
+          - docs/ckdocs/diagrams/radar-chart.md
+          - docs/ckdocs/diagrams/quadrant-chart.md
+          - docs/ckdocs/diagrams/sankey-diagram.md
+          - docs/ckdocs/diagrams/treemap.md
+      - title: Planning and history
+        pages:
+          - docs/ckdocs/diagrams/gantt-chart.md
+          - docs/ckdocs/diagrams/timeline.md
+          - docs/ckdocs/diagrams/user-journey.md
+          - docs/ckdocs/diagrams/kanban-board.md
+          - docs/ckdocs/diagrams/git-graph.md
+  - title: Reference
+    pages:
+      - docs/ckdocs/configuration.md
+      - docs/ckdocs/cli.md
+      - docs/ckdocs/limits.md
