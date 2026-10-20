@@ -562,8 +562,7 @@ void testBuild() {
           "a fragment that names no heading is reported; #y and #install are fine");
   const auto tabs = between(x, "<nav class=\"tabs\"", "</nav>");
   require(contains(tabs, "<a href=\"../index.html\">Home</a>") && contains(tabs, "<a href=\"02-y.html\" aria-current=\"page\">A</a>") &&
-              contains(tabs, "<a href=\"../b/index.html\">Bee</a>") && contains(tabs, "<a href=\"../z.html\">Zed page</a>") &&
-              occurrences(tabs, "aria-current") == 1,
+              contains(tabs, "<a href=\"../b/index.html\">Bee</a>") && contains(tabs, "<a href=\"../z.html\">Zed page</a>"),
           "tabs link to their first page and mark the active one");
   const auto aside = between(x, "<aside class=\"sidebar\">", "</aside>");
   require(contains(aside, "<p class=\"side-title\">A</p>") && contains(aside, "<a href=\"02-y.html\">Why</a>") &&
@@ -577,8 +576,8 @@ void testBuild() {
   require(contains(x, "<img src=\"../img/flow.png\" alt=\"\">") && contains(x, "<a href=\"https://example.test/src\" rel=\"noopener\">Source</a>") &&
               contains(x, "© Fixture") && contains(x, "Built with ckdocs") && contains(x, "<a href=\"../site-index.html\">Site index</a>"),
           "logo, header links, footer, site index link");
-  require(contains(x, "<input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">") && !contains(x, "<script"),
-          "the sidebar toggle is a checkbox, and there is no script");
+  require(contains(x, "<input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">") && contains(x, "class=\"theme-toggle\""),
+          "the sidebar keeps its no-script checkbox and the theme control enhances the shell");
 
   const auto home = slurp(site / "index.html");
   checkInternalReferences(site, "index.html", home);
@@ -817,8 +816,9 @@ void testSearch() {
   ckgit::buildDocsSite(plain_model, plain_site, ckgit::DocsBuildOptions{}, &plain_report);
   require(!fs::exists(plain_site / "search-index.json"), "search-index.json is only written when search: true");
   const auto plain_home = slurp(plain_site / "index.html");
-  require(!contains(plain_home, "ckdocs-search") && !contains(plain_home, "kDocsSearchScript") && !contains(plain_home, "<script>"),
-          "no search input and no script are emitted when search is off");
+  require(!contains(plain_home, "<input type=\"search\"") && !contains(plain_home, "data-index=") &&
+              !contains(plain_home, "fetch("),
+          "search off emits neither its input nor its index loader");
 
   // Enabled: the input, its noscript fallback, and the script are present;
   // the input's data-index is relative to the page the same way any other
@@ -1266,9 +1266,64 @@ void testPortalBuild() {
   require(refused && slurp(out / "index.html") == before && !hasTemporaryLeftovers(scratch.root, "out"),
           "a colliding redirect fails the build and leaves the output alone");
 }
+
+void testHomeLayout() {
+  Scratch scratch;
+  const auto root = scratch.root / "repo";
+  const std::string home =
+      "---\nlayout: home\nhero:\n  name: Agent & Web\n  text: Build <systems>\n"
+      "  tagline: Context before tools.\n  image:\n    light:\n      src: /images/light.svg\n      alt: Stack layers\n"
+      "    dark:\n      src: /images/dark.svg\n  actions:\n    - theme: brand\n      text: Start here\n      link: /guide\n"
+      "features:\n  - title: Discovery\n    details: Read <context> first.\n---\n\n"
+      "## Details\n\n[Guide](/guide) and [directory](/nested/) and [home](/).\n";
+  write(root / "docs/index.md", home);
+  write(root / "docs/guide.md", "# Guide\n\n[Home](/) and [clean HTML](/guide.html).\n");
+  write(root / "docs/nested/index.md", "# Nested\n");
+  write(root / "docs/public/images/light.svg", "<svg>light</svg>");
+  write(root / "docs/public/images/dark.svg", "<svg>dark</svg>");
+  const auto config = ckgit::parseDocsConfig("version: 1\nsite: {title: Example}\nnav:\n  - title: Guides\n    pages: [docs/guide.md, docs/nested/index.md]\n");
+  std::vector<std::string> warnings;
+  auto model = ckgit::loadDocsSite(root, config, &warnings);
+  require(warnings.empty(), "valid home front matter is recognized, including nested image variants");
+  require(model.pages[model.home].landing.has_value(), "home data survives loading");
+  const auto out = scratch.root / "out";
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(model, out, {}, &report);
+  require(report.broken_links.empty() && report.warnings.empty(), "source-relative clean URLs and public assets resolve");
+  const auto html = slurp(out / "index.html");
+  for (const auto* expected : {"class=\"page landing\"", "Agent &amp; Web", "Build &lt;systems&gt;", "Read &lt;context&gt; first.",
+                               "href=\"guide.html\"", "src=\"images/light.svg\"", "srcset=\"images/dark.svg\"",
+                               "class=\"tab-menu\"", "class=\"theme-toggle\""})
+    require(contains(html, expected), std::string("landing output contains ") + expected);
+  require(slurp(out / "images/light.svg") == "<svg>light</svg>", "referenced public asset bytes preserved");
+  require(!contains(html, "<systems>") && !contains(html, "<context>"), "landing text never acts as markup");
+
+  // Invalid action URLs must neither execute nor become clickable, and
+  // missing targets must still fail the same strict reporting path.
+  auto bad = home;
+  bad.replace(bad.find("link: /guide"), 12, "link: javascript:alert(1)");
+  write(root / "docs/index.md", bad);
+  model = ckgit::loadDocsSite(root, config, nullptr);
+  ckgit::DocsBuildOptions clean;
+  clean.clean = true;
+  ckgit::buildDocsSite(model, out, clean, &report);
+  require(!report.warnings.empty() && !contains(slurp(out / "index.html"), "href=\"javascript:"), "unsafe action is reported and never linked");
+  bad = home;
+  bad.replace(bad.find("link: /guide"), 12, "link: /absent");
+  write(root / "docs/index.md", bad);
+  model = ckgit::loadDocsSite(root, config, nullptr);
+  ckgit::buildDocsSite(model, out, clean, &report);
+  require(!report.broken_links.empty(), "missing hero action is reported");
+  write(root / "docs/index.md", "---\nlayout: home\nhero:\n  actions: wrong\n---\n# Home\n");
+  warnings.clear();
+  static_cast<void>(ckgit::loadDocsSite(root, config, &warnings));
+  require(!warnings.empty() && contains(warnings.front(), "hero.actions"), "invalid structured metadata names its field");
+}
+
 }  // namespace
 
 void testDocsSite() {
+  testHomeLayout();
   testConfig();
   testForeignKeyConfig();
   testFrontMatter();

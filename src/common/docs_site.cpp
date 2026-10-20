@@ -158,6 +158,77 @@ void parseNavEntries(const Node& sequence, std::vector<DocsNavEntry>& out, std::
   }
 }
 
+// The familiar data-only home layout also lets existing VitePress content
+// retain its hero, calls to action and feature cards during a migration.
+DocsHome parseHome(const Node& front) {
+  DocsHome home;
+  const auto text = [](const Node& node, const char* key) {
+    const auto value = scalarOf(node, key);
+    if (!isValidDocsText(value)) malformed(std::string(key) + " is too long or has control characters", node.line);
+    return value;
+  };
+  if (const Node* hero = findEntry(front, "hero")) {
+    requireKind(*hero, Node::Kind::Mapping, "hero to be a mapping");
+    rejectUnknownKeys(*hero, {"name", "text", "tagline", "image", "actions"});
+    if (const Node* n = findEntry(*hero, "name")) home.name = text(*n, "hero.name");
+    if (const Node* n = findEntry(*hero, "text")) home.text = text(*n, "hero.text");
+    if (const Node* n = findEntry(*hero, "tagline")) home.tagline = text(*n, "hero.tagline");
+    if (const Node* image = findEntry(*hero, "image")) {
+      requireKind(*image, Node::Kind::Mapping, "hero.image to be a mapping");
+      rejectUnknownKeys(*image, {"src", "alt", "light", "dark"});
+      const auto variant = [&](const Node& node) {
+        requireKind(node, Node::Kind::Mapping, "an image variant to be a mapping");
+        rejectUnknownKeys(node, {"src", "alt"});
+        const Node* src = findEntry(node, "src");
+        if (!src) malformed("hero image needs src", node.line);
+        if (const Node* alt = findEntry(node, "alt")) home.image_alt = text(*alt, "hero.image.alt");
+        return text(*src, "hero.image.src");
+      };
+      if (findEntry(*image, "src")) {
+        if (findEntry(*image, "light") || findEntry(*image, "dark")) malformed("hero.image cannot mix src and variants", image->line);
+        home.image_light = variant(*image);
+      } else {
+        const Node* light = findEntry(*image, "light");
+        const Node* dark = findEntry(*image, "dark");
+        if (!light) malformed("hero.image needs src or a light variant", image->line);
+        home.image_light = variant(*light);
+        const std::string light_alt = home.image_alt;
+        if (dark) home.image_dark = variant(*dark);
+        home.image_alt = light_alt;
+        if (const Node* alt = findEntry(*image, "alt")) home.image_alt = text(*alt, "hero.image.alt");
+      }
+    }
+    if (const Node* actions = findEntry(*hero, "actions")) {
+      requireKind(*actions, Node::Kind::Sequence, "hero.actions to be a list");
+      if (actions->items.size() > 8) malformed("hero.actions has more than 8 entries", actions->line);
+      for (const Node& action : actions->items) {
+        requireKind(action, Node::Kind::Mapping, "a hero action to be a mapping");
+        rejectUnknownKeys(action, {"text", "link", "theme"});
+        const Node* label = findEntry(action, "text");
+        const Node* link = findEntry(action, "link");
+        if (!label || !link) malformed("a hero action needs text and link", action.line);
+        DocsHomeAction out{text(*label, "action.text"), text(*link, "action.link"), "alt"};
+        if (const Node* theme = findEntry(action, "theme")) out.theme = scalarOf(*theme, "action.theme");
+        if (out.theme != "alt" && out.theme != "brand") malformed("action.theme must be brand or alt", action.line);
+        home.actions.push_back(std::move(out));
+      }
+    }
+  }
+  if (const Node* features = findEntry(front, "features")) {
+    requireKind(*features, Node::Kind::Sequence, "features to be a list");
+    if (features->items.size() > 16) malformed("features has more than 16 entries", features->line);
+    for (const Node& feature : features->items) {
+      requireKind(feature, Node::Kind::Mapping, "a feature to be a mapping");
+      rejectUnknownKeys(feature, {"title", "details"});
+      const Node* title = findEntry(feature, "title");
+      const Node* details = findEntry(feature, "details");
+      if (!title || !details) malformed("a feature needs title and details", feature.line);
+      home.features.push_back({text(*title, "feature.title"), text(*details, "feature.details")});
+    }
+  }
+  return home;
+}
+
 // The front matter keys ckdocs reads itself; no project may declare one foreign.
 constexpr std::array<std::string_view, 6> kDocsFrontMatterKeys{"title",       "description", "nav_order",
                                                               "nav_exclude", "author",      "date"};
@@ -755,7 +826,21 @@ DocsSiteModel loadDocsSite(const fs::path& root, const DocsConfig& config, std::
         page.front_matter_error = front->error;
         warn(file + ": " + front->error);
       }
+      if (front->error.empty()) {
+        const Node* layout = findEntry(front->structured, "layout");
+        if (layout && layout->kind == Node::Kind::Scalar && layout->scalar == "home") {
+          try {
+            if (!page.home) throw std::runtime_error("layout: home is only valid on the home page");
+            page.landing = parseHome(front->structured);
+            if (page.title.empty() && !page.landing->name.empty()) page.title = page.landing->name;
+            if (page.description.empty()) page.description = page.landing->tagline;
+          } catch (const std::exception& failure) {
+            warn(file + ": landing page: " + failure.what());
+          }
+        }
+      }
       for (const auto& [key, value] : front->entries) {
+        if (key == "layout" && value == "home") continue;
         if (key == "title") {
           if (isValidDocsTitle(value)) page.title = value;
           else warn(file + ": front matter title is empty, too long, or has control characters; ignored");
@@ -1137,6 +1222,52 @@ std::string withByline(std::string article, const DocsPage& page) {
   return article;
 }
 
+std::string renderHome(const DocsHome& home, const MarkdownLinkResolver& resolver,
+                       const std::function<void(const std::string&)>& warning) {
+  const auto destination = [&](const std::string& target, bool image) -> std::optional<std::string> {
+    if (isValidLinkUrl(target) && !image) return target;
+    if (target.empty() || target.starts_with("//") || target.find(':') != std::string::npos ||
+        target.find_first_of("\\\r\n") != std::string::npos) {
+      warning("unsafe landing page destination");
+      return std::nullopt;
+    }
+    const auto hash = target.find('#');
+    const auto path = target.substr(0, hash);
+    if (path.empty() && hash == 0 && !image) return target;
+    const auto resolved = resolver(path, image, 0);
+    if (!resolved) return std::nullopt;
+    return *resolved + (hash == std::string::npos ? "" : target.substr(hash));
+  };
+  std::string out = "<section class=\"home-hero\"><div class=\"home-copy\"><h1>";
+  if (!home.name.empty()) out += "<span class=\"home-name\">" + escapeHtml(home.name) + "</span>";
+  out += escapeHtml(home.text) + "</h1>";
+  if (!home.tagline.empty()) out += "<p class=\"home-tagline\">" + escapeHtml(home.tagline) + "</p>";
+  out += "<div class=\"home-actions\">";
+  for (const auto& action : home.actions) {
+    if (const auto url = destination(action.link, false))
+      out += "<a class=\"home-action " + action.theme + "\" href=\"" + escapeHtml(*url) + "\">" + escapeHtml(action.text) + "</a>";
+    else out += "<span>" + escapeHtml(action.text) + "</span>";
+  }
+  out += "</div></div>";
+  if (!home.image_light.empty()) {
+    const auto light = destination(home.image_light, true);
+    const auto dark = home.image_dark.empty() ? std::optional<std::string>{} : destination(home.image_dark, true);
+    if (light) {
+      out += "<picture class=\"home-image\">";
+      if (dark) out += "<source media=\"(prefers-color-scheme: dark)\" srcset=\"" + escapeHtml(*dark) + "\">";
+      out += "<img src=\"" + escapeHtml(*light) + "\" alt=\"" + escapeHtml(home.image_alt) + "\"></picture>";
+    }
+  }
+  out += "</section>";
+  if (!home.features.empty()) {
+    out += "<section class=\"home-features\" aria-label=\"Features\">";
+    for (const auto& feature : home.features)
+      out += "<div class=\"home-feature\"><h2>" + escapeHtml(feature.title) + "</h2><p>" + escapeHtml(feature.details) + "</p></div>";
+    out += "</section>";
+  }
+  return out;
+}
+
 struct ShellInput {
   std::string title;        // the page title
   std::string description;  // meta description, may be empty
@@ -1181,6 +1312,7 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   } else if (portal != nullptr && !portal->stylesheet_output.empty()) {
     out += "<link rel=\"stylesheet\" href=\"" + portalUrl(portal->stylesheet_output) + "\">";
   }
+  const bool landing = in.page && model.pages[*in.page].landing.has_value();
   out += "</head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a>";
 
   // Header: brand (the portal's, in a portal), the site selector, tabs, links.
@@ -1199,8 +1331,14 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   for (const auto& item : model.nav) {
     const auto first = firstPageOf(item);
     if (!first) continue;
-    out += "<a href=\"" + url(model.pages[*first].output) + "\"" + (tab == &item ? " aria-current=\"page\"" : "") + ">" +
-           escapeHtml(item.title) + "</a>";
+    out += "<div class=\"tab-group\"><a href=\"" + url(model.pages[*first].output) + "\"" +
+           (tab == &item ? " aria-current=\"page\"" : "") + ">" + escapeHtml(item.title) + "</a>";
+    if (!item.children.empty()) {
+      out += "<details class=\"tab-menu\"><summary aria-label=\"Browse " + escapeHtml(item.title) + "\">▾</summary>";
+      renderSidebarItems(out, item.children, model, in.page.value_or(model.pages.size()), from_dir);
+      out += "</details>";
+    }
+    out += "</div>";
   }
   out += "</nav>";
   if (model.config.search) {
@@ -1217,10 +1355,10 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   }
   // A portal site without links of its own shows the portal's.
   out += renderHeaderLinks(!model.config.links.empty() || portal == nullptr ? model.config.links : portal->portal->config.links);
-  out += "</header>";
+  out += "<button type=\"button\" class=\"theme-toggle\" hidden>Theme: system</button></header>";
 
   // Sidebar: the active tab's pages, then this page's outline.
-  out += "<div class=\"page\"><input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">"
+  out += std::string("<div class=\"page") + (landing ? " landing" : "") + "\"><input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">"
          "<label class=\"nav-toggle\" for=\"nav-toggle\">Menu</label><aside class=\"sidebar\">";
   const auto current = in.page.value_or(model.pages.size());
   if (tab != nullptr) {
@@ -1282,7 +1420,7 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   if (!footer.empty()) out += "<span>" + escapeHtml(footer) + "</span>";
   out += "<span>Built with ckdocs " + escapeHtml(context.version) + "</span>";
   out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a>";
-  return out + "</footer></body></html>";
+  return out + "</footer><script>" + std::string(kDocsUiScript) + "</script></body></html>";
 }
 
 std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir) {
@@ -1632,7 +1770,9 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     const auto full = model.root / root_relative;
     if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return "is not a regular file";
     if (fs::file_size(full, error) > kMaximumPagesFileBytes) return "exceeds the file size limit";
-    const auto path = assetOutputPath(model, root_relative);
+    const std::string public_prefix = model.source.empty() ? "public/" : model.source + "/public/";
+    const auto path = root_relative.starts_with(public_prefix) ? root_relative.substr(public_prefix.size())
+                                                              : assetOutputPath(model, root_relative);
     if (options.mermaid_renderer && diagramPath(path)) return "uses the reserved _ckdocs-mermaid output directory";
     if (page_by_output.count(path) != 0) return "would overwrite the page '" + path + "'";
     if (prefix.empty() && (path == kDocsSitemapFile || path == kDocsLlmsFile || path == kDocsSearchIndexPage ||
@@ -1713,10 +1853,50 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
           return relativeUrl(out_dir, model.pages[found->second].output);
         }
       }
-      if (directory_target || normalized->empty()) return broken("is a directory without an index page");
+      // The source-relative clean URL lookup below also handles directories.
       if (const auto left_out = model.skipped.find(*normalized); left_out != model.skipped.end()) {
         return broken("was left out of the site: it " + left_out->second);
       }
+      if (hasMarkdownExtension(*normalized) && !target.starts_with('/')) return broken("is not a page of this site");
+      // A real repository file takes precedence over a clean page alias,
+      // including the existing asset/page collision check.
+      const auto original_file = model.root / *normalized;
+      if (fs::is_regular_file(original_file, error) || fs::is_symlink(original_file, error)) {
+        std::string output;
+        const auto problem = placeAsset(*normalized, output);
+        if (!problem.empty()) return broken(problem);
+        return relativeUrl(out_dir, output);
+      }
+      // Clean URLs from documentation tools: /guide, /guide.html and
+      // /section/ are interpreted against the source tree only after the
+      // existing repository-relative lookup has had first refusal.
+      std::vector<std::string> candidates{*normalized};
+      if (target.starts_with('/') && !model.source.empty()) candidates.push_back(model.source + "/" + *normalized);
+      for (const auto& candidate : candidates) {
+        if (const auto found = page_by_source.find(candidate); found != page_by_source.end())
+          return relativeUrl(out_dir, model.pages[found->second].output);
+        if (!image && !hasMarkdownExtension(candidate)) {
+          std::string clean = candidate;
+          if (clean.ends_with(".html")) clean.resize(clean.size() - 5);
+          if (const auto found = page_by_source.find(clean + ".md"); found != page_by_source.end())
+            return relativeUrl(out_dir, model.pages[found->second].output);
+        }
+        for (const auto* name : {"README.md", "index.md"}) {
+          if (const auto found = page_by_source.find(candidate + "/" + name); found != page_by_source.end())
+            return relativeUrl(out_dir, model.pages[found->second].output);
+        }
+      }
+      if (target == "/") return relativeUrl(out_dir, model.pages[model.home].output);
+      if (target.starts_with('/') && !model.source.empty()) {
+        const auto public_file = model.source + "/public/" + *normalized;
+        if (!fs::is_symlink(model.root / public_file, error) && fs::is_regular_file(model.root / public_file, error)) {
+          std::string output;
+          const auto problem = placeAsset(public_file, output);
+          if (!problem.empty()) return broken(problem);
+          return relativeUrl(out_dir, output);
+        }
+      }
+      if (directory_target || normalized->empty()) return broken("is a directory without an index page");
       if (hasMarkdownExtension(*normalized)) return broken("is not a page of this site");
       const auto full = model.root / *normalized;
       if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
@@ -1770,13 +1950,18 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       const std::string dark = escapeHtml(relativeUrl(out_dir, rendered.dark_path));
       return "<figure class=\"mermaid\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"" + dark +
              "\"><img src=\"" + light + "\" alt=\"" + escapeHtml(rendered.alternative_text) +
-             "\" loading=\"lazy\"></picture></figure>\n";
+             "\" loading=\"lazy\"></picture><a class=\"diagram-open\" href=\"" + light +
+             "\">Open diagram</a></figure>\n";
     };
     std::string article;
     try {
       article = renderMarkdown(markdownBody(*content), link_context, &context.outlines[index], code_renderer);
     } catch (const std::length_error& bound) {
       siteError("'" + page.source + "' exceeds a rendering bound: " + bound.what());
+    }
+    if (page.landing) {
+      article = renderHome(*page.landing, link_context.resolver,
+                           [&](const std::string& warning) { result.warnings.push_back(page.source + ": " + warning); }) + article;
     }
     broken_links.appendTo(result.broken_links);
     scanArticle(article, ids[index], links[index]);

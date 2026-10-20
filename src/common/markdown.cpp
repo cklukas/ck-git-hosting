@@ -1032,7 +1032,7 @@ constexpr YamlBounds kFrontMatterYamlBounds{
     64,
     kMaximumFrontMatterLines,
     kMaximumFrontMatterLines,
-    4,
+    8,
 };
 constexpr YamlDialect kFrontMatterYamlDialect{kFrontMatterYamlBounds, "front matter", "the front matter"};
 
@@ -1147,8 +1147,8 @@ std::optional<FrontMatter> splitFrontMatter(std::string_view source) {
   }
   if (!result.error.empty() || !any) return result;
   try {
-    const YamlNode root = parseYamlSubset(block, kFrontMatterYamlDialect);
-    for (const auto& [key, value] : root.entries) {
+    result.structured = parseYamlSubset(block, kFrontMatterYamlDialect);
+    for (const auto& [key, value] : result.structured.entries) {
       if (value.kind == YamlNode::Kind::Scalar) result.entries.emplace_back(key, value.scalar);
     }
   } catch (const std::exception& error) {

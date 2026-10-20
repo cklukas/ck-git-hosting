@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "ckgit/yaml_subset.hpp"
+
 namespace ckgit {
 
 inline constexpr std::size_t kMaximumMarkdownInputBytes = 512 * 1024;
@@ -100,6 +102,7 @@ bool isValidFrontMatterKey(std::string_view key);
 // in the same "front matter: ... (line N)" wording as workflow errors, so a
 // page never shows its metadata as text and a checker can report the mistake.
 struct FrontMatter {
+  YamlNode structured;  // bounded parsed metadata, including mappings and lists
   std::vector<std::pair<std::string, std::string>> entries;
   std::size_t body_offset = 0;  // where the Markdown body begins in the source
   std::string error;            // empty when `entries` is trustworthy

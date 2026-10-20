@@ -99,3 +99,44 @@ thematic break (`---`, then prose, then another `---`) has no front matter
 at all; it is correctly left as ordinary body content. The dashboard's
 rendered preview of a Markdown file hides its front matter the same way;
 the file's own Source view still shows it.
+
+## Home layout
+
+A site's home page may use `layout: home` with a structured `hero` and
+`features`. This data-only format also accepts existing VitePress home pages:
+
+```yaml
+---
+layout: home
+hero:
+  name: Example project
+  text: Build something useful.
+  tagline: A short explanation of who the project helps.
+  image:
+    src: /images/overview.svg
+    alt: Architecture overview
+  actions:
+    - text: Get started
+      link: /guide
+      theme: brand
+features:
+  - title: Predictable interfaces
+    details: Inspect the API before calling it.
+---
+```
+
+The hero and feature cards precede the Markdown body, in a full-width home
+layout. All text is escaped, and image/action destinations use the same
+checked resolver as ordinary content. `hero.image` accepts either `src` and
+`alt`, or `light` and optional `dark` mappings, each with `src` and `alt`.
+There may be at most eight actions (`theme: brand` or `alt`) and sixteen
+features. Unsupported fields or invalid shapes are warnings and fail strict
+builds. The ordinary front matter byte/line bounds still apply; structured
+metadata may nest eight levels. Home layouts on other pages are reported.
+
+Navigation groups also provide native dropdown menus in the header. A theme
+button cycles between system, light, and dark preferences, storing the choice
+locally when available; the home image and diagrams follow it. Mermaid
+figures offer an expanded native dialog (Escape closes it) and retain an
+ordinary SVG link without scripting. Search accepts the usual Ctrl/Cmd+K
+shortcut. These controls ship inline with the site and load no external code.

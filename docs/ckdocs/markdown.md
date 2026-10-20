@@ -83,3 +83,15 @@ warning: docs/guide.md:12: link target 'setup.md' is not a page of this site (3 
 A page that links to the same missing target several times is reported
 once, with every line it does so on; a bad `#fragment` repeated on a page
 is reported once with its count.
+
+### Clean documentation URLs
+
+After checking a repository-relative destination, ckdocs also recognizes
+extensionless page links (`/guide`), `.html` page links (`/guide.html`), and
+indexed directories (`/section/`) relative to the configured source tree.
+A leading `/` may reference a file in the source's `public/` directory;
+only referenced files are copied, with `public/` omitted from their output
+path. Existing repository-relative targets take precedence. This lets a
+VitePress documentation tree retain its page and image links while moving
+to ckdocs. Missing targets and traversal outside the repository still fail
+strict validation.

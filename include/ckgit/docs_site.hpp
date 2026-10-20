@@ -118,6 +118,21 @@ DocsConfig parseDocsConfig(std::string_view yaml);
 // The root's `ckdocs.yml`, or defaults when there is none.
 DocsConfig readDocsConfig(const std::filesystem::path& root);
 
+// An optional, data-only landing page. Text is escaped, destinations go
+// through the normal site resolver; no raw HTML or executable metadata.
+struct DocsHomeAction {
+  std::string text, link, theme;
+};
+struct DocsHomeFeature {
+  std::string title, details;
+};
+struct DocsHome {
+  std::string name, text, tagline;
+  std::string image_light, image_dark, image_alt;
+  std::vector<DocsHomeAction> actions;
+  std::vector<DocsHomeFeature> features;
+};
+
 struct DocsPage {
   std::string source;  // repository-relative, `/` separators
   std::string output;  // site-relative output path, e.g. "operations/01-installation.html"
@@ -128,6 +143,7 @@ struct DocsPage {
   std::optional<int> nav_order;
   bool nav_exclude = false;
   bool home = false;
+  std::optional<DocsHome> landing;  // layout: home, hero and features in front matter
   // The config's foreign keys this page carries with a single-line value of
   // at most kMaximumDocsTextBytes, in file order, values exactly as parsed.
   std::vector<std::pair<std::string, std::string>> foreign_front_matter;

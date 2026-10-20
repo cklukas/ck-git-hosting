@@ -21,7 +21,7 @@ body{margin:0;font:15px/1.6 system-ui,sans-serif;background:var(--bg);color:var(
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .skip-link{position:absolute;left:1rem;top:-5rem;background:var(--panel);padding:.6rem;z-index:2}.skip-link:focus{top:.5rem}
-header.site{display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;padding:.9rem 2rem;border-bottom:1px solid var(--line);background:var(--panel)}
+header.site{position:relative;display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;padding:.9rem 2rem;border-bottom:1px solid var(--line);background:var(--panel)}
 .brand{display:inline-flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.15rem;color:var(--text);letter-spacing:-.02em}.brand:hover{text-decoration:none}.brand img{height:1.8rem;width:auto}
 .site-select{position:relative;font-size:.92rem}.site-select>summary{display:inline-flex;align-items:center;gap:.4rem;padding:.25rem .75rem;border:1px solid var(--line);border-radius:1rem;background:var(--panel);color:var(--text);cursor:pointer;list-style:none;white-space:nowrap}
 .site-select>summary::-webkit-details-marker{display:none}.site-select>summary:after{content:"▾";color:var(--muted);font-size:.8em}.site-select[open]>summary:after{content:"▴"}.site-select>summary:hover{background:var(--tint)}
@@ -79,7 +79,52 @@ footer.site{border-top:1px solid var(--line);padding:1rem 2rem;font-size:.85rem;
 .site-select ul{max-width:calc(100vw - 2rem)}.site-cards{grid-template-columns:minmax(0,1fr)}
 aside.sidebar{display:none;position:static;max-height:none;margin-bottom:1.5rem;padding:1rem;border:1px solid var(--line);border-radius:.5rem;background:var(--panel)}.nav-switch:checked~aside.sidebar{display:block}footer.site{padding:1rem}}
 @media print{header.site,.site-select,aside.sidebar,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
+/* Data-only home pages and native section menus. */
+.tab-group{display:flex;align-items:center;gap:.25rem;position:relative}
+.tab-menu{margin:0;padding:0;border:0}.tab-menu>summary{list-style:none;padding:.3rem;line-height:1}.tab-menu>summary::-webkit-details-marker{display:none}.tab-menu[open]>summary{margin:0}
+.tab-menu>ul{position:absolute;left:0;top:100%;z-index:7;list-style:none;min-width:16rem;max-width:min(24rem,90vw);max-height:75vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:.65rem;box-shadow:0 .6rem 1.8rem #0003;padding:.5rem;margin:.3rem 0}
+.tab-menu li{list-style:none}.tab-menu li a{display:block;padding:.4rem .6rem;border-radius:.3rem}.tab-menu li a:hover{background:var(--tint);text-decoration:none}.tab-menu li ul{padding-left:1rem}.tab-menu li details{border:0;padding:.2rem;margin:0}
+.page.landing{display:block;max-width:1440px;padding-top:3rem}.landing>.sidebar,.landing>.nav-toggle,.landing>.nav-switch,.landing main>.pager{display:none}.landing article>h2,.landing article>p,.landing article>ul,.landing article>figure{max-width:70rem;margin-left:auto;margin-right:auto}
+.home-hero{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);align-items:center;gap:3rem;padding:1rem 0 3rem}.home-hero h1{font-size:clamp(2.4rem,4vw,4rem);line-height:1.15;letter-spacing:-.04em}.home-name{display:block;color:var(--accent);margin-bottom:.5rem}.home-tagline{font-size:clamp(1.1rem,1.7vw,1.6rem);line-height:1.55;color:var(--muted)}.home-image img{display:block;width:100%;max-height:30rem;object-fit:contain}.home-actions{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:1.8rem}.home-action{display:inline-block;padding:.6rem 1.1rem;border-radius:2rem;background:var(--tint);font-weight:600}.home-action.brand{background:var(--accent);color:var(--bg);font-size:inherit}.home-features{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1rem;margin:1rem 0 3rem}.home-feature{padding:1.5rem;border-radius:.8rem;background:var(--tint)}.home-feature h2{font-size:1rem;margin:0;padding:0;border:0}.home-feature p{color:var(--muted);margin:.6rem 0 0}
+@media(max-width:700px){.tab-group{position:static}.tab-menu>ul{left:1rem;right:1rem;top:auto;max-width:none}}
+@media(max-width:800px){.home-hero{grid-template-columns:minmax(0,1fr);gap:1.5rem}.home-image{grid-row:1}.home-image img{max-height:18rem}.page.landing{padding-top:1.5rem}}
+
+:root[data-theme=light]{color-scheme:light;--bg:#fafbfd;--panel:#fff;--text:#18212b;--muted:#59636d;--line:#d9e0e7;--accent:#145ea8;--tint:#edf4fb}
+:root[data-theme=dark]{color-scheme:dark;--bg:#131920;--panel:#1b242e;--text:#dce5ed;--muted:#a5b1be;--line:#344251;--accent:#7db8ee;--tint:#263e53}
+.theme-toggle,.diagram-expand,.diagram-close{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:.5rem;padding:.3rem .6rem;cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+figure.mermaid{position:relative}.diagram-expand{display:block;margin:0 0 .5rem auto}.diagram-dialog{color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:.7rem;padding:1rem;width:calc(100vw - 2rem);height:calc(100vh - 2rem);max-width:none;max-height:none}.diagram-dialog::backdrop{background:#0009}.diagram-close{display:block;margin-left:auto}.diagram-dialog picture{display:flex;align-items:center;justify-content:center;height:calc(100% - 3rem);overflow:auto}.diagram-dialog img{width:100%;height:100%;object-fit:contain;max-width:none}.diagram-open{font-size:.85rem}
 )CSS";
+
+// Progressive enhancement: native disclosure menus need no script; these
+// controls add persisted colour choice and a keyboard-accessible diagram dialog.
+inline constexpr std::string_view kDocsUiScript = R"JS(
+(function(){
+  var root=document.documentElement,button=document.querySelector('.theme-toggle');
+  function theme(value){
+    if(value==='light'||value==='dark')root.setAttribute('data-theme',value);
+    else root.removeAttribute('data-theme');
+    document.querySelectorAll('source[media][data-theme-media]').forEach(function(source){
+      source.media=value==='dark'?'all':value==='light'?'not all':source.getAttribute('data-theme-media');
+    });
+    if(button){button.textContent='Theme: '+value;button.setAttribute('aria-label','Colour theme: '+value+'. Change theme');}
+  }
+  document.querySelectorAll('source[media="(prefers-color-scheme: dark)"]').forEach(function(source){source.setAttribute('data-theme-media',source.media);});
+  var choice='system';try{choice=localStorage.getItem('ckdocs-theme')||'system';}catch(e){}
+  if(['system','light','dark'].indexOf(choice)<0)choice='system';
+  theme(choice);
+  if(button){button.hidden=false;button.onclick=function(){choice=choice==='system'?'light':choice==='light'?'dark':'system';theme(choice);try{localStorage.setItem('ckdocs-theme',choice);}catch(e){}};}
+  document.querySelectorAll('figure.mermaid').forEach(function(figure){
+    var picture=figure.querySelector('picture');if(!picture||!window.HTMLDialogElement)return;
+    var expand=document.createElement('button');expand.type='button';expand.className='diagram-expand';expand.textContent='Expand diagram';
+    expand.onclick=function(){
+      var dialog=document.createElement('dialog');dialog.className='diagram-dialog';dialog.setAttribute('aria-label','Expanded diagram');
+      var close=document.createElement('button');close.type='button';close.className='diagram-close';close.textContent='Close diagram';
+      close.onclick=function(){dialog.close();};dialog.appendChild(close);dialog.appendChild(picture.cloneNode(true));document.body.appendChild(dialog);
+      dialog.addEventListener('close',function(){dialog.remove();expand.focus();},{once:true});dialog.showModal();close.focus();
+    };figure.insertBefore(expand,picture);
+  });
+})();
+)JS";
 
 // The opt-in search box's own behaviour (site.search / `search: true`):
 // fetches the generated search-index.json lazily (on first focus or
@@ -94,6 +139,7 @@ inline constexpr std::string_view kDocsSearchScript = R"JS(
   var input=document.getElementById('ckdocs-search');
   if(!input)return;
   input.hidden=false;
+  document.addEventListener('keydown',function(event){if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();input.focus();}});
   var root=input.getAttribute('data-index').replace('search-index.json','');
   var results=document.getElementById('ckdocs-search-results');
   var data=null,loading=null;
