@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 500" role="img" aria-labelledby="t">
+  <title id="t">Markdown in an editor becomes a finished documentation page with a diagram, math and highlighted code</title>
+  <defs>
+    <radialGradient id="glowA" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity=".4"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6d28d9"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f472b6"/>
+      <stop offset=".5" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="editor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262140"/>
+      <stop offset="1" stop-color="#17142a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#2e1065" flood-opacity=".28"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#2e1065" flood-opacity=".22"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 10 5 0 10z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+
+  <!-- Glow -->
+  <circle cx="230" cy="215" r="205" fill="url(#glowA)"/>
+  <circle cx="420" cy="330" r="160" fill="url(#glowB)"/>
+
+  <!-- Markdown editor -->
+  <g filter="url(#shadow)">
+    <rect x="28" y="52" width="318" height="272" rx="18" fill="url(#editor)"/>
+    <rect x="28.5" y="52.5" width="317" height="271" rx="17.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
+    <circle cx="52" cy="76" r="5.5" fill="#ff5f57"/>
+    <circle cx="70" cy="76" r="5.5" fill="#febc2e"/>
+    <circle cx="88" cy="76" r="5.5" fill="#28c840"/>
+    <rect x="112" y="65" width="84" height="22" rx="7" fill="#ffffff" fill-opacity=".08"/>
+    <text x="154" y="80.5" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#c4b5fd">guide.md</text>
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12.5">
+      <g fill="#6b6590" text-anchor="end">
+        <text x="58" y="118">1</text><text x="58" y="138">2</text><text x="58" y="158">3</text>
+        <text x="58" y="178">4</text><text x="58" y="198">5</text><text x="58" y="218">6</text>
+        <text x="58" y="238">7</text><text x="58" y="258">8</text><text x="58" y="278">9</text>
+        <text x="58" y="298">10</text>
+      </g>
+      <text x="72" y="118" fill="#f472b6" font-weight="700"># Getting started</text>
+      <text x="72" y="138" fill="#e4e1f5">Build a <tspan fill="#fbbf24" font-weight="700">**site**</tspan>, fast.</text>
+      <text x="72" y="158" fill="#34d399">::: tip</text>
+      <text x="72" y="178" fill="#e4e1f5">One binary :zap: no Node.</text>
+      <text x="72" y="198" fill="#34d399">:::</text>
+      <text x="72" y="218" fill="#22d3ee">```mermaid</text>
+      <text x="72" y="238" fill="#e4e1f5">flowchart LR</text>
+      <text x="72" y="258" fill="#e4e1f5">  md <tspan fill="#c4b5fd">--&gt;</tspan> site</text>
+      <text x="72" y="278" fill="#22d3ee">```</text>
+      <text x="72" y="298" fill="#a78bfa">$$ e^{i\pi} + 1 = 0 $$</text>
+    </g>
+    <rect x="236" y="287" width="2" height="15" fill="#c4b5fd">
+      <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;.5;.5;1" dur="1.1s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+
+  <!-- Build flow -->
+  <path d="M300 40 C 400 10, 480 40, 500 120" fill="none" stroke="url(#flow)" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9">
+    <animate attributeName="stroke-dashoffset" from="22" to="0" dur="1.2s" repeatCount="indefinite"/>
+  </path>
+  <path d="M492 108 501 124 512 109" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Rendered page -->
+  <g filter="url(#shadow)">
+    <rect x="214" y="138" width="358" height="330" rx="18" fill="#ffffff"/>
+    <rect x="214.5" y="138.5" width="357" height="329" rx="17.5" fill="none" stroke="#2e1065" stroke-opacity=".08"/>
+    <!-- header -->
+    <path d="M232 138h322a18 18 0 0 1 18 18v20H214v-20a18 18 0 0 1 18-18z" fill="#f7f5fd"/>
+    <rect x="230" y="148" width="18" height="18" rx="5" fill="url(#brand)"/>
+    <path d="M235 152h6l3 3v8h-9z" fill="#fff"/>
+    <text x="255" y="161.5" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="11.5" font-weight="700" fill="#1f1640">ckdocs</text>
+    <rect x="305" y="151" width="34" height="12" rx="6" fill="#ede9fe"/>
+    <rect x="345" y="151" width="34" height="12" rx="6" fill="#f1f0f7"/>
+    <rect x="490" y="148" width="66" height="18" rx="9" fill="#ffffff" stroke="#ddd6fe"/>
+    <circle cx="502" cy="157" r="3.6" fill="none" stroke="#7c3aed" stroke-width="1.6"/>
+    <path d="M505 160l3 3" stroke="#7c3aed" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="515" y="160.5" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="8.5" fill="#8b84a8">⌘K</text>
+    <path d="M214 176h358" stroke="#ece9f5"/>
+    <!-- sidebar -->
+    <g fill="#e9e6f3">
+      <rect x="230" y="192" width="56" height="7" rx="3.5"/>
+      <rect x="230" y="226" width="48" height="7" rx="3.5"/>
+      <rect x="230" y="243" width="60" height="7" rx="3.5"/>
+      <rect x="230" y="260" width="42" height="7" rx="3.5"/>
+      <rect x="230" y="277" width="52" height="7" rx="3.5"/>
+    </g>
+    <rect x="226" y="205" width="66" height="15" rx="5" fill="#ede9fe"/>
+    <rect x="232" y="209" width="46" height="7" rx="3.5" fill="#7c3aed"/>
+    <path d="M302 186v270" stroke="#ece9f5"/>
+    <!-- article -->
+    <text x="318" y="206" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="17" font-weight="800" fill="#1f1640" letter-spacing="-.4">Getting started</text>
+    <rect x="318" y="217" width="214" height="6" rx="3" fill="#e9e6f3"/>
+    <rect x="318" y="229" width="168" height="6" rx="3" fill="#e9e6f3"/>
+    <!-- tip -->
+    <rect x="318" y="244" width="236" height="34" rx="7" fill="#ecfdf5"/>
+    <rect x="318" y="244" width="4" height="34" rx="2" fill="#10b981"/>
+    <text x="330" y="258" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="9" font-weight="800" fill="#047857">TIP</text>
+    <text x="330" y="271" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="9.5" fill="#065f46">One binary ⚡ no Node.</text>
+    <!-- diagram -->
+    <rect x="318" y="290" width="236" height="62" rx="9" fill="#faf8ff" stroke="#ede9fe"/>
+    <rect x="340" y="306" width="62" height="30" rx="8" fill="#ffffff" stroke="#a78bfa" stroke-width="1.6"/>
+    <text x="371" y="325" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="11" font-weight="600" fill="#4c1d95">md</text>
+    <path d="M404 321h58" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#arrow)"/>
+    <rect x="468" y="306" width="66" height="30" rx="8" fill="url(#brand)"/>
+    <text x="501" y="325" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="11" font-weight="600" fill="#ffffff">site</text>
+    <!-- math -->
+    <text x="436" y="381" text-anchor="middle" font-family="Cambria Math,STIX Two Math,Latin Modern Math,Times New Roman,serif" font-size="17" fill="#1f1640"><tspan font-style="italic">e</tspan><tspan dy="-7" font-size="11"><tspan font-style="italic">iπ</tspan></tspan><tspan dy="7"> + 1 = 0</tspan></text>
+    <!-- code -->
+    <rect x="318" y="396" width="236" height="56" rx="9" fill="#1e1b2e"/>
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="9.5">
+      <text x="330" y="416"><tspan fill="#f472b6">ckdocs</tspan><tspan fill="#e4e1f5"> build </tspan><tspan fill="#fbbf24">--strict</tspan></text>
+      <text x="330" y="436" fill="#34d399">✓ 66 pages · 0 findings</text>
+    </g>
+    <rect x="522" y="403" width="24" height="15" rx="4" fill="#ffffff" fill-opacity=".12"/>
+    <rect x="528" y="406.5" width="8" height="8" rx="1.5" fill="none" stroke="#c4b5fd" stroke-width="1.2"/>
+    <rect x="530.5" y="409" width="8" height="8" rx="1.5" fill="#1e1b2e" stroke="#c4b5fd" stroke-width="1.2"/>
+  </g>
+
+  <!-- Feature chips -->
+  <g font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="12" font-weight="700">
+    <g filter="url(#soft)">
+      <rect x="430" y="60" width="132" height="32" rx="16" fill="#ffffff"/>
+      <circle cx="449" cy="76" r="9" fill="#fef3c7"/>
+      <path d="M450 69l-5 8h4l-1 6 5-8h-4z" fill="#f59e0b"/>
+      <text x="464" y="80" fill="#1f1640">73 languages</text>
+    </g>
+    <g filter="url(#soft)">
+      <rect x="20" y="352" width="150" height="32" rx="16" fill="#ffffff"/>
+      <circle cx="39" cy="368" r="9" fill="#dbeafe"/>
+      <circle cx="39" cy="368" r="5.5" fill="none" stroke="#2563eb" stroke-width="1.5"/>
+      <path d="M33.5 368h11M39 362.5c-2.5 3-2.5 8 0 11M39 362.5c2.5 3 2.5 8 0 11" fill="none" stroke="#2563eb" stroke-width="1.2"/>
+      <text x="54" y="372" fill="#1f1640">21 UI languages</text>
+    </g>
+    <g filter="url(#soft)">
+      <rect x="64" y="404" width="128" height="32" rx="16" fill="#ffffff"/>
+      <circle cx="83" cy="420" r="9" fill="#ede9fe"/>
+      <path d="M79 416h8M79 420h8M79 424h5" stroke="#7c3aed" stroke-width="1.6" stroke-linecap="round"/>
+      <text x="98" y="424" fill="#1f1640">llms.txt ready</text>
+    </g>
+  </g>
+</svg>

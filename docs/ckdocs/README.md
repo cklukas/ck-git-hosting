@@ -10,8 +10,8 @@ hero:
     documentation site: navigation, search, diagrams, math and highlighted
     code — no Node, no plugins, no external services.
   image:
-    src: images/ckdocs.svg
-    alt: The ckdocs logo
+    src: images/hero.svg
+    alt: A Markdown file in an editor, built into a documentation page with a diagram, math and highlighted code
   actions:
     - text: Get started
       link: getting-started.md
