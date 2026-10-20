@@ -628,7 +628,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
       }
     }
   }
-  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search", "front_matter", "sites"});
+  rejectUnknownKeys(root, {"version", "site", "source", "home", "exclude", "nav", "search", "llms", "front_matter", "sites"});
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the config is missing 'version'", root.line);
   const auto& version_text = scalarOf(*version, "version to be a number");
@@ -711,6 +711,11 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
     const auto value = scalarOf(*search, "search to be true or false");
     if (value != "true" && value != "false") malformed("search must be true or false", search->line);
     config.search = value == "true";
+  }
+  if (const Node* llms = findEntry(root, "llms")) {
+    const auto value = scalarOf(*llms, "llms to be true or false");
+    if (value != "true" && value != "false") malformed("llms must be true or false", llms->line);
+    config.llms = value == "true";
   }
   if (const Node* front_matter = findEntry(root, "front_matter")) {
     config.foreign_front_matter_keys = parseForeignFrontMatterKeys(*front_matter);
@@ -1061,6 +1066,234 @@ std::string unescapeHtml(std::string_view value) {
   return out;
 }
 
+// Serialize the renderer's bounded, trusted article fragment, never the site
+// shell. This keeps the HTML and Markdown views on the same parsing and URL
+// resolution rules. Code uses the ordinary renderer (not diagram SVGs).
+struct MarkdownElement {
+  std::string_view tag, opening, text;
+  std::vector<MarkdownElement> children;
+};
+
+std::string markdownAttribute(std::string_view opening, std::string_view key) {
+  const std::string start = " " + std::string(key) + "=\"";
+  const auto at = opening.find(start);
+  if (at == std::string_view::npos) return {};
+  const auto begin = at + start.size(), end = opening.find('"', begin);
+  return end == std::string_view::npos ? std::string() : unescapeHtml(opening.substr(begin, end - begin));
+}
+
+std::string markdownText(std::string_view text) {
+  std::string out;
+  for (const char byte : text) {
+    if (std::string_view("\\`*_[]<>|#!&~").find(byte) != std::string_view::npos) out += '\\';
+    out += byte;
+  }
+  return out;
+}
+
+std::string markdownDestination(std::string_view href) {
+  std::string out;
+  for (const char byte : href) {
+    if (byte == '<') out += "%3C";
+    else if (byte == '>') out += "%3E";
+    else if (byte == ' ') out += "%20";
+    else if (byte == '\\') out += "%5C";
+    else out += byte;
+  }
+  return out;
+}
+
+std::string markdownPage(std::string_view html, const std::map<std::string, std::string>& page_links) {
+  if (html.size() > kMaximumMarkdownOutputBytes) siteError("Markdown page exceeds the rendering bound");
+  MarkdownElement root;
+  std::vector<MarkdownElement*> stack{&root};
+  std::size_t nodes = 0;
+  for (std::size_t at = 0; at < html.size();) {
+    if (++nodes > 131072 || stack.size() > 128) siteError("Markdown page exceeds the structure bound");
+    if (html[at] != '<') {
+      const auto end = html.find('<', at);
+      stack.back()->children.push_back({{}, {}, html.substr(at, end == std::string_view::npos ? html.size() - at : end - at), {}});
+      at = end == std::string_view::npos ? html.size() : end;
+      continue;
+    }
+    const auto end = html.find('>', at);
+    if (end == std::string_view::npos) siteError("invalid article fragment for Markdown output");
+    const auto opening = html.substr(at, end + 1 - at);
+    const bool closing = opening.starts_with("</");
+    const auto name_at = closing ? 2U : 1U;
+    const auto name_end = opening.find_first_of(" />", name_at);
+    const auto tag = opening.substr(name_at, name_end - name_at);
+    if (closing) {
+      if (stack.size() == 1 || stack.back()->tag != tag) siteError("unbalanced article fragment for Markdown output");
+      stack.pop_back();
+    } else {
+      stack.back()->children.push_back({tag, opening, {}, {}});
+      if (tag != "br" && tag != "hr" && tag != "img" && tag != "input" && tag != "source")
+        stack.push_back(&stack.back()->children.back());
+    }
+    at = end + 1;
+  }
+  if (stack.size() != 1) siteError("unclosed article fragment for Markdown output");
+  const auto link = [&](const std::string& href) {
+    const auto hash = href.find('#');
+    const auto found = page_links.find(href.substr(0, hash));
+    return found == page_links.end() ? href : found->second + (hash == std::string::npos ? "" : href.substr(hash));
+  };
+  const std::function<std::string(const MarkdownElement&)> plain = [&](const MarkdownElement& element) {
+    std::string out = unescapeHtml(element.text);
+    for (const auto& child : element.children) out += plain(child);
+    return out;
+  };
+  const auto trimText = [](std::string text) {
+    const auto begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) return std::string();
+    return text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
+  };
+  const auto indent = [](const std::string& text, const std::string& first, const std::string& rest) {
+    std::string out = first;
+    for (std::size_t at = 0; at < text.size(); ++at) {
+      out += text[at];
+      if (text[at] == '\n' && at + 1 < text.size()) out += rest;
+    }
+    return out;
+  };
+  const auto codeFence = [](const std::string& text, std::size_t minimum) {
+    std::size_t longest = 0, run = 0;
+    for (const char byte : text) { run = byte == '`' ? run + 1 : 0; longest = std::max(longest, run); }
+    return std::string(std::max(minimum, longest + 1), '`');
+  };
+  const std::function<std::string(const MarkdownElement&)> render = [&](const MarkdownElement& element) -> std::string {
+    if (element.tag.empty() && !element.text.empty()) {
+      std::string text = unescapeHtml(element.text), collapsed;
+      for (const unsigned char byte : text) {
+        if (byte == '\r' || byte == '\n' || byte == '\t' || byte == ' ') {
+          if (collapsed.empty() || collapsed.back() != ' ') collapsed += ' ';
+        } else collapsed += static_cast<char>(byte);
+      }
+      return markdownText(collapsed);
+    }
+    const auto& tag = element.tag;
+    if (tag == "pre") {
+      const std::string text = plain(element), fence = codeFence(text, 3);
+      std::string language;
+      if (!element.children.empty()) {
+        const auto classes = markdownAttribute(element.children.front().opening, "class");
+        if (classes.starts_with("language-")) language = classes.substr(9);
+      }
+      return "\n\n" + fence + language + "\n" + text + (text.ends_with('\n') ? "" : "\n") + fence + "\n\n";
+    }
+    if (tag == "code") {
+      const std::string text = plain(element), fence = codeFence(text, 1);
+      const bool pad = text.starts_with('`') || text.ends_with('`') ||
+                       (text.starts_with(' ') && text.ends_with(' ') && text.find_first_not_of(' ') != std::string::npos);
+      return fence + (pad ? " " : "") + text + (pad ? " " : "") + fence;
+    }
+    if (tag == "img") {
+      return "![" + markdownText(markdownAttribute(element.opening, "alt")) + "](<" +
+             markdownDestination(markdownAttribute(element.opening, "src")) + ">)";
+    }
+    if (tag == "input") return element.opening.find(" checked") != std::string_view::npos ? "[x] " : "[ ] ";
+    if (tag == "br") return "  \n";
+    if (tag == "hr") return "\n\n---\n\n";
+    if (tag == "source") return {};
+    if (tag == "ul" || tag == "ol") {
+      std::string out = "\n";
+      unsigned number = 1;
+      const auto start = markdownAttribute(element.opening, "start");
+      if (!start.empty()) std::from_chars(start.data(), start.data() + start.size(), number);
+      for (const auto& child : element.children) {
+        if (child.tag != "li") continue;
+        const std::string marker = tag == "ol" ? std::to_string(number++) + ". " : "- ";
+        out += indent(trimText(render(child)), marker, std::string(marker.size(), ' ')) + "\n";
+      }
+      return out + "\n";
+    }
+    if (tag == "table") {
+      std::vector<const MarkdownElement*> rows;
+      const std::function<void(const MarkdownElement&)> findRows = [&](const MarkdownElement& node) {
+        if (node.tag == "tr") rows.push_back(&node);
+        else for (const auto& child : node.children) findRows(child);
+      };
+      findRows(element);
+      std::string out = "\n\n";
+      for (std::size_t row = 0; row < rows.size(); ++row) {
+        std::size_t cells = 0;
+        out += '|';
+        for (const auto& cell : rows[row]->children) {
+          if (cell.tag != "th" && cell.tag != "td") continue;
+          std::string text = trimText(render(cell));
+          std::replace(text.begin(), text.end(), '\n', ' ');
+          // Pipes inside code spans still need escaping in a GFM table.
+          for (std::size_t at = 0; at < text.size(); ++at) if (text[at] == '|' && (at == 0 || text[at - 1] != '\\')) text.insert(at++, "\\");
+          out += " " + text + " |";
+          ++cells;
+        }
+        out += '\n';
+        if (row == 0) {
+          out += '|';
+          for (std::size_t cell = 0; cell < cells; ++cell) out += " --- |";
+          out += '\n';
+        }
+      }
+      return out + "\n";
+    }
+    if (tag == "div" && markdownAttribute(element.opening, "class") == "home-actions") {
+      std::string out = "\n\n";
+      for (const auto& child : element.children) {
+        const auto text = trimText(render(child));
+        if (!text.empty()) out += "- " + text + "\n";
+      }
+      return out + "\n";
+    }
+    if (tag == "div" && markdownAttribute(element.opening, "class").starts_with("alert alert-")) {
+      std::string kind = markdownAttribute(element.opening, "class").substr(12), body;
+      std::transform(kind.begin(), kind.end(), kind.begin(), [](unsigned char byte) { return static_cast<char>(std::toupper(byte)); });
+      for (const auto& child : element.children) {
+        if (markdownAttribute(child.opening, "class") != "alert-title") body += render(child);
+      }
+      return "\n\n> [!" + kind + "]\n" + indent(trimText(body), "> ", "> ") + "\n\n";
+    }
+    const auto block = [](std::string_view name) {
+      return name == "p" || name == "pre" || name == "blockquote" || name == "ul" || name == "ol" ||
+             name == "table" || name == "div" || name == "section" || name == "details" || name == "picture" ||
+             name == "hr" || (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6');
+    };
+    std::string inner;
+    for (std::size_t index = 0; index < element.children.size(); ++index) {
+      const auto& child = element.children[index];
+      if (child.tag.empty() && trimText(std::string(child.text)).empty() &&
+          (tag.empty() || (index > 0 && block(element.children[index - 1].tag)) ||
+                          (index + 1 < element.children.size() && block(element.children[index + 1].tag)))) continue;
+      const auto part = render(child);
+      // Join block separators without modifying blank lines inside code.
+      if (part.starts_with('\n')) while (!inner.empty() && inner.back() == '\n') inner.pop_back();
+      inner += part;
+    }
+    if (tag == "a") return "[" + inner + "](<" + markdownDestination(link(markdownAttribute(element.opening, "href"))) + ">)";
+    if (tag == "em") return "*" + inner + "*";
+    if (tag == "strong" || tag == "summary") return "**" + inner + "**";
+    if (tag == "del") return "~~" + inner + "~~";
+    if (tag.size() == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6')
+      return "\n\n" + std::string(static_cast<std::size_t>(tag[1] - '0'), '#') + " " + trimText(inner) + "\n\n";
+    if (tag == "blockquote") return "\n\n" + indent(trimText(inner), "> ", "> ") + "\n\n";
+    if (tag == "span" && markdownAttribute(element.opening, "class") == "home-name") return inner + " ";
+    if (tag == "p") {
+      inner = trimText(inner);
+      if (inner.starts_with('-') || inner.starts_with('+')) inner.insert(0, "\\");
+      std::size_t digits = 0;
+      while (digits < inner.size() && inner[digits] >= '0' && inner[digits] <= '9') ++digits;
+      if (digits > 0 && digits + 1 < inner.size() && (inner[digits] == '.' || inner[digits] == ')') && inner[digits + 1] == ' ')
+        inner.insert(digits, "\\");
+      return "\n\n" + inner + "\n\n";
+    }
+    if (tag == "div" || tag == "section" || tag == "details" || tag == "picture") return "\n\n" + trimText(inner) + "\n\n";
+    return inner;
+  };
+  std::string out = trimText(render(root));
+  if (out.size() > kMaximumMarkdownOutputBytes) siteError("Markdown page exceeds the output bound");
+  return out + "\n";
+}
+
 std::vector<std::string_view> splitPath(std::string_view path) {
   std::vector<std::string_view> parts;
   for (std::size_t start = 0; start <= path.size();) {
@@ -1299,6 +1532,31 @@ std::string renderHome(const DocsHome& home, const MarkdownLinkResolver& resolve
   return out;
 }
 
+// v2 permits an appended .md suffix. Relative URLs work on file:// and under
+// any hosting prefix; portal pages all point at the portal's root index.
+std::string llmsDiscovery(std::string_view from, std::string_view page) {
+  return "<link rel=\"describedby\" href=\"" + escapeHtml(relativeUrl(from, kDocsLlmsFile)) +
+         "\" type=\"text/plain\"><link rel=\"alternate\" type=\"text/markdown\" href=\"" +
+         escapeHtml(relativeUrl(directoryOf(page), std::string(page) + ".md")) + "\">";
+}
+
+std::map<std::string, std::string> markdownPageLinks(const DocsSiteModel& model, const std::string& prefix,
+                                                   const PortalShell* portal, std::string_view from) {
+  std::map<std::string, std::string> links;
+  const auto add = [&](const std::string& path) { links.emplace(relativeUrl(from, path), relativeUrl(from, path + ".md")); };
+  if (portal != nullptr) {
+    add("index.html");
+    for (const auto& site : portal->portal->sites) {
+      for (const auto& page : site.model.pages) add(site.entry.id + "/" + page.output);
+      add(site.entry.id + "/" + std::string(kDocsSiteIndexPage));
+    }
+  } else {
+    for (const auto& page : model.pages) add(prefix + page.output);
+    add(prefix + std::string(kDocsSiteIndexPage));
+  }
+  return links;
+}
+
 struct ShellInput {
   std::string title;        // the page title
   std::string description;  // meta description, may be empty
@@ -1335,6 +1593,8 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
     for (const auto& [key, value] : page.foreign_front_matter) meta(std::string(kDocsForeignMetaPrefix) + key, value);
   }
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(context.version) + "\">";
+  if (portal != nullptr ? portal->portal->config.llms : model.config.llms)
+    out += llmsDiscovery(portal_dir, in.output);
   if (portal != nullptr && !portal->favicon_output.empty()) {
     out += "<link rel=\"icon\" href=\"" + portalUrl(portal->favicon_output) + "\">";
   } else if (!context.favicon_output.empty()) {
@@ -1466,6 +1726,8 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   if (!footer.empty()) out += "<span>" + escapeHtml(footer) + "</span>";
   out += "<span>Built with ckdocs " + escapeHtml(context.version) + "</span>";
   out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a>";
+  if (portal != nullptr ? portal->portal->config.llms : model.config.llms)
+    out += "<a href=\"" + url(in.output + ".md") + "\" title=\"Read this page as plain Markdown\">Markdown</a>";
   return out + "</footer><script>" + std::string(kDocsUiScript) + "</script></body></html>";
 }
 
@@ -1809,6 +2071,12 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     page_by_source.emplace(model.pages[index].source, index);
     page_by_output.emplace(model.pages[index].output, index);
   }
+  const bool llms_enabled = portal != nullptr ? portal->portal->config.llms : model.config.llms;
+  std::set<std::string> markdown_outputs;
+  if (llms_enabled) {
+    for (const auto& page : model.pages) markdown_outputs.insert(page.output + ".md");
+    markdown_outputs.insert(std::string(kDocsSiteIndexPage) + ".md");
+  }
   std::map<std::string, std::string> assets;  // output path -> root-relative source
   const auto diagramPath = [](std::string_view path) { return path == "_ckdocs-mermaid" || path.starts_with("_ckdocs-mermaid/"); };
   if (options.mermaid_renderer) {
@@ -1827,7 +2095,8 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
                                                               : assetOutputPath(model, root_relative);
     if (options.mermaid_renderer && diagramPath(path)) return "uses the reserved _ckdocs-mermaid output directory";
     if (page_by_output.count(path) != 0) return "would overwrite the page '" + path + "'";
-    if (prefix.empty() && (path == kDocsSitemapFile || path == kDocsLlmsFile || path == kDocsSearchIndexPage ||
+    if (markdown_outputs.count(path) != 0) return "would overwrite the generated Markdown page '" + path + "'";
+    if (prefix.empty() && (path == kDocsSitemapFile || (llms_enabled && path == kDocsLlmsFile) || path == kDocsSearchIndexPage ||
                            path == kDocsSiteIndexPage)) {
       return "would overwrite the generated '" + path + "'";
     }
@@ -2035,6 +2304,16 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     input.article = withByline(std::move(article), page);
     input.outline = &context.outlines[index];
     input.page = index;
+    if (llms_enabled) {
+      try {
+        std::string clean = renderMarkdown(markdownBody(*content), link_context);
+        if (page.landing) clean = renderHome(*page.landing, link_context.resolver, [](const std::string&) {}) + clean;
+        writeFile(page.output + ".md", markdownPage(withByline(std::move(clean), page),
+            markdownPageLinks(model, prefix, portal, prefix + out_dir)));
+      } catch (const std::length_error& bound) {
+        siteError("'" + page.source + "' exceeds a Markdown rendering bound: " + bound.what());
+      }
+    }
     writeFile(page.output, renderShell(context, input));
     ++result.pages_written;
   }
@@ -2117,6 +2396,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
     input.title = "Site index";
     input.output = std::string(kDocsSiteIndexPage);
     input.article = "<div class=\"site-index\">" + body + "</div>";
+    if (llms_enabled) writeFile(input.output + ".md", markdownPage(input.article, markdownPageLinks(model, prefix, portal, prefix)));
     writeFile(input.output, renderShell(context, input));
   }
 
@@ -2201,12 +2481,13 @@ std::string llmsText(std::string_view value) {
 
 // sitemap.xml (only with a base URL) and llms.txt at the output root.
 void writeListings(OutputTree& tree, const std::string& title, const std::string& description, const std::string& base_url,
-                   const std::vector<ListingSection>& sections) {
+                   const std::vector<ListingSection>& sections, bool llms_enabled) {
   const auto href = [&](const std::string& path) {
     const std::string encoded = encodePathSegment(path);
     return base_url.empty() ? encoded : base_url + encoded;
   };
   for (const std::string_view name : {kDocsSitemapFile, kDocsLlmsFile}) {
+    if (name == kDocsLlmsFile && !llms_enabled) continue;
     if (tree.written(std::string(name))) siteError("'" + std::string(name) + "' would overwrite another output");
   }
   if (!base_url.empty()) {
@@ -2223,12 +2504,13 @@ void writeListings(OutputTree& tree, const std::string& title, const std::string
     xml += "</urlset>\n";
     tree.write(std::string(kDocsSitemapFile), xml);
   }
+  if (!llms_enabled) return;
   std::string text = "# " + llmsText(title) + "\n";
   if (!description.empty()) text += "\n> " + llmsText(description) + "\n";
   for (const auto& section : sections) {
     text += "\n## " + llmsText(section.title) + "\n\n";
     for (const auto& page : section.pages) {
-      text += "- [" + llmsText(page.title) + "](" + href(page.path) + ")";
+      text += "- [" + llmsText(page.title) + "](" + href(page.path + ".md") + ")";
       if (!page.description.empty()) text += ": " + llmsText(page.description);
       text += "\n";
     }
@@ -2247,7 +2529,7 @@ void buildDocsSite(const DocsSiteModel& model, const fs::path& out_path, const D
   OutputTree tree(out_path, options.clean, result);
   std::vector<std::string> leads;
   renderSite(model, tree, "", nullptr, options, result, &leads);
-  writeListings(tree, model.title, model.config.description, model.config.url, siteListing(model, "", "", true, leads));
+  writeListings(tree, model.title, model.config.description, model.config.url, siteListing(model, "", "", true, leads), model.config.llms);
   tree.commit(buildVersion());
 }
 
@@ -2332,11 +2614,12 @@ fs::path extractRef(const fs::path& root, const DocsSiteEntry& entry, std::share
 // A small page standing at a site's old, root-level URL: an immediate
 // refresh to the page's new place, its canonical link, and a visible link
 // for anything that does not follow the refresh.
-std::string renderRedirectPage(const std::string& target, const std::string& title) {
+std::string renderRedirectPage(const std::string& target, const std::string& title, const std::string& output, bool llms) {
   const auto href = escapeHtml(target);
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" + escapeHtml(title) +
          "</title><meta http-equiv=\"refresh\" content=\"0; url=" + href + "\"><link rel=\"canonical\" href=\"" + href +
-         "\"><meta name=\"robots\" content=\"noindex\"></head><body><p>This page has moved to <a href=\"" + href + "\">" +
+         "\"><meta name=\"robots\" content=\"noindex\">" + (llms ? llmsDiscovery(directoryOf(output), output) : "") +
+         "</head><body><p>This page has moved to <a href=\"" + href + "\">" +
          escapeHtml(title) + "</a>.</p></body></html>\n";
 }
 
@@ -2351,6 +2634,7 @@ std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& 
   out += "<title>" + escapeHtml(config.title) + "</title>";
   if (!config.description.empty()) out += "<meta name=\"description\" content=\"" + escapeHtml(config.description) + "\">";
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(version) + "\">";
+  if (config.llms) out += llmsDiscovery("", "index.html");
   if (!shell.favicon_output.empty()) out += "<link rel=\"icon\" href=\"" + escapeHtml(relativeUrl("", shell.favicon_output)) + "\">";
   out += "<style>";
   out += kDocsStyles;
@@ -2375,6 +2659,7 @@ std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& 
   out += "</ul></article></main></div><footer class=\"site\">";
   if (!config.footer.empty()) out += "<span>" + escapeHtml(config.footer) + "</span>";
   out += "<span>Built with ckdocs " + escapeHtml(version) + "</span>";
+  if (config.llms) out += "<a href=\"index.html.md\" title=\"Read this page as plain Markdown\">Markdown</a>";
   return out + "</footer></body></html>";
 }
 
@@ -2567,6 +2852,19 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
       }
     }
   }
+  if (portal.config.llms) {
+    std::string clean = "<h1>" + escapeHtml(portal.config.title) + "</h1>";
+    if (!portal.config.description.empty()) clean += "<p>" + escapeHtml(portal.config.description) + "</p>";
+    clean += intro + "<ul>";
+    for (const auto& site : portal.sites) {
+      clean += "<li><a href=\"" + escapeHtml(site.entry.id + "/" + site.model.pages[site.model.home].output) + "\">" +
+               escapeHtml(site.entry.title) + "</a>";
+      if (!site.entry.description.empty()) clean += "<p>" + escapeHtml(site.entry.description) + "</p>";
+      clean += "</li>";
+    }
+    clean += "</ul>";
+    tree.write("index.html.md", markdownPage(clean, markdownPageLinks(portal.sites.front().model, "", &shell, "")));
+  }
   tree.write("index.html", renderWelcomePage(portal, shell, version, intro));
   ++result.pages_written;
   for (const auto& asset : portal_assets) {
@@ -2588,11 +2886,18 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
       };
       if (const auto* owner = siteOwning(page.output)) fail("inside site '" + owner->entry.id + "'s directory");
       if (tree.written(page.output)) fail("which another output of the portal already uses");
-      tree.write(page.output, renderRedirectPage(relativeUrl(directoryOf(page.output), site.entry.id + "/" + page.output), page.title));
+      const auto target = relativeUrl(directoryOf(page.output), site.entry.id + "/" + page.output);
+      tree.write(page.output, renderRedirectPage(target, page.title, page.output, portal.config.llms));
+      if (portal.config.llms) {
+        if (tree.written(page.output + ".md")) fail("which another Markdown output of the portal already uses");
+        tree.write(page.output + ".md", "# " + markdownText(page.title) + "\n\nThis page has moved to [" +
+                   markdownText(page.title) + "](<" + target + ".md>).\n");
+      }
       ++result.redirects_written;
     }
   }
   std::vector<ListingSection> sections;
+  sections.push_back({"Overview", {{portal.config.title, "index.html", portal.config.description, ""}}});
   for (std::size_t index = 0; index < portal.sites.size(); ++index) {
     const auto& site = portal.sites[index];
     // Each site's pages outside its nav join one "Optional" section below.
@@ -2611,7 +2916,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     }
   }
   if (!optional.pages.empty()) sections.push_back(std::move(optional));
-  writeListings(tree, portal.config.title, portal.config.description, portal.config.url, sections);
+  writeListings(tree, portal.config.title, portal.config.description, portal.config.url, sections, portal.config.llms);
   tree.commit(version);
 }
 

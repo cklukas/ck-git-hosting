@@ -28,6 +28,7 @@ at once instead — see [Several sites in one build](#several-sites-in-one-build
 | `exclude` | list of patterns | none | Each entry is a path (a whole subtree) or a prefix ending in one `*`; matched against both the repository-relative and the source-relative form of every candidate, so `docs/drafts` and, with `source: docs`, plain `drafts` both work. Up to 64 entries. |
 | `nav` | list of entries (below) | derived from pages | Names the tabs and groups explicitly. Nesting is bounded to 4 levels; every path named must be a page the site would otherwise build. |
 | `search` | `true`/`false` | `false` | Adds client-side search — see [Search](#search). |
+| `llms` | `true`/`false` | `true` | Generates llms.txt and Markdown page versions, adds v2 discovery links and a footer Markdown link. Set `false` to disable all four together. In a portal this setting belongs to the portal and overrides each child site. See [Sitemap and llms.txt](#sitemap-and-llmstxt). |
 | `front_matter.foreign_keys` | list of keys | none | Front matter keys another tool reads, accepted silently and carried as `front-matter:<key>` meta tags — see [Front matter](front-matter.md#front-matter). Up to 32 entries, each 1–64 ASCII letters, digits, `.`, `_`, or `-`, listed once, and none of the keys ckdocs reads itself (`title`, `description`, `author`, `date`, `nav_order`, `nav_exclude`); `front_matter:` takes no other key. |
 
 A `nav:` entry is one of:
@@ -88,7 +89,7 @@ to get there.
 
 ## Sitemap and llms.txt
 
-Every build writes `llms.txt` at the output root: a plain-text index of the
+By default, every build writes `llms.txt` at the output root: a plain-text index of the
 site for AI tools, in the [llms.txt](https://llmstxt.org/) format. It holds
 the site title, `site.description` as a quote, one section per tab with each
 page as a Markdown link and its front matter
@@ -105,13 +106,52 @@ appear in the site index and in search results.
 
 ## Guides
 
-- [Set up the client](https://cklukas.github.io/ck-git-hosting/guides/client-setup.html)
+- [Set up the client](https://cklukas.github.io/ck-git-hosting/guides/client-setup.html.md)
 ```
+
+With the default `llms: true`, each HTML content page has a clean Markdown
+version at the same URL with `.md` appended: `guide.html.md`, or
+`index.html.md` for a directory home. The generated site index, portal welcome
+page, and legacy redirect pages have Markdown versions too. Markdown contains
+the article (including landing-page content and bylines), with working links
+to published Markdown pages and copied assets. Code blocks and Mermaid source
+remain fenced code. Front matter and the navigation, search, theme controls,
+and other site chrome are omitted.
+
+Every HTML page includes relative discovery links, following the
+[llms.txt v2 proposal](https://llmstxt.org/changes.html):
+
+```html
+<link rel="describedby" href="../llms.txt" type="text/plain">
+<link rel="alternate" type="text/markdown" href="guide.html.md">
+```
+
+A subtle **Markdown** footer link opens the current page's unrendered text.
+The built-in server and ck-git Pages serve `.md` as UTF-8 plain text, so the
+browser can display it directly. Other hosts choose their own response MIME
+type. The `alternate` link identifies the content as Markdown for agents.
+No server-specific HTTP `Link` headers are required: discovery works from
+the static HTML files, under any URL prefix. A portal uses one covering
+`llms.txt` at its root; child pages link back to that file.
+
+To disable the whole feature:
+
+```yaml
+version: 1
+site:
+  title: My docs
+llms: false
+```
+
+This removes generated `llms.txt` and `*.html.md` files, the discovery links,
+and the footer link. Rebuild with `--clean` to replace an earlier output.
+The setting is independent of search and the sitemap. For portals, only the
+portal's `llms` setting controls output; child settings do not override it.
 
 With `site.url` set, the build also writes `sitemap.xml`, listing every page's
 absolute URL in navigation order, with a page's front matter `date` as its
 `<lastmod>`. A sitemap needs absolute URLs, so without `site.url` there is
-none, and `llms.txt` links stay relative to the site root. A portal writes
+none, and `llms.txt` links stay relative to the site root. Its links target the Markdown page versions; the sitemap continues to target HTML. A portal writes
 one of each at its root, covering every site, with its own `site.url`. A
 linked file that would be copied to one of these generated names is
 reported as a broken link instead.

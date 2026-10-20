@@ -202,6 +202,9 @@ void testConfig() {
 
   const std::string minimal = "version: 1\nsite:\n  title: x\n";
   require(rejection(minimal).empty(), "a minimal config parses");
+  require(ckgit::parseDocsConfig(minimal).llms && !ckgit::parseDocsConfig(minimal + "llms: false\n").llms,
+          "llms publishing defaults on and can be disabled");
+  require(contains(rejection(minimal + "llms: maybe\n"), "llms must be true or false"), "llms requires a boolean");
   require(contains(rejection(""), "ckdocs.yml: the config file is empty (line 1)"), "an empty file names itself");
   require(contains(rejection("site:\n  title: x\n"), "missing 'version'"), "version is required");
   require(contains(rejection("version: 2\nsite:\n  title: x\n"), "version must be 1"), "version must be 1");
@@ -706,6 +709,76 @@ void testFindingsAndLeftOutPages() {
 }
 
 // site.url: validated and given a trailing slash; with it a build writes
+// Both representations share content and resolution, including relocated home
+// pages, assets, fragments, fenced code and landing metadata. Disabling the
+// feature removes every generated representation/link while retaining HTML.
+void testMarkdownPages() {
+  Scratch scratch;
+  write(scratch.root / "README.md", "---\ntitle: Welcome\nauthor: A Person\n---\n# Home\n\n[guide](docs/nested/guide.md#use)\n");
+  write(scratch.root / "docs/nested/guide.md",
+        "---\ndescription: Page summary\n---\n# Guide\n\n## Use\n\n"
+        "[home](../../README.md#home) [clean](/nested/child) [self](#use)\n\n"
+        "![figure](../image.png) [PDF](../files/a%20b.pdf)\n\n"
+        "**Bold** and *emphasis* with `a < b` and escaped \\[label\\].\n\n"
+        "> A quote with a [child](child.md).\n\n- [x] Task\n- List\n  - Nested\n\n"
+        "> [!NOTE]\n> Remember the boundary.\n\n\\- literal list marker\n\n<script>literal</script>\n\n"
+        "| Key | Value |\n| --- | --- |\n| A | [child](child.md) |\n\n"
+        "````markdown\n[code](never-rewrite.md)\n\n\n```\n````\n\n"
+        "```mermaid\nflowchart LR\n  A --> B\n```\n");
+  write(scratch.root / "docs/nested/child.md", "# Child\n");
+  write(scratch.root / "docs/image.png", "PNG");
+  write(scratch.root / "docs/files/a b.pdf", "%PDF");
+  write(scratch.root / "ckdocs.yml", "version: 1\nsite:\n  title: Test\n  url: https://example.test/project/\n");
+  const auto model = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
+  const auto out = scratch.root / "site";
+  ckgit::DocsBuildReport report;
+  ckgit::buildDocsSite(model, out, ckgit::DocsBuildOptions{}, &report);
+  require(report.broken_links.empty() && report.broken_anchors.empty(), "valid source links and fragments");
+  const auto html = slurp(out / "nested/guide.html");
+  require(contains(html, "<link rel=\"describedby\" href=\"../llms.txt\" type=\"text/plain\">") &&
+              contains(html, "<link rel=\"alternate\" type=\"text/markdown\" href=\"guide.html.md\">") &&
+              contains(html, "href=\"guide.html.md\" title=\"Read this page as plain Markdown\">Markdown</a>"),
+          "nested discovery and a subtle plain-Markdown footer link");
+  const auto md = slurp(out / "nested/guide.html.md");
+  require(contains(md, "# Guide") && contains(md, "## Use") && !contains(md, "description:") &&
+              !contains(md, "<nav") && !contains(md, "Built with ckdocs"), "Markdown contains article content, without front matter or shell");
+  require(contains(md, "[home](<../index.html.md#home>)") && contains(md, "[clean](<child.html.md>)") &&
+              contains(md, "[self](<#use>)") && contains(md, "![figure](<../image.png>)") &&
+              contains(md, "[PDF](<../files/a%20b.pdf>)"), "published Markdown links resolve to Markdown pages and copied assets");
+  require(contains(md, "**Bold**") && contains(md, "*emphasis*") && contains(md, "`a < b`") &&
+              contains(md, "> A quote with a [child](<child.html.md>)") && contains(md, "- [x]") &&
+              contains(md, "| A | [child](<child.html.md>) |"), "formatting, quotes, tasks and tables remain Markdown");
+  require(contains(md, "> [!NOTE]\n> Remember the boundary.") && contains(md, "\\- literal list marker") &&
+              contains(md, "\\<script\\>literal\\</script\\>"), "alerts and literal Markdown/HTML retain their meaning");
+  require(contains(md, "````markdown\n[code](never-rewrite.md)\n\n\n```\n````") &&
+              contains(md, "```mermaid\nflowchart LR\n  A --> B\n```"), "code and Mermaid source survive literally, including blank lines and nested fences");
+  require(contains(slurp(out / "index.html.md"), "[guide](<nested/guide.html.md#use>)") &&
+              contains(slurp(out / "index.html.md"), "A Person"), "relocated home links and author content");
+  require(contains(slurp(out / "site-index.html.md"), "nested/guide.html.md#use"), "the generated site index has a Markdown view too");
+  checkInternalReferences(out, "nested/guide.html", html);
+  checkInternalReferences(out, "site-index.html", slurp(out / "site-index.html"));
+
+  write(scratch.root / "docs/public/nested/guide.html.md", "collision");
+  auto collision_config = ckgit::readDocsConfig(scratch.root);
+  collision_config.stylesheet = "docs/public/nested/guide.html.md";
+  bool refused = false;
+  try { ckgit::buildDocsSite(ckgit::loadDocsSite(scratch.root, collision_config, nullptr), scratch.root / "collision", {}, nullptr); }
+  catch (const std::runtime_error& error) { refused = contains(error.what(), "would overwrite the generated Markdown page"); }
+  require(refused && !fs::exists(scratch.root / "collision"), "a copied asset cannot overwrite a generated Markdown page");
+
+  auto disabled = ckgit::readDocsConfig(scratch.root);
+  disabled.llms = false;
+  ckgit::DocsBuildOptions clean;
+  clean.clean = true;
+  ckgit::buildDocsSite(ckgit::loadDocsSite(scratch.root, disabled, nullptr), out, clean, &report);
+  require(fs::is_regular_file(out / "sitemap.xml") && !fs::exists(out / "llms.txt") &&
+              !fs::exists(out / "index.html.md") && !fs::exists(out / "nested/guide.html.md") &&
+              !fs::exists(out / "site-index.html.md"), "disabling llms removes old generated files but keeps the sitemap");
+  const auto disabled_html = slurp(out / "nested/guide.html");
+  require(!contains(disabled_html, "rel=\"describedby\"") && !contains(disabled_html, "rel=\"alternate\"") &&
+              !contains(disabled_html, ">Markdown</a>"), "disabled sites omit machine and footer discovery links");
+}
+
 // sitemap.xml (absolute, encoded URLs in nav order, front matter dates as
 // lastmod) and llms.txt with absolute links; nav-less pages go under Optional.
 void testListings() {
@@ -742,9 +815,9 @@ void testListings() {
           "the sitemap lists every page by absolute URL: " + sitemap);
   const auto llms = slurp(scratch.root / "site/llms.txt");
   require(llms.starts_with("# Listed\n\n> All the pages\n") &&
-              contains(llms, "- [Guide & more](https://example.test/docs/guide.html): How to \\[start\\]\n") &&
-              contains(llms, "- [Spaced](https://example.test/docs/my%20page.html): First sentence here.\n") &&
-              contains(llms, "## Optional\n\n- [Hidden](https://example.test/docs/hidden.html)\n"),
+              contains(llms, "- [Guide & more](https://example.test/docs/guide.html.md): How to \\[start\\]\n") &&
+              contains(llms, "- [Spaced](https://example.test/docs/my%20page.html.md): First sentence here.\n") &&
+              contains(llms, "## Optional\n\n- [Hidden](https://example.test/docs/hidden.html.md)\n"),
           "llms.txt lists tabs, absolute links, descriptions and Optional pages: " + llms);
 
   write(scratch.root / "ckdocs.yml", "version: 1\nsite:\n  title: Listed\n");
@@ -753,7 +826,7 @@ void testListings() {
   const auto relative = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
   ckgit::DocsBuildReport report;
   ckgit::buildDocsSite(relative, scratch.root / "site2", ckgit::DocsBuildOptions{}, &report);
-  require(!fs::exists(scratch.root / "site2/sitemap.xml") && contains(slurp(scratch.root / "site2/llms.txt"), "(guide.html)"),
+  require(!fs::exists(scratch.root / "site2/sitemap.xml") && contains(slurp(scratch.root / "site2/llms.txt"), "(guide.html.md)"),
           "without site.url: no sitemap, relative llms.txt links");
   require(report.broken_links.size() == 1 && contains(report.broken_links[0], "would overwrite the generated 'llms.txt'"),
           "a linked file cannot replace a generated one");
@@ -1123,7 +1196,7 @@ void testPortalBuild() {
       "    ref: main\n"
       "    redirect_from_root: true\n";
   write(root / "ckdocs.yml", portal_yaml);
-  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\n  favicon: unused-child-icon.png\nsource: cpp-docs\n");
+  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\n  favicon: unused-child-icon.png\nllms: false\nsource: cpp-docs\n");
   write(root / "cpp-docs/README.md", "# C++ home\n\nSee the [API](api.md#calls).\n");
   write(root / "cpp-docs/api.md", "# API\n\n## Calls\n");
   write(root / "portal/welcome.md", "Choose an edition, or start with the [Python guide](/python/guide.html).\n\n"
@@ -1156,8 +1229,8 @@ void testPortalBuild() {
   }
   const auto portal_llms = slurp(out / "llms.txt");
   require(portal_llms.starts_with("# Portal\n\n> Both editions\n") && contains(portal_llms, "## C++ edition: ") &&
-              contains(portal_llms, "(cpp/index.html)") && contains(portal_llms, "## Python edition: ") &&
-              contains(portal_llms, "(python/guide.html)") && !fs::exists(out / "sitemap.xml") &&
+              contains(portal_llms, "(cpp/index.html.md)") && contains(portal_llms, "## Python edition: ") &&
+              contains(portal_llms, "(python/guide.html.md)") && !fs::exists(out / "sitemap.xml") &&
               !fs::exists(out / "cpp/llms.txt"),
           "a portal writes one llms.txt for every site and no sitemap without site.url");
   require(!fs::exists(out / "search-index.json") && !fs::exists(out / "site-index.html") && !fs::exists(out / "cpp/search-index.json") &&
@@ -1210,6 +1283,22 @@ void testPortalBuild() {
           "a card per site");
   require(!contains(welcome, "class=\"tabs\"") && !contains(welcome, "<aside") && !contains(welcome, "ckdocs-search"),
           "no tabs, sidebar or search on the welcome page");
+
+  require(contains(python_guide, "rel=\"describedby\" href=\"../llms.txt\"") &&
+              contains(api, "rel=\"alternate\" type=\"text/markdown\" href=\"api.html.md\"") &&
+              contains(welcome, "href=\"index.html.md\""), "portal discovery uses the covering root index and local Markdown views");
+  require(contains(slurp(out / "index.html.md"), "[Python guide](<python/guide.html.md>)") &&
+              contains(slurp(out / "cpp/api.html.md"), "# API") && fs::is_regular_file(out / "guide.html.md"),
+          "portal welcome, child pages and redirect aliases have Markdown versions");
+  auto disabled_config = config;
+  disabled_config.llms = false;
+  const auto disabled_portal = ckgit::loadDocsPortal(root, disabled_config, ckgit::DocsPortalOptions{}, nullptr);
+  const auto disabled_out = scratch.root / "disabled";
+  ckgit::buildDocsPortal(disabled_portal, disabled_out, ckgit::DocsBuildOptions{}, nullptr);
+  require(!fs::exists(disabled_out / "llms.txt") && !fs::exists(disabled_out / "index.html.md") &&
+              !fs::exists(disabled_out / "python/guide.html.md") && !fs::exists(disabled_out / "guide.html.md") &&
+              !contains(slurp(disabled_out / "cpp/api.html"), "rel=\"alternate\""),
+          "the portal switch disables publishing for all sites and redirect aliases");
 
   const auto redirect = slurp(out / "guide.html");
   require(contains(redirect, "<meta http-equiv=\"refresh\" content=\"0; url=python/guide.html\">") &&
@@ -1361,6 +1450,11 @@ void testHomeLayout() {
                                "class=\"tab-menu\"", "class=\"theme-toggle\""})
     require(contains(html, expected), std::string("landing output contains ") + expected);
   require(slurp(out / "images/light.svg") == "<svg>light</svg>", "referenced public asset bytes preserved");
+  const auto home_markdown = slurp(out / "index.html.md");
+  require(contains(home_markdown, "# Agent \\& Web Build \\<systems\\>") &&
+              contains(home_markdown, "guide.html.md") && contains(home_markdown, "images/light.svg") &&
+              !contains(home_markdown, "hero:") && !contains(home_markdown, "class="),
+          "landing metadata becomes readable Markdown content without its implementation markup");
   require(!contains(html, "<systems>") && !contains(html, "<context>"), "landing text never acts as markup");
 
   // Invalid action URLs must neither execute nor become clickable, and
@@ -1398,6 +1492,7 @@ void testDocsSite() {
   testBuild();
   testFindingsAndLeftOutPages();
   testListings();
+  testMarkdownPages();
   testMermaidArtifacts();
   testSearch();
   testPortalConfig();

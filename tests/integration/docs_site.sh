@@ -78,9 +78,15 @@ if ! "$CKDOCS" build --root "$repo_root" --out "$site" --strict >"$test_root/bui
   exit 1
 fi
 
-for page in index.html operations/01-installation.html protocol/01-ssh-and-control-v1.html site-index.html .ckdocs; do
+for page in index.html index.html.md llms.txt operations/01-installation.html operations/01-installation.html.md protocol/01-ssh-and-control-v1.html site-index.html site-index.html.md .ckdocs; do
   [ -f "$site/$page" ] || { echo "expected $page in the built site" >&2; exit 1; }
 done
+
+grep -qF 'rel="alternate" type="text/markdown" href="index.html.md"' "$site/index.html" ||
+  { echo "home page is missing v2 alternate discovery" >&2; exit 1; }
+grep -qF 'rel="describedby" href="../llms.txt"' "$site/operations/01-installation.html" ||
+  { echo "nested page is missing covering-index discovery" >&2; exit 1; }
+grep -qF '.html.md)' "$site/llms.txt" || { echo "llms.txt is missing Markdown page links" >&2; exit 1; }
 
 grep -q '>Home</a>' "$site/index.html" || { echo "index.html is missing the Home link" >&2; exit 1; }
 for tab in Guides Server CI ckdocs Reference; do
@@ -412,6 +418,10 @@ check_serve() {  # check_serve PATH 'HTTP STATUS LINE' [CONTENT-TYPE PATTERN]
 
 check_serve "/" "HTTP/1.1 200 OK" "text/html"
 check_serve "/operations/07-docs-sites.html" "HTTP/1.1 200 OK" "text/html"
+check_serve "/operations/07-docs-sites.html.md" "HTTP/1.1 200 OK" "text/plain"
+grep -qF "#" "$test_root/serve-body" || { echo "Markdown response is missing article content" >&2; exit 1; }
+if grep -qF "<!doctype html>" "$test_root/serve-body"; then echo "Markdown URL returned the HTML shell" >&2; exit 1; fi
+check_serve "/llms.txt" "HTTP/1.1 200 OK" "text/plain"
 check_serve "/operations/08-web-dashboard.html" "HTTP/1.1 200 OK" "text/html"
 check_serve "/images/web-files.png" "HTTP/1.1 200 OK" "image/png"
 diagram_asset=$(basename "$(find "$site/_ckdocs-mermaid" -name '*.svg' | head -n 1)")

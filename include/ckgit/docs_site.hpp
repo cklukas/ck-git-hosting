@@ -98,6 +98,7 @@ struct DocsConfig {
   std::vector<std::string> exclude;  // path prefixes or trailing-`*` patterns, root- or source-relative
   std::vector<DocsNavEntry> nav;     // empty = derived from the tree
   bool search = false;
+  bool llms = true;  // llms.txt, Markdown versions, discovery and footer links; portal-wide
   // front_matter.foreign_keys: page front matter keys that belong to other
   // tools. ckdocs never interprets them; a page carrying one is not warned
   // about, and its value is passed through as a `front-matter:<key>` meta tag.
@@ -199,9 +200,10 @@ inline constexpr std::string_view kDocsSiteMarker = ".ckdocs";
 inline constexpr std::string_view kDocsSiteIndexPage = "site-index.html";
 // Generated at the output root for crawlers and AI tools: a sitemap of every
 // page (only with site.url, since a sitemap needs absolute URLs) and an
-// llms.txt index (llmstxt.org): the title, the description, and each tab's
+// llms.txt index (llmstxt.org, unless llms: false): the title, the description, and each tab's
 // pages as Markdown links with their descriptions, pages outside the nav
-// under "Optional". In a portal one of each covers every site.
+// under "Optional". Index entries target clean .html.md page versions.
+// In a portal one of each covers every site.
 inline constexpr std::string_view kDocsSitemapFile = "sitemap.xml";
 inline constexpr std::string_view kDocsLlmsFile = "llms.txt";
 
