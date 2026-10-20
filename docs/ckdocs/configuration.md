@@ -148,6 +148,17 @@ and the footer link. Rebuild with `--clean` to replace an earlier output.
 The setting is independent of search and the sitemap. For portals, only the
 portal's `llms` setting controls output; child settings do not override it.
 
+When the same source is published to more than one host, override `site.url`
+for that build instead of changing its configuration:
+
+```sh
+ckdocs build --site-url http://rpi4:8421/my-project/ --strict
+```
+
+The override applies to single sites and portals, and is also available for
+`check` and `serve`. It uses the same URL validation as `site.url`; relative
+HTML discovery and footer links remain portable between hosts.
+
 With `site.url` set, the build also writes `sitemap.xml`, listing every page's
 absolute URL in navigation order, with a page's front matter `date` as its
 `<lastmod>`. A sitemap needs absolute URLs, so without `site.url` there is

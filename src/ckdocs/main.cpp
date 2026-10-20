@@ -107,6 +107,7 @@ void usage(std::ostream& out) {
          "Options:\n"
          "  --root DIR      The repository to read (default: the current directory).\n"
          "  --source DIR    Override the page source tree, relative to --root.\n"
+         "  --site-url URL  Override site.url for this publishing host (also for portals).\n"
          "  --config FILE   Read this file instead of <root>/ckdocs.yml.\n"
          "  --ref-tree REF=DIR\n"
          "                  Use DIR (relative to the current directory) as the tree of the\n"
@@ -147,6 +148,7 @@ enum class Command { kBuild, kCheck, kServe };
 struct Options {
   fs::path root = ".";
   std::optional<fs::path> source;
+  std::optional<std::string> site_url;
   std::optional<fs::path> config;
   std::optional<fs::path> out;
   std::map<std::string, fs::path> ref_trees;
@@ -177,6 +179,19 @@ bool parseOptions(int argc, char** argv, int start, Command command, Options& op
       const auto value = next();
       if (!value) { error = "--source requires a value"; return false; }
       options.source = *value;
+    } else if (argument == "--site-url") {
+      const auto value = next();
+      if (!value) { error = "--site-url requires a value"; return false; }
+      // Use the configuration's URL validation and trailing-slash policy.
+      std::string quoted = "'";
+      for (const char byte : *value) quoted += byte == '\'' ? "''" : std::string(1, byte);
+      quoted += "'";
+      try {
+        options.site_url = ckgit::parseDocsConfig("version: 1\nsite:\n  title: URL\n  url: " + quoted + "\n").url;
+      } catch (const std::exception& failure) {
+        error = "--site-url: " + std::string(failure.what());
+        return false;
+      }
     } else if (argument == "--config") {
       const auto value = next();
       if (!value) { error = "--config requires a value"; return false; }
@@ -533,6 +548,7 @@ int run(const std::string& command_name, int argc, char** argv) {
       return kUsage;
     }
     if (options.source) config.source = options.source->generic_string();
+    if (options.site_url) config.url = *options.site_url;
 
     std::vector<std::string> problems;
     std::optional<ckgit::DocsSiteModel> model;

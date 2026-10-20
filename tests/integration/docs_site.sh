@@ -78,6 +78,18 @@ if ! "$CKDOCS" build --root "$repo_root" --out "$site" --strict >"$test_root/bui
   exit 1
 fi
 
+# A publishing host override must change both indexes without editing config.
+"$CKDOCS" build --root "$repo_root" --site-url https://publish.example.test/project --out "$test_root/host-site" --strict >"$test_root/host-build.log" 2>&1
+grep -qF '(https://publish.example.test/project/index.html.md)' "$test_root/host-site/llms.txt" ||
+  { echo "--site-url did not override llms.txt URLs" >&2; exit 1; }
+grep -qF '<loc>https://publish.example.test/project/index.html</loc>' "$test_root/host-site/sitemap.xml" ||
+  { echo "--site-url did not override sitemap URLs" >&2; exit 1; }
+set +e
+"$CKDOCS" check --root "$repo_root" --site-url 'https://example.test/?unsafe=1' >"$test_root/bad-url.log" 2>&1
+bad_url_status=$?
+set -e
+[ "$bad_url_status" -eq 2 ] || { echo "unsafe --site-url should be a usage error" >&2; exit 1; }
+
 for page in index.html index.html.md llms.txt operations/01-installation.html operations/01-installation.html.md protocol/01-ssh-and-control-v1.html site-index.html site-index.html.md .ckdocs; do
   [ -f "$site/$page" ] || { echo "expected $page in the built site" >&2; exit 1; }
 done

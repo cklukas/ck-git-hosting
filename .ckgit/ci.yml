@@ -74,7 +74,7 @@ jobs:
           CK_CI_RUNNER="$TMPDIR/build/bin/ck-ci-runnerd" \
           CKGIT_POST_RECEIVE="$TMPDIR/build/hooks/post-receive" \
             sh scripts/docs-web-screenshots.sh "$PWD/docs/images"
-          "$TMPDIR/build/bin/ckdocs" build --root "$PWD" --out "$PWD/public" --strict
+          "$TMPDIR/build/bin/ckdocs" build --root "$PWD" --site-url http://rpi4:8421/ck-git-hosting/ --out "$PWD/public" --strict
       - name: package
         script: |
           # A tag build whose tag matches VERSION exactly publishes the
