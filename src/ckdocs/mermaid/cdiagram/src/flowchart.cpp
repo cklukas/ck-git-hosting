@@ -351,7 +351,11 @@ bool parse_link(const std::string& s, std::size_t& i, EdgeStyle& style,
             // The tail run starts with '-' or '=' (`-->`, `--`, `-.->`,
             // `==>`, `--o`, `--x`) — letter runs like the 'ox' in
             // `A -- box --> B` are ordinary label text.
-            if ((s[i] == '-' || s[i] == '=') && link_char(s[i])) {
+            // A dotted middle label closes with `.->` (or `.-`),
+            // including its first dot. Do not eat punctuation inside the label.
+            const bool dotted_tail = style == EdgeStyle::Dotted && s[i] == '.' &&
+                                     i + 1 < s.size() && s[i + 1] == '-';
+            if (s[i] == '-' || s[i] == '=' || dotted_tail) {
                 std::size_t j = i;
                 while (j < s.size() && link_char(s[j])) ++j;
                 if (j - i >= 2) break;  // the tail run

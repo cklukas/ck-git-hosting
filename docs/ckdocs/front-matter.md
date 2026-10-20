@@ -135,8 +135,10 @@ builds. The ordinary front matter byte/line bounds still apply; structured
 metadata may nest eight levels. Home layouts on other pages are reported.
 
 Navigation groups also provide native dropdown menus in the header. A theme
-button cycles between system, light, and dark preferences, storing the choice
-locally when available; the home image and diagrams follow it. Mermaid
-figures offer an expanded native dialog (Escape closes it) and retain an
-ordinary SVG link without scripting. Search accepts the usual Ctrl/Cmd+K
+picker uses system, sun, and moon icon buttons with the selected preference
+highlighted, storing the choice locally when available; the home image and
+diagrams follow it. Mermaid
+figures offer compact icon controls for an expanded native dialog (Escape
+closes it) and opening the SVG. Icons have tooltips and accessible labels;
+the SVG link also works without scripting. Search accepts the usual Ctrl/Cmd+K
 shortcut. These controls ship inline with the site and load no external code.

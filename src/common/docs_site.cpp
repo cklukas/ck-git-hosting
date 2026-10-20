@@ -1355,7 +1355,11 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   }
   // A portal site without links of its own shows the portal's.
   out += renderHeaderLinks(!model.config.links.empty() || portal == nullptr ? model.config.links : portal->portal->config.links);
-  out += "<button type=\"button\" class=\"theme-toggle\" hidden>Theme: system</button></header>";
+  out += R"HTML(<div class="theme-picker" role="group" aria-label="Colour theme" hidden>
+<button type="button" class="theme-toggle" data-theme-choice="system" aria-label="Use system theme" title="System theme" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></button>
+<button type="button" class="theme-toggle" data-theme-choice="light" aria-label="Use light theme" title="Light theme" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4L19 5"/></svg></button>
+<button type="button" class="theme-toggle" data-theme-choice="dark" aria-label="Use dark theme" title="Dark theme" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14A8.5 8.5 0 0 1 10 3.5 8.5 8.5 0 1 0 20.5 14Z"/></svg></button>
+</div></header>)HTML";
 
   // Sidebar: the active tab's pages, then this page's outline.
   out += std::string("<div class=\"page") + (landing ? " landing" : "") + "\"><input class=\"nav-switch\" id=\"nav-toggle\" type=\"checkbox\">"
@@ -1950,8 +1954,8 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       const std::string dark = escapeHtml(relativeUrl(out_dir, rendered.dark_path));
       return "<figure class=\"mermaid\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"" + dark +
              "\"><img src=\"" + light + "\" alt=\"" + escapeHtml(rendered.alternative_text) +
-             "\" loading=\"lazy\"></picture><a class=\"diagram-open\" href=\"" + light +
-             "\">Open diagram</a></figure>\n";
+             "\" loading=\"lazy\"></picture><div class=\"diagram-tools\"><a class=\"icon-button diagram-open\" href=\"" + light +
+             "\" aria-label=\"Open diagram\" title=\"Open SVG diagram\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M14 3h7v7m0-7L11 13M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5\"/></svg></a></div></figure>\n";
     };
     std::string article;
     try {

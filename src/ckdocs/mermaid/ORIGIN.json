@@ -626,6 +626,16 @@
           "embedded_sha256": "64a878191b6bf4451c6f0265d656ea69faccd07718b8a19508ff0fe0040f2026"
         }
       }
+    },
+    {
+      "revision": "94e47da5f2ffd8a9eca47c16935bc3f29ab1a261",
+      "description": "Consume the full dotted middle-label connector at the parser boundary; preserve genuine label punctuation.",
+      "files": {
+        "cdiagram/src/flowchart.cpp": {
+          "upstream_sha256": "35745c3f007f73253b3befc1ed20641ddfe8a2e83a6f257a1561c74d41b318a5",
+          "embedded_sha256": "906229e9a47f94dbcdd7620513867026d3a013bc7d6cd49edde5a8035b3cc737"
+        }
+      }
     }
   ]
 }

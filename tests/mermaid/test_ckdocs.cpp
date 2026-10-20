@@ -53,3 +53,14 @@ TEST_CASE("ckdocs escapes labels and titles without introducing active markup") 
     CHECK_THROWS_AS(ckgit::renderMermaid("flowchart LR\nA --> B\nclick A \"javascript:alert(1)\"\n"), std::exception);
     CHECK_THROWS_AS(ckgit::renderMermaid("---\nlink: 'data:text/html,hello'\n---\nflowchart LR\nA --> B\n"), std::exception);
 }
+
+TEST_CASE("dotted middle edge labels exclude connector dots and preserve punctuation") {
+    const auto result = ckgit::renderMermaid("flowchart TB\nA -. OpenAPI contract .-> B\nB -. Sentence. .-> C\nC -.->|Pipe label.| D\n");
+    CHECK(result.warnings.empty());
+    for (const auto& svg : {result.light_svg, result.dark_svg}) {
+        CHECK(svg.find(">OpenAPI contract<") != std::string::npos);
+        CHECK(svg.find("OpenAPI contract .") == std::string::npos);
+        CHECK(svg.find(">Sentence.<") != std::string::npos);
+        CHECK(svg.find(">Pipe label.<") != std::string::npos);
+    }
+}
