@@ -69,6 +69,7 @@ struct DocsUiText {
   std::string diagram_expand = "Expand diagram";
   std::string diagram_close = "Close diagram";
   std::string markdown_version = "Read this page as plain Markdown";
+  std::string llms_index = "Read the documentation index for agents";
 };
 
 // The keys `ui:` accepts, in the order DocsUiText declares them.

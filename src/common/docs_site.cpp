@@ -2534,6 +2534,10 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">" + escapeHtml(ui.site_index) + "</a>";
   if (portal != nullptr ? portal->portal->config.llms : model.config.llms) {
     out += "<a href=\"" + url(in.output + ".md") + "\" title=\"" + escapeHtml(ui.markdown_version) + "\">Markdown</a>";
+    // The site index also leads to the covering llms.txt: the one at the
+    // output's root, for a portal's sites and for translations alike.
+    if (in.output == kDocsSiteIndexPage)
+      out += "<a href=\"" + portalUrl(kDocsLlmsFile) + "\" title=\"" + escapeHtml(ui.llms_index) + "\">llms.txt</a>";
   }
   out += "</footer><script>";
   out += kDocsUiScript;

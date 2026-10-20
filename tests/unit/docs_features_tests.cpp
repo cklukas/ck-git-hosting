@@ -365,6 +365,10 @@ void testTranslations() {
   require(contains(sitemap, "https://example.test/de/a.html") && !contains(sitemap, "https://example.test/de/b.html") &&
               !contains(slurp(site / "llms.txt"), "/de/"),
           "the sitemap lists translated pages but not fallbacks; llms.txt keeps to the default language");
+  require(contains(slurp(site / "de/site-index.html"),
+                   "<a href=\"../llms.txt\" title=\"Das Dokumentationsverzeichnis für Agenten lesen\">llms.txt</a>") &&
+              !fs::exists(site / "de/llms.txt"),
+          "a translation's site index leads to the one llms.txt, with its own language's title");
 
   // Without fallback a translation holds only its own pages.
   write(root / "ckdocs.yml", "version: 1\nsite:\n  title: Docs\ni18n:\n  locales:\n    - lang: de\n      fallback: false\n");

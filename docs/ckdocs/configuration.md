@@ -93,6 +93,6 @@ ui:
 | `search_open`, `search_close` | The search button's accessible names. |
 | `theme`, `theme_system`, `theme_light`, `theme_dark` | The colour theme picker and its three choices. |
 | `diagram_open`, `diagram_expand`, `diagram_close` | A diagram's buttons: open its SVG, show it full size, close that view. |
-| `markdown_version` | The title of the footer's link to the page's Markdown version. |
+| `markdown_version`, `llms_index` | The titles of the footer's links to the page's Markdown version and, on the site index, to `llms.txt`. |
 
 A key ckdocs does not know, or an empty text, is a configuration error.

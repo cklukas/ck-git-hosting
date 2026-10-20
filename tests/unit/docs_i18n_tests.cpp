@@ -45,7 +45,7 @@ void testDocsI18n() {
             "a translation keeps its placeholders: " + std::string(lang));
   }
   DocsUiText unknown;
-  require(docsUiKeys().size() == 49 && !setDocsUiText(unknown, "nope", "x"), "49 keys; an unknown one is refused");
+  require(docsUiKeys().size() == 50 && !setDocsUiText(unknown, "nope", "x"), "50 keys; an unknown one is refused");
 
   require(docsLanguageName("de") == "Deutsch" && docsLanguageName("pt-BR") == "Português (Brasil)" && docsLanguageName("de-AT") == "Deutsch" &&
               docsLanguageName("zh-Hant-TW") == "繁體中文" && docsLanguageName("tlh") == "tlh",
