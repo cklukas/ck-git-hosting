@@ -755,8 +755,14 @@ void testMarkdownPages() {
   require(contains(slurp(out / "index.html.md"), "[guide](<nested/guide.html.md#use>)") &&
               contains(slurp(out / "index.html.md"), "A Person"), "relocated home links and author content");
   require(contains(slurp(out / "site-index.html.md"), "nested/guide.html.md#use"), "the generated site index has a Markdown view too");
+  const auto index_html = slurp(out / "site-index.html");
+  require(contains(between(index_html, "<footer class=\"site\">", "</footer>"),
+                   ">Markdown</a><a href=\"llms.txt\" title=\"Read the documentation index for agents\">llms.txt</a>"),
+          "the site index links to llms.txt immediately after Markdown");
+  require(!contains(between(html, "<footer class=\"site\">", "</footer>"), ">llms.txt</a>"),
+          "the llms.txt footer link is specific to the site index");
   checkInternalReferences(out, "nested/guide.html", html);
-  checkInternalReferences(out, "site-index.html", slurp(out / "site-index.html"));
+  checkInternalReferences(out, "site-index.html", index_html);
 
   write(scratch.root / "docs/public/nested/guide.html.md", "collision");
   auto collision_config = ckgit::readDocsConfig(scratch.root);
@@ -777,6 +783,9 @@ void testMarkdownPages() {
   const auto disabled_html = slurp(out / "nested/guide.html");
   require(!contains(disabled_html, "rel=\"describedby\"") && !contains(disabled_html, "rel=\"alternate\"") &&
               !contains(disabled_html, ">Markdown</a>"), "disabled sites omit machine and footer discovery links");
+  const auto disabled_index_footer = between(slurp(out / "site-index.html"), "<footer class=\"site\">", "</footer>");
+  require(!contains(disabled_index_footer, ">Markdown</a>") && !contains(disabled_index_footer, ">llms.txt</a>"),
+          "the llms switch hides both site index footer links");
 }
 
 // sitemap.xml (absolute, encoded URLs in nav order, front matter dates as
@@ -1227,6 +1236,13 @@ void testPortalBuild() {
                            "python/search-index.json"}) {
     require(fs::is_regular_file(out / file), std::string("portal output: ") + file);
   }
+  for (const auto* index : {"cpp/site-index.html", "python/site-index.html"}) {
+    const auto index_html = slurp(out / index);
+    require(contains(between(index_html, "<footer class=\"site\">", "</footer>"),
+                     ">Markdown</a><a href=\"../llms.txt\" title=\"Read the documentation index for agents\">llms.txt</a>"),
+            "each portal site index links to the covering root llms.txt beside Markdown");
+    checkInternalReferences(out, index, index_html);
+  }
   const auto portal_llms = slurp(out / "llms.txt");
   require(portal_llms.starts_with("# Portal\n\n> Both editions\n") && contains(portal_llms, "## C++ edition: ") &&
               contains(portal_llms, "(cpp/index.html.md)") && contains(portal_llms, "## Python edition: ") &&
@@ -1299,6 +1315,11 @@ void testPortalBuild() {
               !fs::exists(disabled_out / "python/guide.html.md") && !fs::exists(disabled_out / "guide.html.md") &&
               !contains(slurp(disabled_out / "cpp/api.html"), "rel=\"alternate\""),
           "the portal switch disables publishing for all sites and redirect aliases");
+  for (const auto* index : {"cpp/site-index.html", "python/site-index.html"}) {
+    const auto footer = between(slurp(disabled_out / index), "<footer class=\"site\">", "</footer>");
+    require(!contains(footer, ">Markdown</a>") && !contains(footer, ">llms.txt</a>"),
+            "the portal llms switch hides both child site index footer links");
+  }
 
   const auto redirect = slurp(out / "guide.html");
   require(contains(redirect, "<meta http-equiv=\"refresh\" content=\"0; url=python/guide.html\">") &&

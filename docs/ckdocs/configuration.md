@@ -127,6 +127,8 @@ Every HTML page includes relative discovery links, following the
 ```
 
 A subtle **Markdown** footer link opens the current page's unrendered text.
+The generated **Site index** page also has an **llms.txt** link beside it,
+pointing to the covering documentation index (the root index in a portal).
 The built-in server and ck-git Pages serve `.md` as UTF-8 plain text, so the
 browser can display it directly. Other hosts choose their own response MIME
 type. The `alternate` link identifies the content as Markdown for agents.
@@ -144,7 +146,7 @@ llms: false
 ```
 
 This removes generated `llms.txt` and `*.html.md` files, the discovery links,
-and the footer link. Rebuild with `--clean` to replace an earlier output.
+and both footer links. Rebuild with `--clean` to replace an earlier output.
 The setting is independent of search and the sitemap. For portals, only the
 portal's `llms` setting controls output; child settings do not override it.
 

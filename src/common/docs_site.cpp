@@ -1726,8 +1726,12 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   if (!footer.empty()) out += "<span>" + escapeHtml(footer) + "</span>";
   out += "<span>Built with ckdocs " + escapeHtml(context.version) + "</span>";
   out += "<a href=\"" + url(std::string(kDocsSiteIndexPage)) + "\">Site index</a>";
-  if (portal != nullptr ? portal->portal->config.llms : model.config.llms)
+  if (portal != nullptr ? portal->portal->config.llms : model.config.llms) {
     out += "<a href=\"" + url(in.output + ".md") + "\" title=\"Read this page as plain Markdown\">Markdown</a>";
+    if (in.output == kDocsSiteIndexPage)
+      out += "<a href=\"" + (portal != nullptr ? portalUrl(std::string(kDocsLlmsFile)) : url(std::string(kDocsLlmsFile))) +
+             "\" title=\"Read the documentation index for agents\">llms.txt</a>";
+  }
   return out + "</footer><script>" + std::string(kDocsUiScript) + "</script></body></html>";
 }
 
