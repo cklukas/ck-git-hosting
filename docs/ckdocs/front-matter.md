@@ -135,9 +135,9 @@ builds. The ordinary front matter byte/line bounds still apply; structured
 metadata may nest eight levels. Home layouts on other pages are reported.
 
 Navigation groups also provide native dropdown menus in the header. A theme
-picker uses system, sun, and moon icon buttons with the selected preference
-highlighted, storing the choice locally when available; the home image and
-diagrams follow it. Mermaid
+picker shows one compact icon for the current preference. Opening it reveals
+system, sun, and moon choices, with the selected preference highlighted. The
+choice is stored locally when available; the home image and diagrams follow it. Mermaid
 figures offer compact icon controls for an expanded native dialog (Escape
 closes it) and opening the SVG. Icons have tooltips and accessible labels;
 the SVG link also works without scripting. Search accepts the usual Ctrl/Cmd+K

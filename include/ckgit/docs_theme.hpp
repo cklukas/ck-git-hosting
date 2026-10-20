@@ -94,9 +94,11 @@ aside.sidebar{display:none;position:static;max-height:none;margin-bottom:1.5rem;
 .theme-toggle,.diagram-expand,.diagram-close{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:.5rem;padding:.3rem .6rem;cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 figure.mermaid{position:relative}.diagram-expand{display:block;margin:0 0 .5rem auto}.diagram-dialog{color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:.7rem;padding:1rem;width:calc(100vw - 2rem);height:calc(100vh - 2rem);max-width:none;max-height:none}.diagram-dialog::backdrop{background:#0009}.diagram-close{display:block;margin-left:auto}.diagram-dialog picture{display:flex;align-items:center;justify-content:center;height:calc(100% - 3rem);overflow:auto}.diagram-dialog img{width:100%;height:100%;object-fit:contain;max-width:none}.diagram-open{font-size:.85rem}
 
-.theme-picker:not([hidden]){display:inline-flex;align-items:center;gap:2px;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--tint);flex-shrink:0}
+.theme-picker:not([hidden]){display:block;position:relative;margin:0;padding:0;border:0;background:none;flex-shrink:0}
+.theme-trigger{display:flex;align-items:center;justify-content:center;list-style:none;width:30px;height:30px;padding:6px;border:1px solid var(--line);border-radius:50%;background:var(--tint);color:var(--muted);cursor:pointer}.theme-trigger::-webkit-details-marker{display:none}.theme-picker[open]>.theme-trigger{margin-bottom:0;color:var(--accent)}.theme-trigger:hover{color:var(--text);background:var(--panel)}
+.theme-options{position:absolute;right:0;top:calc(100% + .45rem);z-index:8;display:flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:0 .25rem 1rem #0002}
 .theme-toggle,.icon-button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:6px;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:pointer;line-height:1;transition:background .15s,color .15s,box-shadow .15s}
-.theme-toggle svg,.icon-button svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.theme-trigger svg,.theme-toggle svg,.icon-button svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .theme-toggle:hover,.icon-button:hover{background:var(--panel);color:var(--text);text-decoration:none}.theme-toggle[aria-pressed=true]{background:var(--panel);color:var(--accent);box-shadow:0 1px 4px #0002}
 figure.mermaid{padding-top:3rem}.diagram-tools{display:flex;gap:3px;position:absolute;right:.55rem;top:.5rem}.diagram-tools .icon-button{margin:0;background:var(--tint);border-radius:.45rem}.diagram-tools .icon-button:hover{background:var(--line);color:var(--text)}.diagram-close{display:flex;width:34px;height:34px;margin:0 0 .5rem auto;background:var(--tint);border-radius:.5rem}
 @media(prefers-reduced-motion:reduce){.theme-toggle,.icon-button{transition:none}}
@@ -113,13 +115,17 @@ inline constexpr std::string_view kDocsUiScript = R"JS(
     document.querySelectorAll('source[media][data-theme-media]').forEach(function(source){
       source.media=value==='dark'?'all':value==='light'?'not all':source.getAttribute('data-theme-media');
     });
-    buttons.forEach(function(button){button.setAttribute('aria-pressed',String(button.getAttribute('data-theme-choice')===value));});
+    buttons.forEach(function(button){
+      var selected=button.getAttribute('data-theme-choice')===value;
+      button.setAttribute('aria-pressed',String(selected));
+      if(selected&&picker){var trigger=picker.querySelector('summary');trigger.replaceChildren(button.querySelector('svg').cloneNode(true));trigger.setAttribute('aria-label','Colour theme: '+value+'. Choose theme');trigger.title='Colour theme: '+value;}
+    });
   }
   document.querySelectorAll('source[media="(prefers-color-scheme: dark)"]').forEach(function(source){source.setAttribute('data-theme-media',source.media);});
   var choice='system';try{choice=localStorage.getItem('ckdocs-theme')||'system';}catch(e){}
   if(['system','light','dark'].indexOf(choice)<0)choice='system';
   theme(choice);
-  if(picker){picker.hidden=false;buttons.forEach(function(button){button.onclick=function(){choice=button.getAttribute('data-theme-choice');theme(choice);try{localStorage.setItem('ckdocs-theme',choice);}catch(e){}};});}
+  if(picker){picker.hidden=false;buttons.forEach(function(button){button.onclick=function(){choice=button.getAttribute('data-theme-choice');theme(choice);picker.open=false;picker.querySelector('summary').focus();try{localStorage.setItem('ckdocs-theme',choice);}catch(e){}};});}
   document.querySelectorAll('figure.mermaid').forEach(function(figure){
     var picture=figure.querySelector('picture');if(!picture||!window.HTMLDialogElement)return;
     var expand=document.createElement('button');expand.type='button';expand.className='icon-button diagram-expand';expand.setAttribute('aria-label','Expand diagram');expand.title='Expand diagram';expand.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m0-5 7 7m6-7h5v5m0-5-7 7M3 16v5h5m-5 0 7-7m11 2v5h-5m5 0-7-7"/></svg>';
