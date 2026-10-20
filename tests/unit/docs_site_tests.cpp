@@ -162,6 +162,7 @@ void testConfig() {
       "  title: ck-git-hosting\n"
       "  brand: ck git hosting\n"
       "  logo: docs/assets/logo.svg\n"
+      "  favicon: docs/assets/logo.svg\n"
       "  description: A small Git control plane\n"
       "  footer: \"© 2026 C. Klukas\"\n"
       "  links:\n"
@@ -183,7 +184,7 @@ void testConfig() {
       "        pages: [docs/operations/04-ci-cd.md]\n"
       "search: true\n");
   require(config.title == "ck-git-hosting" && config.brand == "ck git hosting" && config.logo == "docs/assets/logo.svg" &&
-              config.description == "A small Git control plane" && config.footer == "© 2026 C. Klukas" &&
+              config.favicon == "docs/assets/logo.svg" && config.description == "A small Git control plane" && config.footer == "© 2026 C. Klukas" &&
               config.stylesheet == "docs/assets/site.css" && config.source == "docs" && config.home == "README.md" && config.search,
           "every site field is read");
   require(config.links.size() == 2 && config.links[0].title == "GitHub" && config.links[0].icon == "github" &&
@@ -213,6 +214,8 @@ void testConfig() {
   require(contains(rejection("version: 1\nsite:\n  title: x\n  logo: ../x.svg\n"), "site.logo must be a relative path"),
           "paths may not leave the repository");
   require(contains(rejection("version: 1\nsite:\n  title: x\n  logo: /x.svg\n"), "site.logo must be a relative path"), "no absolute paths");
+  require(contains(rejection("version: 1\nsite:\n  title: x\n  favicon: ../x.png\n"), "site.favicon must be a relative path"),
+          "favicon paths may not leave the repository");
   require(contains(rejection("version: 1\nsite:\n  title: x\n  links:\n    - title: A\n      url: ftp://x\n"), "must be http(s) or mailto"),
           "link schemes are limited");
   require(contains(rejection("version: 1\nsite:\n  title: x\n  links:\n    - url: https://x\n"), "needs both 'title' and 'url'"),
@@ -532,7 +535,7 @@ void testBuild() {
   write(scratch.root / "CONTRIBUTING.md", "# Contributing\n");
   write(scratch.root / "docs/site.css", "body{}");
   write(scratch.root / "ckdocs.yml",
-        "version: 1\nsite:\n  title: Fixture\n  logo: docs/img/flow.png\n  stylesheet: docs/site.css\n  footer: \"© Fixture\"\n"
+        "version: 1\nsite:\n  title: Fixture\n  logo: docs/img/flow.png\n  favicon: docs/img/flow.png\n  stylesheet: docs/site.css\n  footer: \"© Fixture\"\n"
         "  links:\n    - title: Source\n      url: https://example.test/src\n");
   const auto model = ckgit::loadDocsSite(scratch.root, ckgit::readDocsConfig(scratch.root), nullptr);
   const auto site = scratch.root / "site";
@@ -549,6 +552,7 @@ void testBuild() {
 
   const auto x = slurp(site / "a/01-x.html");
   checkInternalReferences(site, "a/01-x.html", x);
+  require(contains(x, "<link rel=\"icon\" href=\"../img/flow.png\">"), "nested pages resolve the favicon relative to the page");
   require(contains(x, "<title>X page · Fixture</title>") && contains(x, "<link rel=\"stylesheet\" href=\"../site.css\">"),
           "title and the extra stylesheet, relative to the page");
   require(contains(x, "href=\"02-y.html#y\"") && contains(x, "href=\"../index.html\"") && contains(x, "href=\"../b/index.html\"") &&
@@ -587,6 +591,7 @@ void testBuild() {
 
   const auto home = slurp(site / "index.html");
   checkInternalReferences(site, "index.html", home);
+  require(contains(home, "<link rel=\"icon\" href=\"img/flow.png\">"), "the home page uses the shared logo as its favicon");
   require(contains(home, "<title>Fixture home · Fixture</title>") && !contains(home, "class=\"crumbs\"") &&
               !contains(home, "rel=\"prev\"") && contains(home, "rel=\"next\" href=\"a/02-y.html\"") &&
               contains(home, "<a href=\"site-index.html\">Site index</a>") && contains(home, "<summary><span>A</span>"),
@@ -598,6 +603,7 @@ void testBuild() {
   require(!contains(last, "rel=\"next\"") && contains(last, "rel=\"prev\""), "the last page has no next");
   const auto index = slurp(site / "site-index.html");
   checkInternalReferences(site, "site-index.html", index);
+  require(contains(index, "<link rel=\"icon\" href=\"img/flow.png\">"), "the generated site index has the favicon");
   require(contains(index, "<title>Site index · Fixture</title>") && contains(index, "<h2>A</h2>") && contains(index, "<h2>Bee</h2>") &&
               contains(index, "<h2>Other pages</h2>") && contains(index, "href=\"hidden.html\">Hidden</a>") &&
               contains(index, "href=\"a/01-x.html#install\">Install</a>") && contains(index, "href=\"b/deep/inner.html\">Inner</a>"),
@@ -1100,6 +1106,7 @@ void testPortalBuild() {
       "site:\n"
       "  title: Portal\n"
       "  logo: portal/logo.svg\n"
+      "  favicon: portal/logo.svg\n"
       "  description: Both editions\n"
       "  footer: \"© Portal\"\n"
       "  links:\n"
@@ -1116,7 +1123,7 @@ void testPortalBuild() {
       "    ref: main\n"
       "    redirect_from_root: true\n";
   write(root / "ckdocs.yml", portal_yaml);
-  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\nsource: cpp-docs\n");
+  write(root / "cpp-docs/ckdocs.yml", "version: 1\nsite:\n  title: C++ docs\n  favicon: unused-child-icon.png\nsource: cpp-docs\n");
   write(root / "cpp-docs/README.md", "# C++ home\n\nSee the [API](api.md#calls).\n");
   write(root / "cpp-docs/api.md", "# API\n\n## Calls\n");
   write(root / "portal/welcome.md", "Choose an edition, or start with the [Python guide](/python/guide.html).\n\n"
@@ -1166,6 +1173,7 @@ void testPortalBuild() {
 
   python_guide = slurp(out / "python/guide.html");
   checkInternalReferences(out, "python/guide.html", python_guide);
+  require(contains(python_guide, "<link rel=\"icon\" href=\"../portal/logo.svg\">"), "a site from another ref uses the portal favicon");
   require(contains(python_guide, "<title>Guide · Python docs</title>"), "the site's own title in <title>");
   require(contains(python_guide, "<a class=\"brand\" href=\"../index.html\"><img src=\"../portal/logo.svg\" alt=\"\">Portal</a>"
                                  "<details class=\"site-select\"><summary>Python edition</summary>"),
@@ -1182,6 +1190,7 @@ void testPortalBuild() {
 
   const auto api = slurp(out / "cpp/api.html");
   checkInternalReferences(out, "cpp/api.html", api);
+  require(contains(api, "<link rel=\"icon\" href=\"../portal/logo.svg\">"), "the portal favicon replaces a child site favicon");
   require(contains(api, "<summary>C++ edition</summary>") && contains(api, "<a href=\"index.html\" aria-current=\"true\">C++ edition</a>") &&
               contains(api, "<a href=\"../python/index.html\">Python edition</a>") && !contains(api, "ckdocs-search"),
           "the C++ site's selector");
@@ -1189,6 +1198,7 @@ void testPortalBuild() {
 
   const auto welcome = slurp(out / "index.html");
   checkInternalReferences(out, "index.html", welcome);
+  require(contains(welcome, "<link rel=\"icon\" href=\"portal/logo.svg\">"), "the welcome page uses the same copied portal favicon");
   require(contains(welcome, "<title>Portal</title>") && contains(welcome, "<h1>Portal</h1>") &&
               contains(welcome, "<p class=\"portal-description\">Both editions</p>") &&
               contains(welcome, "<details class=\"site-select\"><summary>Sites</summary>") && !contains(welcome, "aria-current=\"true\""),

@@ -17,6 +17,7 @@ at once instead — see [Several sites in one build](#several-sites-in-one-build
 | `site.title` | string, ≤ 128 bytes | — (required once the file exists) | The site's name: header brand text, `<title>` suffix, and the default for `site.brand`. |
 | `site.brand` | string, ≤ 128 bytes | `site.title` | Header wordmark, when it should differ from the title. |
 | `site.logo` | path | none | An image shown before the brand; copied into the site. |
+| `site.favicon` | path | none | A browser tab icon (PNG, SVG, or ICO), copied into the site and linked from every page, including the generated site index. It can reuse `site.logo`; shared assets are copied once. Paths are repository-root-relative. |
 | `site.description` | string, ≤ 1024 bytes | none | The home page's `<meta name="description">`. |
 | `site.footer` | string, ≤ 1024 bytes | none | Footer text, alongside "Built with ckdocs `<version>`". |
 | `site.links` | list of `{title, url, icon?}` | none | Up to 8 header links; `url` must be `http://`, `https://`, or `mailto:`. Optional `icon: github` displays a circular GitHub icon link; `title` supplies its accessible name and tooltip. Omit `icon` for a text link. |
@@ -141,7 +142,7 @@ sites:
 ```
 
 In a portal configuration `site` describes the portal (its title, brand,
-logo, description, footer, links, and stylesheet), and `home` names an
+logo, favicon, description, footer, links, and stylesheet), and `home` names an
 optional Markdown page whose content appears on the welcome page above the
 list of sites. The keys that describe one page tree — `source`, `nav`,
 `search`, `exclude`, and `front_matter` — are build errors next to `sites`;
@@ -167,7 +168,7 @@ its own, for example `docs/ckdocs.yml` with `source: docs`.
 |---|---|
 | `index.html` | The welcome page: the portal title, description, the `home` intro, then one card per site linking to its home page. |
 | `<id>/` | The site, laid out exactly as a single-site build would lay it out: its own `index.html`, `site-index.html`, `search-index.json` when its configuration turns search on, and its assets. |
-| the portal's logo, stylesheet, and files the intro references | At their path relative to the work tree root. |
+| the portal's logo, favicon, stylesheet, and files the intro references | At their path relative to the work tree root. |
 | redirect pages | At the old page paths of the `redirect_from_root` site. |
 | `.ckdocs` | One marker for the whole output. |
 
@@ -179,7 +180,8 @@ the page title and the sidebar, and its tabs, search, and site index cover
 only that site. A site's own `links` and `footer` are shown on its pages;
 when it has none, the portal's are shown instead. The same applies to
 `stylesheet`. A site's `logo` is not shown, because the portal's brand
-replaces it. All links stay relative, so the result works from `file://`
+replaces it. The portal's `favicon` is used on its welcome page and every
+site page, replacing each site's favicon. All links stay relative, so the result works from `file://`
 and under any URL prefix. The `--out` and `--clean` rules and the Pages size
 and entry limits apply to the whole build.
 

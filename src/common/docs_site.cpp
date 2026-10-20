@@ -642,7 +642,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
   const Node* site = findEntry(root, "site");
   if (site == nullptr) malformed("the config is missing 'site'", root.line);
   requireKind(*site, Node::Kind::Mapping, "site to be a mapping");
-  rejectUnknownKeys(*site, {"title", "brand", "logo", "description", "footer", "links", "stylesheet", "url"});
+  rejectUnknownKeys(*site, {"title", "brand", "logo", "favicon", "description", "footer", "links", "stylesheet", "url"});
   if (const Node* url = findEntry(*site, "url")) {
     config.url = scalarOf(*url, "site.url");
     const auto lowered = lowerAscii(config.url.substr(0, 8));
@@ -657,6 +657,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
   config.title = titleOf(*title, "site.title");
   if (const Node* brand = findEntry(*site, "brand")) config.brand = titleOf(*brand, "site.brand");
   if (const Node* logo = findEntry(*site, "logo")) config.logo = pathOf(*logo, "site.logo");
+  if (const Node* favicon = findEntry(*site, "favicon")) config.favicon = pathOf(*favicon, "site.favicon");
   if (const Node* stylesheet = findEntry(*site, "stylesheet")) config.stylesheet = pathOf(*stylesheet, "site.stylesheet");
   for (const auto* key : {"description", "footer"}) {
     if (const Node* text = findEntry(*site, key)) {
@@ -1132,6 +1133,7 @@ struct PortalShell {
   const DocsPortalModel* portal = nullptr;
   std::optional<std::size_t> current;  // the site being rendered; none on the welcome page
   std::string logo_output;             // the portal's copied logo, or ""
+  std::string favicon_output;          // the portal's copied browser icon, or ""
   std::string stylesheet_output;       // the portal's copied stylesheet, or ""
 };
 
@@ -1140,6 +1142,7 @@ struct SiteContext {
   const DocsSiteModel* model = nullptr;
   std::string version;
   std::string logo_output;        // site-relative path of the copied logo, or ""
+  std::string favicon_output;     // site-relative path of the copied browser icon, or ""
   std::string stylesheet_output;  // site-relative path of the copied stylesheet, or ""
   std::vector<std::vector<MarkdownHeading>> outlines;  // per page, filled while rendering
   std::string prefix;                   // where the site sits in the output: "" or "<id>/"
@@ -1332,6 +1335,11 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
     for (const auto& [key, value] : page.foreign_front_matter) meta(std::string(kDocsForeignMetaPrefix) + key, value);
   }
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(context.version) + "\">";
+  if (portal != nullptr && !portal->favicon_output.empty()) {
+    out += "<link rel=\"icon\" href=\"" + portalUrl(portal->favicon_output) + "\">";
+  } else if (!context.favicon_output.empty()) {
+    out += "<link rel=\"icon\" href=\"" + url(context.favicon_output) + "\">";
+  }
   out += "<style>";
   out += kDocsStyles;
   out += "</style>";
@@ -1839,6 +1847,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
   };
   // In a portal the header shows the portal's brand and logo, not the site's.
   if (portal == nullptr && !model.config.logo.empty()) context.logo_output = addAsset(model.config.logo, "site.logo");
+  if (portal == nullptr && !model.config.favicon.empty()) context.favicon_output = addAsset(model.config.favicon, "site.favicon");
   if (!model.config.stylesheet.empty()) context.stylesheet_output = addAsset(model.config.stylesheet, "site.stylesheet");
 
   const auto writeFile = [&](const std::string& site_path, const std::string& content) { tree.write(prefix + site_path, content); };
@@ -2342,6 +2351,7 @@ std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& 
   out += "<title>" + escapeHtml(config.title) + "</title>";
   if (!config.description.empty()) out += "<meta name=\"description\" content=\"" + escapeHtml(config.description) + "\">";
   out += "<meta name=\"generator\" content=\"ckdocs " + escapeHtml(version) + "\">";
+  if (!shell.favicon_output.empty()) out += "<link rel=\"icon\" href=\"" + escapeHtml(relativeUrl("", shell.favicon_output)) + "\">";
   out += "<style>";
   out += kDocsStyles;
   out += "</style>";
@@ -2480,6 +2490,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
   PortalShell shell;
   shell.portal = &portal;
   if (!portal.config.logo.empty()) shell.logo_output = addPortalAsset(portal.config.logo, "site.logo");
+  if (!portal.config.favicon.empty()) shell.favicon_output = addPortalAsset(portal.config.favicon, "site.favicon");
   if (!portal.config.stylesheet.empty()) shell.stylesheet_output = addPortalAsset(portal.config.stylesheet, "site.stylesheet");
 
   // Every site below its id, its findings prefixed with it.

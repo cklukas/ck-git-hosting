@@ -88,6 +88,7 @@ struct DocsConfig {
   std::string url;
   std::string brand;  // header wordmark; empty = title
   std::string logo;   // an image file shown before the brand
+  std::string favicon;  // optional browser tab icon, copied into the site
   std::string description;
   std::string footer;
   std::vector<DocsLink> links;  // header links
