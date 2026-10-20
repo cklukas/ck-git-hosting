@@ -22,14 +22,18 @@
       <stop offset="0" stop-color="#262140"/>
       <stop offset="1" stop-color="#17142a"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="160%">
       <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#2e1065" flood-opacity=".28"/>
     </filter>
-    <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+    <filter id="soft" x="-30%" y="-80%" width="160%" height="300%">
       <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#2e1065" flood-opacity=".22"/>
     </filter>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0 0 10 5 0 10z" fill="#7c3aed"/>
+    </marker>
+    <!-- The build flow's head: undashed, turned to the curve's direction at its end. -->
+    <marker id="flowHead" viewBox="-12 -10 16 20" refX="0" refY="0" markerWidth="16" markerHeight="20" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M-9 -7.5 0 0 -9 7.5" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="none"/>
     </marker>
   </defs>
 
@@ -70,10 +74,9 @@
   </g>
 
   <!-- Build flow -->
-  <path d="M300 40 C 400 10, 480 40, 500 120" fill="none" stroke="url(#flow)" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9">
+  <path d="M300 40 C 400 10, 480 40, 500 118" fill="none" stroke="url(#flow)" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 9" marker-end="url(#flowHead)">
     <animate attributeName="stroke-dashoffset" from="22" to="0" dur="1.2s" repeatCount="indefinite"/>
   </path>
-  <path d="M492 108 501 124 512 109" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Rendered page -->
   <g filter="url(#shadow)">
@@ -134,10 +137,10 @@
   <!-- Feature chips -->
   <g font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="12" font-weight="700">
     <g filter="url(#soft)">
-      <rect x="430" y="60" width="132" height="32" rx="16" fill="#ffffff"/>
-      <circle cx="449" cy="76" r="9" fill="#fef3c7"/>
-      <path d="M450 69l-5 8h4l-1 6 5-8h-4z" fill="#f59e0b"/>
-      <text x="464" y="80" fill="#1f1640">73 languages</text>
+      <rect x="440" y="448" width="132" height="32" rx="16" fill="#ffffff"/>
+      <circle cx="459" cy="464" r="9" fill="#fef3c7"/>
+      <path d="M460 457l-5 8h4l-1 6 5-8h-4z" fill="#f59e0b"/>
+      <text x="474" y="468" fill="#1f1640">73 languages</text>
     </g>
     <g filter="url(#soft)">
       <rect x="20" y="352" width="150" height="32" rx="16" fill="#ffffff"/>
