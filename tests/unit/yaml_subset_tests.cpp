@@ -301,7 +301,25 @@ void testBounds() {
 
 }  // namespace
 
+// `|` and `>` with their chomping indicators, as YAML defines them.
+void testBlockScalars() {
+  const auto value = [](const std::string& text) { return parse(text).entries.at(0).value.scalar; };
+  require(value("a: |\n  x\n  y\n\n\nb: 1\n") == "x\ny\n", "| clips to one final line break");
+  require(value("a: |-\n  x\n  y\n") == "x\ny", "|- strips the final line break");
+  require(value("a: |+\n  x\n\n\nb: 1\n") == "x\n\n\n", "|+ keeps every final line break");
+  require(value("a: >\n  one\n  two\n\n  three\n") == "one two\nthree\n", "> folds lines into spaces; a blank line is a break");
+  require(value("a: >\n  one\n\n\n  two\n") == "one\n\ntwo\n", "> keeps one break per blank line beyond the first");
+  require(value("a: >-\n  one\n  two\n") == "one two", ">- folds and strips");
+  require(value("a: >+\n  one\n\n") == "one\n\n", ">+ folds and keeps");
+  require(value("a: >\n  one\n    kept\n    as is\n  two\n") == "one\n  kept\n  as is\ntwo\n",
+          "> leaves more-indented lines and the breaks around them alone");
+  require(value("a: >  # a comment\n  x\n") == "x\n", "a comment may follow the indicator");
+  require(rejection("a: >\nb: 1\n").find("block scalar '>' has no content") != std::string::npos, "an empty > block is rejected");
+  require(value("a: '>'\n") == ">" && value("a: '|-'\n") == "|-", "a quoted indicator is an ordinary value");
+}
+
 void testYamlSubset() {
+  testBlockScalars();
   testStructures();
   testScalars();
   testRejections();

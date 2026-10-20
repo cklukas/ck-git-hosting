@@ -194,7 +194,9 @@ class Parser {
 
   YamlNode parseValue(std::string_view text, std::size_t line, std::size_t owner_indent, std::size_t depth) {
     const std::string_view value = stripComment(text);
-    if (value == "|") return parseBlockLiteral(owner_indent, line);
+    if (value == "|" || value == "|-" || value == "|+" || value == ">" || value == ">-" || value == ">+") {
+      return parseBlockScalar(owner_indent, line, value.front() == '>', value.size() == 2 ? value[1] : ' ');
+    }
     if (!value.empty() && value.front() == '[') return parseFlowSequence(value, line);
     if (!value.empty() && value.front() == '{') return parseFlowMapping(value, line, depth);
     YamlNode node;
@@ -237,9 +239,15 @@ class Parser {
     return node;
   }
 
-  // Reads a `|` block scalar: every following line indented deeper than the key
-  // that introduced it, dedented by the first content line's indent.
-  YamlNode parseBlockLiteral(std::size_t owner_indent, std::size_t line) {
+  // Reads a block scalar: every following line indented deeper than the key
+  // that introduced it, dedented by the first content line's indent. `|`
+  // keeps the line breaks; `>` folds them, as YAML does: lines at the base
+  // indent join with a space, a blank line stands for one line break, and a
+  // more-indented line keeps the breaks around it. The chomping indicator
+  // decides the end: clip (none) keeps one final line break, `-` strips it,
+  // `+` keeps every trailing one.
+  YamlNode parseBlockScalar(std::size_t owner_indent, std::size_t line, bool folded, char chomping) {
+    const char* const indicator = folded ? ">" : "|";
     std::vector<std::size_t> body;
     std::size_t base = std::string::npos;
     while (pos_ < lines_.size()) {
@@ -249,24 +257,40 @@ class Parser {
       body.push_back(pos_);
       ++pos_;
     }
-    if (base == std::string::npos) malformed("block scalar '|' has no content", line);
+    if (base == std::string::npos) malformed(std::string("block scalar '") + indicator + "' has no content", line);
     std::string text;
+    // While folding: whether the previous line was a base-indent text line
+    // whose break is still open, i.e. may become a space.
+    bool open_text = false;
     for (const std::size_t index : body) {
       const RawLine& raw = lines_[index];
       if (raw.blank) {
+        if (folded && open_text) {
+          // The blank line itself is the break; the open one is consumed.
+          open_text = false;
+        }
         text.push_back('\n');
         continue;
       }
       if (raw.indent < base) malformed("block scalar line is under-indented", raw.number);
+      const bool more_indented = raw.indent > base;
+      if (folded && open_text) text.push_back(more_indented ? '\n' : ' ');
       // The raw content excludes the indent already; re-add the indentation
       // beyond the block's base so nested shell structure is preserved.
       text.append(raw.indent - base, ' ');
       text.append(raw.content);
-      text.push_back('\n');
+      if (folded && !more_indented) {
+        open_text = true;
+      } else {
+        text.push_back('\n');
+        open_text = false;
+      }
       if (text.size() > dialect_.bounds.block_scalar_bytes) tooLarge("a block scalar exceeds its length limit");
     }
-    while (text.size() >= 2 && text[text.size() - 1] == '\n' && text[text.size() - 2] == '\n') {
-      text.pop_back();
+    if (open_text) text.push_back('\n');
+    if (chomping != '+') {
+      while (!text.empty() && text.back() == '\n') text.pop_back();
+      if (chomping != '-') text.push_back('\n');
     }
     YamlNode node;
     node.kind = YamlNode::Kind::Scalar;

@@ -79,9 +79,9 @@ ck-git-runner register --server USER@HOST --name NAME [--config RUNNER-CONFIG] [
 ck-pagesd serve --config /etc/ck-git-hosting/server.ini
 ck-pagesd check --config /etc/ck-git-hosting/server.ini
 
-ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean] [--strict] [--quiet]
-ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]
-ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT] [--no-watch] [--quiet]
+ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean] [--drafts] [--strict] [--quiet]
+ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--drafts] [--quiet]
+ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT] [--no-watch] [--drafts] [--quiet]
 ```
 
 `--config` defaults to `~/.config/ck-git-hosting/client.ini` (or the

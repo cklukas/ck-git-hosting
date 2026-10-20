@@ -16,6 +16,11 @@ description: How ckdocs finds pages, names and orders them, and builds the tabs,
   is used instead, skipping dotfiles, dot-directories, and symlinks.
   [`exclude:` patterns](configuration.md) remove further candidates before anything
   else happens.
+- **Partials and drafts.** A file or directory whose name starts with `_`
+  (`_parts/intro.md`) holds pieces other pages
+  [include](markdown.md#including-files); it is never a page of its own. A
+  page whose front matter says `draft: true` is left out of the site unless
+  the build is given `--drafts`, and a link to it is reported.
 - **Files that cannot be pages.** A Markdown file over the 512 KiB page
   limit, one that cannot be read, or one that is not valid UTF-8 is left out
   of the site with a warning, and the build goes on; a `nav:` entry naming
@@ -31,7 +36,10 @@ description: How ckdocs finds pages, names and orders them, and builds the tabs,
   tree with `.md`/`.markdown` replaced by `.html`; a directory's own
   `README.md`/`index.md` becomes that directory's `index.html`. So
   `docs/operations/01-installation.md` is served as
-  `operations/01-installation.html`.
+  `operations/01-installation.html`. A page's front matter
+  [`slug`](front-matter.md#front-matter) gives it another address; the
+  generated tag pages take `tags/` once any page has a tag, and each
+  [translation](translations.md) its language's directory.
 - **Titles.** Front matter `title:`; else the page's first `#` heading,
   rendered to plain text (a link keeps its label, an image its alternative
   text, code its content — never text found inside a fenced code block);

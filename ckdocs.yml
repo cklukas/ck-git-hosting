@@ -47,6 +47,8 @@ nav:
       - docs/ckdocs/front-matter.md
       - docs/ckdocs/configuration.md
       - docs/ckdocs/markdown.md
+      - docs/ckdocs/code.md
+      - docs/ckdocs/translations.md
       - docs/ckdocs/publishing.md
       - docs/ckdocs/mermaid.md
       - title: Flows and systems

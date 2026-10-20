@@ -198,8 +198,8 @@ void testRouterMarkdown() {
   check(renderMarkdown("```cpp\nint x = 1; // c\n```\n", root_context) ==
             "<pre><code class=\"language-cpp\"><span class=\"hl-k\">int</span> x = <span class=\"hl-n\">1</span>; <span class=\"hl-c\">// c</span>\n</code></pre>\n",
         "a fence whose info string names a language is highlighted");
-  check(renderMarkdown("```rust\nfn x() { let y = 1; }\n```\n", root_context) ==
-            "<pre><code class=\"language-rust\">fn x() { let y = 1; }\n</code></pre>\n",
+  check(renderMarkdown("```cobol\nMOVE 1 TO X.\n```\n", root_context) ==
+            "<pre><code class=\"language-cobol\">MOVE 1 TO X.\n</code></pre>\n",
         "a fence naming an unknown language stays plain");
   check(renderMarkdown("```yaml\n# c\nkey: \"v\"\n```\n", root_context) ==
             "<pre><code class=\"language-yaml\"><span class=\"hl-c\"># c</span>\n<span class=\"hl-a\">key</span>: <span class=\"hl-s\">&quot;v&quot;</span>\n</code></pre>\n",
@@ -411,13 +411,14 @@ void testMarkdownExtensions() {
   check(!splitFrontMatter("---\n\nSome text\n\n---\n") && contains(renderMarkdown(markdownBody("---\n\nSome text\n\n---\n"), ctx), "<hr>"),
         "a document that merely starts with a thematic break is all body");
   std::string many = "---\n";
-  for (int index = 0; index < 64; ++index) many += "k" + std::to_string(index) + ": v\n";
+  for (std::size_t index = 0; index < kMaximumFrontMatterLines; ++index) many += "k" + std::to_string(index) + ": v\n";
   const auto at_limit = splitFrontMatter(many + "---\n");
-  check(at_limit && at_limit->error.empty() && at_limit->entries.size() == 64, "64 lines are within the bound");
-  check(!splitFrontMatter(many + "k64: v\n---\n"), "65 lines are not front matter");
+  check(at_limit && at_limit->error.empty() && at_limit->entries.size() == kMaximumFrontMatterLines,
+        "a block of exactly the maximum number of lines is front matter");
+  check(!splitFrontMatter(many + "extra: v\n---\n"), "one line more is not front matter");
   std::string big = "---\n";
-  for (int index = 0; index < 60; ++index) big += "k" + std::to_string(index) + ": " + std::string(200, 'x') + "\n";
-  check(!splitFrontMatter(big + "---\n"), "a block over 8 KiB is not front matter");
+  for (int index = 0; index < 200; ++index) big += "k" + std::to_string(index) + ": " + std::string(200, 'x') + "\n";
+  check(!splitFrontMatter(big + "---\n"), "a block over 32 KiB is not front matter");
   const auto duplicate = splitFrontMatter("---\na: 1\na: 2\n---\nbody");
   check(duplicate && duplicate->entries.empty() && duplicate->error == "front matter: duplicate key 'a' (line 3)" &&
             markdownBody("---\na: 1\na: 2\n---\nbody") == "body",

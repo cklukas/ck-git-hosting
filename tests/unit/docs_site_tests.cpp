@@ -93,7 +93,7 @@ void writeFixtureTree(const fs::path& root) {
   write(root / "docs/b/README.md", "---\ntitle: Bee\ndescription: About b\n---\n# B\n");
   write(root / "docs/b/deep/inner.md", "# Inner\n");
   write(root / "docs/z.md", "```\n# not a title\n```\n# Zed *page*\n");
-  write(root / "docs/hidden.md", "---\nnav_exclude: true\nlayout: post\n---\n# Hidden\n");
+  write(root / "docs/hidden.md", "---\nnav_exclude: true\npermalink: /hidden/\n---\n# Hidden\n");
   write(root / "docs/.drafts/n.md", "# Draft\n");
   write(root / "docs/notes.txt", "not a page\n");
   fs::create_symlink("z.md", root / "docs/link.md");
@@ -256,8 +256,8 @@ void testForeignKeyConfig() {
   const auto config = ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys: [format, pdf.theme, Paper_size-2]\n");
   require(config.foreign_front_matter_keys == std::vector<std::string>{"format", "pdf.theme", "Paper_size-2"},
           "foreign keys are read in order, with every key character front matter allows");
-  const auto block = ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys:\n    - format\n    - 'layout'\n");
-  require(block.foreign_front_matter_keys == std::vector<std::string>{"format", "layout"}, "a block list and quoted keys");
+  const auto block = ckgit::parseDocsConfig(minimal + "front_matter:\n  foreign_keys:\n    - format\n    - 'permalink'\n");
+  require(block.foreign_front_matter_keys == std::vector<std::string>{"format", "permalink"}, "a block list and quoted keys");
 
   const auto foreign = [&](const std::string& list) { return rejection(minimal + "front_matter:\n  foreign_keys: " + list + "\n"); };
   for (const auto* reserved : {"title", "description", "nav_order", "nav_exclude", "author", "date"}) {
@@ -306,7 +306,7 @@ void testDiscovery() {
   std::vector<std::string> warnings;
   const auto walked = ckgit::loadDocsSite(scratch.root, ckgit::DocsConfig{}, &warnings);
   checkDerivedModel(walked, scratch.root);
-  require(warnings.size() == 1 && warnings[0] == "docs/hidden.md: unknown front matter key 'layout' ignored; list it under "
+  require(warnings.size() == 1 && warnings[0] == "docs/hidden.md: unknown front matter key 'permalink' ignored; list it under "
                                                  "front_matter.foreign_keys in ckdocs.yml if another tool reads it",
           "unknown front matter keys are warned about, once each, naming the way to declare another tool's key");
   require(ckgit::readDocsConfig(scratch.root).title.empty(), "no ckdocs.yml means defaults");
@@ -458,9 +458,9 @@ void testThisRepository() {
                 model.pages[*guides[0].page].source == "docs/guides/client-setup.md",
             "the user guides begin with client setup");
     const auto& docs = model.nav[4].children;
-    require(docs.size() == 12 && docs[0].page.has_value() &&
+    require(docs.size() == 14 && docs[0].page.has_value() &&
                 model.pages[*docs[0].page].source == "docs/operations/07-docs-sites.md",
-            "ckdocs has seven guides and five diagram categories");
+            "ckdocs has nine guides and five diagram categories");
     std::size_t diagram_pages = 0;
     for (const auto& group : docs) {
       for (const auto& example : group.children) {
@@ -1112,7 +1112,8 @@ void testPortalConfig() {
 
   const std::string one = "sites:\n  - id: a\n    title: A\n";
   for (const auto* key : {"source: docs\n", "nav: [README.md]\n", "search: true\n", "exclude: [x]\n",
-                          "front_matter:\n  foreign_keys: [layout]\n"}) {
+                          "front_matter:\n  foreign_keys: [permalink]\n", "toc:\n  max_level: 4\n",
+                          "markdown:\n  line_numbers: true\n", "i18n:\n  locales: [{lang: de}]\n"}) {
     const std::string name = std::string(key).substr(0, std::string(key).find(':'));
     require(contains(rejection(kPortalHead + key + one), "'" + name + "' belongs to a site's own config when 'sites' is given"),
             "a page-tree key beside sites is rejected: " + name);

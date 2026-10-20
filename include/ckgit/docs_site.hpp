@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "ckgit/docs_i18n.hpp"
+
 namespace ckgit {
 
 // The model behind a `ckdocs` documentation site: which Markdown files of a
@@ -33,6 +35,11 @@ inline constexpr std::size_t kMaximumDocsTextBytes = 1024;  // description, foot
 inline constexpr std::size_t kMaximumDocsUrlBytes = 1024;
 inline constexpr std::size_t kMaximumDocsSites = 8;
 inline constexpr std::size_t kMaximumDocsSiteIdBytes = 32;
+inline constexpr std::size_t kMaximumDocsLocales = 16;
+inline constexpr std::size_t kMaximumDocsPageTags = 32;      // tags (and keywords) on one page
+inline constexpr std::size_t kMaximumDocsTagBytes = 64;
+inline constexpr std::size_t kMaximumDocsHeroActions = 4;
+inline constexpr std::size_t kMaximumDocsFeatures = 24;
 
 struct DocsLink {
   std::string title;
@@ -77,6 +84,35 @@ struct DocsSiteEntry {
   bool redirect_from_root = false;
 };
 
+// One `i18n.locales` entry: a translation of the site, built from its own
+// page tree into `<lang>/` beside the default language. The file form:
+//
+//   site:
+//     lang: en                     # the default language (default: en)
+//   i18n:
+//     label: English               # the default language's name in the menu
+//     locales:
+//       - lang: de                 # a BCP 47 tag; also the output directory
+//         label: Deutsch           # its name in the language menu
+//         source: docs/de          # its page tree (default: <source>/<lang>)
+//         title: …                 # optional site title and description
+//         description: …
+//         nav: [...]               # optional; else the default nav, mapped
+//         nav_titles: {Guides: Anleitungen}   # titles for the mapped nav
+//         fallback: true           # untranslated pages fall back (default)
+//         ui: {on_this_page: …}    # interface text overrides
+struct DocsLocaleEntry {
+  std::string lang;
+  std::string label;   // empty = the language's own name
+  std::string source;  // empty = <default source>/<lang>
+  std::string title;
+  std::string description;
+  std::vector<DocsNavEntry> nav;
+  std::map<std::string, std::string> nav_titles;
+  bool fallback = true;
+  std::vector<std::pair<std::string, std::string>> ui;
+};
+
 // `ckdocs.yml` at the repository root. Every path is repository-relative
 // and must be a safe relative path (no leading `/`, no `.`/`..` component,
 // no backslash). Unknown keys are rejected: this file is ours.
@@ -104,10 +140,25 @@ struct DocsConfig {
   // about, and its value is passed through as a `front-matter:<key>` meta tag.
   std::vector<std::string> foreign_front_matter_keys;
   // `sites:` makes this a portal config: one build holding several sites
-  // and a generated welcome page. Then only `site` and `home` (the welcome
-  // page's Markdown intro) may sit beside it; source, nav, search, exclude
-  // and front_matter belong to each site's own config.
+  // and a generated welcome page. Then only `site`, `home` (the welcome
+  // page's Markdown intro) and `ui` may sit beside it; source, nav, search,
+  // exclude, front_matter, toc, markdown and i18n belong to each site's own
+  // config.
   std::vector<DocsSiteEntry> sites;
+  std::string lang;            // site.lang: the pages' language; empty = "en"
+  std::string language_label;  // i18n.label: the default language's name in the language menu
+  std::vector<DocsLocaleEntry> locales;  // i18n.locales
+  // `ui:` -- interface text for site.lang, overriding the built-in set
+  // (docs_i18n.hpp; keys as docsUiKeys() lists them).
+  std::vector<std::pair<std::string, std::string>> ui;
+  // `toc:` -- the heading levels "On this page" lists by default (2 and 3);
+  // a page's front matter may choose others.
+  int toc_min_level = 2;
+  int toc_max_level = 3;
+  bool line_numbers = false;  // markdown.line_numbers: number every code block's lines
+  // Not read from the file: build pages whose front matter says
+  // `draft: true` (ckdocs serve --drafts) instead of leaving them out.
+  bool drafts = false;
 };
 
 // The meta-tag name a foreign front matter key is carried under. Namespaced
@@ -121,19 +172,32 @@ DocsConfig parseDocsConfig(std::string_view yaml);
 // The root's `ckdocs.yml`, or defaults when there is none.
 DocsConfig readDocsConfig(const std::filesystem::path& root);
 
-// An optional, data-only landing page. Text is escaped, destinations go
-// through the normal site resolver; no raw HTML or executable metadata.
+// An optional, data-only landing page (`layout: home` on the home page):
+// a banner from front matter `hero` and cards from `features`. Text is
+// escaped, destinations go through the normal site resolver; no raw HTML or
+// executable metadata.
 struct DocsHomeAction {
-  std::string text, link, theme;
+  std::string text, link, theme;  // theme: brand or alt
 };
 struct DocsHomeFeature {
   std::string title, details;
+  std::string icon;  // optional short text or emoji (a `:shortcode:` is spelled out) above the title
+  std::string link;  // optional; the whole card links there
 };
 struct DocsHome {
   std::string name, text, tagline;
   std::string image_light, image_dark, image_alt;
   std::vector<DocsHomeAction> actions;
   std::vector<DocsHomeFeature> features;
+};
+
+// Front matter `prev` / `next`: hidden (`false`), or another page in place
+// of the reading order's, optionally with its own label.
+struct DocsPagerLink {
+  bool hidden = false;
+  std::string target;  // the page as written (relative to the page, or `/`-rooted)
+  std::string text;
+  std::optional<std::size_t> page;  // resolved by loadDocsSite
 };
 
 struct DocsPage {
@@ -143,10 +207,34 @@ struct DocsPage {
   std::string description;
   std::string author;  // front matter `author`, shown in the byline
   std::string date;    // front matter `date`, a validated YYYY-MM-DD calendar date
-  std::optional<int> nav_order;
+  std::optional<int> nav_order;  // front matter `nav_order` (or `sidebar_position`)
   bool nav_exclude = false;
   bool home = false;
+  std::string nav_title;  // front matter `sidebar_label`: the page's title in navigation
+  std::string slug;       // front matter `slug`, as written; `output` already follows it
+  std::vector<std::string> tags;
+  std::vector<std::string> keywords;
+  std::string layout = "doc";  // `doc`, `page` (no sidebar, outline or pager) or `home` (the landing page)
+  bool sidebar = true;
+  bool toc = true;            // `toc: false`, `hide_table_of_contents: true` or `outline: false` turn it off
+  int toc_min_level = 2;      // from the config unless the page says otherwise
+  int toc_max_level = 3;
+  bool pager = true;
+  DocsPagerLink prev;
+  DocsPagerLink next;
+  bool search = true;         // `search: false` keeps the page out of the search index
+  bool hide_title = false;    // `hide_title: true` drops the page's leading `#` heading
+  std::string page_class;     // `page_class`: extra classes on the page's <body>
+  std::string lang;           // `lang`: this page's language when it differs from the site's
   std::optional<DocsHome> landing;  // layout: home, hero and features in front matter
+  // Where the page sits in its language's page tree (its source relative to
+  // that tree; "" for the home page), shared by a page and its translations.
+  std::string counterpart;
+  // The same page's path in the other language's tree, so a link written in
+  // either finds it (a translation links to the default page and back).
+  std::string alias;
+  // A default-language page standing in for a translation that does not exist yet.
+  bool fallback = false;
   // The config's foreign keys this page carries with a single-line value of
   // at most kMaximumDocsTextBytes, in file order, values exactly as parsed.
   std::vector<std::pair<std::string, std::string>> foreign_front_matter;
@@ -170,15 +258,25 @@ struct DocsSiteModel {
   std::vector<std::size_t> reading_order;  // page indices depth-first through nav, for previous/next
   std::vector<std::size_t> unlisted;       // pages outside nav: nav_exclude, or not named by an explicit nav
   // Markdown files left out because they cannot be pages (over the 512 KiB
-  // page limit, unreadable, or not UTF-8), each with the reason; links to
-  // them are reported with it.
+  // page limit, unreadable, not UTF-8, or a draft), each with the reason;
+  // links to them are reported with it.
   std::map<std::string, std::string> skipped;
+  std::string lang;            // the pages' language
+  std::string language_label;  // its name in the language menu
+  DocsUiText ui;               // the interface text in that language
+  // Each tag with the pages carrying it, in title order.
+  std::map<std::string, std::vector<std::size_t>> tags;
+  // The translations (i18n.locales), each a site of its own rendered under
+  // `<lang>/`; empty on a translation itself.
+  std::vector<DocsSiteModel> translations;
 };
 
 // Enumerates pages (`git ls-files` inside a Git work tree, so nothing
 // untracked is ever published; a directory walk that skips symlinks and
 // dot-names otherwise), reads each page's front matter and first heading,
-// derives output paths and the navigation, and checks the bounds. Throws
+// derives output paths and the navigation, and checks the bounds; then does
+// the same for each translation in config.locales, adding a fallback page
+// for every page a translation lacks (unless its `fallback` is off). Throws
 // std::runtime_error ("ckdocs: ...") on anything that must stop a build;
 // appends advisory findings (front-matter keys neither ckdocs nor the
 // config's foreign keys name, front-matter values ckdocs cannot use, pages an
@@ -229,9 +327,19 @@ struct DocsDiagram {
 // Keeping the callback here lets the other binaries omit the diagram engine.
 using DocsDiagramRenderer = std::function<DocsDiagram(std::string_view source)>;
 
+// Diagrams rendered by an earlier build, by their source's SHA-256, for a
+// caller that builds the same site again and again (ckdocs serve): a rebuild
+// then renders only the diagrams that changed. Holds at most
+// kMaximumDocsCachedDiagrams entries; beyond that it is cleared.
+inline constexpr std::size_t kMaximumDocsCachedDiagrams = 4096;
+struct DocsDiagramCache {
+  std::map<std::string, DocsDiagram> diagrams;
+};
+
 struct DocsBuildOptions {
   bool clean = false;  // replace an existing output directory that carries the marker
   DocsDiagramRenderer mermaid_renderer{};
+  DocsDiagramCache* diagram_cache = nullptr;
 };
 
 struct DocsBuildReport {
@@ -248,6 +356,9 @@ struct DocsBuildReport {
   // "<page>: '<href>' names no heading on <target page>", repeats once with " (<n> links)"
   std::vector<std::string> broken_anchors;
   std::vector<std::string> warnings;        // other build-time findings, e.g. a truncated search index
+  // Files the pages read besides themselves (`<<<` snippets and
+  // `<!--@include:-->` parts), repository-relative, for a watcher.
+  std::vector<std::string> inputs;
 };
 
 // Renders every page of the model into `out`: the site's HTML (each page
@@ -287,6 +398,7 @@ struct DocsPortalOptions {
   // `--ref-tree REF=DIR`: a directory that already holds REF's tree, used
   // instead of extracting the ref from the work tree's Git repository.
   std::map<std::string, std::filesystem::path> ref_trees;
+  bool drafts = false;  // every site builds its draft pages too (DocsConfig::drafts)
 };
 
 // Loads every site of a portal config (`config.sites` non-empty). A site

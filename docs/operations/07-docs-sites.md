@@ -1,10 +1,11 @@
 ---
-description: Build a documentation site from Markdown with ckdocs, preview it with live rebuilds, and check it for broken links.
+description: Build a documentation site from Markdown with ckdocs, preview it with live updates, and check it for broken links.
 ---
 # Get started with ckdocs
 
 `ckdocs` turns Markdown into a static documentation site with navigation,
-search, and Mermaid diagrams. It is a standalone binary with no external
+search, Mermaid diagrams, math, highlighted code in 73 languages, tabs,
+footnotes, tags, and translations. It is a standalone binary with no external
 rendering tools. Generated sites work offline and under a URL prefix.
 
 ## Build your first site
@@ -29,11 +30,16 @@ ckdocs serve --root .
 
 Open `http://127.0.0.1:8422`. Use `--port` to choose another port and press
 Ctrl+C to stop. While it runs, `serve` watches the configuration, the pages,
-and the source tree and rebuilds the site about a second after you save a
-change; reload the browser page to see it. A rebuild that fails, for example
-on a configuration error, prints the error and keeps serving the last good
-site. Inside a Git repository a new page appears once Git tracks it
-(`git add`). Use `--no-watch` to serve the first build only.
+the files they include, and the source tree, and rebuilds the site as soon as
+a change has settled — usually in a few milliseconds, with diagrams it has
+drawn before reused. Open pages update themselves: the page you are reading
+swaps in its new content and keeps its scroll position, a page whose output
+did not change stays as it is, and changed images and stylesheets reload. A
+rebuild that fails, for example on a configuration error, prints the error,
+shows it over the open pages, and keeps serving the last good site. Inside a
+Git work tree a new page appears once Git tracks it (`git add`). Use
+`--no-watch` to serve the first build only, and `--drafts` to preview pages
+marked `draft: true`.
 
 Use `--out public` to keep the generated files. An existing ckdocs output is
 replaced by `serve`; with `build`, add `--clean` to replace it explicitly.
@@ -65,5 +71,7 @@ its own configuration. See
 | Configure branding, navigation, and search | [Site configuration](../ckdocs/configuration.md) |
 | Combine several sites or branches | [Several sites in one build](../ckdocs/configuration.md#several-sites-in-one-build) |
 | Format content and link files | [Markdown, links, and assets](../ckdocs/markdown.md) |
+| Show and include code | [Code blocks](../ckdocs/code.md) |
+| Publish in several languages | [Translations](../ckdocs/translations.md) |
 | Add a diagram | [Mermaid and 23 examples](../ckdocs/mermaid.md) |
 | Publish the site | [Publishing](../ckdocs/publishing.md) |

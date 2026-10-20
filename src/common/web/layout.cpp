@@ -7,6 +7,7 @@
 #include "ckgit/cli_help.hpp"
 #include "ckgit/http_router.hpp"
 #include "ckgit/markdown.hpp"
+#include "ckgit/markdown_styles.hpp"
 #include "ckgit/runtime_status.hpp"
 #include "ckgit/web_repository.hpp"
 #include "style.hpp"
@@ -143,6 +144,7 @@ std::string pageLayout(std::string_view title, std::string_view body, const Proj
   }
   out += "<title>" + htmlEscape(title) + " · ck-git-hosting</title><style>";
   out += kWebStyles;
+  out += kMarkdownStyles;
   out += "</style></head><body><a class=\"skip-link\" href=\"#main-content\">Skip to content</a><header>"
       "<a class=\"brand\" href=\"/\" aria-label=\"ck-git-hosting\">" + std::string(kTextBrand) + "</a><a href=\"/\">Projects</a>";
   if (p) {

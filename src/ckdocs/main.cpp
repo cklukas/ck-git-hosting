@@ -3,7 +3,8 @@
 //
 // ckdocs turns a repository's Markdown (a README and a docs/ tree) into a
 // self-contained static documentation site: relative links between pages, a
-// pull model for referenced images and files, no JavaScript. It is a
+// pull model for referenced images and files, and no JavaScript beyond the
+// small inline scripts of search and code-copy buttons where a page has them. It is a
 // separate, dependency-free binary so it can run wherever a docs build step
 // runs -- inside the server's sandboxed CI runner, on a developer's machine,
 // or on a GitHub Actions runner -- without the sync client or the server
@@ -40,6 +41,7 @@
 
 #include "ckgit/cli_help.hpp"
 #include "ckgit/docs_site.hpp"
+#include "ckgit/hash.hpp"
 #include "ckgit/http_request.hpp"
 #include "ckgit/pages_store.hpp"
 #include "mermaid.hpp"
@@ -57,10 +59,10 @@ constexpr unsigned short kDefaultServePort = 8422;
 void usage(std::ostream& out) {
   out << "Usage:\n"
          "  ckdocs build [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--clean]\n"
-         "               [--strict] [--quiet]\n"
-         "  ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--quiet]\n"
+         "               [--drafts] [--strict] [--quiet]\n"
+         "  ckdocs check [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--drafts] [--quiet]\n"
          "  ckdocs serve [--root DIR] [--source DIR] [--config FILE] [--ref-tree REF=DIR]... [--out DIR] [--port PORT]\n"
-         "               [--no-watch] [--quiet]\n"
+         "               [--no-watch] [--drafts] [--quiet]\n"
          "  ckdocs --version\n"
          "  ckdocs --help\n"
          "\n"
@@ -90,10 +92,13 @@ void usage(std::ostream& out) {
          "  is given (replacing a previous ckdocs site there the way --clean would), or into\n"
          "  a private directory removed on exit otherwise, then serves it on 127.0.0.1:--port\n"
          "  the same way a published Pages site is served, until Ctrl+C. While it serves, it\n"
-         "  watches the configuration, the pages, and the source tree, and rebuilds the site\n"
-         "  in place about a second after a change settles (reload the browser to see it);\n"
-         "  a rebuild that fails keeps the last good site. Inside a Git work tree a new page\n"
-         "  appears once Git tracks it (git add). --no-watch serves the first build only.\n"
+         "  watches the configuration, the pages, the files they include, and the source\n"
+         "  tree, and rebuilds the site in place as soon as a change settles. Open pages\n"
+         "  update themselves: a page whose output changed swaps in its new content and keeps\n"
+         "  its scroll position, and changed images and stylesheets reload; a rebuild that\n"
+         "  fails keeps the last good site and shows its error over the open pages. Inside a\n"
+         "  Git work tree a new page appears once Git tracks it (git add). --no-watch serves\n"
+         "  the first build only. Pages marked draft: true are left out unless --drafts.\n"
          "\n"
          "Several sites:\n"
          "  A configuration with a sites: list builds a portal: a welcome page at the output\n"
@@ -118,6 +123,8 @@ void usage(std::ostream& out) {
          "  --clean         Replace an existing site already at --out. build only.\n"
          "  --port PORT     Loopback port to serve on (default: 8422). serve only.\n"
          "  --no-watch      Do not rebuild when the sources change. serve only.\n"
+         "  --drafts        Build pages whose front matter says draft: true, which are\n"
+         "                  otherwise left out of the site.\n"
          "  --strict        Fail (exit 1) on any warning: a broken link or heading fragment\n"
          "                  (reported as page:line), a front matter key that is neither\n"
          "                  ckdocs's own nor listed in front_matter.foreign_keys, an\n"
@@ -134,6 +141,7 @@ void usage(std::ostream& out) {
          "  ckdocs build --root /srv/checkout --out /srv/checkout/public --strict\n"
          "  ckdocs check --root .\n"
          "  ckdocs serve --root .\n"
+         "  ckdocs serve --drafts --port 9000\n"
          "  ckdocs build --ref-tree main=../project-main --clean\n"
          "\n"
          "Exit codes:\n"
@@ -157,6 +165,7 @@ struct Options {
   bool strict = false;
   bool quiet = false;
   bool no_watch = false;
+  bool drafts = false;
 };
 
 // Parses the options for `command`, starting at argv[start]. Each option is
@@ -228,6 +237,8 @@ bool parseOptions(int argc, char** argv, int start, Command command, Options& op
     } else if (argument == "--no-watch") {
       if (command != Command::kServe) { error = "--no-watch is only valid for serve"; return false; }
       options.no_watch = true;
+    } else if (argument == "--drafts") {
+      options.drafts = true;
     } else if (argument == "--strict") {
       options.strict = true;
     } else if (argument == "--quiet") {
@@ -293,6 +304,12 @@ void onServeStop(int) { g_serve_stop = 1; }
 
 constexpr std::size_t kMaximumServeRequestBytes = 16 * 1024;
 constexpr std::size_t kMaximumServedFileBytes = static_cast<std::size_t>(1) << 30;  // matches kMaximumPagesFileBytes
+constexpr std::size_t kMaximumLiveClients = 64;
+constexpr std::size_t kMaximumListedChanges = 512;
+// The path the live-update channel answers on. A site cannot have a file
+// there: ckdocs never writes a dot-name, and a page or asset named so would
+// need a `__ckdocs` directory, which is reserved.
+constexpr std::string_view kLiveEventsPath = "/__ckdocs/events";
 
 bool readServeHeaders(int fd, std::string* out) {
   char buffer[4096];
@@ -336,37 +353,190 @@ void sendServeError(int fd, int status, std::string_view reason, bool head_only)
   sendServeResponse(fd, status, reason, "text/html; charset=utf-8", body, head_only);
 }
 
-void handleServeConnection(int fd, const fs::path& site) {
+std::string jsonString(std::string_view value) {
+  std::string out = "\"";
+  for (const unsigned char byte : value) {
+    switch (byte) {
+      case '"': out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (byte < 0x20) {
+          constexpr char kHex[] = "0123456789abcdef";
+          out += "\\u00";
+          out += kHex[byte >> 4];
+          out += kHex[byte & 0x0f];
+        } else {
+          out += static_cast<char>(byte);
+        }
+    }
+  }
+  return out + "\"";
+}
+
+// ---- live updates ------------------------------------------------------------
+//
+// While serve watches, every page it sends carries a small script that opens
+// a Server-Sent Events stream on kLiveEventsPath. After each rebuild the
+// server lists the output files whose bytes changed; the page fetches itself
+// again and swaps its head styles and body in place (keeping the scroll
+// position) when it is among them, and re-requests just the images and
+// stylesheets that changed otherwise. A failed rebuild shows its error over
+// the page until the next good one. Nothing of this is written to the built
+// site: the script is added to HTML responses on the way out.
+
+struct LiveState {
+  std::vector<int> clients;
+  std::string session;  // tells a page that the server restarted (it reloads then)
+  std::uint64_t build = 1;
+  std::map<std::string, std::string> files;  // output path ("/x/y.html") -> SHA-256 of its bytes
+  std::string failure;                       // the last rebuild's error, empty after a good one
+};
+
+// Every file of the built site with a hash of its bytes.
+std::map<std::string, std::string> snapshotSite(const fs::path& site) {
+  std::map<std::string, std::string> files;
+  std::error_code error;
+  fs::recursive_directory_iterator walk(site, fs::directory_options::skip_permission_denied, error);
+  for (; !error && walk != fs::recursive_directory_iterator(); walk.increment(error)) {
+    if (!walk->is_regular_file(error)) continue;
+    const auto relative = fs::relative(walk->path(), site, error).generic_string();
+    if (error || relative == ckgit::kDocsSiteMarker) continue;
+    files.emplace("/" + relative, ckgit::sha256HexOfFile(walk->path()));
+  }
+  return files;
+}
+
+std::string liveScript(const LiveState& live) {
+  // The JSON values are produced here; the page reads them as literals.
+  return "<script data-ckdocs-live>(function(){"
+         "if(window.__ckdocsLive)return;window.__ckdocsLive=1;"
+         "var session=" + jsonString(live.session) + ",build=" + std::to_string(live.build) + ",banner=null;"
+         R"JS(
+function here(){var p=decodeURIComponent(location.pathname);return p.charAt(p.length-1)==='/'?p+'index.html':p}
+function pathOf(url){try{return decodeURIComponent(new URL(url,location.href).pathname)}catch(e){return ''}}
+function bust(url,n){var u=new URL(url,location.href);u.searchParams.set('ckdocs-live',n);return u.href}
+function clearError(){if(banner&&banner.parentNode)banner.parentNode.removeChild(banner);banner=null}
+function showError(text){
+  clearError();banner=document.createElement('div');banner.setAttribute('role','alert');
+  banner.style.cssText='position:fixed;left:1rem;right:1rem;top:1rem;z-index:2147483647;max-height:60vh;overflow:auto;padding:1rem 1.2rem;border-radius:.6rem;border:2px solid #cf222e;background:#fff5f5;color:#3b0a0f;box-shadow:0 .8rem 2rem #0004;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap';
+  var close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label','Dismiss');
+  close.style.cssText='float:right;border:0;background:none;font-size:1.4rem;line-height:1;cursor:pointer;color:inherit';
+  close.onclick=clearError;banner.appendChild(close);
+  var title=document.createElement('strong');title.textContent='ckdocs: the rebuild failed; still serving the last good build\n\n';
+  banner.appendChild(title);banner.appendChild(document.createTextNode(text));document.body.appendChild(banner);
+}
+function swap(){
+  fetch(location.href,{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error(r.status);return r.text()}).then(function(html){
+    var doc=new DOMParser().parseFromString(html,'text/html'),x=window.scrollX,y=window.scrollY;
+    document.title=doc.title;
+    var fresh=doc.head.querySelectorAll('style,link[rel=stylesheet]'),stale=document.head.querySelectorAll('style,link[rel=stylesheet]');
+    for(var i=0;i<fresh.length;i++)document.head.appendChild(document.importNode(fresh[i],true));
+    for(var j=0;j<stale.length;j++)stale[j].parentNode.removeChild(stale[j]);
+    var body=document.importNode(doc.body,true),scripts=body.querySelectorAll('script');
+    for(var k=0;k<scripts.length;k++){
+      var old=scripts[k];
+      if(old.hasAttribute('data-ckdocs-live')){old.parentNode.removeChild(old);continue}
+      var run=document.createElement('script');run.textContent=old.textContent;old.parentNode.replaceChild(run,old);
+    }
+    document.documentElement.replaceChild(body,document.body);
+    window.scrollTo(x,y);
+  })['catch'](function(){location.reload()});
+}
+function refresh(changed,n){
+  var nodes=document.querySelectorAll('img[src],link[rel=stylesheet][href],source[srcset]');
+  for(var i=0;i<nodes.length;i++){
+    var node=nodes[i],attribute=node.tagName==='LINK'?'href':node.tagName==='SOURCE'?'srcset':'src',value=node.getAttribute(attribute);
+    if(changed.indexOf(pathOf(value))>=0)node.setAttribute(attribute,bust(value,n));
+  }
+}
+if(!window.EventSource)return;
+var source=new EventSource('/__ckdocs/events');
+source.addEventListener('hello',function(e){var d=JSON.parse(e.data);if(d.session!==session||d.build!==build)location.reload()});
+source.addEventListener('reload',function(e){
+  var d=JSON.parse(e.data);build=d.build;clearError();
+  if(d.changed==='all'||d.changed.indexOf(here())>=0)swap();else refresh(d.changed,d.build);
+});
+source.addEventListener('failure',function(e){showError(JSON.parse(e.data).message)});
+})();</script>)JS";
+}
+
+// Sends one event to every live page, dropping those that are gone.
+void broadcast(LiveState& live, std::string_view event, const std::string& data) {
+  const std::string message = "event: " + std::string(event) + "\ndata: " + data + "\n\n";
+  std::vector<int> kept;
+  for (const int client : live.clients) {
+    if (writeServeAll(client, message)) kept.push_back(client);
+    else ::close(client);
+  }
+  live.clients = std::move(kept);
+}
+
+std::string helloEvent(const LiveState& live) {
+  return "{\"session\":" + jsonString(live.session) + ",\"build\":" + std::to_string(live.build) + "}";
+}
+
+// Answers one request. Returns true when the connection became a live-update
+// stream the caller keeps open; false when it is done with it.
+bool handleServeConnection(int fd, const fs::path& site, LiveState* live) {
   std::string raw;
-  if (!readServeHeaders(fd, &raw)) return;
+  if (!readServeHeaders(fd, &raw)) return false;
   const std::optional<ckgit::HttpRequest> request = ckgit::parseReadOnlyHttpRequest(raw);
   if (!request.has_value()) {
     sendServeError(fd, 400, "Bad Request", false);
-    return;
+    return false;
   }
   const bool head_only = request->method == ckgit::HttpMethod::kHead;
   std::string_view target = request->target;
   const auto query = target.find_first_of("?#");
   if (query != std::string_view::npos) target = target.substr(0, query);
+  if (target == kLiveEventsPath) {
+    if (live == nullptr || head_only) {
+      sendServeError(fd, 404, "Not Found", head_only);
+      return false;
+    }
+    if (live->clients.size() >= kMaximumLiveClients) {
+      sendServeError(fd, 503, "Service Unavailable", false);
+      return false;
+    }
+    const std::string opening = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
+                                "X-Content-Type-Options: nosniff\r\nConnection: keep-alive\r\n\r\nretry: 1000\n\n"
+                                "event: hello\ndata: " + helloEvent(*live) + "\n\n" +
+                                (live->failure.empty() ? std::string()
+                                                       : "event: failure\ndata: {\"message\":" + jsonString(live->failure) + "}\n\n");
+    if (!writeServeAll(fd, opening)) return false;
+    live->clients.push_back(fd);
+    return true;
+  }
   const std::optional<std::string> decoded = ckgit::decodeRequestPath(target);
   if (!decoded.has_value() || decoded->empty() || decoded->front() != '/') {
     sendServeError(fd, 404, "Not Found", head_only);
-    return;
+    return false;
   }
-  const std::optional<ckgit::PageFile> page =
+  std::optional<ckgit::PageFile> page =
       ckgit::readSiteFile(site, std::string_view(*decoded).substr(1), kMaximumServedFileBytes);
   if (!page.has_value()) {
     sendServeError(fd, 404, "Not Found", head_only);
-    return;
+    return false;
+  }
+  if (live != nullptr && page->content_type.starts_with("text/html")) {
+    const std::string script = liveScript(*live);
+    const auto body_end = page->content.rfind("</body>");
+    if (body_end != std::string::npos) page->content.insert(body_end, script);
+    else page->content += script;
   }
   sendServeResponse(fd, 200, "OK", page->content_type, page->content, head_only);
+  return false;
 }
 
 // The files and directories a build read, as a cheap change fingerprint for
-// serve's rebuild-on-change: the configuration, every page, and every entry
-// (with its size and modification time) under the watched trees, skipping
-// dot-names (so .git) and the output directory. A new or removed file
-// changes its directory's entry list, so it is noticed too.
+// serve's rebuild-on-change: the configuration, every page and included
+// file, and every entry (with its size and modification time) under the
+// watched trees, skipping dot-names (so .git) and the output directory. A
+// new or removed file changes its directory's entry list, so it is noticed
+// too.
 struct WatchSet {
   std::vector<fs::path> files;
   std::vector<fs::path> trees;
@@ -417,9 +587,12 @@ std::uint64_t fingerprint(const WatchSet& watch) {
 // Serves `site` on 127.0.0.1:`port` (0 = an OS-chosen port) until SIGINT or
 // SIGTERM. Prints the bound port once listening, in the same "<program>:
 // ... ready on <port>" shape ck-git-hostingd and ck-pagesd already use. With
-// `rebuild`, it checks `watch` about twice a second between requests and,
-// once a change has settled, calls `rebuild` to refresh the site in place.
-int runServe(const fs::path& site, unsigned short port, const std::function<void()>& rebuild, const WatchSet& watch) {
+// `rebuild`, it fingerprints `watch` between requests -- as often as the scan
+// itself allows, from ten times a second for a small tree to every two
+// seconds for a huge one -- and once a change has held still for one scan,
+// calls `rebuild` (which answers its error, or "") and tells the open pages
+// what changed.
+int runServe(const fs::path& site, unsigned short port, const std::function<std::string()>& rebuild, const WatchSet& watch) {
   const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
   if (listener < 0) throw std::runtime_error("could not create the listening socket");
   const int enabled = 1;
@@ -439,6 +612,8 @@ int runServe(const fs::path& site, unsigned short port, const std::function<void
   action.sa_handler = onServeStop;
   ::sigaction(SIGTERM, &action, nullptr);
   ::sigaction(SIGINT, &action, nullptr);
+  // A page that goes away mid-write must not end the server.
+  std::signal(SIGPIPE, SIG_IGN);
 
   unsigned short bound_port = port;
   sockaddr_in bound{};
@@ -446,41 +621,118 @@ int runServe(const fs::path& site, unsigned short port, const std::function<void
   if (::getsockname(listener, reinterpret_cast<sockaddr*>(&bound), &bound_size) == 0 && bound_size == sizeof(bound)) {
     bound_port = ntohs(bound.sin_port);
   }
-  std::cout << "ckdocs: serve ready on " << bound_port << "\n" << std::flush;
   using Clock = std::chrono::steady_clock;
-  constexpr auto kScanInterval = std::chrono::milliseconds(500);
-  std::uint64_t built = rebuild ? fingerprint(watch) : 0;
+  std::optional<LiveState> live;
+  if (rebuild) {
+    live.emplace();
+    live->session = std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + "-" +
+                    std::to_string(static_cast<long long>(::getpid()));
+    live->files = snapshotSite(site);
+  }
+  std::cout << "ckdocs: serve ready on " << bound_port << "\n" << std::flush;
+  constexpr auto kHeartbeat = std::chrono::seconds(15);
+  auto scan_interval = std::chrono::milliseconds(100);
+  const auto scan = [&]() {
+    const auto started = Clock::now();
+    const auto value = fingerprint(watch);
+    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started);
+    scan_interval = std::clamp(spent * 10, std::chrono::milliseconds(100), std::chrono::milliseconds(2000));
+    return value;
+  };
+  std::uint64_t built = rebuild ? scan() : 0;
   std::optional<std::uint64_t> pending;  // a changed fingerprint waiting to settle
-  auto next_scan = Clock::now() + kScanInterval;
+  auto next_scan = Clock::now() + scan_interval;
+  auto next_heartbeat = Clock::now() + kHeartbeat;
   while (g_serve_stop == 0) {
-    pollfd waiting{listener, POLLIN, 0};
-    const int ready = ::poll(&waiting, 1, rebuild ? 250 : -1);
+    std::vector<pollfd> waiting{{listener, POLLIN, 0}};
+    if (live) {
+      for (const int client : live->clients) waiting.push_back({client, POLLIN, 0});
+    }
+    const int ready = ::poll(waiting.data(), static_cast<nfds_t>(waiting.size()), rebuild ? 50 : -1);
     if (ready < 0 && errno != EINTR) break;
-    if (ready > 0) {
+    if (ready > 0 && live) {
+      // A live page sends nothing; readable means it went away.
+      std::vector<int> kept;
+      for (std::size_t index = 1; index < waiting.size(); ++index) {
+        const int client = waiting[index].fd;
+        if ((waiting[index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+          char ignored[256];
+          const ssize_t received = ::recv(client, ignored, sizeof(ignored), MSG_DONTWAIT);
+          if (received <= 0) {
+            ::close(client);
+            continue;
+          }
+        }
+        kept.push_back(client);
+      }
+      live->clients = std::move(kept);
+    }
+    if (ready > 0 && (waiting[0].revents & POLLIN) != 0) {
       const int client = ::accept(listener, nullptr, nullptr);
       if (client >= 0) {
         const timeval timeout{10, 0};
         ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        bool kept = false;
         try {
-          handleServeConnection(client, site);
+          kept = handleServeConnection(client, site, live ? &*live : nullptr);
         } catch (const std::exception&) {
         }
-        ::close(client);
+        if (!kept) ::close(client);
       }
     }
-    if (!rebuild || Clock::now() < next_scan) continue;
-    next_scan = Clock::now() + kScanInterval;
-    const std::uint64_t now = fingerprint(watch);
-    if (now == built) {
+    if (!rebuild) continue;
+    const auto now = Clock::now();
+    if (live && now >= next_heartbeat) {
+      next_heartbeat = now + kHeartbeat;
+      std::vector<int> kept;
+      for (const int client : live->clients) {
+        if (writeServeAll(client, ": ping\n\n")) kept.push_back(client);
+        else ::close(client);
+      }
+      live->clients = std::move(kept);
+    }
+    if (now < next_scan) continue;
+    const std::uint64_t value = scan();
+    next_scan = Clock::now() + scan_interval;
+    if (value == built) {
       pending.reset();
-    } else if (pending != now) {
-      pending = now;  // wait one more scan: an editor may still be writing
+    } else if (pending != value) {
+      pending = value;  // wait one more scan: an editor may still be writing
     } else {
       pending.reset();
-      built = now;
-      rebuild();
+      built = value;
+      const std::string failure = rebuild();
+      if (!failure.empty()) {
+        live->failure = failure;
+        broadcast(*live, "failure", "{\"message\":" + jsonString(failure) + "}");
+        continue;
+      }
+      live->failure.clear();
+      auto files = snapshotSite(site);
+      std::vector<std::string> changed;
+      for (const auto& [path, hash] : files) {
+        const auto before = live->files.find(path);
+        if (before == live->files.end() || before->second != hash) changed.push_back(path);
+      }
+      for (const auto& [path, hash] : live->files) {
+        if (files.count(path) == 0) changed.push_back(path);
+      }
+      live->files = std::move(files);
+      ++live->build;
+      std::string list;
+      if (changed.size() > kMaximumListedChanges) {
+        list = "\"all\"";
+      } else {
+        list = "[";
+        for (std::size_t index = 0; index < changed.size(); ++index) list += (index ? "," : "") + jsonString(changed[index]);
+        list += "]";
+      }
+      broadcast(*live, "reload", "{\"build\":" + std::to_string(live->build) + ",\"changed\":" + list + "}");
     }
+  }
+  if (live) {
+    for (const int client : live->clients) ::close(client);
   }
   ::close(listener);
   return kOk;
@@ -512,6 +764,10 @@ int run(const std::string& command_name, int argc, char** argv) {
   fs::path target;
   ckgit::DocsBuildOptions build_options;
   build_options.mermaid_renderer = ckgit::renderMermaid;
+  // serve rebuilds the same site again and again; diagrams it has drawn
+  // once are reused until their source changes.
+  ckgit::DocsDiagramCache diagram_cache;
+  if (command == Command::kServe) build_options.diagram_cache = &diagram_cache;
   if (command == Command::kCheck) {
     scratch.emplace("ckdocs-check");
     target = scratch->path;
@@ -549,6 +805,7 @@ int run(const std::string& command_name, int argc, char** argv) {
     }
     if (options.source) config.source = options.source->generic_string();
     if (options.site_url) config.url = *options.site_url;
+    config.drafts = options.drafts;
 
     std::vector<std::string> problems;
     std::optional<ckgit::DocsSiteModel> model;
@@ -558,6 +815,7 @@ int run(const std::string& command_name, int argc, char** argv) {
     if (several) {
       ckgit::DocsPortalOptions portal_options;
       portal_options.ref_trees = ref_trees;
+      portal_options.drafts = options.drafts;
       portal = ckgit::loadDocsPortal(root, config, portal_options, &problems);
       watch.trees.push_back(root);  // every site's tree and configuration lives below it
     } else {
@@ -569,11 +827,15 @@ int run(const std::string& command_name, int argc, char** argv) {
     }
 
     ckgit::DocsBuildReport report;
+    const auto started = std::chrono::steady_clock::now();
     if (portal) {
       ckgit::buildDocsPortal(*portal, target, build_options, &report);
     } else {
       ckgit::buildDocsSite(*model, target, build_options, &report);
+      for (const auto& input : report.inputs) watch.files.push_back(root / input);
     }
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     // Extracted ref trees are only read while building; serve must not keep them.
     const std::size_t sites = portal ? portal->sites.size() : 0;
     portal.reset();
@@ -595,7 +857,9 @@ int run(const std::string& command_name, int argc, char** argv) {
         std::cout << (rebuilding ? "Rebuilt " : "Built ") << report.pages_written << " page(s)" << in_sites << ", "
                   << report.assets_copied + report.assets_generated << " asset(s), ";
         if (report.redirects_written > 0) std::cout << report.redirects_written << " redirect(s), ";
-        std::cout << report.bytes_written << " byte(s) to " << target.string() << ".\n";
+        std::cout << report.bytes_written << " byte(s) to " << target.string();
+        if (rebuilding) std::cout << " in " << elapsed << " ms";
+        std::cout << ".\n";
       }
       std::cout << std::flush;
     }
@@ -605,15 +869,20 @@ int run(const std::string& command_name, int argc, char** argv) {
   const int status = buildOnce(false);
   if (command != Command::kServe) return status;
   if (status == kUsage || status == kFailed) return status;
-  std::function<void()> rebuild;
+  std::function<std::string()> rebuild;
   if (!options.no_watch) {
-    rebuild = [&]() {
-      // A failed rebuild keeps serving the last good site and says why.
+    rebuild = [&]() -> std::string {
+      // A failed rebuild keeps serving the last good site and says why --
+      // here and over every open page.
       try {
-        buildOnce(true);
+        const int rebuilt = buildOnce(true);
+        if (rebuilt == kFailed || rebuilt == kUsage) return "the rebuild failed; see the terminal running ckdocs serve";
+        return {};
       } catch (const std::exception& failure) {
-        const std::string_view text = failure.what();
-        std::cerr << (text.starts_with("ckdocs: ") ? "" : "ckdocs: ") << text << "; still serving the last build\n";
+        std::string text = failure.what();
+        if (text.starts_with("ckdocs: ")) text.erase(0, 8);
+        std::cerr << "ckdocs: " << text << "; still serving the last build\n";
+        return text;
       }
     };
   }

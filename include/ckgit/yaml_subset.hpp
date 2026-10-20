@@ -16,10 +16,11 @@ namespace ckgit {
 // product reads from a repository (`.ckgit/ci.yml`, `ckdocs.yml`). It is
 // deliberately small: block and flow mappings and sequences (one level of flow
 // nesting), plain / single-quoted / double-quoted scalars with the escapes
-// `\\ \" \n \t` only, `|` block literals, `#` comments, spaces-only
-// indentation, LF line endings, UTF-8. No anchors, aliases, tags, multiple
-// documents, or merge keys. Anything outside the subset is rejected rather
-// than guessed; a documented bound that is exceeded is reported as such.
+// `\\ \" \n \t` only, `|` and `>` block scalars (with `-`/`+` chomping),
+// `#` comments, spaces-only indentation, LF line endings, UTF-8. No anchors,
+// aliases, tags, multiple documents, or merge keys. Anything outside the
+// subset is rejected rather than guessed; a documented bound that is exceeded
+// is reported as such.
 
 struct YamlEntry;
 
@@ -56,7 +57,7 @@ struct YamlBounds {
   std::size_t lines;                // physical lines per file
   std::size_t key_bytes;            // one mapping key
   std::size_t scalar_bytes;         // one plain or quoted scalar
-  std::size_t block_scalar_bytes;   // one `|` block literal
+  std::size_t block_scalar_bytes;   // one `|` or `>` block scalar
   std::size_t flow_sequence_items;  // items in `[a, b]`
   std::size_t block_sequence_items; // items in a `- a` / `- b` block
   std::size_t mapping_entries;      // entries in one mapping

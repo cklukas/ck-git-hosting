@@ -254,7 +254,7 @@ done
 
 cat >"$tagged/other.md" <<'EOF'
 ---
-layout: post
+permalink: /other/
 ---
 # Other
 EOF
@@ -268,7 +268,7 @@ set -e
   exit 1
 }
 case "$tagged_output" in
-  *"other.md: unknown front matter key 'layout' ignored"*) ;;
+  *"other.md: unknown front matter key 'permalink' ignored"*) ;;
   *)
     echo "ckdocs check's report should name the page and the undeclared key:" >&2
     echo "$tagged_output" >&2
@@ -484,8 +484,27 @@ wait_served() {  # wait_served PATH TEXT: until the served page contains TEXT
   done
 }
 wait_served /guide.html 'Guide'
+# While watching, served pages carry the live-update script (the built files
+# do not), and the event stream names exactly the outputs a rebuild changed.
+curl --max-time 4 --silent "http://127.0.0.1:$serve_port/guide.html" | grep -q '<script data-ckdocs-live>' ||
+  { echo "a served page lacks the live-update script" >&2; exit 1; }
+! grep -q 'data-ckdocs-live' "$test_root/findings-site/guide.html" || { echo "a built page carries the live-update script" >&2; exit 1; }
+events="$test_root/live-events"
+curl --no-buffer --max-time 30 --silent "http://127.0.0.1:$serve_port/__ckdocs/events" >"$events" &
+events_pid=$!
+await_event() {  # await_event PATTERN: until the event stream contains PATTERN
+  attempt=0
+  until grep -q "$1" "$events"; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 100 ] || { cat "$events" >&2; echo "no live event matching '$1'" >&2; exit 1; }
+    sleep .1
+  done
+}
+await_event '^event: hello$'
 printf '# Guide\n\nEdited-while-serving.\n' > "$findings_fixture/docs/guide.md"
 wait_served /guide.html 'Edited-while-serving'
+await_event '^data: {"build":2,"changed":\[.*"/guide.html"'
+! grep -q '"/index.html"' "$events" || { cat "$events" >&2; echo "an unchanged page was listed as changed" >&2; exit 1; }
 printf '# Fresh\n\nA new page.\n' > "$findings_fixture/docs/fresh.md"
 wait_served /fresh.html 'A new page'
 grep -q '^Rebuilt ' "$watch_log" || { cat "$watch_log" >&2; echo "serve did not report its rebuild" >&2; exit 1; }
@@ -496,7 +515,10 @@ until grep -q 'still serving the last build' "$watch_log"; do
   [ "$attempt" -lt 100 ] || { cat "$watch_log" >&2; echo "a failed rebuild was not reported" >&2; exit 1; }
   sleep .1
 done
+await_event '^event: failure$'
 wait_served /fresh.html 'A new page'
+kill "$events_pid" 2>/dev/null || true
+wait "$events_pid" 2>/dev/null || true
 stop_serve || exit 1
 rm -f "$findings_fixture/ckdocs.yml"
 echo "docs_site watch check passed"

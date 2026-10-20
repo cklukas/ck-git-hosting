@@ -262,7 +262,7 @@ void testDashboard() {
   require(text.find("id=\"L2\"") != std::string::npos && text.find("&lt;script&gt;second") != std::string::npos, "line numbers escape content");
   require(text.find("class=\"hl-") == std::string::npos, "plain text files get no highlighting spans");
   const auto highlighted = page("blob/" + resolved.id + ":src/internal/engine.cpp").body;
-  require(highlighted.find("<span class=\"line-text\"><span class=\"hl-k\">int</span> engine() { <span class=\"hl-k\">return</span> "
+  require(highlighted.find("<span class=\"line-text\"><span class=\"hl-k\">int</span> <span class=\"hl-f\">engine</span>() { <span class=\"hl-k\">return</span> "
                            "<span class=\"hl-n\">42</span>; }</span>") != std::string::npos,
           "C++ sources are highlighted in the file view, inside the line structure");
   auto svg = page("blob/" + resolved.id + ":diagram.svg").body;
@@ -316,7 +316,8 @@ void testDashboard() {
   const auto source_doc = page("source/heads/main:docs/README.md").body;
   require(source_doc.find("id=\"L1\"") != std::string::npos && source_doc.find("**Strong**") != std::string::npos &&
           source_doc.find("Wrap lines") != std::string::npos, "source mode includes line navigation and wrapping");
-  require(source_doc.find("title: Directory") != std::string::npos, "source mode still shows the front matter");
+  require(source_doc.find("<span class=\"hl-a\">title</span>: Directory") != std::string::npos,
+          "source mode still shows the front matter, highlighted as YAML");
   const auto directory_redirect = page("blob/tags/main:docs");
   require(directory_redirect.status == 302 && directory_redirect.location == "/project/demo/tree/tags/main:docs", "directory without slash redirects preserving tag");
   const auto selected_overview = page("overview/heads/side").body;
