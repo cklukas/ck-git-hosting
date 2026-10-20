@@ -37,6 +37,7 @@ inline constexpr std::size_t kMaximumDocsSiteIdBytes = 32;
 struct DocsLink {
   std::string title;
   std::string url;  // http(s) or mailto
+  std::string icon = {};  // optional built-in icon: github; title remains the accessible name
 };
 
 // One `nav:` entry as configured: a page (`page` set; `title` optional and

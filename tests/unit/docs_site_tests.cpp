@@ -167,6 +167,7 @@ void testConfig() {
       "  links:\n"
       "    - title: GitHub\n"
       "      url: https://github.com/cklukas/ck-git-hosting\n"
+      "      icon: github\n"
       "    - title: Mail\n"
       "      url: mailto:someone@example.test\n"
       "  stylesheet: docs/assets/site.css\n"
@@ -185,8 +186,11 @@ void testConfig() {
               config.description == "A small Git control plane" && config.footer == "© 2026 C. Klukas" &&
               config.stylesheet == "docs/assets/site.css" && config.source == "docs" && config.home == "README.md" && config.search,
           "every site field is read");
-  require(config.links.size() == 2 && config.links[0].title == "GitHub" && config.links[1].url == "mailto:someone@example.test",
-          "links are title/url pairs");
+  require(config.links.size() == 2 && config.links[0].title == "GitHub" && config.links[0].icon == "github" &&
+              config.links[1].url == "mailto:someone@example.test" && config.links[1].icon.empty(),
+          "links retain their accessible title and optionally select an icon");
+  require(contains(rejection("version: 1\nsite:\n  title: x\n  links:\n    - title: A\n      url: https://x\n      icon: arbitrary\n"),
+                   "link icon must be github"), "unknown built-in icons are rejected");
   require(config.exclude == std::vector<std::string>{"drafts", "internal/*"}, "exclude patterns");
   require(config.nav.size() == 2 && config.nav[0].page == "README.md" && config.nav[0].title.empty() &&
               config.nav[1].title == "Operations" && config.nav[1].pages.size() == 2 &&
@@ -830,6 +834,9 @@ void testSearch() {
           "the root page's search input points at the index directly");
   require(contains(home, "<noscript><a href=\"site-index.html\">Site index</a></noscript>"),
           "the no-script fallback links to the site index");
+  require(contains(home, "aria-label=\"Open search\"") &&
+              contains(home, "aria-expanded=\"false\" aria-controls=\"ckdocs-search\" hidden>"),
+          "search starts as a labelled collapsed disclosure, enhanced only when script runs");
   require(contains(home, "<script>") && contains(home, "getElementById('ckdocs-search')"),
           "the inline search script is embedded in the page");
   const auto hidden_page = slurp(site / "hidden.html");
@@ -1281,10 +1288,15 @@ void testNavigationDisclosures() {
       "version: 1\nsite: {title: Fixture}\nnav:\n  - title: Start\n    page: docs/index.md\n  - title: Learn\n    pages:\n"
       "      - title: Concepts\n        pages: [docs/concepts/index.md, docs/concepts/agent.md]\n"
       "      - title: Topics\n        pages: [docs/topics/index.md, docs/topics/tools.md]\n");
+  config.links.push_back({"GitHub", "https://github.com/cklukas/Agentic-Web-Stack", "github"});
   auto model = ckgit::loadDocsSite(root, config, nullptr);
   const auto out = scratch.root / "out";
   ckgit::buildDocsSite(model, out, {}, nullptr);
   const auto html = slurp(out / "concepts/agent.html");
+  require(contains(html, "class=\"icon-button header-icon github-link\"") &&
+              contains(html, "rel=\"noopener\" aria-label=\"GitHub\" title=\"GitHub\"") &&
+              !contains(html, ">GitHub</a>") && contains(html, "Copyright (c) 2026 GitHub Inc."),
+          "GitHub icon links keep their accessible label and the icon's upstream licence notice");
   const auto tabs = between(html, "<nav class=\"tabs\"", "</nav>");
   require(contains(tabs, "<summary><span>Learn</span>") && !contains(tabs, ">Learn</a>") &&
               !contains(between(tabs, "<summary>", "</summary>"), "<a "),

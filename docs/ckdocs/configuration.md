@@ -19,7 +19,7 @@ at once instead — see [Several sites in one build](#several-sites-in-one-build
 | `site.logo` | path | none | An image shown before the brand; copied into the site. |
 | `site.description` | string, ≤ 1024 bytes | none | The home page's `<meta name="description">`. |
 | `site.footer` | string, ≤ 1024 bytes | none | Footer text, alongside "Built with ckdocs `<version>`". |
-| `site.links` | list of `{title, url}` | none | Up to 8 header links; `url` must be `http://`, `https://`, or `mailto:`. |
+| `site.links` | list of `{title, url, icon?}` | none | Up to 8 header links; `url` must be `http://`, `https://`, or `mailto:`. Optional `icon: github` displays a circular GitHub icon link; `title` supplies its accessible name and tooltip. Omit `icon` for a text link. |
 | `site.stylesheet` | path | none | An extra stylesheet, copied as-is and linked after the built-in one. |
 | `site.url` | absolute `http://` or `https://` URL | none | Where the site is published, such as `https://example.github.io/project/`; a missing trailing `/` is added. With it, the build also writes `sitemap.xml`, and `llms.txt` links are absolute. See [Sitemap and llms.txt](#sitemap-and-llmstxt). |
 | `source` | path | `docs/` if it exists, else the repository root | The page tree, relative to the repository root. |
@@ -63,8 +63,10 @@ index page would repeat its category's name, its navigation label becomes
 
 Without `search: true`, the [generated site index](pages.md#how-pages-are-found-named-and-ordered)
 is the answer to "how do I find something" — every page and heading, one
-plain list, no script needed. `search: true` adds a proper search box to
-the header, backed by a generated `search-index.json` (each page's title,
+plain list, no script needed. `search: true` adds a round search button to
+the header. Clicking it or pressing Cmd/Ctrl+K expands and focuses the input;
+Escape collapses it and returns focus to the button. Clicking outside also
+collapses it. Search is backed by a generated `search-index.json` (each page's title,
 URL, and one entry per top-level heading with a plain-text excerpt of that
 section, up to 200 bytes) and a small inline script — under 2 KiB, part of
 the site itself, never fetched from anywhere else — that fetches the index

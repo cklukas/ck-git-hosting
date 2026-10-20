@@ -8,6 +8,7 @@ site:
   links:
     - title: GitHub
       url: https://github.com/cklukas/ck-git-hosting
+      icon: github
 search: true
 nav:
   - title: Home

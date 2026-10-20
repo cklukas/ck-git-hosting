@@ -31,6 +31,7 @@
 
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/cli_help.hpp"
+#include "ckgit/docs_icons.hpp"
 #include "ckgit/docs_theme.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/http_router.hpp"
@@ -669,7 +670,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
     if (links->items.size() > kMaximumDocsLinks) tooLarge("site has too many links");
     for (const Node& item : links->items) {
       requireKind(item, Node::Kind::Mapping, "each link to be a mapping with 'title' and 'url'");
-      rejectUnknownKeys(item, {"title", "url"});
+      rejectUnknownKeys(item, {"title", "url", "icon"});
       const Node* link_title = findEntry(item, "title");
       const Node* url = findEntry(item, "url");
       if (link_title == nullptr || url == nullptr) malformed("a link needs both 'title' and 'url'", item.line);
@@ -677,6 +678,10 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
       link.title = titleOf(*link_title, "a link title");
       link.url = scalarOf(*url, "a link url");
       if (!isValidLinkUrl(link.url)) malformed("link url '" + link.url + "' must be http(s) or mailto", url->line);
+      if (const Node* icon = findEntry(item, "icon")) {
+        link.icon = scalarOf(*icon, "a link icon");
+        if (link.icon != "github") malformed("link icon must be github", icon->line);
+      }
       config.links.push_back(std::move(link));
     }
   }
@@ -1372,6 +1377,9 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
     // reveals it, so a visitor without scripting sees only the <noscript>
     // link below, never a non-functional box.
     out += "<form class=\"search\" role=\"search\" onsubmit=\"return false\">"
+           "<button type=\"button\" class=\"icon-button header-icon search-toggle\" aria-label=\"Open search\" title=\"Search (⌘/Ctrl+K)\" "
+           "aria-expanded=\"false\" aria-controls=\"ckdocs-search\" hidden><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">"
+           "<circle cx=\"10.5\" cy=\"10.5\" r=\"6.5\"/><path d=\"m16 16 5 5\"/></svg></button>"
            "<input type=\"search\" id=\"ckdocs-search\" name=\"q\" placeholder=\"Search\" "
            "aria-label=\"Search this site\" autocomplete=\"off\" spellcheck=\"false\" hidden data-index=\"" +
            url(std::string(kDocsSearchIndexPage)) + "\">"
@@ -1469,7 +1477,13 @@ std::string renderHeaderLinks(const std::vector<DocsLink>& links) {
   if (links.empty()) return {};
   std::string out = "<nav class=\"links\" aria-label=\"Links\">";
   for (const auto& link : links) {
-    out += "<a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + escapeHtml(link.title) + "</a>";
+    if (link.icon == "github") {
+      out += "<a class=\"icon-button header-icon github-link\" href=\"" + escapeHtml(link.url) +
+             "\" rel=\"noopener\" aria-label=\"" + escapeHtml(link.title) + "\" title=\"" + escapeHtml(link.title) + "\">" +
+             std::string(kDocsGithubIcon) + "</a>";
+    } else {
+      out += "<a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + escapeHtml(link.title) + "</a>";
+    }
   }
   return out + "</nav>";
 }

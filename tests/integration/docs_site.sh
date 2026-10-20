@@ -82,8 +82,9 @@ for page in index.html operations/01-installation.html protocol/01-ssh-and-contr
   [ -f "$site/$page" ] || { echo "expected $page in the built site" >&2; exit 1; }
 done
 
-for tab in Home Guides Server CI ckdocs Reference; do
-  grep -q ">$tab</a>" "$site/index.html" || { echo "index.html is missing the $tab tab" >&2; exit 1; }
+grep -q '>Home</a>' "$site/index.html" || { echo "index.html is missing the Home link" >&2; exit 1; }
+for tab in Guides Server CI ckdocs Reference; do
+  grep -q "<summary><span>$tab</span>" "$site/index.html" || { echo "index.html is missing the $tab dropdown" >&2; exit 1; }
 done
 
 # Restricted to *.html: the site legitimately carries copied non-HTML
