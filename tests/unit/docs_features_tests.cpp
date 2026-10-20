@@ -415,6 +415,45 @@ void testPortalSites() {
           "a site with its own logo, brand and favicon shows them, still leading to the welcome page");
 }
 
+// Nothing outside the tree reaches a site through a symbolic link committed
+// to it: not an include, a snippet, an image, a linked file, nor a logo --
+// whether the link is the file itself or a directory on the way to it.
+void testTreeConfinement() {
+  Scratch scratch;
+  const auto root = scratch.root / "repo";
+  write(scratch.root / "outside/secret.md", "# OUTSIDE-SECRET\n");
+  write(scratch.root / "outside/secret.txt", "OUTSIDE-SECRET\n");
+  write(root / "ckdocs.yml", "version: 1\nsite:\n  title: Docs\n");
+  write(root / "docs/_parts/inside.md", "Inside part.\n");
+  fs::create_directory_symlink(scratch.root / "outside", root / "docs/linked");
+  fs::create_symlink(scratch.root / "outside/secret.md", root / "docs/_parts/alias.md");
+  write(root / "docs/README.md",
+        "# Home\n\n<!--@include: _parts/inside.md-->\n\n<!--@include: linked/secret.md-->\n\n<!--@include: _parts/alias.md-->\n\n"
+        "<<< linked/secret.txt\n\n![image](linked/secret.txt)\n\n[file](linked/secret.txt)\n");
+  const auto model = ckgit::loadDocsSite(root, ckgit::readDocsConfig(root), nullptr);
+  require(model.pages.size() == 1, "a linked directory's pages are never pages of the site");
+  ckgit::DocsBuildReport report;
+  const auto site = root / "site";
+  ckgit::buildDocsSite(model, site, ckgit::DocsBuildOptions{}, &report);
+  const auto home = slurp(site / "index.html");
+  require(contains(home, "Inside part.") && !contains(home, "OUTSIDE-SECRET") && !fs::exists(site / "linked"),
+          "an ordinary part is included; nothing behind a link is");
+  for (const auto* finding : {"include 'linked/secret.md' is not a regular file", "include '_parts/alias.md' is not a regular file",
+                              "snippet 'linked/secret.txt' is not a regular file", "image target 'linked/secret.txt' is not a regular file",
+                              "link target 'linked/secret.txt' is not a regular file"}) {
+    require(anyContains(report.broken_links, finding), std::string("reported: ") + finding);
+  }
+  write(root / "ckdocs.yml", "version: 1\nsite:\n  title: Docs\n  logo: docs/linked/secret.txt\n");
+  std::string refused;
+  try {
+    ckgit::buildDocsSite(ckgit::loadDocsSite(root, ckgit::readDocsConfig(root), nullptr), root / "site2", ckgit::DocsBuildOptions{},
+                         nullptr);
+  } catch (const std::exception& error) {
+    refused = error.what();
+  }
+  require(contains(refused, "site.logo 'docs/linked/secret.txt' is not a regular file"), "a logo behind a link is refused");
+}
+
 }  // namespace
 
 void testDocsFeatures() {
@@ -424,4 +463,5 @@ void testDocsFeatures() {
   testDiagramCache();
   testTranslations();
   testPortalSites();
+  testTreeConfinement();
 }

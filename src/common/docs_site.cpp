@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -27,6 +28,9 @@
 #include <functional>
 #include <set>
 
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "ckgit/ci_workflow.hpp"
@@ -467,18 +471,6 @@ bool isCalendarDate(std::string_view value) {
   return *day <= kDays[static_cast<std::size_t>(*month - 1)] + (*month == 2 && leap ? 1 : 0);
 }
 
-std::optional<std::string> readFile(const fs::path& path, std::size_t limit) {
-  std::error_code error;
-  const auto size = fs::file_size(path, error);
-  if (error || size > limit) return std::nullopt;
-  std::ifstream in(path, std::ios::binary);
-  if (!in) return std::nullopt;
-  std::string content(static_cast<std::size_t>(size), '\0');
-  in.read(content.data(), static_cast<std::streamsize>(content.size()));
-  if (in.gcount() != static_cast<std::streamsize>(content.size())) return std::nullopt;
-  return content;
-}
-
 // ---- page enumeration ------------------------------------------------------
 
 std::string_view directoryOf(std::string_view path) {
@@ -620,6 +612,119 @@ std::optional<std::string> normalizePath(std::string_view path) {
     result += part;
   }
   return result;
+}
+
+// ---- reading the tree's files ---------------------------------------------
+//
+// Every file a site takes from its tree -- a page, an include or snippet, a
+// config, a logo, an asset -- is opened through treeFile, never by a plain
+// path: each directory on the way and the file itself are opened without
+// following a symbolic link. A link committed to the repository
+// (`docs/system -> /etc`) therefore cannot lead outside it, not even as an
+// intermediate directory, and nothing can swap a component between the check
+// and the read. Only the root itself may be reached through a link (`/tmp` on
+// macOS is one); it is where the user pointed ckdocs.
+
+class Descriptor {
+ public:
+  explicit Descriptor(int value) : value_(value) {}
+  ~Descriptor() {
+    if (value_ >= 0) close(value_);
+  }
+  Descriptor(const Descriptor&) = delete;
+  Descriptor& operator=(const Descriptor&) = delete;
+  Descriptor(Descriptor&& other) noexcept : value_(std::exchange(other.value_, -1)) {}
+  Descriptor& operator=(Descriptor&& other) noexcept {
+    if (this != &other) {
+      if (value_ >= 0) close(value_);
+      value_ = std::exchange(other.value_, -1);
+    }
+    return *this;
+  }
+  int get() const { return value_; }
+  explicit operator bool() const { return value_ >= 0; }
+
+ private:
+  int value_;
+};
+
+enum class TreeFileStatus {
+  Ok,
+  Missing,     // no such file, or a path that is not one (`..` above the root, empty)
+  NotRegular,  // a directory, a symbolic link, or a path through one, or something else
+  TooLarge,    // larger than the caller's limit
+  Unreadable,
+};
+
+struct TreeFile {
+  TreeFileStatus status = TreeFileStatus::Missing;
+  std::uintmax_t size = 0;
+  std::string content;  // only when asked for and Ok
+};
+
+// `relative` below `root`, as a regular file of at most `limit` bytes, with
+// its content when `read`.
+TreeFile treeFile(const fs::path& root, std::string_view relative, std::uintmax_t limit, bool read) {
+  TreeFile result;
+  const auto normalized = normalizePath(relative);
+  if (!normalized || normalized->empty()) return result;
+  const auto parts = splitPath(*normalized);
+  const auto failed = [&result](int code) {
+    result.status = code == ENOENT ? TreeFileStatus::Missing
+                    : code == ELOOP || code == ENOTDIR || code == EMLINK ? TreeFileStatus::NotRegular
+                                                                         : TreeFileStatus::Unreadable;
+    return result;
+  };
+  Descriptor directory(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (!directory) return failed(errno);
+  for (std::size_t index = 0; index + 1 < parts.size(); ++index) {
+    Descriptor next(::openat(directory.get(), std::string(parts[index]).c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (!next) return failed(errno);
+    directory = std::move(next);
+  }
+  // O_NONBLOCK: opening a FIFO must not wait for a writer; it is refused
+  // below like anything else that is not a regular file.
+  Descriptor file(::openat(directory.get(), std::string(parts.back()).c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+  if (!file) return failed(errno);
+  struct stat status {};
+  if (::fstat(file.get(), &status) != 0) return failed(errno);
+  if (!S_ISREG(status.st_mode)) {
+    result.status = TreeFileStatus::NotRegular;
+    return result;
+  }
+  result.size = static_cast<std::uintmax_t>(status.st_size);
+  if (result.size > limit) {
+    result.status = TreeFileStatus::TooLarge;
+    return result;
+  }
+  if (read) {
+    result.content.resize(static_cast<std::size_t>(result.size));
+    std::size_t done = 0;
+    while (done < result.content.size()) {
+      const auto count = ::read(file.get(), result.content.data() + done, result.content.size() - done);
+      if (count < 0 && errno == EINTR) continue;
+      if (count <= 0) {  // an error, or the file shrank while it was read
+        result.content.clear();
+        result.status = TreeFileStatus::Unreadable;
+        return result;
+      }
+      done += static_cast<std::size_t>(count);
+    }
+  }
+  result.status = TreeFileStatus::Ok;
+  return result;
+}
+
+// Whether `relative` is a regular file of the tree, reached without links.
+bool isTreeFile(const fs::path& root, std::string_view relative) {
+  return treeFile(root, relative, std::numeric_limits<std::uintmax_t>::max(), false).status == TreeFileStatus::Ok;
+}
+
+// Its content, when it is a regular file of the tree of at most `limit` bytes.
+std::optional<std::string> readTreeFile(const fs::path& root, std::string_view relative, std::uintmax_t limit) {
+  auto file = treeFile(root, relative, limit, true);
+  if (file.status != TreeFileStatus::Ok) return std::nullopt;
+  return std::move(file.content);
 }
 
 bool hasPartialComponent(std::string_view path) {
@@ -904,13 +1009,11 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
 }
 
 DocsConfig readDocsConfig(const fs::path& root) {
-  const auto path = root / "ckdocs.yml";
-  std::error_code error;
-  if (!fs::exists(path, error)) return DocsConfig{};
-  if (!fs::is_regular_file(path, error)) siteError("ckdocs.yml is not a regular file");
-  const auto content = readFile(path, kMaximumDocsConfigBytes + 1);
-  if (!content) siteError("cannot read ckdocs.yml");
-  return parseDocsConfig(*content);
+  const auto file = treeFile(root, "ckdocs.yml", kMaximumDocsConfigBytes + 1, true);
+  if (file.status == TreeFileStatus::Missing) return DocsConfig{};
+  if (file.status == TreeFileStatus::NotRegular) siteError("ckdocs.yml is not a regular file");
+  if (file.status != TreeFileStatus::Ok) siteError("cannot read ckdocs.yml");
+  return parseDocsConfig(file.content);
 }
 
 namespace {
@@ -1244,9 +1347,8 @@ DocsSiteModel loadTree(const fs::path& root, const DocsConfig& config, std::vect
     const bool inside = model.source.empty() || (file.starts_with(model.source) && file.size() > model.source.size() &&
                                                  file[model.source.size()] == '/');
     if (!inside && file != "README.md" && file != "index.md") continue;
-    const auto full = root / file;
-    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) {
-      if (work_tree && !fs::exists(full, error)) warn(file + ": tracked but missing on disk; skipped");
+    if (!isTreeFile(root, file)) {
+      if (work_tree && !fs::exists(root / file, error)) warn(file + ": tracked but missing on disk; skipped");
       continue;
     }
     candidates.push_back(file);
@@ -1303,11 +1405,12 @@ DocsSiteModel loadTree(const fs::path& root, const DocsConfig& config, std::vect
     page.home = file == home;
     page.toc_min_level = config.toc_min_level;
     page.toc_max_level = config.toc_max_level;
-    const auto content = readFile(root / file, kMaximumMarkdownInputBytes);
+    auto file_read = treeFile(root, file, kMaximumMarkdownInputBytes, true);
+    std::optional<std::string> content;
+    if (file_read.status == TreeFileStatus::Ok) content = std::move(file_read.content);
     std::string unusable;
     if (!content) {
-      unusable = fs::file_size(root / file, error) > kMaximumMarkdownInputBytes ? "exceeds the 512 KiB page limit"
-                                                                                : "cannot be read";
+      unusable = file_read.status == TreeFileStatus::TooLarge ? "exceeds the 512 KiB page limit" : "cannot be read";
     } else if (!isValidUtf8(*content)) {
       unusable = "is not valid UTF-8";
     }
@@ -3024,9 +3127,9 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
   // Copies a root-relative file into the site: its output path, or why it
   // cannot be copied (empty `output`).
   const auto placeAsset = [&](const std::string& root_relative, std::string& output) -> std::string {
-    const auto full = model.root / root_relative;
-    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return "is not a regular file";
-    if (fs::file_size(full, error) > kMaximumPagesFileBytes) return "exceeds the file size limit";
+    const auto file = treeFile(model.root, root_relative, kMaximumPagesFileBytes, false);
+    if (file.status == TreeFileStatus::TooLarge) return "exceeds the file size limit";
+    if (file.status != TreeFileStatus::Ok) return "is not a regular file";
     const std::string public_prefix = model.source.empty() ? "public/" : model.source + "/public/";
     const auto path = root_relative.starts_with(public_prefix) ? root_relative.substr(public_prefix.size())
                                                               : assetOutputPath(model, root_relative);
@@ -3083,7 +3186,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
   if (model.config.search) search_entries.reserve(model.pages.size());
   for (std::size_t index = 0; index < model.pages.size(); ++index) {
     const DocsPage& page = model.pages[index];
-    const auto content = readFile(model.root / page.source, kMaximumMarkdownInputBytes);
+    const auto content = readTreeFile(model.root, page.source, kMaximumMarkdownInputBytes);
     if (!content) siteError("cannot read '" + page.source + "', or it exceeds the 512 KiB page limit");
     const std::string page_dir(directoryOf(page.source));
     const std::string out_dir(directoryOf(page.output));
@@ -3129,6 +3232,8 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       if (hasMarkdownExtension(*normalized) && !target.starts_with('/')) return broken("is not a page of this site");
       // A real repository file takes precedence over a clean page alias,
       // including the existing asset/page collision check.
+      // (Anything else at that path -- a link, or a path through one -- is
+      // refused by placeAsset, not mistaken for a missing file.)
       const auto original_file = model.root / *normalized;
       if (fs::is_regular_file(original_file, error) || fs::is_symlink(original_file, error)) {
         std::string output;
@@ -3158,7 +3263,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       if (target == "/") return relativeUrl(out_dir, model.pages[model.home].output);
       if (target.starts_with('/') && !model.source.empty()) {
         const auto public_file = model.source + "/public/" + *normalized;
-        if (!fs::is_symlink(model.root / public_file, error) && fs::is_regular_file(model.root / public_file, error)) {
+        if (isTreeFile(model.root, public_file)) {
           std::string output;
           const auto problem = placeAsset(public_file, output);
           if (!problem.empty()) return broken(problem);
@@ -3167,9 +3272,9 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       }
       if (directory_target || normalized->empty()) return broken("is a directory without an index page");
       if (hasMarkdownExtension(*normalized)) return broken("is not a page of this site");
-      const auto full = model.root / *normalized;
-      if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
-      if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
+      const auto file = treeFile(model.root, *normalized, kMaximumPagesFileBytes, false);
+      if (file.status == TreeFileStatus::TooLarge) return broken("exceeds the file size limit");
+      if (file.status != TreeFileStatus::Ok) return broken("does not exist");
       // A file a link cannot bring along is that link's problem, not the site's.
       std::string output;
       const std::string problem = placeAsset(*normalized, output);
@@ -3191,14 +3296,14 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
       const auto normalized = normalizePath(target.starts_with('/') ? std::string(target.substr(1)) : joinPath(page_dir, target));
       if (!normalized || normalized->empty()) return broken("leaves the repository");
       if (hasDotComponent(*normalized)) return broken("is a hidden file or inside a hidden directory");
-      const auto full = model.root / *normalized;
-      if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
-      if (fs::file_size(full, error) > kMaximumMarkdownInputBytes) return broken("exceeds the 512 KiB include limit");
-      auto content = readFile(full, kMaximumMarkdownInputBytes);
-      if (!content) return broken("cannot be read");
-      if (!isValidUtf8(*content)) return broken("is not valid UTF-8 text");
+      auto file = treeFile(model.root, *normalized, kMaximumMarkdownInputBytes, true);
+      if (file.status == TreeFileStatus::Missing) return broken("does not exist");
+      if (file.status == TreeFileStatus::NotRegular) return broken("is not a regular file (a symbolic link, or a path through one, is never followed)");
+      if (file.status == TreeFileStatus::TooLarge) return broken("exceeds the 512 KiB include limit");
+      if (file.status != TreeFileStatus::Ok) return broken("cannot be read");
+      if (!isValidUtf8(file.content)) return broken("is not valid UTF-8 text");
       if (std::find(result.inputs.begin(), result.inputs.end(), *normalized) == result.inputs.end()) result.inputs.push_back(*normalized);
-      return MarkdownInclude{std::move(*content), relativeDirectory(page_dir, directoryOf(*normalized))};
+      return MarkdownInclude{std::move(file.content), relativeDirectory(page_dir, directoryOf(*normalized))};
     };
     std::size_t diagram_number = 0;
     const MarkdownCodeRenderer code_renderer = [&](std::string_view language, std::string_view source) -> std::optional<std::string> {
@@ -3433,7 +3538,7 @@ void renderSite(const DocsSiteModel& model, OutputTree& tree, const std::string&
 
   // Assets.
   for (const auto& [output, source] : assets) {
-    const auto asset = readFile(model.root / source, kMaximumPagesFileBytes);
+    const auto asset = readTreeFile(model.root, source, kMaximumPagesFileBytes);
     if (!asset) siteError("cannot read '" + source + "'");
     writeFile(output, *asset);
     ++result.assets_copied;
@@ -3740,8 +3845,7 @@ DocsPortalModel loadDocsPortal(const fs::path& root, const DocsConfig& config, c
   portal.root = root;
   portal.config = config;
   if (!config.home.empty()) {
-    const auto intro = root / config.home;
-    if (fs::is_symlink(intro, error) || !fs::is_regular_file(intro, error)) {
+    if (!isTreeFile(root, config.home)) {
       siteError("home page '" + config.home + "' (the welcome page's intro) is not a regular file");
     }
   }
@@ -3767,15 +3871,14 @@ DocsPortalModel loadDocsPortal(const fs::path& root, const DocsConfig& config, c
     const std::string config_path = entry.config.empty() ? std::string("ckdocs.yml") : entry.config;
     const std::string where = entry.ref.empty() ? std::string() : " in ref '" + entry.ref + "'";
     DocsConfig site_config;
-    const auto file = site_root / config_path;
-    if (fs::exists(file, error)) {
-      if (fs::is_symlink(file, error) || !fs::is_regular_file(file, error)) {
+    const auto file = treeFile(site_root, config_path, kMaximumDocsConfigBytes + 1, true);
+    if (file.status != TreeFileStatus::Missing) {
+      if (file.status == TreeFileStatus::NotRegular) {
         siteError("site '" + entry.id + "': config '" + config_path + "'" + where + " is not a regular file");
       }
-      const auto content = readFile(file, kMaximumDocsConfigBytes + 1);
-      if (!content) siteError("site '" + entry.id + "': cannot read config '" + config_path + "'" + where);
+      if (file.status != TreeFileStatus::Ok) siteError("site '" + entry.id + "': cannot read config '" + config_path + "'" + where);
       try {
-        site_config = parseDocsConfig(*content);
+        site_config = parseDocsConfig(file.content);
       } catch (const std::exception& failure) {
         siteError("site '" + entry.id + "': config '" + config_path + "'" + where + ": " + failure.what());
       }
@@ -3830,9 +3933,9 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
     return nullptr;
   };
   const auto addPortalAsset = [&](const std::string& root_relative, const std::string& what) {
-    const auto full = portal.root / root_relative;
-    if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) siteError(what + " '" + root_relative + "' is not a regular file");
-    if (fs::file_size(full, error) > kMaximumPagesFileBytes) siteError(what + " '" + root_relative + "' exceeds the file size limit");
+    const auto file = treeFile(portal.root, root_relative, kMaximumPagesFileBytes, false);
+    if (file.status == TreeFileStatus::TooLarge) siteError(what + " '" + root_relative + "' exceeds the file size limit");
+    if (file.status != TreeFileStatus::Ok) siteError(what + " '" + root_relative + "' is not a regular file");
     if (const auto* owner = siteOwning(root_relative)) {
       siteError(what + " '" + root_relative + "' would be written inside site '" + owner->entry.id + "'s directory");
     }
@@ -3872,7 +3975,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
   std::string intro;
   if (!portal.config.home.empty()) {
     const std::string& source = portal.config.home;
-    const auto content = readFile(portal.root / source, kMaximumMarkdownInputBytes);
+    const auto content = readTreeFile(portal.root, source, kMaximumMarkdownInputBytes);
     if (!content) siteError("cannot read '" + source + "', or it exceeds the 512 KiB page limit");
     if (!isValidUtf8(*content)) siteError("'" + source + "' is not valid UTF-8");
     const std::string page_dir(directoryOf(source));
@@ -3899,9 +4002,9 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
       }
       if (normalized->empty() || target.ends_with('/')) return broken("is a directory");
       if (hasMarkdownExtension(*normalized)) return broken("is a Markdown file; link to a site's page as <id>/<page>.html");
-      const auto full = portal.root / *normalized;
-      if (fs::is_symlink(full, error) || !fs::is_regular_file(full, error)) return broken("does not exist");
-      if (fs::file_size(full, error) > kMaximumPagesFileBytes) return broken("exceeds the file size limit");
+      const auto file = treeFile(portal.root, *normalized, kMaximumPagesFileBytes, false);
+      if (file.status == TreeFileStatus::TooLarge) return broken("exceeds the file size limit");
+      if (file.status != TreeFileStatus::Ok) return broken("does not exist");
       return relativeUrl("", addPortalAsset(*normalized, "file"));
     };
     std::vector<MarkdownHeading> outline;
@@ -3938,7 +4041,7 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
   ++result.pages_written;
   for (const auto& asset : portal_assets) {
     if (tree.written(asset)) siteError("'" + asset + "' would overwrite another output of the portal");
-    const auto content = readFile(portal.root / asset, kMaximumPagesFileBytes);
+    const auto content = readTreeFile(portal.root, asset, kMaximumPagesFileBytes);
     if (!content) siteError("cannot read '" + asset + "'");
     tree.write(asset, *content);
     ++result.assets_copied;

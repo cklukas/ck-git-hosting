@@ -86,7 +86,7 @@ actually builds:
 
 | Part | Meaning |
 |---|---|
-| `path` | Relative to the page, or to the repository root with a leading `/` or `@/`. Hidden files and directories cannot be included. |
+| `path` | Relative to the page, or to the repository root with a leading `/` or `@/`; never outside the repository, and never through a symbolic link. Hidden files and directories cannot be included. |
 | `#name` | Only the lines between `#region name` and `#endregion name` in whatever comment the language uses (`// #region name`, `# #region name`, `<!-- #region name -->`), without the markers, and with their shared indentation removed. |
 | `#L10-L25` (or `#L10`) | Only those lines, as on GitHub. |
 | `{…}` | Highlighted lines and, optionally, a language (to override the extension) with `:line-numbers`. |

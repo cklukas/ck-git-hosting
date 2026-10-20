@@ -1,5 +1,21 @@
 # Changes
 
+## Unreleased
+
+### Security
+
+- ckdocs never reads a file outside the repository it builds. Before, a
+  symbolic link to a directory committed to the repository
+  (`docs/system -> /etc`) let an include, a `<<<` snippet, an image or a
+  linked file copy a file from outside the repository into the built site,
+  for example `<!--@include: system/passwd-->`. A link that was the file
+  itself was already refused.
+- Every file a site reads (pages, includes, snippets, configs, logos,
+  stylesheets and assets) is now opened one path component at a time
+  without following links. A path that goes through a link, or leaves the
+  repository with `..`, is refused and reported as a broken reference, so
+  `ckdocs check` fails on it. A regression test covers every kind of file.
+
 ## 0.8.0 — 2026-10-20
 
 A major ckdocs release: translations, much richer Markdown and code blocks,

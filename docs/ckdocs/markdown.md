@@ -216,7 +216,10 @@ outline:
 ```
 
 - **Paths** are relative to the including page, or to the repository root
-  with a leading `/` or `@/`. Hidden files and directories cannot be included.
+  with a leading `/` or `@/`, and never lead outside the repository: `..`
+  stops at its root, and a symbolic link is never followed, whether it is the
+  file itself or a directory on the way to it. Hidden files and directories
+  cannot be included.
 - **Part of a file:** `#name` takes the lines between `<!-- #region name -->`
   and `<!-- #endregion name -->`; `{from,to}` takes a range of lines (either
   end may be left out), counted from the first line after the file's front
@@ -246,7 +249,8 @@ image's `![alt text]` and `(destination)` — both of them in a linked image,
     slash implied) — becomes a link to that page's own `.html`, itself
     relative to the linking page's output location, so the whole site
     keeps working from `file://` and under any URL prefix;
-  - a target naming any other existing, non-symlink file up to 1 GiB is
+  - a target naming any other existing file up to 1 GiB, reached without a
+    symbolic link anywhere on its path, is
     copied into the site at its own repository-relative path (relative to
     the source tree, or root-relative outside it) and linked there — the
     **pull model**: a file ships only because a page actually references

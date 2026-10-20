@@ -6,7 +6,8 @@ description: The bounds ckdocs enforces on sites, pages, configuration, front ma
 ckdocs is bounded everywhere, so a mistaken or hostile input can never make a
 build run away. Most bounds are far beyond what documentation needs. When one
 is reached, ckdocs either stops with a message naming it or, where a part can
-be left out safely, leaves that part out and warns.
+be left out safely, leaves that part out and warns. Which files a build may
+read at all is covered under [Security](security.md).
 
 ## Sites and pages
 
