@@ -561,9 +561,11 @@ void testBuild() {
   require(report.broken_anchors.size() == 1 && contains(report.broken_anchors[0], "docs/a/01-x.md: '02-y.html#nope' names no heading on docs/a/02-y.md"),
           "a fragment that names no heading is reported; #y and #install are fine");
   const auto tabs = between(x, "<nav class=\"tabs\"", "</nav>");
-  require(contains(tabs, "<a href=\"../index.html\">Home</a>") && contains(tabs, "<a href=\"02-y.html\" aria-current=\"page\">A</a>") &&
-              contains(tabs, "<a href=\"../b/index.html\">Bee</a>") && contains(tabs, "<a href=\"../z.html\">Zed page</a>"),
-          "tabs link to their first page and mark the active one");
+  require(contains(tabs, "<a class=\"tab-link\" href=\"../index.html\">Home</a>") &&
+              contains(tabs, "<details class=\"tab-menu is-active\"><summary><span>A</span>") &&
+              contains(tabs, "<summary><span>Bee</span>") && contains(tabs, "href=\"../b/index.html\">Overview</a>") &&
+              contains(tabs, "<a class=\"tab-link\" href=\"../z.html\">Zed page</a>"),
+          "page tabs stay links, category tabs disclose their pages and retain directory overviews");
   const auto aside = between(x, "<aside class=\"sidebar\">", "</aside>");
   require(contains(aside, "<p class=\"side-title\">A</p>") && contains(aside, "<a href=\"02-y.html\">Why</a>") &&
               contains(aside, "<a href=\"01-x.html\" aria-current=\"page\">X page</a>") && occurrences(aside, "aria-current") == 1,
@@ -583,7 +585,7 @@ void testBuild() {
   checkInternalReferences(site, "index.html", home);
   require(contains(home, "<title>Fixture home · Fixture</title>") && !contains(home, "class=\"crumbs\"") &&
               !contains(home, "rel=\"prev\"") && contains(home, "rel=\"next\" href=\"a/02-y.html\"") &&
-              contains(home, "<a href=\"site-index.html\">Site index</a>") && contains(home, "<a href=\"a/02-y.html\">A</a>"),
+              contains(home, "<a href=\"site-index.html\">Site index</a>") && contains(home, "<summary><span>A</span>"),
           "the home page: no breadcrumbs, no previous, links from the root");
   const auto y = slurp(site / "a/02-y.html");
   require(contains(y, "class=\"alert alert-note\"") && contains(y, "task-list-item") && contains(y, "<span class=\"hl-k\">int</span>"),
@@ -1267,6 +1269,47 @@ void testPortalBuild() {
           "a colliding redirect fails the build and leaves the output alone");
 }
 
+void testNavigationDisclosures() {
+  Scratch scratch;
+  const auto root = scratch.root / "repo";
+  write(root / "docs/index.md", "# Home\n");
+  write(root / "docs/concepts/index.md", "# Concepts\n");
+  write(root / "docs/concepts/agent.md", "# Agent\n");
+  write(root / "docs/topics/index.md", "# Topics\n");
+  write(root / "docs/topics/tools.md", "# Tools\n");
+  auto config = ckgit::parseDocsConfig(
+      "version: 1\nsite: {title: Fixture}\nnav:\n  - title: Start\n    page: docs/index.md\n  - title: Learn\n    pages:\n"
+      "      - title: Concepts\n        pages: [docs/concepts/index.md, docs/concepts/agent.md]\n"
+      "      - title: Topics\n        pages: [docs/topics/index.md, docs/topics/tools.md]\n");
+  auto model = ckgit::loadDocsSite(root, config, nullptr);
+  const auto out = scratch.root / "out";
+  ckgit::buildDocsSite(model, out, {}, nullptr);
+  const auto html = slurp(out / "concepts/agent.html");
+  const auto tabs = between(html, "<nav class=\"tabs\"", "</nav>");
+  require(contains(tabs, "<summary><span>Learn</span>") && !contains(tabs, ">Learn</a>") &&
+              !contains(between(tabs, "<summary>", "</summary>"), "<a "),
+          "the whole category label toggles its menu without a competing page link");
+  const auto aside = between(html, "<aside class=\"sidebar\">", "</aside>");
+  require(contains(aside, "class=\"nav-group\" open><summary><span>Concepts</span>") &&
+              contains(aside, "class=\"nav-group\"><summary><span>Topics</span>"),
+          "the current category is expanded and unrelated categories start collapsed");
+  require(contains(aside, "href=\"index.html\">Overview</a>") && !contains(aside, ">Concepts</a>") &&
+              contains(aside, "href=\"agent.html\" aria-current=\"page\">Agent</a>"),
+          "a repeated category index becomes Overview and the current page stays highlighted");
+
+  // Automatic directories carry their index on the category itself rather
+  // than as a child. Its link must survive the new disclosure-only heading.
+  config.nav.clear();
+  model = ckgit::loadDocsSite(root, config, nullptr);
+  ckgit::DocsBuildOptions clean;
+  clean.clean = true;
+  ckgit::buildDocsSite(model, out, clean, nullptr);
+  const auto automatic = slurp(out / "concepts/agent.html");
+  require(contains(between(automatic, "<nav class=\"tabs\"", "</nav>"), "href=\"index.html\">Overview</a>") &&
+              contains(between(automatic, "<aside class=\"sidebar\">", "</aside>"), "href=\"index.html\">Overview</a>"),
+          "automatic category indexes remain reachable from both menus");
+}
+
 void testHomeLayout() {
   Scratch scratch;
   const auto root = scratch.root / "repo";
@@ -1323,6 +1366,7 @@ void testHomeLayout() {
 }  // namespace
 
 void testDocsSite() {
+  testNavigationDisclosures();
   testHomeLayout();
   testConfig();
   testForeignKeyConfig();

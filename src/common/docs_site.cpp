@@ -1149,6 +1149,26 @@ std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std:
 // Header links, as configured.
 std::string renderHeaderLinks(const std::vector<DocsLink>& links);
 
+constexpr std::string_view kNavChevron =
+    "<svg class=\"nav-chevron\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg>";
+
+// Keep the category's landing page reachable without repeating its name as
+// both a disclosure heading and its first link. This only changes navigation
+// labels; the page title, breadcrumbs and reading order remain intact.
+std::vector<DocsNavItem> menuChildren(const DocsNavItem& item, const DocsSiteModel& model) {
+  auto children = item.children;
+  if (item.page) {
+    children.insert(children.begin(), DocsNavItem{"Overview", item.page, {}});
+  } else if (!children.empty()) {
+    auto& first = children.front();
+    if (first.page && first.children.empty() && first.title == item.title) {
+      const auto name = basenameOf(model.pages[*first.page].source);
+      if (name == "index.md" || name == "README.md") first.title = "Overview";
+    }
+  }
+  return children;
+}
+
 void renderSidebarItems(std::string& out, const std::vector<DocsNavItem>& items, const DocsSiteModel& model,
                         std::size_t current, std::string_view from_dir) {
   out += "<ul>";
@@ -1163,8 +1183,11 @@ void renderSidebarItems(std::string& out, const std::vector<DocsNavItem>& items,
     if (item.children.empty()) {
       out += link(item.title, item.page);
     } else {
-      out += "<details open><summary>" + link(item.title, item.page) + "</summary>";
-      renderSidebarItems(out, item.children, model, current, from_dir);
+      std::vector<const DocsNavItem*> trail;
+      const bool active = item.page == current || findTrail(item.children, current, trail);
+      out += std::string("<details class=\"nav-group\"") + (active ? " open" : "") + "><summary><span>" +
+             escapeHtml(item.title) + "</span>" + std::string(kNavChevron) + "</summary>";
+      renderSidebarItems(out, menuChildren(item, model), model, current, from_dir);
       out += "</details>";
     }
     out += "</li>";
@@ -1331,12 +1354,15 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
   for (const auto& item : model.nav) {
     const auto first = firstPageOf(item);
     if (!first) continue;
-    out += "<div class=\"tab-group\"><a href=\"" + url(model.pages[*first].output) + "\"" +
-           (tab == &item ? " aria-current=\"page\"" : "") + ">" + escapeHtml(item.title) + "</a>";
+    out += "<div class=\"tab-group\">";
     if (!item.children.empty()) {
-      out += "<details class=\"tab-menu\"><summary aria-label=\"Browse " + escapeHtml(item.title) + "\">▾</summary>";
-      renderSidebarItems(out, item.children, model, in.page.value_or(model.pages.size()), from_dir);
+      out += std::string("<details class=\"tab-menu") + (tab == &item ? " is-active" : "") +
+             "\"><summary><span>" + escapeHtml(item.title) + "</span>" + std::string(kNavChevron) + "</summary>";
+      renderSidebarItems(out, menuChildren(item, model), model, in.page.value_or(model.pages.size()), from_dir);
       out += "</details>";
+    } else {
+      out += "<a class=\"tab-link\" href=\"" + url(model.pages[*first].output) + "\"" +
+             (tab == &item ? " aria-current=\"page\"" : "") + ">" + escapeHtml(item.title) + "</a>";
     }
     out += "</div>";
   }
@@ -1374,7 +1400,7 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
       out += escapeHtml(tab->title);
     }
     out += "</p>";
-    if (!tab->children.empty()) renderSidebarItems(out, tab->children, model, current, from_dir);
+    if (!tab->children.empty()) renderSidebarItems(out, menuChildren(*tab, model), model, current, from_dir);
     out += "</nav>";
   }
   const std::string outline = in.outline ? renderOutline(*in.outline) : std::string();

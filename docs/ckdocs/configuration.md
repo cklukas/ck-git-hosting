@@ -49,6 +49,16 @@ Every path is repository-root-relative and must name an existing page.
 Nesting depth counts a tab as level 1: a group may nest to level 3, so its
 pages can sit at level 4. The same limit applies to automatic navigation.
 
+Category tabs open a dropdown when you click anywhere on their label or
+chevron; individual page tabs remain links. The category's overview page is
+inside the dropdown. Escape closes the menu and returns focus to its label;
+clicking outside also closes it. Native disclosure controls work without JavaScript.
+
+Sidebar categories use borderless disclosure rows. The category containing
+the current page starts expanded; other categories start collapsed. If an
+index page would repeat its category's name, its navigation label becomes
+**Overview**. Its page title and breadcrumbs remain unchanged.
+
 ## Search
 
 Without `search: true`, the [generated site index](pages.md#how-pages-are-found-named-and-ordered)
