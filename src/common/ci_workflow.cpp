@@ -268,7 +268,7 @@ CiJob interpretJob(const Node& node) {
 
 CiWorkflow interpret(const Node& root) {
   requireKind(root, Node::Kind::Mapping, "the workflow to be a mapping");
-  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "checkout", "runs_on", "cache", "jobs", "pages"});
+  rejectUnknownKeys(root, {"version", "on", "env", "sisters", "checkout", "runs_on", "cache", "jobs", "pages", "auto_cancel"});
 
   const Node* version = findEntry(root, "version");
   if (version == nullptr) malformed("the workflow is missing 'version'", root.line);
@@ -280,6 +280,9 @@ CiWorkflow interpret(const Node& root) {
   }
 
   CiWorkflow workflow;
+  if (const Node* value = findEntry(root, "auto_cancel")) {
+    workflow.auto_cancel = interpretBoolean(*value, "auto_cancel must be a boolean");
+  }
   workflow.version = 1;
 
   if (const Node* on = findEntry(root, "on")) {

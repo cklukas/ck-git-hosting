@@ -208,10 +208,10 @@ std::string_view expectField(std::string_view line, std::string_view key) {
   return line.substr(key.size());
 }
 
-// schema_version 2 adds the attempt counter after queued_epoch; parseJob still
-// reads a version-1 job (attempt 1) queued by an earlier build.
+// Versions 2/3/4 add attempts, runner labels, and auto_cancel respectively.
+// Earlier spool records remain readable; their cancellation policy defaults on.
 std::string serializeJob(const CiJobRequest& job) {
-  return "schema_version=3\n"
+  return "schema_version=4\n"
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
          "ref_hex=" + hexEncode(job.ref) + "\n"
@@ -219,14 +219,16 @@ std::string serializeJob(const CiJobRequest& job) {
          "client_id=" + job.client_id + "\n"
          "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n"
          "attempt=" + std::to_string(job.attempt) + "\n"
-         "runs_on=" + formatCiLabelList(job.runs_on) + "\n";
+         "runs_on=" + formatCiLabelList(job.runs_on) + "\n" +
+         "auto_cancel=" + (job.auto_cancel ? "true\n" : "false\n");
 }
 
 CiJobRequest parseJob(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  const bool v3 = !lines.empty() && lines[0] == "schema_version=3";
+  const bool v4 = !lines.empty() && lines[0] == "schema_version=4";
+  const bool v3 = v4 || (!lines.empty() && lines[0] == "schema_version=3");
   const bool v2 = v3 || (!lines.empty() && lines[0] == "schema_version=2");
-  if (!((v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
+  if (!((v4 && lines.size() == 10) || (!v4 && v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
         (lines.size() == 7 && lines[0] == "schema_version=1"))) {
     fail("a CI job record has the wrong shape");
   }
@@ -246,6 +248,11 @@ CiJobRequest parseJob(std::string_view content) {
     std::optional<std::vector<std::string>> runs_on = parseCiLabelList(expectField(lines[8], "runs_on="));
     if (!runs_on.has_value()) fail("a CI job record has invalid runs_on labels");
     job.runs_on = std::move(*runs_on);
+  }
+  if (v4) {
+    const auto flag = expectField(lines[9], "auto_cancel=");
+    if (flag != "true" && flag != "false") fail("invalid auto_cancel policy");
+    job.auto_cancel = flag == "true";
   }
   if (!isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
       !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
@@ -468,6 +475,10 @@ std::string generateCiId() {
   return std::string(buffer);
 }
 
+namespace {
+void supersedeCiJobs(const std::filesystem::path& root, int spool, int working, const CiJobRequest& request);
+}
+
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request) {
   if (!isValidCiId(request.job_id) || !isValidProjectName(request.project_name) ||
       !isValidClientId(request.client_id) || !isValidObjectId(request.commit_id) ||
@@ -502,6 +513,8 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
     writeCiRunRecord(state_root, pending);
   } catch (const std::exception&) {
   }
+  Descriptor working_fd(ensureDirAt(ci_fd, "working"));
+  supersedeCiJobs(state_root, spool_fd, working_fd, request);
 }
 
 CiQueuePaths ensureCiQueueDirectories(const std::filesystem::path& state_root) {
@@ -594,6 +607,55 @@ std::optional<CiJobRequest> readJobAt(int directory_fd, const std::string& name)
   }
 }
 
+// Caller holds the spool lock: a queued job cannot be claimed between its
+// terminal record and removal. Claimed jobs retain their lease/ref exclusion
+// until their runner observes the existing cancellation protocol and exits.
+void cancelQueuedJob(const std::filesystem::path& root, int spool, const CiJobRequest& job,
+                     const std::string& detail) {
+  CiRunRecord record;
+  if (const auto old = loadCiRun(root, job.project_name, job.job_id)) record = *old;
+  record.run_id = job.job_id;
+  record.project_name = job.project_name;
+  record.ref = job.ref;
+  record.commit_id = job.commit_id;
+  record.attempt = job.attempt;
+  record.status = CiRunStatus::Cancelled;
+  record.finished_epoch_seconds = currentEpoch();
+  record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
+  record.detail = detail;
+  prepareCiRunDirectory(root, job.project_name, job.job_id);
+  writeCiRunRecord(root, record);
+  if (::unlinkat(spool, (job.job_id + ".ini").c_str(), 0) != 0 && errno != ENOENT)
+    fail("could not remove a superseded CI job");
+  if (::fsync(spool) != 0) fail("could not commit CI cancellation");
+}
+
+void supersedeCiJobs(const std::filesystem::path& root, int spool, int working,
+                     const CiJobRequest& request) {
+  if (request.ref.rfind("refs/heads/", 0) != 0) return;
+  for (const int directory : {spool, working}) {
+    for (const auto& name : listNames(directory)) {
+      if (!endsWith(name, ".ini")) continue;
+      const auto old = readJobAt(directory, name);
+      if (!old || old->project_name != request.project_name || old->ref != request.ref ||
+          old->job_id == request.job_id) continue;
+      // A slower receive hook may enqueue an older id after a newer hook.
+      if (old->job_id > request.job_id) {
+        if (old->auto_cancel) cancelQueuedJob(root, spool, request, "superseded by run " + old->job_id);
+        continue;
+      }
+      if (!request.auto_cancel) continue;
+      if (directory == spool) {
+        cancelQueuedJob(root, spool, *old, "superseded by run " + request.job_id);
+      } else {
+        const auto record = loadCiRun(root, old->project_name, old->job_id);
+        if (!record || record->status == CiRunStatus::Pending || record->status == CiRunStatus::Running)
+          requestCiCancel(root, old->project_name, old->job_id);
+      }
+    }
+  }
+}
+
 // Returns a lost attempt's run to Pending so the dashboard shows it waiting
 // again: its step logs move aside to attempt-<n>/ (kept for diagnosis), a
 // partial artifact or upload set is dropped, and the record is rewritten with
@@ -624,7 +686,7 @@ void resetRunForRequeue(const std::filesystem::path& state_root, const CiJobRequ
 
 // Puts a claimed job back into the spool (or, past the attempt limit, records
 // its run as an error). The caller holds the spool lock.
-enum class RequeueOutcome { kRequeued, kFailed, kGone };
+enum class RequeueOutcome { kRequeued, kFailed, kCancelled, kGone };
 RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, const std::string& runner,
                              bool enforce_limit, unsigned max_attempts) {
   const std::string name = job_id + ".ini";
@@ -633,6 +695,14 @@ RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, c
     ::renameat(dirs.working, name.c_str(), dirs.working, (name + ".rejected").c_str());
     ::unlinkat(dirs.leases, name.c_str(), 0);
     return RequeueOutcome::kGone;
+  }
+  if (isCiCancelRequested(dirs.root, job->project_name, job->job_id)) {
+    cancelQueuedJob(dirs.root, dirs.spool, *job, "cancelled before its runner returned");
+    ::unlinkat(dirs.working, name.c_str(), 0);
+    ::unlinkat(dirs.leases, name.c_str(), 0);
+    ::fsync(dirs.working);
+    clearCiCancel(dirs.root, job->project_name, job->job_id);
+    return RequeueOutcome::kCancelled;
   }
   const unsigned lost_attempt = job->attempt;
   const std::string who = runner.empty() ? std::string("its runner") : "runner " + runner;
@@ -840,6 +910,7 @@ CiReapResult reapCiLeases(const std::filesystem::path& state_root, const CiReapO
                           options.max_attempts == 0 ? 1 : options.max_attempts)) {
       case RequeueOutcome::kRequeued: result.requeued.push_back(job_id); break;
       case RequeueOutcome::kFailed: result.failed.push_back(job_id); break;
+      case RequeueOutcome::kCancelled: result.cancelled.push_back(job_id); break;
       case RequeueOutcome::kGone: break;
     }
   }

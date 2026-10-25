@@ -32,7 +32,7 @@ group is killed.
 
 Exit-code and status mapping, checked in this order per step:
 
-1. The run was cancelled (an administrator requested it) → status
+1. The run was cancelled (an administrator requested it or a newer branch push superseded it) → status
    `cancelled`.
 2. The step could not even be started (e.g. the interpreter is missing) →
    status `error`.

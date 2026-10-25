@@ -139,6 +139,9 @@ int serve(const std::filesystem::path& config_path, bool once) {
       for (const std::string& id : result.requeued) {
         std::cout << "ck-ci-runnerd: requeued " << id << " (its runner was lost)\n";
       }
+      for (const std::string& id : result.cancelled) {
+        std::cout << "ck-ci-runnerd: cancelled " << id << " (its runner was lost)\n";
+      }
       for (const std::string& id : result.failed) {
         std::cout << "ck-ci-runnerd: gave up on " << id << " (its runner was lost on the last attempt)\n";
       }

@@ -138,7 +138,9 @@ void enqueueCiJobs(const char* state_root, const std::string& project, const std
     job.commit_id = std::string(new_id);
     job.client_id = client_id;
     job.queued_epoch_seconds = now;
-    job.runs_on = ckgit::ciWorkflowRunsOn(repository, job.commit_id);
+    const auto policy = ckgit::ciWorkflowQueuePolicy(repository, job.commit_id);
+    job.runs_on = policy.runs_on;
+    job.auto_cancel = policy.auto_cancel;
     ckgit::enqueueCiJob(state_root, job);
   }
 }

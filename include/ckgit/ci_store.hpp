@@ -70,6 +70,8 @@ struct CiJobRequest {
   // The labels the commit's workflow asks for (`runs_on:`), recorded when the
   // job is queued; only a runner carrying all of them claims it. Empty: any.
   std::vector<std::string> runs_on;
+  // Policy from the incoming commit; applies only to branch refs.
+  bool auto_cancel = true;
 };
 
 struct CiStepResult {
@@ -158,7 +160,9 @@ std::string generateCiId();
 // --- hook side --------------------------------------------------------------
 
 // Atomically queues a job under <state_root>/ci/spool. Fails closed if the
-// state root is not private and daemon-owned.
+// state root is not private and daemon-owned. With auto_cancel (the default),
+// supersedes older queued/running jobs of this project and branch under the
+// queue lock. Tag jobs are never superseded.
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request);
 
 // --- runner side ------------------------------------------------------------
@@ -254,6 +258,7 @@ struct CiReapOptions {
 struct CiReapResult {
   std::vector<std::string> requeued;  // job ids put back into the spool
   std::vector<std::string> failed;    // job ids recorded as error after the last attempt
+  std::vector<std::string> cancelled; // cancelled jobs whose runner was lost; never requeued
   // When the earliest remaining lease lapses, so a caller can sleep until then.
   std::optional<std::uint64_t> next_expiry_epoch_seconds;
 };

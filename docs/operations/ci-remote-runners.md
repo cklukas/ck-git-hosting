@@ -20,9 +20,11 @@ the server ran, and nothing ever connects to the runner.
   busy or offline the server simply runs the job itself, one second later.
 - **Several remote runners compete.** Each runs one job at a time and asks for
   work only when idle; the first to claim a job gets it.
-- **One run per project and branch at a time.** Runs of one ref finish in push
-  order, so an older commit can never publish after a newer one. Different
-  projects and branches run in parallel.
+- **One run per project and branch at a time.** New branch pushes cancel older
+  pending/running runs by default. Set `auto_cancel: false` in the existing
+  `.ckgit/ci.yml` to retain every run in push order. The replacement waits for
+  cancellation to finish; an older commit cannot publish after a newer one.
+  Tags are preserved. Different projects and branches run in parallel.
 - **No polling.** Every runner is woken by a change notification on the
   server's queue: the primary watches it directly (inotify), and a remote
   runner holds a long poll that the server answers the moment a job appears.

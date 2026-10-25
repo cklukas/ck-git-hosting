@@ -290,6 +290,12 @@ CiRunRecord commitCiRun(const CiCommitPolicy& policy, const CiPreparedJob& prepa
     const std::string key = stem(upload.kind, upload.name);
     staged.emplace(key, std::move(upload));
   }
+  // Honour a cancellation received after the last step, including remote
+  // runners that report success before receiving their next heartbeat reply.
+  if (isCiCancelRequested(policy.state_root, project, run_id)) {
+    record.status = CiRunStatus::Cancelled;
+    record.detail = "cancelled before publishing results";
+  }
   const bool success = record.status == CiRunStatus::Success;
   record.artifacts.clear();
 

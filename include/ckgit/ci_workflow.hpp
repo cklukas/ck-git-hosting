@@ -157,6 +157,8 @@ struct CiCache {
 
 struct CiWorkflow {
   int version = 1;
+  // New branch pushes supersede older queued/running jobs of the same ref.
+  bool auto_cancel = true;
   // Trigger sets, resolved from the optional `on:` block:
   //   - no `on:` at all  -> triggers_default_branch = true, tags = ["*"]
   //     (build the repo's default branch, and cut a release on any tag)

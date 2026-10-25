@@ -49,6 +49,7 @@ ckgit::CiJobRequest sampleJob(const std::string& id) {
   job.commit_id = std::string(40, 'a');
   job.client_id = "mac-studio";
   job.queued_epoch_seconds = 1700000000;
+  job.auto_cancel = false;  // These fixtures exercise the opt-out FIFO scheduler.
   return job;
 }
 
@@ -63,6 +64,74 @@ void testIdsAndStatus() {
   require(!ckgit::ciRunStatusFromName("bogus").has_value(), "unknown status rejected");
 }
 
+void testAutoCancel() {
+  StoreFixture fixture;
+  auto older = sampleJob("00000000000000000001-aaaaaaaa");
+  auto latest = sampleJob("00000000000000000002-bbbbbbbb");
+  latest.auto_cancel = true;
+  auto branch = older;
+  branch.job_id = "branch";
+  branch.ref = "refs/heads/other";
+  auto project = older;
+  project.job_id = "project";
+  project.project_name = "other";
+  auto tag = older;
+  tag.job_id = "tag";
+  tag.ref = "refs/tags/v1";
+  for (const auto& job : {older, branch, project, tag}) ckgit::enqueueCiJob(fixture.state, job);
+  // Existing installations have schema-3 spool files. A new push must clear
+  // that backlog too, without requiring a migration or a runner to claim it.
+  const auto old_file = fixture.state / "ci/spool" / (older.job_id + ".ini");
+  {
+    std::ifstream input(old_file);
+    std::string bytes((std::istreambuf_iterator<char>(input)), {});
+    bytes.replace(0, std::string("schema_version=4").size(), "schema_version=3");
+    bytes.erase(bytes.find("auto_cancel="));
+    std::ofstream(old_file) << bytes;
+  }
+  ckgit::enqueueCiJob(fixture.state, latest);
+  const auto old = ckgit::loadCiRun(fixture.state, "demo", older.job_id);
+  require(old && old->status == ckgit::CiRunStatus::Cancelled && old->finished_epoch_seconds > 0 &&
+          old->detail.find(latest.job_id) != std::string::npos, "superseded job has a terminal explanation");
+  const auto queue = ckgit::ensureCiQueueDirectories(fixture.state);
+  require(!std::filesystem::exists(queue.spool / (older.job_id + ".ini")), "obsolete job removed immediately");
+  for (const auto& job : {branch, project, tag, latest})
+    require(std::filesystem::exists(queue.spool / (job.job_id + ".ini")), "unrelated jobs preserved");
+  // A delayed older hook must not put obsolete work back into the queue.
+  ckgit::enqueueCiJob(fixture.state, older);
+  require(!std::filesystem::exists(queue.spool / (older.job_id + ".ini")), "late older enqueue is superseded");
+  auto tag2 = tag;
+  tag2.job_id = "tag2";
+  tag2.auto_cancel = true;
+  ckgit::enqueueCiJob(fixture.state, tag2);
+  require(std::filesystem::exists(queue.spool / "tag.ini"), "even updates of the same tag are preserved");
+}
+
+void testAutoCancelClaimedAndLostRunner() {
+  StoreFixture fixture;
+  auto older = sampleJob("00000000000000000001-aaaaaaaa");
+  auto latest = sampleJob("00000000000000000002-bbbbbbbb");
+  latest.auto_cancel = true;
+  ckgit::enqueueCiJob(fixture.state, older);
+  ckgit::CiClaimOptions options;
+  options.runner = "remote";
+  const auto claim = ckgit::claimCiJob(fixture.state, options);
+  require(claim.has_value(), "older job claimed");
+  ckgit::enqueueCiJob(fixture.state, latest);
+  require(ckgit::isCiCancelRequested(fixture.state, "demo", older.job_id), "claimed job receives cancellation");
+  require(!ckgit::claimCiJob(fixture.state, options), "new job waits until old runner relinquishes branch");
+  ckgit::CiReapOptions reap;
+  reap.now_epoch_seconds = UINT64_MAX;
+  reap.max_attempts = 1;
+  const auto reaped = ckgit::reapCiLeases(fixture.state, reap);
+  require(reaped.cancelled.size() == 1 && reaped.requeued.empty() && reaped.failed.empty(),
+          "reaper distinguishes cancelled jobs from failures");
+  const auto old = ckgit::loadCiRun(fixture.state, "demo", older.job_id);
+  require(old && old->status == ckgit::CiRunStatus::Cancelled, "lost cancelled runner is not retried or marked error");
+  const auto next = ckgit::claimCiJob(fixture.state, options);
+  require(next && next->job.job_id == latest.job_id && next->job.auto_cancel, "newest policy survives spool roundtrip");
+}
+
 void testSpoolFifo() {
   StoreFixture fixture;
   ckgit::enqueueCiJob(fixture.state, sampleJob("00000000000000000001-aaaaaaaa"));
@@ -70,6 +139,7 @@ void testSpoolFifo() {
 
   const auto first = ckgit::claimNextCiJob(fixture.state);
   require(first.has_value() && first->job_id == "00000000000000000001-aaaaaaaa", "oldest job claimed first");
+  require(!first->auto_cancel, "opt-out policy survives spool roundtrip");
   require(first->ref == "refs/heads/main" && first->commit_id == std::string(40, 'a'), "job fields round trip");
   const auto second = ckgit::claimNextCiJob(fixture.state);
   require(second.has_value() && second->job_id == "00000000000000000002-bbbbbbbb", "second job claimed next");
@@ -555,6 +625,8 @@ void testLogChunkTailing() {
 void testCiStore() {
   testIdsAndStatus();
   testSpoolFifo();
+  testAutoCancel();
+  testAutoCancelClaimedAndLostRunner();
   testEnqueuePublishesPendingRun();
   testMalformedSpoolSkipped();
   testRunRecordRoundTrip();

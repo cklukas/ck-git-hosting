@@ -1384,10 +1384,11 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
   return commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
 }
 
-std::vector<std::string> ciWorkflowRunsOn(const std::filesystem::path& repository, const std::string& commit) {
+CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit) {
   try {
     if (const std::optional<std::string> text = readWorkflowBlob(repository, commit)) {
-      return parseCiWorkflow(*text).runs_on;
+      const auto workflow = parseCiWorkflow(*text);
+      return {workflow.runs_on, workflow.auto_cancel};
     }
   } catch (const std::exception&) {
   }

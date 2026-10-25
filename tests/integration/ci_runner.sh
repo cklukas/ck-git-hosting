@@ -542,4 +542,61 @@ kill -TERM "$runner_pid" 2>/dev/null || true
 wait "$runner_pid" 2>/dev/null || true
 runner_pid=''
 
+# The existing workflow controls supersession, read from each pushed commit.
+policy_work="$test_root/policy-work"
+git -c init.defaultBranch=main init -q "$policy_work"
+git -C "$repos" -c init.defaultBranch=main init --bare -q policy.git
+mkdir -p "$policy_work/.ckgit"
+printf 'version: 1\njobs:\n  - name: build\n    steps:\n      - run: true\n' > "$policy_work/.ckgit/ci.yml"
+"$CKGIT_ADMIN" ci enable policy --config "$test_root/server.ini" >/dev/null
+policy_push() {
+  git -C "$policy_work" add -A
+  git -C "$policy_work" -c user.email=t@example.invalid -c user.name=Test commit --allow-empty -qm policy
+  policy_commit=$(git -C "$policy_work" rev-parse HEAD)
+  git -C "$policy_work" push -q "$repos/policy.git" main
+  printf '%s %s refs/heads/main\n' "$(printf '0%.0s' $(seq 1 40))" "$policy_commit" |
+    env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=policy \
+        CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE"
+}
+policy_pending() {
+  grep -l '^status=pending$' "$state"/ci/runs/policy/*/run.ini | wc -l | tr -d ' '
+}
+policy_push
+policy_push
+[ "$(policy_pending)" = 1 ] || fail "default did not supersede pending branch run"
+grep -l '^status=cancelled$' "$state"/ci/runs/policy/*/run.ini >/dev/null || fail "superseded history missing"
+printf '\nauto_cancel: false\n' >> "$policy_work/.ckgit/ci.yml"
+policy_push
+policy_push
+[ "$(policy_pending)" = 3 ] || fail "existing workflow opt-out did not retain all commits"
+sed '/auto_cancel:/d' "$policy_work/.ckgit/ci.yml" > "$test_root/policy.yml"
+mv "$test_root/policy.yml" "$policy_work/.ckgit/ci.yml"
+policy_push
+[ "$(policy_pending)" = 1 ] || fail "returning to default did not clear old backlog"
+
+# An incoming push also stops an active local step through the same protocol.
+printf 'version: 1\njobs:\n  - name: build\n    steps:\n      - run: sh -ec "echo auto-start; sleep 30; echo auto-end"\n' > "$policy_work/.ckgit/ci.yml"
+policy_push
+policy_active=$(grep -l '^status=pending$' "$state"/ci/runs/policy/*/run.ini)
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/policy-runner.log" 2>&1 &
+runner_pid=$!
+attempt=0
+while ! grep -rq auto-start "$(dirname "$policy_active")/steps"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail "automatic cancellation step never started"
+  sleep .1
+done
+printf 'version: 1\njobs:\n  - name: build\n    steps:\n      - run: true\n' > "$policy_work/.ckgit/ci.yml"
+policy_push
+attempt=0
+while ! grep -q '^status=cancelled$' "$policy_active"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail "new push did not cancel active step promptly"
+  sleep .1
+done
+wait "$runner_pid" || fail "runner failed while cancelling obsolete job"
+runner_pid=''
+if grep -rq auto-end "$(dirname "$policy_active")/steps"; then fail "superseded step ran to completion"; fi
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/policy-latest.log" 2>&1
+[ "$(policy_pending)" = 0 ] || fail "replacement job remained blocked"
+grep -l '^status=success$' "$state"/ci/runs/policy/*/run.ini >/dev/null || fail "replacement did not succeed"
+
 echo "ci_runner integration OK"

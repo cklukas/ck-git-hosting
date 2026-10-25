@@ -83,6 +83,7 @@ ckgit::CiJobRequest sampleJob(const std::string& id, const std::string& ref = "r
   job.commit_id = std::string(40, 'a');
   job.client_id = "mac-studio";
   job.queued_epoch_seconds = 1700000000;
+  job.auto_cancel = false;  // These fixtures exercise the opt-out FIFO scheduler.
   return job;
 }
 
@@ -447,6 +448,24 @@ void testCommitVerifiesStagedOutputs() {
 
 // R2b: an older run never replaces a newer run's live Pages site, and a site
 // can arrive as a staged tar (the remote path).
+void testCancelledSuccessDoesNotPublishPages() {
+  Fixture fixture;
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  policy.pages_root = fixture.root / "pages";
+  const auto job = preparedJob(ckgit::generateCiId(), "refs/heads/main", true,
+      "version: 1\npages: {path: public}\njobs:\n  - name: build\n    steps:\n      - run: true\n");
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", job.job.job_id);
+  require(ckgit::requestCiCancel(fixture.state, "demo", job.job.job_id), "cancel marker written");
+  const auto site = fixture.root / "site";
+  std::filesystem::create_directories(site);
+  std::ofstream(site / "index.html") << "obsolete";
+  const auto result = ckgit::commitCiRun(policy, job,
+      finishedRecord(job, ckgit::CiRunStatus::Success), {}, site);
+  require(result.status == ckgit::CiRunStatus::Cancelled, "late success becomes cancelled");
+  require(!ckgit::currentPagesVersion(policy.pages_root, "demo"), "cancelled site is not published");
+}
+
 void testPagesOrderingGuard() {
   Fixture fixture;
   ckgit::CiCommitPolicy policy;
@@ -1023,6 +1042,7 @@ void testCiDistributed() {
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();
   testPagesOrderingGuard();
+  testCancelledSuccessDoesNotPublishPages();
   testClaimDelay();
   testOneRunPerRef();
   testRunnerCommandGrammar();

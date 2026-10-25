@@ -1,9 +1,12 @@
 ---
-description: Enable CI for a project and add a first .ckgit/ci.yml workflow that builds and tests every push.
+description: Enable CI for a project and add a first .ckgit/ci.yml workflow that builds and tests pushed commits.
 ---
 # Run your first CI workflow
 
-Add a `.ckgit/ci.yml` workflow to a hosted project to build and test every push.
+Add a `.ckgit/ci.yml` workflow to a hosted project to build and test pushed commits.
+New branch pushes cancel older pending/running runs by default. To build every
+commit in order, set [`auto_cancel: false`](06-ci-yml-reference.md#superseded-branch-runs-auto_cancel)
+in that same workflow.
 Results, logs, and artifacts appear in the dashboard and in `ckgit ci`.
 
 The server administrator first [configures the CI runner](ci-runner.md).

@@ -30,6 +30,29 @@ Pages), whether the sister projects exist, and the limits in
 [§10](#bounds-table) that the server configures (step timeout, log and
 artifact sizes, retention cap, network policy).
 
+## Superseded branch runs (`auto_cancel`)
+
+By default, a new branch push cancels older pending and running runs for the
+same project and full branch ref. Pending runs become **cancelled** immediately;
+running jobs receive a cancellation request, stop their step processes, and
+release the branch before its newest run starts. Other branches, other projects,
+and tag/release runs are unaffected. Run history and existing logs are retained.
+
+To build every pushed commit in order, add this top-level setting to the
+project's existing `.ckgit/ci.yml`:
+
+```yaml
+auto_cancel: false
+```
+
+Omitting the setting or setting `auto_cancel: true` enables cancellation.
+Only `true` and `false` are accepted. The incoming commit's workflow determines
+whether it supersedes older runs, including jobs queued before this feature was
+installed. Turning it off does not resurrect previously cancelled jobs. A missing
+or invalid workflow uses the default policy; its own run still reports the normal
+skipped/error result. At most one run per project and branch executes at a time,
+even with cancellation disabled.
+
 ## Syntax
 
 The format is a small, strict, hand-rolled subset of YAML — not a full YAML
@@ -118,6 +141,7 @@ exact same subset — one syntax, two schemas.
 | `checkout.since` | date | no | — | `YYYY-MM-DD`; every commit since that date instead of a fixed depth; not together with `depth` |
 | `checkout.tags` | boolean | no | `false` | `true` also fetches the tags inside that history (for `git describe`) |
 | `checkout.mode` | `git` or `archive` | no | `git` | `archive` removes `.git` after the checkout: the plain tree earlier runners produced |
+| `auto_cancel` | boolean | no | `true` | `true` or `false`; supersede older runs on the same branch |
 | `runs_on` | a label, or a list of up to 16 labels | no | any runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |

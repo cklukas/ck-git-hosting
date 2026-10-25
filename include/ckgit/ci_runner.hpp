@@ -312,11 +312,14 @@ class LocalCiSink : public CiResultSink {
   std::optional<std::filesystem::path> site_;
 };
 
-// The `runs_on:` labels of the workflow in `commit` of `repository`, read
-// when a push queues the job so the claim can route it. Empty when the commit
-// has no workflow or it does not parse (the run then records why, wherever it
-// is claimed).
-std::vector<std::string> ciWorkflowRunsOn(const std::filesystem::path& repository, const std::string& commit);
+// Scheduling policy from the existing workflow at the pushed commit. Missing
+// or invalid workflows use no labels and auto_cancel=true; execution still
+// records the usual skipped/error result.
+struct CiQueuePolicy {
+  std::vector<std::string> runs_on;
+  bool auto_cancel = true;
+};
+CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit);
 
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result
 // under the state root (a run.ini plus steps/<n>.log): prepareCiJob, then

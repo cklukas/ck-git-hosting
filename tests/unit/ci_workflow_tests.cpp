@@ -26,6 +26,16 @@ bool rejected(const std::string& text) {
   }
 }
 
+void testAutoCancelPolicy() {
+  const std::string base = "version: 1\njobs:\n  - name: build\n    steps:\n      - run: true\n";
+  require(ckgit::parseCiWorkflow(base).auto_cancel, "auto cancellation defaults on");
+  require(ckgit::parseCiWorkflow(base + "auto_cancel: true\n").auto_cancel, "explicit true");
+  require(!ckgit::parseCiWorkflow(base + "auto_cancel: false\n").auto_cancel, "existing YAML can opt out");
+  for (const auto& value : {"yes", "0", "[]", "{}", "", "null"})
+    require(rejected(base + "auto_cancel: " + value + "\n"), "invalid policy rejected");
+  require(rejected(base + "auto_cancel: true\nauto_cancel: false\n"), "duplicate policy rejected");
+}
+
 void testValidWorkflow() {
   const std::string text =
       "version: 1\n"
@@ -391,6 +401,7 @@ void testReferenceDocMatchesConstants() {
 }  // namespace
 
 void testCiWorkflow() {
+  testAutoCancelPolicy();
   testValidWorkflow();
   testBlockStyleAndComments();
   testQuoting();

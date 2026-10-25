@@ -1,5 +1,19 @@
 # Changes
 
+## 0.8.2 — 2026-10-25
+
+### CI scheduling
+
+- New branch pushes automatically cancel older pending and running runs for
+  the same project and branch. Pending jobs leave the queue immediately;
+  active jobs stop through the existing local/remote cancellation protocol.
+- Set top-level `auto_cancel: false` in the existing `.ckgit/ci.yml` to build
+  every commit in order. The default is `true`; tag/release jobs and other
+  branches and projects are preserved.
+- Cancelled jobs are not resurrected when a runner disconnects, and a late
+  success report cannot publish a cancelled Pages build. Existing queued
+  jobs are superseded by the next branch push after upgrading the server.
+
 ## 0.8.1 — 2026-10-20
 
 ### Security
