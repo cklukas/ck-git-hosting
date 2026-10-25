@@ -26,7 +26,7 @@ class Ckgit < Formula
   end
 
   test do
-    assert_match "ckgit scan", shell_output("#{bin}/ckgit --help")
+    assert_match "ckgit scan", shell_output("#{bin}/ckgit scan --help")
     assert_match "ckdocs", shell_output("#{bin}/ckdocs --version")
   end
 end
