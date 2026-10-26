@@ -128,6 +128,24 @@ downloaded through the parent: 7,454,720 bytes, SHA-256
 `5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
 This was a branch build; live tag-release publication is a separate check.
 
+A second native Windows build of commit `93f70771e500` succeeded as child
+`00001793026967533567-8878469f` in 368 seconds. Its artifact contains exactly
+three setup executables (ckgit, ckdocs and the runner), the portable ZIP, and
+three build/input/package manifests; CPack intermediate files are excluded.
+The downloaded bundle is 11,366,400 bytes with SHA-256
+`ddbbd2372de10fdc4f3a517c9e2b890993ee465e2d023014d67f15f32711dd9a`.
+All four package hashes and 292 source-file hashes matched the exact commit.
+The child artifact can be downloaded before the Linux sibling finishes,
+including with servers that do not yet support named job selection:
+
+```sh
+mkdir -p downloads
+ckgit ci download 00001793026967533567-8878469f windows-installers --project ck-git-hosting --into downloads
+```
+
+This test artifact expires on 2026-11-02 at 15:09 UTC; it is not a durable
+tagged release. Later runs have their own run IDs and retention deadlines.
+
 The Windows job in [GitHub run 40326726111](https://github.com/cklukas/ck-git-hosting/actions/runs/40326726111)
 built all three installers and the portable ZIP from commit `1f94b843ca9f`,
 passed native tests, and tested both installer scopes. Those exact client
