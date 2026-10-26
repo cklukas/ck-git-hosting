@@ -41,6 +41,10 @@ int run(const std::vector<std::string>& args) {
       return value ? 0 : 3;
     }
     if (args[1] == "-o") {
+      if (args.back().find("git-upload-pack") != std::string::npos) {
+        std::cerr << "selected SSH transport reached\n";
+        return 1;
+      }
 #ifdef _WIN32
       _setmode(_fileno(stdin), _O_BINARY);
       _setmode(_fileno(stdout), _O_BINARY);
@@ -219,7 +223,7 @@ int run(const std::vector<std::string>& args) {
       std::filesystem::path path;
       ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{root};
-    const auto copied_program = root / ckgit::pathFromUtf8("program space \xc3\xbc.exe");
+    const auto copied_program = root / ckgit::pathFromUtf8("program's space \xc3\xbc.exe");
     std::filesystem::copy_file(ckgit::pathFromUtf8(args[0]), copied_program);
     const auto resolved = ckgit::resolveProcessExecutable(ckgit::pathToUtf8(copied_program));
     require(ckgit::pathFromUtf8(resolved).is_absolute() &&
@@ -227,6 +231,35 @@ int run(const std::vector<std::string>& args) {
         "resolve executable preserves spaces and Unicode");
     require(ckgit::runProcess({resolved, "exit"}).exit_code == 37,
         "reported executable is runnable");
+    {
+      ckgit::ProcessToolScope selected(resolved, resolved);
+      require(ckgit::resolveProcessExecutable("git") == resolved &&
+          ckgit::runProcess({"git", "exit"}).exit_code == 37 &&
+          ckgit::runProcess({"ssh", "exit"}).exit_code == 37,
+          "selected Git and SSH are used for direct process calls");
+      bool other_thread_default = false;
+      std::thread worker([&] { other_thread_default = ckgit::resolveProcessExecutable("git") != resolved; });
+      worker.join();
+      require(other_thread_default, "tool selection is confined to the caller thread");
+      { ckgit::ProcessToolScope defaults({}, {});
+        require(ckgit::resolveProcessExecutable("git") != resolved, "nested scope can restore PATH lookup"); }
+      require(ckgit::resolveProcessExecutable("git") == resolved, "nested scope restores outer selection");
+      ckgit::ManagedProcess ssh({"ssh", "exit"});
+      std::optional<int> exit;
+      for (int attempt = 0; attempt < 100 && !(exit = ssh.poll()); ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      require(exit && *exit == 37, "managed SSH uses selected executable");
+    }
+    require(ckgit::resolveProcessExecutable("git") != resolved, "tool scope does not leak after destruction");
+    {
+      ckgit::ProcessToolScope transport({}, resolved);
+      ckgit::ProcessOptions options;
+      options.environment["GIT_SSH_COMMAND"] = "deliberately-unavailable-ssh";
+      const auto result = ckgit::runProcess({"git", "-c", "core.sshCommand=deliberately-unavailable-ssh",
+          "ls-remote", "ssh://fixture.invalid/repository.git"}, options);
+      require(result.exit_code != 0 && result.output.find("selected SSH transport reached") != std::string::npos,
+          "real Git invokes selected SSH with literal Unicode, spaces and apostrophe, overriding other selections");
+    }
     for (const auto& invalid : {std::string{}, std::string("bad\0name", 8),
                                ckgit::pathToUtf8(root / "missing.exe")}) {
       bool rejected = false;

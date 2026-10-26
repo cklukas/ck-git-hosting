@@ -62,7 +62,8 @@ int setupCommand(const std::vector<std::string>& arguments) {
       else if (option == "--overwrite") overwrite = true;
       else if ((option == "--config" || option == "--server" || option == "--client-id" ||
                 option == "--display-name" || option == "--scan-root" || option == "--remote-name" ||
-                option == "--public-path-mode" || option == "--web-host" || option == "--remote-port") &&
+                option == "--public-path-mode" || option == "--web-host" || option == "--remote-port" ||
+                option == "--git-program" || option == "--ssh-program") &&
                index + 1 < arguments.size()) {
         const auto value = arguments[++index];
         if (option == "--config") requested = setupPath(value);
@@ -88,7 +89,7 @@ int setupCommand(const std::vector<std::string>& arguments) {
     }
     ckgit::ClientConfig config;
     if (exists) {
-      try { config = ckgit::loadClientConfig(path); }
+      try { config = loadConfiguredClient(path); }
       catch (const std::exception& failure) {
         std::cout << "Existing configuration needs repair: " << failure.what()
                   << "\nIts contents remain unchanged until you confirm the replacement.\n";
@@ -111,6 +112,8 @@ int setupCommand(const std::vector<std::string>& arguments) {
     assign("--server", config.server); assign("--client-id", config.client_id);
     assign("--display-name", config.display_name); assign("--remote-name", config.remote_name);
     assign("--web-host", config.web_host);
+    if (values.contains("--git-program")) config.git_program = setupPath(values.at("--git-program"));
+    if (values.contains("--ssh-program")) config.ssh_program = setupPath(values.at("--ssh-program"));
     if (values.contains("--remote-port")) config.web_port = setupPort(values.at("--remote-port"), "--remote-port");
     if (values.contains("--public-path-mode")) {
       const auto& mode = values.at("--public-path-mode");
@@ -140,9 +143,14 @@ int setupCommand(const std::vector<std::string>& arguments) {
       }
     }
     const auto rendered = ckgit::renderClientConfig(config);
+    selectClientTools(config);
     std::cout << (exists ? "Replace configuration: " : "Create configuration: ") << path.string()
               << "\nPrivate file permissions: 0600\n\n" << rendered
               << "\nOrdinary sync uploads committed local branches and tags. Path privacy does not limit local management.\n";
+    for (const auto* tool : {"git", "ssh"}) {
+      try { std::cout << tool << " executable: " << ckgit::resolveProcessExecutable(tool) << "\n"; }
+      catch (const std::exception&) { std::cout << "unavailable; install/configure it before using remote commands\n"; }
+    }
     if (dry_run || (!yes && !guided)) {
       std::cout << "Preview only; no files changed. Run again with --yes to save, or use an interactive terminal.\n";
       return 0;
@@ -262,7 +270,7 @@ int doctorCommand(const std::vector<std::string>& arguments) {
   std::optional<ckgit::ClientConfig> config;
   try {
     const auto path = requested ? *requested : defaultClientConfigPath();
-    config = ckgit::loadClientConfig(path);
+    config = loadConfiguredClient(path);
     report(true, "Configuration", path.string() + " · " + config->display_name + " (" + config->client_id + ") → " + config->server);
   } catch (const std::exception& failure) {
     report(false, "Configuration", failure.what(), "run ckgit setup, or repair the displayed configuration file");

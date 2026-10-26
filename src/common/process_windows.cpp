@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/process.hpp"
+#include "process_tools_internal.hpp"
 #include "ckgit/windows.hpp"
 #include "ckgit/windows_sandbox.hpp"
 #include <windows.h>
@@ -102,7 +103,8 @@ std::wstring executable(const std::string& name) {
 
 // Each captured child belongs to a non-inheritable kill-on-close job. Windows
 // closes these handles on caller termination, including console termination.
-std::string resolveProcessExecutable(const std::string& name) {
+std::string resolveProcessExecutable(const std::string& requested) {
+  const auto name = selectedProcessProgram(requested);
   if (name.empty() || name.find('\0') != std::string::npos)
     throw std::invalid_argument("invalid executable name");
   return wideToUtf8(executable(name));
@@ -353,7 +355,10 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   return result;
 }
 
-ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options) {
+ProcessResult runProcess(const std::vector<std::string>& requested, const ProcessOptions& requested_options) {
+  const auto arguments = selectedProcessArguments(requested);
+  const auto selected_options = selectedProcessOptions(requested, requested_options);
+  const auto& options = selected_options ? *selected_options : requested_options;
   return runProcessImpl(arguments, options, nullptr, {});
 }
 
@@ -388,7 +393,8 @@ struct ManagedProcess::State {
   DWORD id = 0;
   std::optional<int> exit;
 };
-ManagedProcess::ManagedProcess(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+ManagedProcess::ManagedProcess(const std::vector<std::string>& requested) : state_(std::make_unique<State>()) {
+  const auto arguments = selectedProcessArguments(requested);
   auto command = commandLine(arguments);
   const auto application = executable(arguments.front());
   state_->job.value = CreateJobObjectW(nullptr, nullptr);
@@ -461,7 +467,8 @@ void ManagedProcess::stop() noexcept {
   state_->exit = static_cast<int>(code);
 }
 
-int spawnAttachedProcess(const std::vector<std::string>& arguments) {
+int spawnAttachedProcess(const std::vector<std::string>& requested) {
+  const auto arguments = selectedProcessArguments(requested);
   auto command = commandLine(arguments);
   const auto application = executable(arguments.front());
   STARTUPINFOW startup{};
@@ -474,7 +481,8 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
   return static_cast<int>(info.dwProcessId);
 }
 
-int execProcess(const std::vector<std::string>& arguments) {
+int execProcess(const std::vector<std::string>& requested) {
+  const auto arguments = selectedProcessArguments(requested);
   if (arguments.empty()) throw std::invalid_argument("empty exec command");
   auto command = commandLine(arguments);
   const auto application = executable(arguments.front());
@@ -544,7 +552,8 @@ struct ProcessStream::State {
     return 1;
   }
 };
-ProcessStream::ProcessStream(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+ProcessStream::ProcessStream(const std::vector<std::string>& requested) : state_(std::make_unique<State>()) {
+  const auto arguments = selectedProcessArguments(requested);
   auto command = commandLine(arguments);
   if (arguments.empty()) throw std::invalid_argument("empty stream command");
   const auto application = executable(arguments.front());

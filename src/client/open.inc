@@ -105,7 +105,7 @@ int openCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: choose one of PATH, --commit, --ci, and --run\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   std::optional<ckgit::RepositoryAudit> audit;
   try {
     audit = ckgit::inspectRepository(repository.value_or("."));

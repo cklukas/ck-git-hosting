@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/process.hpp"
+#include "process_tools_internal.hpp"
 #include "ckgit/path_utf8.hpp"
 
 #include <algorithm>
@@ -85,7 +86,8 @@ void sleepBriefly() {
 
 }  // namespace
 
-std::string resolveProcessExecutable(const std::string& name) {
+std::string resolveProcessExecutable(const std::string& requested) {
+  const auto name = selectedProcessProgram(requested);
   if (name.empty() || name.find('\0') != std::string::npos)
     throw std::invalid_argument("invalid executable name");
   const auto usable = [](const std::filesystem::path& candidate) {
@@ -134,7 +136,10 @@ ProcessResult runProcess(const std::vector<std::string>& arguments,
   return runProcess(arguments, options);
 }
 
-ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options) {
+ProcessResult runProcess(const std::vector<std::string>& requested, const ProcessOptions& requested_options) {
+  const auto arguments = selectedProcessArguments(requested);
+  const auto selected_options = selectedProcessOptions(requested, requested_options);
+  const auto& options = selected_options ? *selected_options : requested_options;
   if (arguments.empty() || arguments.front().empty()) {
     throw std::invalid_argument("cannot run an empty command");
   }
@@ -326,7 +331,8 @@ struct ManagedProcess::State {
   pid_t child = -1;
   std::optional<int> exit;
 };
-ManagedProcess::ManagedProcess(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+ManagedProcess::ManagedProcess(const std::vector<std::string>& requested) : state_(std::make_unique<State>()) {
+  const auto arguments = selectedProcessArguments(requested);
   if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty background command");
   std::vector<char*> argv;
   for (const auto& argument : arguments) {
@@ -377,7 +383,8 @@ void ManagedProcess::stop() noexcept {
   unregisterActiveChild(state_->child);
 }
 
-int spawnAttachedProcess(const std::vector<std::string>& arguments) {
+int spawnAttachedProcess(const std::vector<std::string>& requested) {
+  const auto arguments = selectedProcessArguments(requested);
   if (arguments.empty() || arguments.front().empty()) {
     throw std::invalid_argument("cannot run an empty command");
   }
@@ -397,7 +404,8 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
 }
 
 
-int execProcess(const std::vector<std::string>& arguments) {
+int execProcess(const std::vector<std::string>& requested) {
+  const auto arguments = selectedProcessArguments(requested);
   if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty exec command");
   std::vector<char*> argv;
   for (const auto& argument : arguments) {
@@ -416,7 +424,8 @@ struct ProcessStream::State {
   ~State() { if (input >= 0) close(input); if (output >= 0) close(output); }
 };
 
-ProcessStream::ProcessStream(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+ProcessStream::ProcessStream(const std::vector<std::string>& requested) : state_(std::make_unique<State>()) {
+  const auto arguments = selectedProcessArguments(requested);
   if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty stream command");
   std::vector<char*> argv;
   for (const auto& argument : arguments) {

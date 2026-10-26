@@ -945,8 +945,16 @@ int ciCommand(const std::vector<std::string>& arguments) {
   }
   const std::string& subcommand = arguments.front();
   CiOptions options = parseCiOptions(std::vector<std::string>(arguments.begin() + 1, arguments.end()));
-  if (subcommand == "lint") return ciLintCommand(options);
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(options.config_path));
+  if (subcommand == "lint") {
+    // Lint stays usable without a server configuration, but an explicit or
+    // existing default configuration still selects the local Git executable.
+    const auto path = resolveConfigPath(options.config_path);
+    std::error_code error;
+    if (options.config_path || std::filesystem::is_regular_file(path, error))
+      (void)loadConfiguredClient(path);
+    return ciLintCommand(options);
+  }
+  const auto config = loadConfiguredClient(resolveConfigPath(options.config_path));
   try {
     if (options.job) {
       const auto project = resolveCiProject(config, options);

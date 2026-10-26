@@ -157,6 +157,10 @@ ClientConfig loadClientConfig(const std::filesystem::path& path) {
         configError(path, line_number, "invalid remote_name");
       }
       config.remote_name = value;
+    } else if (key == "git_program" || key == "ssh_program") {
+      if (!isValidUtf8(value) || !pathFromUtf8(value).is_absolute())
+        configError(path, line_number, "tool program must be an absolute path");
+      (key == "git_program" ? config.git_program : config.ssh_program) = pathFromUtf8(value);
     } else if (key == "web_host") {
       if (!isValidWebHost(value)) configError(path, line_number, "invalid web_host; expected an SSH alias or user@host");
       config.web_host = value;
@@ -228,6 +232,11 @@ std::string renderClientConfig(const ClientConfig& config) {
   add("public_path_mode", config.expose_full_paths ? "full" : "basename");
   if (!config.web_host.empty()) add("web_host", config.web_host);
   add("web_port", std::to_string(config.web_port));
+  for (const auto& [key, program] : {std::pair{"git_program", config.git_program}, std::pair{"ssh_program", config.ssh_program}}) {
+    if (program.empty()) continue;
+    if (!program.is_absolute()) throw std::invalid_argument("tool program must be an absolute path");
+    add(key, pathToUtf8(program));
+  }
   for (const auto& root : config.scan_roots) {
     if (!root.is_absolute()) throw std::invalid_argument("scan_root must be an absolute path");
     add("scan_root", pathToUtf8(root));

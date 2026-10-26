@@ -58,6 +58,7 @@ else()
   add_library(ckgit_process STATIC src/common/process.cpp)
 endif()
 target_link_libraries(ckgit_process PUBLIC ckgit_portable)
+target_sources(ckgit_process PRIVATE src/common/process_tools.cpp)
 add_library(ckgit_remote_transport STATIC src/common/ci_remote_transport.cpp)
 target_link_libraries(ckgit_remote_transport PUBLIC ckgit_process)
 add_library(ckgit_client_support STATIC src/common/git_repository.cpp src/common/ci_checkout.cpp)
@@ -77,7 +78,7 @@ endif()
 if(NOT WIN32)
   file(GLOB HOST_SOURCES CONFIGURE_DEPENDS src/common/*.cpp src/common/web/*.cpp)
   list(TRANSFORM HOST_SOURCES REPLACE "^${CMAKE_CURRENT_SOURCE_DIR}/" "")
-  list(REMOVE_ITEM HOST_SOURCES ${PORTABLE_SOURCES} src/common/process.cpp
+  list(REMOVE_ITEM HOST_SOURCES ${PORTABLE_SOURCES} src/common/process.cpp src/common/process_tools.cpp
     src/common/process_windows.cpp src/common/windows.cpp src/common/windows_sandbox.cpp
     src/common/private_file_windows.cpp src/common/git_repository.cpp src/common/docs_site.cpp
     src/common/ci_remote_transport.cpp src/common/ci_checkout.cpp src/common/ci_remote.cpp src/common/windows_ci_executor.cpp)

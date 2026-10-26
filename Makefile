@@ -105,6 +105,7 @@ COMMON_SOURCES := \
 	src/common/metadata_store.cpp \
 	src/common/recovery.cpp \
 	src/common/process.cpp \
+	src/common/process_tools.cpp \
 	src/common/project_summary.cpp \
 	src/common/repository_store.cpp \
 	src/common/remote_url.cpp \

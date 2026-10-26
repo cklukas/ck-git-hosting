@@ -69,6 +69,20 @@ int setenv(const char* name, const char* value, int overwrite) {
 int unsetenv(const char* name) { return _wputenv_s(ckgit::utf8ToWide(name).c_str(), L""); }
 #endif
 
+// Only this client opts into process tool selection. Config parsing in other
+// programs remains pure, and sandbox launches never consult this scope.
+std::unique_ptr<ckgit::ProcessToolScope> client_tools;
+void selectClientTools(const ckgit::ClientConfig& config) {
+  client_tools.reset();
+  client_tools = std::make_unique<ckgit::ProcessToolScope>(
+      ckgit::pathToUtf8(config.git_program), ckgit::pathToUtf8(config.ssh_program));
+}
+ckgit::ClientConfig loadConfiguredClient(const std::filesystem::path& path) {
+  auto config = ckgit::loadClientConfig(path);
+  selectClientTools(config);
+  return config;
+}
+
 constexpr int kUsage = 2;
 constexpr int kPartial = 3;
 constexpr int kBusy = 4;
@@ -674,6 +688,8 @@ void printConfig(const std::filesystem::path& path, bool explicit_path, const ck
             << "server=" << config.server << "\n"
             << "web_host=" << config.web_host << "\n"
             << "web_port=" << config.web_port << "\n"
+            << "git_program=" << ckgit::pathToUtf8(config.git_program) << "\n"
+            << "ssh_program=" << ckgit::pathToUtf8(config.ssh_program) << "\n"
             << "remote_name=" << config.remote_name << "\n"
             << "public_path_mode=" << (config.expose_full_paths ? "full" : "basename") << "\n";
   for (const auto& root : config.scan_roots) {
@@ -791,7 +807,7 @@ int scan(const std::vector<std::string>& arguments) {
     }
   }
   if (config_path.has_value()) {
-    const auto config = ckgit::loadClientConfig(*config_path);
+    const auto config = loadConfiguredClient(*config_path);
     exclusions = config.exclusions;
     if (roots.empty()) {
       roots = config.scan_roots;
@@ -853,7 +869,7 @@ int configCommand(const std::vector<std::string>& arguments) {
     }
   }
   const auto path = resolveConfigPath(config_path);
-  printConfig(path, config_path.has_value(), ckgit::loadClientConfig(path));
+  printConfig(path, config_path.has_value(), loadConfiguredClient(path));
   return 0;
 }
 
@@ -1081,7 +1097,7 @@ int statusCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: --scan and --repo are mutually exclusive\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   if (!scan && !repository_path.has_value()) {
     const auto inventory = managedInventory(config);
     printManagedScope(inventory, config);
@@ -1171,7 +1187,7 @@ int cloneCommand(const std::vector<std::string>& arguments, bool only_unmanaged 
     std::cerr << "ckgit: usage: ckgit clone --config PATH NAME [DESTINATION]\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   const std::filesystem::path destination = positional.size() == 2 ? positional[1] : positional[0];
   if (destination.empty()) {
     std::cerr << "ckgit: clone destination is required\n";
@@ -1279,7 +1295,7 @@ int createCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: usage: ckgit create --config PATH NAME [--default-branch BRANCH]\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   const auto result = controlRpc(config, "create", {*project_name, branch});
   if (result.exit_code != 0 || result.timed_out || result.output_truncated || result.output != "ok created\n") {
     std::cerr << "ckgit: remote project creation failed (" << describeProcessFailure(result, kControlTimeout)
@@ -1613,7 +1629,7 @@ int publishCommand(const std::vector<std::string>& arguments) {
       return kUsage;
     }
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   const auto path = repository_path.value_or(".");
   try {
     // Preserve errors for broken repositories and Git environment overrides;
@@ -1723,7 +1739,7 @@ int registerCommand(const std::vector<std::string>& arguments) {
       return kUsage;
     }
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   const auto lock = acquireSyncLock(config, "register");
   if (!lock.has_value()) {
     return kBusy;
@@ -1866,7 +1882,7 @@ int syncCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: --replace-checkout needs --repo PATH to name the new main checkout\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   std::optional<ckgit::SyncLock> lock;
   if (!dry_run) {
     lock = acquireSyncLock(config, "sync");
@@ -2111,7 +2127,7 @@ int checkoutCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: invalid checkout arguments; see ckgit checkout --help\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   if (list) {
     return checkoutList(config, positional.size() == 2 ? std::optional<std::string>(positional[1]) : std::nullopt, scan);
   }
@@ -2366,7 +2382,7 @@ int webCommand(const std::vector<std::string>& arguments, const std::string& pag
   if (!admin_host.has_value() || config_path.has_value()) {
     // The tunnel uses the administrator's own SSH login on the server host;
     // the restricted ckgit account deliberately allows no forwarding.
-    const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+    const auto config = loadConfiguredClient(resolveConfigPath(config_path));
     if (!admin_host.has_value()) {
       admin_host = config.web_host.empty() ? config.server.substr(config.server.find('@') + 1) : config.web_host;
     }
@@ -2695,7 +2711,7 @@ int releaseListCommand(const std::vector<std::string>& arguments) {
       project = argument;
     }
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   std::vector<ckgit::CiReleaseRecord> releases;
   try {
     releases = fetchReleases(config, project);
@@ -2762,7 +2778,7 @@ int releaseDownloadCommand(const std::vector<std::string>& arguments) {
       project = argument;
     }
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   std::vector<ckgit::CiReleaseRecord> releases;
   try {
     releases = fetchReleases(config, project);
@@ -2854,7 +2870,7 @@ int versionCommand(const std::vector<std::string>& arguments) {
   std::cout << "ckgit " << ckgit::buildVersion() << "  (local CLI)\n";
   std::optional<ckgit::ClientConfig> config;
   try {
-    config = ckgit::loadClientConfig(resolveConfigPath(requested));
+    config = loadConfiguredClient(resolveConfigPath(requested));
   } catch (const std::exception&) {
     std::cout << "server: not configured; run ckgit setup to query the host and service versions\n";
     return 0;

@@ -402,7 +402,7 @@ int incomingCommand(const std::vector<std::string>& arguments, bool update) {
     std::cerr << "ckgit: --repo, --project, and --all are mutually exclusive\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(options.config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(options.config_path));
   std::optional<ckgit::SyncLock> lock;
   if (!options.dry_run) {
     lock = acquireSyncLock(config, verb);

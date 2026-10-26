@@ -17,7 +17,8 @@ saves a private configuration; it requires `--overwrite` before replacing an
 existing file. The device ID must match its paired SSH key. The Git account
 (`server=ckgit@rpi4`, for example) and ordinary dashboard SSH login
 (`web_host=rpi4`) are separate settings. Optional `web_port` defaults to 8420.
-Doctor reports the absolute Git and SSH executable paths resolved from PATH,
+Setup and Doctor report the absolute Git and SSH executable paths, using the
+configured selections or PATH when no selection is configured. Doctor
 tests that Git executable, and uses that SSH executable for its connection tests.
 It checks the restricted control connection and an actual dashboard
 HTTP request through a temporary tunnel, then closes it. SSH keys and trusted
@@ -45,6 +46,26 @@ paths, and a private owner/SYSTEM ACL. Setup writes LF line endings; the strict
 configuration reader requires those line endings. `~` in setup paths expands
 to the Windows user profile. Reopen a terminal after changing PATH during
 installation.
+
+For portable Git or a particular OpenSSH installation, select the executables
+explicitly (PowerShell example):
+
+```powershell
+ckgit setup --config V:\ckgit\client.ini --overwrite --yes --git-program 'V:\Tools\PortableGit\cmd\git.exe' --ssh-program 'V:\Tools\PortableGit\usr\bin\ssh.exe'
+ckgit doctor --config V:\ckgit\client.ini
+```
+
+The optional `git_program` and `ssh_program` configuration values are absolute
+paths, without surrounding quotes. Setup accepts relative paths and saves
+their absolute form. Spaces and Unicode are supported. Setup can save paths
+before the tools are installed; Doctor checks whether they can be used.
+All client Git operations use `git_program`; direct SSH connections, dashboard
+tunnels and Git transports use `ssh_program`. An explicit SSH selection takes
+precedence over `GIT_SSH`, `GIT_SSH_COMMAND` and Git's `core.sshCommand` for this
+client's Git children. It selects OpenSSH, with noninteractive connection and
+keepalive options; host aliases and identity settings still come from SSH's
+configuration. Remove either optional field to return that tool to its default
+lookup. The client does not change the parent's environment or Git settings.
 
 `client.ini` is a strict, bounded key/value file.  Its required fields are
 `schema_version=1`, `client_id`, `display_name`, `server` (`user@host`), and

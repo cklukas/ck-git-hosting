@@ -119,12 +119,18 @@ int run(const std::vector<std::string>& args) {
   config.display_name = "Unicode \xc3\xbc";
   config.server = "ckgit@example.test";
   config.remote_name = "ckgit";
+  config.git_program = root / ckgit::pathFromUtf8("portable git \xc3\xbc/git.exe");
+  config.ssh_program = root / "portable git/ssh.exe";
   config.scan_roots = {root / ckgit::pathFromUtf8("checkout \xf0\x9f\x98\x80")};
   ckgit::saveClientConfig(file, config);
   verifyPrivate(directory);
   verifyPrivate(file);
   auto loaded = ckgit::loadClientConfig(file);
   require(loaded.scan_roots == config.scan_roots && loaded.display_name == config.display_name, "UTF-8 configuration roundtrip");
+  require(loaded.git_program == config.git_program && loaded.ssh_program == config.ssh_program,
+      "explicit tool paths roundtrip without executing or requiring installed tools");
+  { auto invalid = config; invalid.git_program = "relative/git.exe";
+    rejects([&] { ckgit::renderClientConfig(invalid); }, "relative executable path rejected"); }
   config.display_name = "changed";
   rejects([&] { ckgit::saveClientConfig(file, config); }, "existing config requires overwrite");
   require(ckgit::loadClientConfig(file).display_name == loaded.display_name, "refused overwrite preserves bytes");

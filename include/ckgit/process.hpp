@@ -21,6 +21,21 @@ namespace ckgit {
 // Pass the result to runProcess to test the exact executable being reported.
 std::string resolveProcessExecutable(const std::string& name);
 
+// Explicit, thread-local tool selection for a CLI invocation. Other threads
+// and processes are unaffected; destruction restores an enclosing selection.
+// Empty paths retain PATH lookup. Paths must be absolute UTF-8 paths. Captured
+// Git children use the selected OpenSSH via per-child environment overrides.
+class ProcessToolScope {
+ public:
+  ProcessToolScope(std::string git_program, std::string ssh_program);
+  ~ProcessToolScope();
+  ProcessToolScope(const ProcessToolScope&) = delete;
+  ProcessToolScope& operator=(const ProcessToolScope&) = delete;
+ private:
+  struct State;
+  std::unique_ptr<State> state_;
+};
+
 struct ProcessResult {
   int exit_code{-1};
   bool timed_out{false};

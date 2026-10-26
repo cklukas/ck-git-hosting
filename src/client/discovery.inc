@@ -49,7 +49,7 @@ int projectsCommand(const std::vector<std::string>& arguments) {
     else if (arguments[i] == "--uncloned") uncloned = true;
     else throw std::invalid_argument("invalid projects option: " + arguments[i]);
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   const auto hosted = fetchPublishedProjects(config);
   const auto local = ckgit::loadCanonicalCheckouts(canonicalSelectionPath(config));
   const auto reported = fetchRegisteredCheckouts(config);
@@ -120,7 +120,7 @@ int cloneEntryCommand(const std::vector<std::string>& arguments) {
   }
   const auto parent = std::filesystem::canonical(*into);
   const auto resolved_config = resolveConfigPath(config_path);
-  const auto config = ckgit::loadClientConfig(resolved_config);
+  const auto config = loadConfiguredClient(resolved_config);
   const auto hosted = fetchPublishedProjects(config);
   const auto local = ckgit::loadCanonicalCheckouts(canonicalSelectionPath(config));
   const auto reported = fetchRegisteredCheckouts(config);
@@ -190,7 +190,7 @@ int forgetCommand(const std::vector<std::string>& arguments) {
     else return kUsage;
   }
   if (!ckgit::isValidProjectName(project)) return kUsage;
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(config_path));
   std::optional<ckgit::SyncLock> lock;
   if (!dry_run) {
     lock = acquireSyncLock(config, "checkout forget");
