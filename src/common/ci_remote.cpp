@@ -36,28 +36,6 @@ extern char** environ;
 namespace ckgit {
 namespace {
 
-// A path or token that can be embedded in GIT_SSH_COMMAND, which Git hands to
-// a shell: only characters that need no quoting.
-bool isShellSafe(std::string_view value) {
-  return !value.empty() && value.size() <= 1024 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
-           return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '/' ||
-                  c == '.' || c == '_' || c == '-' || c == '@' || c == ':' || c == '+' || c == '=';
-         });
-}
-
-std::filesystem::path selfExecutable() {
-#if defined(__linux__)
-  return std::filesystem::canonical("/proc/self/exe");
-#elif defined(__APPLE__)
-  char buffer[4096];
-  uint32_t size = sizeof(buffer);
-  if (_NSGetExecutablePath(buffer, &size) != 0) throw std::runtime_error("executable path too long");
-  return std::filesystem::canonical(buffer);
-#else
-  return "/usr/bin/ck-ci-runnerd";
-#endif
-}
-
 std::uint64_t parseCount(std::string_view text) {
   std::uint64_t value = 0;
   const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -73,105 +51,6 @@ std::string firstLine(const std::string& text) {
 }
 
 }  // namespace
-
-// --- transport -----------------------------------------------------------------
-
-CiRemoteTransport::CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version)
-    : config_(std::move(config)), config_path_(std::move(config_path)), protocol_version_(protocol_version) {
-  if (protocol_version < 1 || protocol_version > kCiRunnerProtocolVersion) {
-    throw std::invalid_argument("unsupported runner protocol version");
-  }
-}
-
-bool CiRemoteTransport::negotiate(std::string_view version_hex) {
-  for (unsigned version = kCiRunnerProtocolVersion; version > 0; --version) {
-    CiRemoteTransport candidate(config_, config_path_, version);
-    CiRunnerCommand hello;
-    hello.op = CiRunnerOp::kHello;
-    hello.version_hex = std::string(version_hex);
-    const auto answer = candidate.run(hello, {}, std::chrono::seconds(60));
-    const std::string expected = "ok\nprotocol=" + std::to_string(version) + "\n";
-    if (answer.exit_code == 0 && !answer.timed_out && answer.output.rfind(expected, 0) == 0) {
-      protocol_version_ = version;
-      return true;
-    }
-  }
-  return false;
-}
-
-std::vector<std::string> CiRemoteTransport::sshArguments() const {
-  std::vector<std::string> argv = {config_.ssh_program.string(),
-                                   "-o", "BatchMode=yes",
-                                   "-o", "ConnectTimeout=15",
-                                   "-o", "ServerAliveInterval=15",
-                                   "-o", "ServerAliveCountMax=4",
-                                   "-o", "ControlMaster=auto",
-                                   "-o", "ControlPath=" + (config_.build_root.parent_path() / ".ssh-control-%C").string(),
-                                   "-o", "ControlPersist=120"};
-  if (config_.identity) {
-    argv.insert(argv.end(), {"-o", "IdentitiesOnly=yes", "-i", config_.identity->string()});
-  }
-  if (config_.known_hosts) {
-    argv.insert(argv.end(), {"-o", "UserKnownHostsFile=" + config_.known_hosts->string(), "-o",
-                             "StrictHostKeyChecking=yes"});
-  } else {
-    argv.insert(argv.end(), {"-o", "StrictHostKeyChecking=accept-new"});
-  }
-  argv.push_back(config_.server);
-  return argv;
-}
-
-CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command, std::string_view input,
-                                                 std::chrono::seconds timeout) const {
-  std::vector<std::string> argv = sshArguments();
-  auto negotiated = command;
-  negotiated.protocol_version = protocol_version_;
-  argv.push_back(formatCiRunnerCommand(negotiated));
-  struct PayloadDirectory {
-    std::filesystem::path path;
-    ~PayloadDirectory() {
-      if (!path.empty()) { std::error_code error; std::filesystem::remove_all(path, error); }
-    }
-  } payload;
-  ProcessOptions options;
-  options.timeout = timeout;
-  options.output_limit = kMaximumCiClaimResponseBytes + 4096;
-  options.inherit_stderr = true;
-  if (!input.empty()) {
-    payload.path = createTempDirectory(config_.build_root, "request-");
-    options.input_file = payload.path / "stdin";
-    std::ofstream file(*options.input_file, std::ios::binary | std::ios::trunc);
-    file.write(input.data(), static_cast<std::streamsize>(input.size()));
-    file.close();
-    if (!file) throw std::runtime_error("could not stage runner request payload");
-  }
-  const auto child = runProcess(argv, options);
-  return Result{child.output_truncated ? -1 : child.exit_code, child.timed_out, child.output};
-}
-
-CiRemoteTransport::Session CiRemoteTransport::open(const CiRunnerCommand& command) const {
-  std::vector<std::string> argv = sshArguments();
-  auto negotiated = command;
-  negotiated.protocol_version = protocol_version_;
-  argv.push_back(formatCiRunnerCommand(negotiated));
-  return std::make_unique<ProcessStream>(argv);
-}
-
-void CiRemoteTransport::close(Session& session) { session.reset(); }
-
-std::string CiRemoteTransport::gitSshCommand(const std::string& job_id, const std::string& token) const {
-  const std::string self = selfExecutable().string();
-  const std::string config = std::filesystem::absolute(config_path_).string();
-  if (!isShellSafe(self) || !isShellSafe(config) || !isValidCiId(job_id) || !isShellSafe(token)) {
-    throw std::runtime_error("the runner's paths cannot be passed to git safely");
-  }
-  return self + " ssh-shim --config " + config + " --job " + job_id + " --token " + token +
-         " --protocol " + std::to_string(protocol_version_);
-}
-
-std::string CiRemoteTransport::fetchUrl(const std::string& project) const {
-  return config_.server + ":" + (project.front() == '-' ? "./" : "") + project + ".git";
-}
 
 int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
                  const std::vector<std::string>& git_arguments, unsigned protocol_version) {

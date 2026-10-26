@@ -7,6 +7,7 @@
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
+#include "ckgit/ci_remote.hpp"
 #include "ckgit/temp_directory.hpp"
 #include "ckgit/path_utf8.hpp"
 #include <fstream>
@@ -28,6 +29,23 @@ void require(bool condition, const char* message) {
 }
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
+    if (args[1] == "-o") {
+#ifdef _WIN32
+      _setmode(_fileno(stdin), _O_BINARY);
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      const auto command = ckgit::parseCiRunnerCommand(args.back());
+      if (!command) return 2;
+      if (command->op == ckgit::CiRunnerOp::kHello) {
+        std::cout << "ok\nprotocol=" << command->protocol_version << "\n";
+      } else if (command->op == ckgit::CiRunnerOp::kClaim) {
+        std::cout << "none\n";
+      } else if (command->op == ckgit::CiRunnerOp::kStream || command->op == ckgit::CiRunnerOp::kPut) {
+        if (command->op == ckgit::CiRunnerOp::kStream) std::cout << "ready\n" << std::flush;
+        std::cout << std::cin.rdbuf();
+      } else return 2;
+      return 0;
+    }
     if (args[1] == "input") {
 #ifdef _WIN32
       _setmode(_fileno(stdin), _O_BINARY);
@@ -137,6 +155,48 @@ int run(const std::vector<std::string>& args) {
     std::string payload(1024 * 1024, '\0');
     for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>(i % 256);
     { std::ofstream stream(file, std::ios::binary); stream.write(payload.data(), payload.size()); }
+    {
+      ckgit::RunnerConfig config;
+      config.server = "runner@example.test";
+      config.name = "native-test";
+      config.build_root = root;
+      config.ssh_program = ckgit::pathFromUtf8(args[0]);
+      config.known_hosts = root / ckgit::pathFromUtf8("known hosts \xc3\xbc");
+      ckgit::CiRemoteTransport transport(config, root / "runner's config.ini");
+      require(transport.negotiate("31") && transport.protocolVersion() == 2, "native SSH transport negotiates v2");
+      const auto shim = transport.gitSshCommand("job-test", std::string(32, 'a'));
+      require(shim.find("runner'\\''s config.ini") != std::string::npos, "Git shim quotes paths for the Git shell");
+      ckgit::CiRunnerCommand command;
+      command.op = ckgit::CiRunnerOp::kClaim;
+      const auto claimed = transport.run(command, {}, std::chrono::seconds(3));
+      require(claimed.exit_code == 0 && claimed.output == "none\n", "native SSH transport receives claim response");
+      command.op = ckgit::CiRunnerOp::kPut;
+      command.job_id = "job-test";
+      command.token = std::string(32, 'a');
+      command.kind = "artifact";
+      command.name = "binary";
+      const std::string input("abc\0def", 7);
+      command.total = input.size();
+      command.sha256 = ckgit::sha256Hex(input);
+      const auto uploaded = transport.run(command, input, std::chrono::seconds(3));
+      require(uploaded.exit_code == 0 && uploaded.output == input, "native SSH transport preserves binary payload");
+      command.op = ckgit::CiRunnerOp::kStream;
+      auto session = transport.open(command);
+      require(session->write("heartbeat\n") == 10, "native SSH transport accepts stream frames");
+      std::string output;
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (std::chrono::steady_clock::now() < deadline) {
+        session->closeInput();
+        char buffer[128];
+        const auto count = session->read(buffer, sizeof(buffer));
+        if (count < 0) break;
+        if (count > 0) output.append(buffer, static_cast<std::size_t>(count));
+        else std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(output == "ready\nheartbeat\n", "native SSH transport carries bidirectional stream frames");
+      ckgit::CiRemoteTransport::close(session);
+      require(!session, "native SSH transport closes session ownership");
+    }
     ckgit::ProcessOptions options;
     options.input_file = file;
     options.output_limit = 3 * 1024 * 1024;

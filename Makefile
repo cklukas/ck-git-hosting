@@ -63,6 +63,7 @@ COMMON_SOURCES := \
 	src/common/authorized_keys.cpp \
 	src/common/ci_control.cpp \
 	src/common/ci_remote.cpp \
+	src/common/ci_remote_transport.cpp \
 	src/common/runner_config.cpp \
 	src/common/ci_gateway.cpp \
 	src/common/ci_results.cpp \

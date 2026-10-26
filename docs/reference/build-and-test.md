@@ -62,6 +62,12 @@ bidirectional binary traffic, backpressure, cancellation of pending writes and
 handle inheritance. The Unix remote-runner integration test covers checkout,
 live logs and output uploads through the same interface. The connected Windows
 runner still requires checkout/execution integration and deployment qualification.
+The SSH transport itself is now a separately linked native library. Windows
+tests exercise protocol negotiation, claims, binary request input and the log
+stream through a local SSH stand-in. Paths are passed as UTF-8, and Git's
+`GIT_SSH_COMMAND` quotes executable/configuration paths for its shell. Windows
+does not use the Unix ControlMaster socket. These transport tests do not yet
+establish a connection from the installed Windows runner to rpi4.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed
