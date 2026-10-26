@@ -169,6 +169,9 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
     windows.resize(count);
     environment[L"SYSTEMROOT"] = windows;
     environment[L"WINDIR"] = windows;
+    // NMake and other native build tools invoke the system command processor.
+    // Resolve it from Windows, never from the broker's inherited environment.
+    environment[L"COMSPEC"] = windows + L"\\System32\\cmd.exe";
     environment[L"SYSTEMDRIVE"] = std::filesystem::path(windows).root_name().wstring();
     environment[L"TEMP"] = (sandbox->work() / "tmp").wstring();
     environment[L"TMP"] = environment[L"TEMP"];

@@ -97,6 +97,8 @@ int wmain(int argc, wchar_t** argv) {
     if (argc > 1 && std::wstring_view(argv[1]) == L"--executor-child") {
       const auto sister = _wgetenv(L"CKGIT_SISTER_SISTER");
       const auto cache = _wgetenv(L"COMPILER_CACHE");
+      const auto command_processor = _wgetenv(L"COMSPEC");
+      require(command_processor && fs::path(command_processor).is_absolute(), "executor system command processor");
       require(sister && fs::is_regular_file(fs::path(sister) / "probe.c"), "executor sister environment");
       require(cache && fs::is_regular_file(fs::path(cache) / "seed"), "executor restores persistent cache");
       require(fs::current_path().filename() == L"src", "executor working directory");
