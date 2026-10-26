@@ -69,6 +69,7 @@ std::vector<unsigned char> capability(const wchar_t* name) {
 struct WindowsSandbox::State {
   std::filesystem::path root;
   std::wstring profile, owner, app;
+  bool retain = false;
   PSID sid = nullptr;
   std::vector<std::vector<unsigned char>> capabilities;
   HWINSTA station = nullptr;
@@ -78,7 +79,7 @@ struct WindowsSandbox::State {
     if (station) CloseWindowStation(station);
     if (sid) FreeSid(sid);
     if (!profile.empty()) DeleteAppContainerProfile(profile.c_str());
-    if (!root.empty()) { std::error_code error; std::filesystem::remove_all(root, error); }
+    if (!retain && !root.empty()) { std::error_code error; std::filesystem::remove_all(root, error); }
   }
 };
 WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std::make_unique<State>()) {
@@ -130,6 +131,7 @@ WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std
   protect(tools(), state_->owner, state_->app, false);
 }
 WindowsSandbox::~WindowsSandbox() = default;
+void WindowsSandbox::retainWorkspace() { state_->retain = true; }
 std::filesystem::path WindowsSandbox::work() const { return state_->root / "work"; }
 std::filesystem::path WindowsSandbox::tools() const { return state_->root / "tools"; }
 void* WindowsSandbox::sid() const { return state_->sid; }
@@ -139,8 +141,10 @@ std::vector<void*> WindowsSandbox::capabilitySids() const {
   return result;
 }
 std::wstring WindowsSandbox::desktopName() const { return state_->profile + L"\\Default"; }
-void WindowsSandbox::sealTools() {
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(tools()))
+void WindowsSandbox::sealTools(const std::function<bool()>& should_continue) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(tools())) {
+    if (should_continue && !should_continue()) throw std::runtime_error("toolchain staging cancelled");
     protect(entry.path(), state_->owner, state_->app, false);
+  }
 }
 }

@@ -32,7 +32,10 @@ try {
         $process.Refresh()
         if ($process.HasExited) { throw ('Preview exited: ' + (Get-Content $stderr -Raw)) }
         $log = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
-        if ($log -match 'serve ready on (\d+)') { $port = $Matches[1]; break }
+        if ($null -ne $log) {
+            $ready = [regex]::Match(($log -join "`n"), 'serve ready on (\d+)')
+            if ($ready.Success) { $port = $ready.Groups[1].Value; break }
+        }
         Start-Sleep -Milliseconds 100
     }
     if (!$port) { throw 'Preview did not become ready' }

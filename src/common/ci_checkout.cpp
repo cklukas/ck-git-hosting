@@ -7,11 +7,13 @@
 #include <stdexcept>
 namespace ckgit {
 void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
-                     const std::vector<std::string>& environment, const std::string& upload_pack) {
+                     const std::vector<std::string>& environment, const std::string& upload_pack,
+                     const std::function<bool()>& should_continue) {
   if (!isValidObjectId(request.commit)) throw std::runtime_error("invalid commit for checkout");
   // Every git process runs with a scrubbed configuration: no system or user
   // config, no prompts, and no hooks (fetch and checkout run none here anyway).
   ProcessOptions common;
+  common.should_continue = should_continue;
 #ifdef _WIN32
   const std::string null_device = "NUL";
 #else
@@ -38,7 +40,9 @@ void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, c
     ProcessOptions options = common;
     options.timeout = timeout;
     options.output_limit = 64 * 1024;
+    if (should_continue && !should_continue()) throw std::runtime_error("checkout cancelled");
     const ProcessResult result = runProcess(command, options);
+    if (result.cancelled) throw std::runtime_error("checkout cancelled");
     if (result.timed_out || result.exit_code != 0) {
       std::string reason = result.output;
       while (!reason.empty() && (reason.back() == '\n' || reason.back() == '\r')) reason.pop_back();

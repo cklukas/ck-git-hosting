@@ -77,6 +77,8 @@ class RemoteCiSource : public CiSourceProvider {
  public:
   RemoteCiSource(const CiRemoteTransport& transport, std::string job_id, std::string token);
   void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) override;
+  void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                const std::function<bool()>& should_continue) override;
 
  private:
   const CiRemoteTransport& transport_;

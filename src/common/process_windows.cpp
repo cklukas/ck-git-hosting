@@ -343,11 +343,26 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
 
 ProcessResult runWindowsSandboxProcess(const WindowsSandbox& sandbox,
     const std::vector<std::string>& arguments, const ProcessOptions& options,
-    const std::map<std::wstring, std::wstring>& environment) {
+    const std::map<std::wstring, std::wstring>& environment,
+    const std::filesystem::path& working_subdirectory) {
   if (arguments.empty() || !std::filesystem::path(utf8ToWide(arguments.front())).is_absolute())
     throw std::invalid_argument("sandbox requires an absolute executable");
   std::vector<std::string> command{wideToUtf8((sandbox.tools() / "ckgit-job-launcher.exe").native()),
       wideToUtf8((sandbox.work() / "tmp").native())};
+  if (!working_subdirectory.empty()) {
+    if (working_subdirectory.is_absolute() || working_subdirectory.has_root_name())
+      throw std::invalid_argument("sandbox working directory must be relative");
+    auto current = sandbox.work();
+    for (const auto& part : working_subdirectory) {
+      if (part == "..") throw std::invalid_argument("sandbox working directory escapes workspace");
+      current /= part;
+      const auto attributes = GetFileAttributesW(current.c_str());
+      if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+          !(attributes & FILE_ATTRIBUTE_DIRECTORY)) throw std::invalid_argument("invalid sandbox working directory");
+    }
+    command.push_back("--cwd");
+    command.push_back(wideToUtf8(current.native()));
+  }
   command.insert(command.end(), arguments.begin(), arguments.end());
   return runProcessImpl(command, options, &sandbox, environment);
 }

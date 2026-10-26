@@ -90,8 +90,24 @@ callers must cap any logs they retain. A false continuation result cancels the
 process tree, including a silent child. Callback exceptions stop the tree
 before propagating. Native tests cover cancellation, complete streamed output
 and Windows descendant cleanup after cancellation or a log callback failure.
-These hooks are available to the LPAC backend; wiring them to the production
-Windows executor's lease and log lifecycle remains part of runner integration.
+The native Windows executor uses these hooks to stream bounded step logs,
+call the result sink's heartbeat and stop on cancellation or lease loss.
+Its standalone LPAC fixture exercises pinned source and sister checkouts,
+compiler execution in the checkout directory, child-result identity, artifact
+packing, Pages handoff and a persistent cache copied into the job. Cache storage
+is separated under `windows-x64/<project>/<cache>` and locked during use;
+only the per-job copy is exposed to LPAC. Tools are copied from an
+operator-selected tree and sealed read-only. The daemon entry point, toolchain
+configuration, installer and live rpi4 connection still require integration.
+
+The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
+`windows-installers` job selected by the `windows` and `x64` labels. The Windows
+job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
+with MSVC/NMake, invokes Inno Setup for both clients, creates the portable ZIP,
+and places installer files plus input/output hashes in the `windows-installers`
+artifact. The Linux job remains the Pages producer. This workflow is the
+required live rpi4-to-Windows acceptance case; its installer build inside the
+connected LPAC runner has not yet been qualified.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

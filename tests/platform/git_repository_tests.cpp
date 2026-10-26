@@ -115,7 +115,14 @@ int run(const std::vector<std::string>& args) {
 #endif
     url.append(generic.begin(), generic.end());
     const auto checkout = root / ckgit::pathFromUtf8("CI checkout \xc3\xbc");
-    ckgit::cloneCiCheckout(url, request, checkout);
+    unsigned checkout_ticks = 0;
+    ckgit::cloneCiCheckout(url, request, checkout, {}, {}, [&] { ++checkout_ticks; return true; });
+    require(checkout_ticks > 1, "CI checkout maintains continuation during Git operations");
+    bool cancelled_checkout = false;
+    try { ckgit::cloneCiCheckout(url, request, root / "cancelled-checkout", {}, {}, [] { return false; }); }
+    catch (const std::runtime_error& error) { cancelled_checkout = std::string(error.what()) == "checkout cancelled"; }
+    require(cancelled_checkout && !std::filesystem::exists(root / "cancelled-checkout"),
+        "cancelled checkout does not start Git");
     const auto count = ckgit::runProcess({"git", "-C", ckgit::pathToUtf8(checkout), "rev-list", "--count", "HEAD"});
     require(count.exit_code == 0 && (count.output == "1\n" || count.output == "1\r\n"), "native CI checkout is shallow");
     require(ckgit::inspectRepository(checkout).detached_head, "native CI checkout is detached");

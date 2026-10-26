@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 // Opt-in native qualification: creates disposable AppContainer profiles.
 #include "ckgit/windows_sandbox.hpp"
+#include "ckgit/windows_ci_executor.hpp"
+#include "ckgit/hash.hpp"
 #include "ckgit/windows.hpp"
 #include "ckgit/socket.hpp"
 #include <windows.h>
@@ -23,6 +25,46 @@ void copyTools(const fs::path& source, const fs::path& destination) {
     else throw std::runtime_error("special file in toolchain source");
   }
 }
+class ExecutorSource : public ckgit::CiSourceProvider {
+ public:
+  unsigned checkouts = 0;
+  void checkout(const ckgit::CiCheckoutRequest& request, const fs::path& destination) override {
+    require(request.commit == std::string(40, 'a'), "executor must use pinned commit");
+    ++checkouts;
+    std::ofstream(destination / "probe.c") <<
+      "__declspec(dllimport) void __stdcall ExitProcess(unsigned);\n"
+      "void mainCRTStartup(void) { ExitProcess(0); }\n";
+    fs::create_directory(destination / "public");
+    std::ofstream(destination / "public" / "index.html") << "executor site";
+  }
+};
+class ExecutorSink : public ckgit::CiResultSink {
+ public:
+  bool started = false, artifact = false, pages = false;
+  unsigned steps = 0;
+  std::string logs;
+  void runStarted(const ckgit::CiRunRecord&) override { started = true; }
+  void stepStarted(const ckgit::CiRunRecord&, std::size_t index) override { require(index == steps, "executor step order"); }
+  void appendLog(std::size_t, std::string_view bytes) override { logs.append(bytes); }
+  void stepFinished(const ckgit::CiRunRecord& record, std::size_t) override {
+    ++steps; require(record.steps.size() == steps, "executor publishes completed step");
+  }
+  void heartbeat(const ckgit::CiRunRecord&) override {}
+  void progress(const ckgit::CiRunRecord&) override {}
+  bool cancelRequested() override { return false; }
+  bool leaseLost() override { return false; }
+  ckgit::CiArtifactRecord putArtifact(const ckgit::CiArtifact& declared, const fs::path& bundle,
+      const std::string& note, bool) override {
+    if (!note.empty()) throw std::runtime_error("executor artifact: " + note);
+    require(fs::file_size(bundle) > 0, "executor artifact bytes");
+    artifact = true;
+    ckgit::CiArtifactRecord result;
+    result.name = declared.name; result.bytes = fs::file_size(bundle); result.sha256 = ckgit::sha256HexOfFile(bundle);
+    return result;
+  }
+  void putPagesSite(const fs::path& site) override { pages = fs::is_regular_file(site / "index.html"); }
+  ckgit::CiRunRecord finish(ckgit::CiRunRecord record) override { return record; }
+};
 int child(int argc, wchar_t** argv) {
   require(argc == 5, "child arguments");
   const auto denied = CreateFileW(argv[2], GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -52,6 +94,16 @@ int child(int argc, wchar_t** argv) {
 }
 int wmain(int argc, wchar_t** argv) {
   try {
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--executor-child") {
+      const auto sister = _wgetenv(L"CKGIT_SISTER_SISTER");
+      const auto cache = _wgetenv(L"COMPILER_CACHE");
+      require(sister && fs::is_regular_file(fs::path(sister) / "probe.c"), "executor sister environment");
+      require(cache && fs::is_regular_file(fs::path(cache) / "seed"), "executor restores persistent cache");
+      require(fs::current_path().filename() == L"src", "executor working directory");
+      std::ofstream(fs::path(cache) / "written") << "cache output";
+      std::cout << "executor environment checked\n";
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--wait") {
       std::cout << "ready" << std::flush;
       Sleep(30000);
@@ -128,6 +180,49 @@ int wmain(int argc, wchar_t** argv) {
         throw std::runtime_error("LPAC tool failed: " + command.front() + " exit=" + std::to_string(result.exit_code) +
             (result.timed_out ? " timeout" : ""));
     }
+    ckgit::CiPreparedJob prepared;
+    prepared.job.job_id = "executor-fixture";
+    prepared.job.parent_run_id = "parent-fixture";
+    prepared.job.workflow_job = "windows";
+    prepared.job.project_name = "fixture";
+    prepared.job.commit_id = std::string(40, 'a');
+    prepared.job.ref = "refs/heads/main";
+    prepared.is_default_branch = true;
+    prepared.sisters.push_back({"sister", std::string(40, 'a'), {}});
+    prepared.workflow.pages_path = "public";
+    prepared.workflow.caches.push_back({"compiler", {"COMPILER_CACHE"}});
+    ckgit::CiJob ci_job;
+    ci_job.name = "windows";
+    ci_job.steps.push_back({"environment", {"probe.exe", "--executor-child"}, {}, {}});
+    ci_job.steps.push_back({"compile", {"cl.exe", "/nologo", "/GS-", "/Zl", "probe.c", "/Fe:result.exe", "/link",
+        "/nodefaultlib", "/entry:mainCRTStartup", "/subsystem:console", "kernel32.lib"}, {}, {}});
+    ci_job.steps.push_back({"execute", {"./result.exe"}, {}, {}});
+    ci_job.artifact = ckgit::CiArtifact{"native-result", {"result.exe"}, 7};
+    prepared.workflow.jobs.push_back(ci_job);
+    ckgit::WindowsCiToolchain toolchain;
+    toolchain.root = sandbox.tools();
+    toolchain.launcher = fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe";
+    toolchain.binary_directories = {"msvc", "cmake/bin", "."};
+    toolchain.environment["LIB"] = "${TOOLS}";
+    ckgit::CiExecutionOptions execution;
+    execution.build_root = sandbox.work() / "executor-build";
+    execution.cache_root = sandbox.work() / "executor-cache";
+    execution.runner = "windows-fixture";
+    execution.timeout_seconds = 60;
+    fs::create_directories(execution.cache_root / "windows-x64" / "fixture" / "compiler");
+    std::ofstream(execution.cache_root / "windows-x64" / "fixture" / "compiler" / "seed") << "cached input";
+    ExecutorSource source;
+    ExecutorSink sink;
+    const auto record = ckgit::executeWindowsCiJob(prepared, execution, toolchain, source, sink);
+    if (record.status != ckgit::CiRunStatus::Success)
+      throw std::runtime_error("native executor failed: " + record.detail + "\n" + sink.logs);
+    require(source.checkouts == 2 && sink.started && sink.steps == 3 && sink.artifact && sink.pages,
+        "native executor checkout, logs, artifacts and Pages lifecycle");
+    require(record.parent_run_id == "parent-fixture" && record.workflow_job == "windows" && !sink.logs.empty(),
+        "native executor child identity and live logs");
+    require(fs::is_regular_file(execution.cache_root / "windows-x64" / "fixture" / "compiler" / "written"), "native executor cache persistence");
+    require(fs::is_empty(execution.build_root), "native executor removes scratch");
+    std::cout << "LPAC native executor lifecycle passed\n";
     std::cout << "LPAC native build qualification passed\n";
     return 0;
   } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

@@ -20,7 +20,8 @@ class WindowsSandbox {
   WindowsSandbox& operator=(const WindowsSandbox&) = delete;
   std::filesystem::path work() const;
   std::filesystem::path tools() const;
-  void sealTools();
+  void sealTools(const std::function<bool()>& should_continue = {});
+  void retainWorkspace();
   void* sid() const;
   std::vector<void*> capabilitySids() const;
   std::wstring desktopName() const;
@@ -33,6 +34,7 @@ class WindowsSandbox {
 // TEMP, TMP, TMPDIR and USERPROFILE are always replaced with per-job paths.
 ProcessResult runWindowsSandboxProcess(const WindowsSandbox& sandbox,
     const std::vector<std::string>& arguments, const ProcessOptions& options,
-    const std::map<std::wstring, std::wstring>& environment);
+    const std::map<std::wstring, std::wstring>& environment,
+    const std::filesystem::path& working_subdirectory = {});
 }
 #endif

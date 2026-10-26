@@ -20,14 +20,17 @@ int wmain(int argc, wchar_t** argv) {
     CloseHandle(token);
     if (!queried || !isolated) throw std::runtime_error("job launcher requires an AppContainer");
     const auto work = std::filesystem::current_path();
-    if (std::filesystem::path(argv[1]) != work / "tmp" || !std::filesystem::path(argv[2]).is_absolute())
+    const bool selected_directory = argc >= 5 && std::wstring_view(argv[2]) == L"--cwd";
+    const int executable_index = selected_directory ? 4 : 2;
+    const auto directory = selected_directory ? std::filesystem::path(argv[3]) : work;
+    if (std::filesystem::path(argv[1]) != work / "tmp" || !std::filesystem::path(argv[executable_index]).is_absolute())
       throw std::invalid_argument("invalid job launcher paths");
     for (const auto name : {L"TEMP", L"TMP", L"TMPDIR"})
       if (_wputenv_s(name, argv[1])) throw std::runtime_error("set job temporary directory");
     for (const auto name : {L"USERPROFILE", L"APPDATA", L"LOCALAPPDATA"})
       if (_wputenv_s(name, (work / "home").c_str())) throw std::runtime_error("set job home directory");
     std::vector<std::wstring> arguments;
-    for (int i = 2; i < argc; ++i) arguments.emplace_back(argv[i]);
+    for (int i = executable_index; i < argc; ++i) arguments.emplace_back(argv[i]);
     auto command = ckgit::windowsCommandLine(arguments);
     std::vector<HANDLE> handles;
     for (const auto which : {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
@@ -51,9 +54,9 @@ int wmain(int argc, wchar_t** argv) {
     startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     startup.lpAttributeList = attributes;
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(argv[2], command.data(), nullptr, nullptr, TRUE,
+    if (!CreateProcessW(argv[executable_index], command.data(), nullptr, nullptr, TRUE,
         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
-        nullptr, work.c_str(), &startup.StartupInfo, &process))
+        nullptr, directory.c_str(), &startup.StartupInfo, &process))
       throw std::runtime_error("start job tool: Windows error " + std::to_string(GetLastError()));
     CloseHandle(process.hThread);
     const auto waited = WaitForSingleObject(process.hProcess, INFINITE);

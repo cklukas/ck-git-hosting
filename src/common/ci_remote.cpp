@@ -41,9 +41,13 @@ RemoteCiSource::RemoteCiSource(const CiRemoteTransport& transport, std::string j
     : transport_(transport), job_id_(std::move(job_id)), token_(std::move(token)) {}
 
 void RemoteCiSource::checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) {
+  checkout(request, destination, {});
+}
+void RemoteCiSource::checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination,
+    const std::function<bool()>& should_continue) {
   if (!isValidProjectName(request.project)) throw std::runtime_error("invalid checkout request");
   cloneCiCheckout(transport_.fetchUrl(request.project), request, destination,
-                  {"GIT_SSH_COMMAND=" + transport_.gitSshCommand(job_id_, token_), "GIT_SSH_VARIANT=ssh"});
+                  {"GIT_SSH_COMMAND=" + transport_.gitSshCommand(job_id_, token_), "GIT_SSH_VARIANT=ssh"}, {}, should_continue);
 }
 
 // --- remote sink ---------------------------------------------------------------

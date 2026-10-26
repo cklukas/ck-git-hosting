@@ -65,6 +65,8 @@ target_link_libraries(ckgit_client_support PUBLIC ckgit_process)
 add_library(ckgit_remote STATIC src/common/ci_remote.cpp)
 target_link_libraries(ckgit_remote PUBLIC ckgit_remote_transport ckgit_client_support)
 if(WIN32)
+  add_library(ckgit_windows_executor STATIC src/common/windows_ci_executor.cpp)
+  target_link_libraries(ckgit_windows_executor PUBLIC ckgit_remote)
   add_executable(ckgit src/client/main.cpp)
   target_link_libraries(ckgit PRIVATE ckgit_client_support shell32)
 endif()
@@ -75,7 +77,7 @@ if(NOT WIN32)
   list(REMOVE_ITEM HOST_SOURCES ${PORTABLE_SOURCES} src/common/process.cpp
     src/common/process_windows.cpp src/common/windows.cpp src/common/windows_sandbox.cpp
     src/common/private_file_windows.cpp src/common/git_repository.cpp src/common/docs_site.cpp
-    src/common/ci_remote_transport.cpp src/common/ci_checkout.cpp src/common/ci_remote.cpp)
+    src/common/ci_remote_transport.cpp src/common/ci_checkout.cpp src/common/ci_remote.cpp src/common/windows_ci_executor.cpp)
   add_library(ckgit_host STATIC ${HOST_SOURCES})
   target_link_libraries(ckgit_host PUBLIC ckgit_docs ckgit_remote)
   foreach(pair "ckgit|client" "ckgit-admin|admin" "ck-git-shell|ssh-dispatcher"
@@ -112,7 +114,7 @@ target_link_libraries(ckgit_docs PUBLIC ckgit_process)
 if(BUILD_TESTING)
   if(WIN32)
     add_executable(ckgit-lpac-probe tests/platform/windows_sandbox_probe.cpp)
-    target_link_libraries(ckgit-lpac-probe PRIVATE ckgit_process)
+    target_link_libraries(ckgit-lpac-probe PRIVATE ckgit_windows_executor)
     # Deliberately not a default CTest: the caller must approve Windows-managed
     # profile creation and select explicit staging/toolchain locations.
   endif()

@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #include <vector>
 
 #include "ckgit/ci_store.hpp"
@@ -193,6 +194,13 @@ class CiSourceProvider {
   // Materialises the request into the empty directory `destination`. Throws
   // std::runtime_error with a short reason when it cannot.
   virtual void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) = 0;
+  // Remote sources override this to maintain the lease during long Git calls.
+  virtual void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                        const std::function<bool()>& should_continue) {
+    if (should_continue && !should_continue()) throw std::runtime_error("checkout cancelled");
+    checkout(request, destination);
+    if (should_continue && !should_continue()) throw std::runtime_error("checkout cancelled");
+  }
 };
 
 // Makes the shallow clone a CiSourceProvider promises: `git init`, a fetch of
@@ -205,7 +213,8 @@ class CiSourceProvider {
 // reachable commit by hash). With spec.archive the .git directory is removed
 // afterwards.
 void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
-                     const std::vector<std::string>& environment = {}, const std::string& upload_pack = {});
+                     const std::vector<std::string>& environment = {}, const std::string& upload_pack = {},
+                     const std::function<bool()>& should_continue = {});
 
 // Where a run's progress and results go. The primary writes the server's state
 // root directly; a remote runner relays everything to the server. The executor

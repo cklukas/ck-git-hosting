@@ -1,6 +1,9 @@
 # ck-git-hosting builds and self-deploys through its own CI runner.
 #
-# Every push to master runs the full build and test suite: `make check`, the
+# Linux and Windows jobs run independently for each selected push. The Windows
+# job builds this project's own installers natively and retains them in the
+# windows-installers artifact; tagged runs combine both platforms' outputs.
+# Every push to master runs the full Linux build and test suite: `make check`, the
 # unit binary plus every tests/integration/*.sh script, including the ones
 # that need loopback networking (the runner brings the sandbox's isolated
 # network namespace's loopback interface up for exactly this; the LAN stays
@@ -26,12 +29,13 @@
 # Pages; the same documentation source is published to GitHub Pages by the separate
 # .github/workflows/pages.yml, which compiles its own ckdocs rather than
 # depending on anything built here.
-version: 1
+version: 2
 on:
-  branches: [master]
+  branches: [master, windows-port-ci]
   tags: [v*]
 jobs:
   - name: build-test-package
+    runs_on: [linux]
     steps:
       - name: build
         script: |
@@ -119,5 +123,14 @@ jobs:
       # release.ini record (an artifact of that name would overwrite it).
       name: packages
       paths: [dist]
+  - name: windows-installers
+    runs_on: [windows, x64]
+    steps:
+      - name: build-native-windows-installers
+        run: [cmake.exe, -P, packaging/windows/build-ci.cmake]
+    artifacts:
+      name: windows-installers
+      paths: [dist]
 pages:
   path: public
+  job: build-test-package
