@@ -94,6 +94,22 @@ int child(int argc, wchar_t** argv) {
 }
 int wmain(int argc, wchar_t** argv) {
   try {
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--linger") { Sleep(30000); return 0; }
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--background") {
+      auto command = ckgit::windowsCommandLine({argv[0], L"--linger"});
+      STARTUPINFOW startup{};
+      startup.cb = sizeof(startup);
+      startup.dwFlags = STARTF_USESTDHANDLES;
+      startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+      startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+      startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+      PROCESS_INFORMATION process{};
+      require(CreateProcessW(argv[0], command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+          nullptr, nullptr, &startup, &process) != FALSE, "start background helper with inherited output");
+      std::cout << process.dwProcessId << std::endl;
+      CloseHandle(process.hThread); CloseHandle(process.hProcess);
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--executor-child") {
       const auto sister = _wgetenv(L"CKGIT_SISTER_SISTER");
       const auto cache = _wgetenv(L"COMPILER_CACHE");
@@ -151,7 +167,19 @@ int wmain(int argc, wchar_t** argv) {
     options.on_output = {};
     options.should_continue = {};
     options.output_limit = 256 * 1024;
-    std::cout << "LPAC live output and cancellation checks passed\n";
+    const auto finished_start = std::chrono::steady_clock::now();
+    result = ckgit::runWindowsSandboxProcess(sandbox,
+        {ckgit::wideToUtf8(executable.native()), "--background"}, options, {});
+    require(result.exit_code == 0 && !result.timed_out &&
+        std::chrono::steady_clock::now() - finished_start < std::chrono::seconds(5),
+        "completed LPAC step must stop background helpers without waiting for timeout");
+    const auto background = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(std::stoul(result.output)));
+    if (background) {
+      const auto stopped = WaitForSingleObject(background, 1000);
+      CloseHandle(background);
+      require(stopped == WAIT_OBJECT_0, "completed LPAC step left a background process");
+    } else require(GetLastError() == ERROR_INVALID_PARAMETER, "background termination must be observable");
+    std::cout << "LPAC live output, cancellation and background cleanup checks passed\n";
     // Real compiler -> linker -> produced executable, driven by CMake/NMake.
     // No CRT/SDK headers are needed by this minimal console executable.
     std::ofstream(sandbox.work() / "probe.c") <<

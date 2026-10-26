@@ -68,7 +68,9 @@ installation, Windows SDK, CMake and Inno Setup into a new toolchain directory.
 Supply `-Destination`, `-TemporaryRoot`, `-MsvcRoot`, `-SdkRoot`, `-SdkVersion`,
 `-CmakeRoot` and `-InnoRoot`. Existing destinations are refused. Every copied
 file is checked against its source SHA-256; installed tool permissions are
-unchanged. The example configuration matches this staged directory layout:
+unchanged. The optional `vctip.exe` telemetry uploader is omitted from the
+staged copy so resident uploaders cannot exhaust the job's process limit.
+The example configuration matches this staged directory layout:
 
 - `ci_toolchain_root`: absolute path to the operator-controlled tool tree.
 - `ci_toolchain_paths`: semicolon-separated relative binary directories, using

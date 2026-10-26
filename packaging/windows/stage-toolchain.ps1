@@ -20,6 +20,7 @@ $oldTemp=$env:TEMP; $oldTmp=$env:TMP; $oldTmpdir=$env:TMPDIR
 $stage = Join-Path $TemporaryRoot ('toolchain-stage-' + [guid]::NewGuid().ToString('N'))
 $start = [DateTime]::UtcNow
 $manifest = New-Object 'System.Collections.Generic.List[string]'
+$omissions = New-Object 'System.Collections.Generic.List[string]'
 try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     $env:TEMP=$stage; $env:TMP=$stage; $env:TMPDIR=$stage
@@ -41,6 +42,12 @@ try {
         foreach ($item in Get-ChildItem -LiteralPath $source -Recurse -Force) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Redirected tool input: $($item.FullName)" }
             $relative = $item.FullName.Substring($source.Length + 1)
+            # Optional VC telemetry helpers stay resident and consume sandbox
+            # process slots. Keep installed tools intact; omit only this copy.
+            if (!$item.PSIsContainer -and $item.Name -ieq 'vctip.exe') {
+                $omissions.Add((Join-Path $tree[1] $relative).Replace('\','/'))
+                continue
+            }
             $copy = Join-Path $target $relative
             if ($item.PSIsContainer) { New-Item -ItemType Directory -Path $copy -Force | Out-Null; continue }
             New-Item -ItemType Directory -Path (Split-Path $copy) -Force | Out-Null
@@ -52,6 +59,7 @@ try {
         Write-Output "Verified staged $($tree[1])"
     }
     [IO.File]::WriteAllLines((Join-Path $stage 'toolchain.sha256'), $manifest, (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllLines((Join-Path $stage 'toolchain-omissions.txt'), $omissions, (New-Object Text.UTF8Encoding($false)))
     $end = [DateTime]::UtcNow
     @{start=$start.ToString('o');end=$end.ToString('o');seconds=($end-$start).TotalSeconds;files=$manifest.Count;sdk=$SdkVersion} |
         ConvertTo-Json | Set-Content (Join-Path $stage 'toolchain-build.json')

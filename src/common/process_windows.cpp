@@ -290,6 +290,7 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   const auto deadline = std::chrono::steady_clock::now() + options.timeout;
   std::array<char, 16384> buffer{};
   bool pipe_open = true;
+  bool sandbox_descendants_stopped = false;
   try {
     while (true) {
       DWORD available = 0;
@@ -307,6 +308,12 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
       }
       const DWORD waited = WaitForSingleObject(process.value, 0);
       if (waited == WAIT_FAILED) fail("wait for process");
+      if (sandbox && waited == WAIT_OBJECT_0 && !sandbox_descendants_stopped) {
+        // A completed step must not leave background helpers holding stdout
+        // open or modifying its workspace while the next step/publisher runs.
+        if (!TerminateJobObject(job.value, 0)) fail("finish sandbox descendants");
+        sandbox_descendants_stopped = true;
+      }
       if (!pipe_open && waited == WAIT_OBJECT_0) break;
       const bool cancelled = options.should_continue && !options.should_continue();
       if (cancelled || std::chrono::steady_clock::now() >= deadline) {
