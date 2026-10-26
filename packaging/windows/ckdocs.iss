@@ -118,7 +118,7 @@ begin
 #if Product == "ck-git-runner"
   Result := Result + NewLine + 'Before starting the runner, select the SSH client in runner.ini and check the configuration.';
 #elif Product == "ckgit"
-  Result := Result + NewLine + 'Run ckgit doctor after setup to test the programs selected by your client configuration.';
+  Result := Result + NewLine + 'Run ckgit doctor after setup to test Git and the configured server connection.';
 #else
   Result := Result + NewLine + 'Git is needed for documentation portals built from repository refs.';
 #endif

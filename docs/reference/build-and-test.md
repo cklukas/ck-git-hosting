@@ -178,8 +178,8 @@ and portable Git directories. This preflight checks presence, not executable
 version or trust, and does not run discovered programs with installer rights.
 Missing tools do not block local documentation use or offline installation;
 remote operations require Git and SSH, and ref portals require Git. Existing
-client/runner tool settings remain unchanged. Run `ckgit doctor` after client
-setup to verify the programs selected by that user's configuration.
+client/runner configuration remains unchanged. Run `ckgit doctor` after client
+setup to check Git availability and the configured server connection.
 
 The combined `ckgit` installer offers `ckgit`, `ckdocs`, or both (the default).
 For unattended selection, pass `/COMPONENTS="ckgit"`, `/COMPONENTS="ckdocs"`,
