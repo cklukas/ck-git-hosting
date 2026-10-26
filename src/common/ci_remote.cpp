@@ -4,34 +4,17 @@
 #include "ckgit/ci_remote.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <charconv>
-#include <csignal>
-#include <cstring>
-#include <fcntl.h>
 #include <fstream>
-#include <poll.h>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <thread>
-#include <unistd.h>
-#include <unordered_set>
-
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-
 #include "ckgit/ci_results.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/process.hpp"
 #include "ckgit/temp_directory.hpp"
-#include "ckgit/server_config.hpp"
-#include "ckgit/ssh_command.hpp"
+#include "ckgit/path_utf8.hpp"
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
-
-extern char** environ;
 
 namespace ckgit {
 namespace {
@@ -60,7 +43,7 @@ RemoteCiSource::RemoteCiSource(const CiRemoteTransport& transport, std::string j
 void RemoteCiSource::checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) {
   if (!isValidProjectName(request.project)) throw std::runtime_error("invalid checkout request");
   cloneCiCheckout(transport_.fetchUrl(request.project), request, destination,
-                  {"GIT_SSH_COMMAND=" + transport_.gitSshCommand(job_id_, token_)});
+                  {"GIT_SSH_COMMAND=" + transport_.gitSshCommand(job_id_, token_), "GIT_SSH_VARIANT=ssh"});
 }
 
 // --- remote sink ---------------------------------------------------------------
@@ -70,10 +53,15 @@ RemoteCiSink::RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob
     : transport_(transport), job_(job), relay_dir_(std::move(relay_dir)), stop_flag_(stop_flag) {
   std::error_code error;
   std::filesystem::create_directories(relay_dir_, error);
-  ::chmod(relay_dir_.c_str(), 0700);
+  if (error) throw std::runtime_error("could not create runner relay directory");
+  relay_dir_ = createTempDirectory(relay_dir_, "private-");
 }
 
-RemoteCiSink::~RemoteCiSink() { disconnect(); }
+RemoteCiSink::~RemoteCiSink() {
+  disconnect();
+  std::error_code error;
+  std::filesystem::remove_all(relay_dir_, error);
+}
 
 std::filesystem::path RemoteCiSink::relayPath(std::size_t index) const {
   return relay_dir_ / (std::to_string(index) + ".log");
@@ -281,8 +269,9 @@ void RemoteCiSink::runStarted(const CiRunRecord& record) {
 
 void RemoteCiSink::stepStarted(const CiRunRecord&, std::size_t index) {
   if (steps_.size() <= index) steps_.resize(index + 1);
-  std::ofstream(relayPath(index), std::ios::binary | std::ios::trunc);
-  ::chmod(relayPath(index).c_str(), 0600);
+  std::ofstream relay(relayPath(index), std::ios::binary | std::ios::trunc);
+  relay.close();
+  if (!relay) throw std::runtime_error("could not create runner step log");
   steps_[index] = StepLog{};
   send("step-start " + std::to_string(index) + " -\n");
 }
@@ -291,6 +280,8 @@ void RemoteCiSink::appendLog(std::size_t index, std::string_view bytes) {
   if (index >= steps_.size() || bytes.empty()) return;
   std::ofstream relay(relayPath(index), std::ios::binary | std::ios::app);
   relay.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  relay.close();
+  if (!relay) throw std::runtime_error("could not append runner step log");
   steps_[index].size += bytes.size();
 }
 
@@ -339,6 +330,7 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
     std::string chunk(length, '\0');
     in.seekg(static_cast<std::streamoff>(offset));
     in.read(chunk.data(), static_cast<std::streamsize>(length));
+    if (static_cast<std::size_t>(in.gcount()) != length) throw std::runtime_error("could not read runner upload payload");
     command.offset = offset;
     const CiRemoteTransport::Result result = transport_.run(command, chunk, std::chrono::seconds(300));
     const std::string reply = firstLine(result.output);
@@ -393,7 +385,7 @@ void RemoteCiSink::putPagesSite(const std::filesystem::path& site) {
   ProcessOptions options;
   options.timeout = std::chrono::seconds(600);
   options.output_limit = 16 * 1024;
-  const ProcessResult packed = runProcess({"tar", "-cf", archive.string(), "-C", site.string(), "."}, options);
+  const ProcessResult packed = runProcess({"tar", "-cf", pathToUtf8(archive), "-C", pathToUtf8(site), "."}, options);
   if (packed.timed_out || packed.exit_code != 0) throw std::runtime_error("the site could not be packed");
   upload("pages", kCiPagesUploadName, archive);
   std::error_code error;

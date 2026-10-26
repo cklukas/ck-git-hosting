@@ -12,6 +12,7 @@
 #include "ckgit/path_utf8.hpp"
 #include <fstream>
 #include <cstdlib>
+#include <sstream>
 #include "ckgit/web_renderer.hpp"
 #include <chrono>
 #include <iostream>
@@ -46,6 +47,45 @@ int run(const std::vector<std::string>& args) {
 #endif
       const auto command = ckgit::parseCiRunnerCommand(args.back());
       if (!command) return 2;
+      if (command->job_id == "sink-job") {
+        if (command->protocol_version != 2 || command->token != std::string(32, 'b')) return 2;
+        if (command->op == ckgit::CiRunnerOp::kStream) {
+          std::cout << "ready\n" << std::flush;
+          std::uint64_t held = 0;
+          for (std::string line; std::getline(std::cin, line);) {
+            std::istringstream fields(line);
+            std::string operation;
+            fields >> operation;
+            if (operation == "log") {
+              std::size_t index = 0, length = 0;
+              std::uint64_t offset = 0;
+              fields >> index >> offset >> length;
+              if (!fields || index != 0 || offset != held || length > ckgit::kMaximumCiLogFrameBytes) return 2;
+              std::string bytes(length, '\0');
+              std::cin.read(bytes.data(), static_cast<std::streamsize>(length));
+              if (!std::cin || bytes != std::string(length, 'x')) return 2;
+              held += length;
+              std::cout << "ack 0 " << held << '\n' << std::flush;
+            }
+          }
+          return held == 200000 ? 0 : 2;
+        }
+        const std::string body(std::istreambuf_iterator<char>(std::cin), {});
+        if (command->op == ckgit::CiRunnerOp::kPut) {
+          if (command->offset != 0 || command->total != body.size() || command->sha256 != ckgit::sha256Hex(body)) return 2;
+          std::cout << "ok " << body.size() << '\n';
+          return 0;
+        }
+        if (command->op == ckgit::CiRunnerOp::kFinish) {
+          const auto report = ckgit::parseCiFinishReport(body);
+          if (report.status != ckgit::CiRunStatus::Success || report.steps.size() != 1 ||
+              report.steps[0].name != "compile" || report.outputs.size() != 1 || report.outputs[0].name != "build" ||
+              !report.outputs[0].note.empty()) return 2;
+          std::cout << "ok success\n";
+          return 0;
+        }
+        return 2;
+      }
       if (command->op == ckgit::CiRunnerOp::kHello) {
         std::cout << "ok\nprotocol=" << command->protocol_version << "\n";
       } else if (command->op == ckgit::CiRunnerOp::kClaim) {
@@ -223,6 +263,35 @@ int run(const std::vector<std::string>& args) {
       require(output == "ready\nheartbeat\n", "native SSH transport carries bidirectional stream frames");
       ckgit::CiRemoteTransport::close(session);
       require(!session, "native SSH transport closes session ownership");
+      {
+        ckgit::CiRemoteJob job;
+        job.prepared.job.job_id = "sink-job";
+        job.token = std::string(32, 'b');
+        ckgit::RemoteCiSink sink(transport, job, root / "relay", nullptr);
+        ckgit::CiRunRecord record;
+        record.started_epoch_seconds = 1;
+        record.status = ckgit::CiRunStatus::Running;
+        sink.runStarted(record);
+        sink.stepStarted(record, 0);
+        sink.appendLog(0, std::string(200000, 'x'));
+        ckgit::CiStepResult step;
+        step.name = "compile";
+        step.exit_code = 0;
+        record.steps.push_back(step);
+        sink.stepFinished(record, 0);
+        ckgit::CiArtifact artifact;
+        artifact.name = "build";
+        const auto uploaded_artifact = sink.putArtifact(artifact, file, {}, false);
+        require(uploaded_artifact.bytes == payload.size() && uploaded_artifact.note.empty(),
+            "native result sink uploads verified artifact bytes");
+        const auto site = root / ckgit::pathFromUtf8("Pages \xc3\xbc");
+        std::filesystem::create_directory(site);
+        std::ofstream(site / "index.html", std::ios::binary) << "native Pages fixture";
+        sink.putPagesSite(site);
+        record.status = ckgit::CiRunStatus::Success;
+        require(sink.finish(record).status == ckgit::CiRunStatus::Success, "native sink commits logs and declared outputs");
+      }
+      require(std::filesystem::is_empty(root / "relay"), "native sink removes private relay staging");
     }
     ckgit::ProcessOptions options;
     options.input_file = file;

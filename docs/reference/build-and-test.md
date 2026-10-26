@@ -78,6 +78,12 @@ ID, token and protocol version. Configuration paths include spaces, Unicode
 and an apostrophe. The Windows shim inherits only standard I/O and keeps its
 SSH child in a kill-on-close Job Object. The connected AppContainer executor
 and rpi4 deployment qualification remain outstanding.
+The remote result sink now also builds natively. Its local SSH fixture checks
+acknowledged log frames, artifact and Pages upload checksums, and the terminal
+report. Relay files live in a private temporary subdirectory that is removed
+when the sink closes; failed local writes or short upload reads stop reporting
+those bytes as successfully transferred. Pages packaging currently requires
+`tar` on the runner's PATH.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed
