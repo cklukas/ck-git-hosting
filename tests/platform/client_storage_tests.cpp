@@ -6,6 +6,7 @@
 #include "ckgit/path_utf8.hpp"
 #include "ckgit/temp_directory.hpp"
 #include "ckgit/windows.hpp"
+#include "ckgit/runner_config.hpp"
 #include <atomic>
 #include <fstream>
 #include <iostream>
@@ -58,6 +59,36 @@ int run(const std::vector<std::string>& args) {
   const auto root = ckgit::createTempDirectory(ckgit::pathFromUtf8(args[1]), "client-storage-");
   struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); } } cleanup{root};
   const auto directory = root / ckgit::pathFromUtf8("config with spaces-\xc3\xbc");
+  {
+    ckgit::RunnerConfig runner;
+    runner.server = "ckgit@example.test";
+    runner.name = "test-runner";
+    runner.build_root = root;
+#ifdef _WIN32
+    runner.build_root = directory / "build";
+    runner.ssh_program = directory / "ssh.exe";
+#endif
+    runner.identity = directory / "identity";
+    const auto runner_file = root / "runner.ini";
+    const auto write_runner = [&](const std::string& content) {
+      std::ofstream(runner_file, std::ios::binary | std::ios::trunc) << content;
+    };
+    const auto rendered = ckgit::renderRunnerConfig(runner);
+    std::string crlf;
+    for (const char c : rendered) { if (c == '\n') crlf += '\r'; crlf += c; }
+    write_runner(crlf);
+    const auto parsed = ckgit::loadRunnerConfig(runner_file);
+    require(parsed.build_root == runner.build_root && parsed.identity == runner.identity &&
+        parsed.ssh_program == runner.ssh_program, "native runner paths survive UTF-8 and CRLF configuration");
+    write_runner("schema_version=1\nserver=ckgit@example.test\nname=test-runner\nci_build_root=relative\n");
+    rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "relative runner build root rejected");
+#ifdef _WIN32
+    write_runner("schema_version=1\nserver=ckgit@example.test\nname=test-runner\nci_build_root=V:relative\n");
+    rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "drive-relative build root rejected");
+    write_runner(rendered + "ci_allow_degraded=true\n");
+    rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "Windows cannot opt out of AppContainer isolation");
+#endif
+  }
   const auto identity_path = root / "identity";
   std::filesystem::create_directory(identity_path);
   {

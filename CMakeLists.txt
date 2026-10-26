@@ -32,7 +32,7 @@ endif()
 # Unix socket transport. Windows builds this layer without POSIX headers.
 set(PORTABLE_SOURCES
   src/common/checkout_path.cpp src/common/ci_types.cpp src/common/sync_lock.cpp src/common/directory_identity.cpp
-  src/common/client_config.cpp src/common/client_state.cpp
+  src/common/client_config.cpp src/common/client_state.cpp src/common/runner_config.cpp
   src/common/ci_control.cpp src/common/server_identity.cpp
   src/common/release_control.cpp src/common/display_format.cpp
   src/common/ci_workflow.cpp src/common/cli_help.cpp src/common/control_rpc.cpp

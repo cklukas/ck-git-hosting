@@ -10,6 +10,8 @@
 #include <optional>
 
 namespace ckgit {
+bool isValidSshCloneTarget(std::string_view value);
+
 
 // First-release repository names are deliberately a narrow, portable subset.
 // The returned string is empty when the value is valid.

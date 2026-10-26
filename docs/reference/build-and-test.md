@@ -42,6 +42,22 @@ CMake 3.24 or later. Install Git for Windows and make `git.exe` available on
 PATH for repository inspection and its integration tests. The executables
 link the C++ runtime statically.
 
+Runner configuration parsing is shared across platforms and accepts UTF-8
+paths and LF or CRLF line endings. Windows build, cache and credential paths
+must be absolute; drive-relative paths such as `V:build` are rejected. Windows
+also rejects `ci_allow_degraded=true`: there is no unsandboxed fallback. Native
+configuration tests cover Unicode paths, spaces and these refusal cases. This
+configuration support does not yet constitute a connected Windows runner.
+
+The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
+built both installers and the portable ZIP from commit `ae982d1d6295`, passed
+native tests, and tested both installer scopes. Those exact installers were
+installed on the development workstation on 2026-10-26 with a non-admin token
+in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
+Installed executable hashes matched the CI ZIP, and both reported
+`0.8.2+gae982d1d6295`. This verifies client installation; runner installation
+and the rpi4-to-Windows job qualification remain outstanding.
+
 On the development workstation, keep sources in a permanent directory on
 `V:` and select a unique temporary directory before running development tools:
 

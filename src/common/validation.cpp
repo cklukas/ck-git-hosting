@@ -7,6 +7,21 @@
 #include <cctype>
 
 namespace ckgit {
+bool isValidSshCloneTarget(std::string_view value) {
+  const auto at = value.find('@');
+  if (value.empty() || value.size() > 255 || at == std::string_view::npos || at == 0 ||
+      at + 1 == value.size() || value.find('@', at + 1) != std::string_view::npos) return false;
+  const auto safe = [](std::string_view component) {
+    return component.front() != '-' && component.front() != '.' && component.back() != '.' &&
+        std::all_of(component.begin(), component.end(), [](unsigned char byte) {
+          return (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
+                 (byte >= '0' && byte <= '9') || byte == '-' || byte == '_' || byte == '.';
+        });
+  };
+  return safe(value.substr(0, at)) && safe(value.substr(at + 1));
+}
+
+
 namespace {
 
 bool isAsciiProjectCharacter(unsigned char character) {

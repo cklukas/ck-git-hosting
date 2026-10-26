@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "ckgit/ci_runner.hpp"
+#include "ckgit/runner_config.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
 
 namespace ckgit {
@@ -22,37 +23,6 @@ namespace ckgit {
 // claims jobs through the runner protocol (ci_runner_protocol.hpp), fetches
 // source through the same SSH account, relays its progress live, uploads its
 // outputs, and keeps nothing once a job has ended.
-
-// /etc/ck-git-hosting/runner.ini, strict key=value like server.ini:
-//
-//   schema_version=1
-//   server=ckgit@rpi4                # SSH destination of the main host
-//   name=uconsole                    # this runner's client id (its key's)
-//   ci_build_root=/var/lib/ck-git-runner/ci-build
-//   identity=/var/lib/ck-git-runner/.ssh/id_ed25519   # optional
-//   known_hosts=/var/lib/ck-git-runner/.ssh/known_hosts  # optional
-//   ssh_program=/usr/bin/ssh         # optional
-//   claim_wait_seconds=60            # optional long-poll length (1..120)
-//   ci_cache_root=...                # optional; unset keeps the runner clean
-//   ci_allow_network=false           # optional; may only tighten the server
-//   ci_timeout_seconds=...           # optional; may only tighten the server
-//   ci_allow_degraded=false          # optional; run without a sandbox?
-struct RunnerConfig {
-  std::string server;
-  std::string name;
-  std::filesystem::path build_root;
-  std::optional<std::filesystem::path> identity;
-  std::optional<std::filesystem::path> known_hosts;
-  std::filesystem::path ssh_program{"/usr/bin/ssh"};
-  unsigned claim_wait_seconds = 60;
-  std::optional<std::filesystem::path> cache_root;
-  bool allow_network = true;  // true = whatever the server allows
-  std::optional<unsigned> timeout_seconds;
-  bool allow_degraded = false;
-};
-
-RunnerConfig loadRunnerConfig(const std::filesystem::path& path);
-std::string renderRunnerConfig(const RunnerConfig& config);
 
 // Runs runner protocol operations over SSH. Every operation is one `ssh` exec
 // of the runner key's forced command; a ControlMaster connection under the
