@@ -166,14 +166,24 @@ Inno Setup 6 builds `packaging/windows/ckdocs.iss` and
 `/DBinaryDir`, `/DOutputDir`, and `/DReleaseVersion` definitions. The installer
 supports `/CURRENTUSER` without elevation and `/ALLUSERS` with administrator
 rights. It tracks its own PATH entry and preserves user files on uninstall.
+The combined `ckgit` installer offers `ckgit`, `ckdocs`, or both (the default).
+For unattended selection, pass `/COMPONENTS="ckgit"`, `/COMPONENTS="ckdocs"`,
+or `/COMPONENTS="ckgit,ckdocs"`. An empty selection is rejected. Reinstalling
+can add a component; deselecting a previously installed component does not
+remove its existing files. Use the uninstaller to remove the installation.
 `tests/integration/windows_installer.ps1` checks installation, reinstallation,
-binary identity, execution and uninstallation. Use `-RequireNonAdmin` from a
+binary identity, execution and uninstallation. For `ckgit`, it also rejects an
+empty selection and upgrades the initial selection to both components. Set
+`-InitialComponents ckgit` or `-InitialComponents ckdocs` to test a single-tool
+installation; the default tests the installer's default selection.
+Use `-RequireNonAdmin` from a
 non-elevated process to verify installation without administrator rights.
 Pass `-Product ckgit -DocsBinary <verified-ckdocs.exe>` for the client installer;
 it bundles both executables. The portable ZIP also contains both tools.
 
-The reusable GitHub Windows workflow builds the ZIP and both installers, runs native
-tests and checks both installer scopes. Its callers include push CI and the
+The reusable GitHub Windows workflow builds the ZIP and all three installers,
+runs native tests and checks both installer scopes, including every client
+component selection. Its callers include push CI and the
 release workflow. Hosted runners use their supplied `RUNNER_TEMP`; the `V:`
 policy above applies to the development workstation. Installers are currently
 unsigned.

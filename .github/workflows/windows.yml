@@ -54,7 +54,10 @@ jobs:
           foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
             $executable = if ($product -eq 'ck-git-runner') { 'ck-ci-runnerd' } else { $product }
             foreach ($mode in @('CurrentUser','AllUsers')) {
-              & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/Release/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode
+              $selections = if ($product -eq 'ckgit') { @('both','ckgit','ckdocs') } else { @('both') }
+              foreach ($selection in $selections) {
+                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/Release/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection
+              }
             }
           }
       - uses: actions/upload-artifact@v7

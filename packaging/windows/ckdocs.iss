@@ -19,6 +19,9 @@
 #ifndef ProductExecutable
   #define ProductExecutable Product + ".exe"
 #endif
+#ifndef InstallerStateKey
+  #define InstallerStateKey "Software\ckgit\" + Product + "\Installer"
+#endif
 
 [Setup]
 AppId={#ProductAppId}
@@ -37,21 +40,36 @@ OutputBaseFilename={#Product}-{#ReleaseVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+#if Product != "ckgit"
 UninstallDisplayIcon={app}\{#ProductExecutable}
+#endif
 CloseApplications=yes
 RestartApplications=no
 ChangesEnvironment=yes
 LicenseFile=..\..\LICENSE
 
+#if Product == "ckgit"
+[Types]
+Name: full; Description: "ckgit and ckdocs"
+Name: cli; Description: "ckgit only"
+Name: docs; Description: "ckdocs only"
+Name: custom; Description: "Custom selection"; Flags: iscustom
+
+[Components]
+Name: ckgit; Description: "ckgit command-line client"; Types: full cli
+Name: ckdocs; Description: "ckdocs documentation generator"; Types: full docs
+#endif
+
 [Files]
 #if Product == "ckgit"
-Source: "{#BinaryDir}\ckgit.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\ckgit.exe"; DestDir: "{app}"; Components: ckgit; Flags: ignoreversion
+Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Components: ckdocs; Flags: ignoreversion
 #endif
 #if Product == "ck-git-runner"
 Source: "{#BinaryDir}\ck-ci-runnerd.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\ckgit-job-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "runner.ini.example"; DestDir: "{app}"; Flags: ignoreversion
-#else
+#elif Product == "ckdocs"
 Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -104,19 +122,19 @@ var
 begin
   if CurStep = ssPostInstall then begin
     RegQueryStringValue(ScopeRoot, EnvironmentKey, 'Path', Value);
-    if RegQueryStringValue(ScopeRoot, 'Software\ckgit\{#Product}\Installer', 'OwnedPath', Owned) and
+    if RegQueryStringValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath', Owned) and
        ((CompareText(Owned, ExpandConstant('{app}')) <> 0) or not WizardIsTaskSelected('addtopath')) then begin
       Value := WithoutPath(Value, Owned, Found);
       if not RegWriteExpandStringValue(ScopeRoot, EnvironmentKey, 'Path', Value) then
         RaiseException('Could not remove previous PATH entry');
-      RegDeleteValue(ScopeRoot, 'Software\ckgit\{#Product}\Installer', 'OwnedPath');
+      RegDeleteValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath');
     end;
     Ignored := WithoutPath(Value, ExpandConstant('{app}'), Found);
     if WizardIsTaskSelected('addtopath') and not Found then begin
       if Value <> '' then Value := Value + ';';
       if not RegWriteExpandStringValue(ScopeRoot, EnvironmentKey, 'Path', Value + ExpandConstant('{app}')) then
         RaiseException('Could not update PATH');
-      RegWriteStringValue(ScopeRoot, 'Software\ckgit\{#Product}\Installer', 'OwnedPath', ExpandConstant('{app}'));
+      RegWriteStringValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath', ExpandConstant('{app}'));
     end;
   end;
 end;
@@ -127,11 +145,11 @@ var
   Found: Boolean;
 begin
   if CurUninstallStep = usPostUninstall then begin
-    if RegQueryStringValue(ScopeRoot, 'Software\ckgit\{#Product}\Installer', 'OwnedPath', Owned) and
+    if RegQueryStringValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath', Owned) and
        (CompareText(Owned, ExpandConstant('{app}')) = 0) then begin
       if RegQueryStringValue(ScopeRoot, EnvironmentKey, 'Path', Value) then
         RegWriteExpandStringValue(ScopeRoot, EnvironmentKey, 'Path', WithoutPath(Value, Owned, Found));
-      RegDeleteValue(ScopeRoot, 'Software\ckgit\{#Product}\Installer', 'OwnedPath');
+      RegDeleteValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath');
     end;
   end;
 end;
@@ -141,4 +159,9 @@ begin
   Result := '';
   if Pos(';', ExpandConstant('{app}')) <> 0 then
     Result := 'Choose an installation path without a semicolon.';
+#if Product == "ckgit"
+  if (Result = '') and not WizardIsComponentSelected('ckgit') and
+     not WizardIsComponentSelected('ckdocs') then
+    Result := 'Select at least one component: ckgit or ckdocs.';
+#endif
 end;
