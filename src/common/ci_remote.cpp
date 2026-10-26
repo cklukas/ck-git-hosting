@@ -58,63 +58,6 @@ std::filesystem::path selfExecutable() {
 #endif
 }
 
-struct Spawned {
-  pid_t pid = -1;
-  int in = -1;   // write end: the child's stdin
-  int out = -1;  // read end: the child's stdout
-};
-
-Spawned spawnPiped(const std::vector<std::string>& argv) {
-  int to_child[2];
-  int from_child[2];
-  if (::pipe(to_child) != 0) throw std::runtime_error("could not create a pipe");
-  if (::pipe(from_child) != 0) {
-    ::close(to_child[0]);
-    ::close(to_child[1]);
-    throw std::runtime_error("could not create a pipe");
-  }
-  const pid_t pid = ::fork();
-  if (pid < 0) {
-    ::close(to_child[0]);
-    ::close(to_child[1]);
-    ::close(from_child[0]);
-    ::close(from_child[1]);
-    throw std::runtime_error("could not start ssh");
-  }
-  if (pid == 0) {
-    ::dup2(to_child[0], STDIN_FILENO);
-    ::dup2(from_child[1], STDOUT_FILENO);
-    ::close(to_child[0]);
-    ::close(to_child[1]);
-    ::close(from_child[0]);
-    ::close(from_child[1]);
-    std::vector<char*> raw;
-    for (const std::string& argument : argv) raw.push_back(const_cast<char*>(argument.c_str()));
-    raw.push_back(nullptr);
-    ::execvp(raw[0], raw.data());
-    _exit(127);
-  }
-  ::close(to_child[0]);
-  ::close(from_child[1]);
-  ::fcntl(to_child[1], F_SETFD, FD_CLOEXEC);
-  ::fcntl(from_child[0], F_SETFD, FD_CLOEXEC);
-  return Spawned{pid, to_child[1], from_child[0]};
-}
-
-void reap(pid_t pid, bool terminate) {
-  if (pid <= 0) return;
-  int status = 0;
-  for (int attempt = 0; attempt < 50; ++attempt) {
-    const pid_t done = ::waitpid(pid, &status, WNOHANG);
-    if (done == pid || (done < 0 && errno != EINTR)) return;
-    if (attempt == 10 && terminate) ::kill(pid, SIGTERM);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  ::kill(pid, SIGKILL);
-  while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-  }
-}
-
 std::uint64_t parseCount(std::string_view text) {
   std::uint64_t value = 0;
   const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -211,18 +154,10 @@ CiRemoteTransport::Session CiRemoteTransport::open(const CiRunnerCommand& comman
   auto negotiated = command;
   negotiated.protocol_version = protocol_version_;
   argv.push_back(formatCiRunnerCommand(negotiated));
-  const Spawned child = spawnPiped(argv);
-  return Session{child.pid, child.in, child.out};
+  return std::make_unique<ProcessStream>(argv);
 }
 
-void CiRemoteTransport::close(Session& session) {
-  if (session.to_server >= 0) ::close(session.to_server);
-  if (session.from_server >= 0) ::close(session.from_server);
-  session.to_server = -1;
-  session.from_server = -1;
-  reap(session.pid, true);
-  session.pid = -1;
-}
+void CiRemoteTransport::close(Session& session) { session.reset(); }
 
 std::string CiRemoteTransport::gitSshCommand(const std::string& job_id, const std::string& token) const {
   const std::string self = selfExecutable().string();
@@ -303,11 +238,10 @@ bool RemoteCiSink::connect() {
   std::string buffer;
   bool ready = false;
   while (!ready && std::chrono::steady_clock::now() < deadline) {
-    pollfd descriptor{session_.from_server, POLLIN, 0};
-    if (::poll(&descriptor, 1, 500) <= 0) continue;
     char chunk[4096];
-    const ssize_t received = ::read(session_.from_server, chunk, sizeof(chunk));
-    if (received <= 0) break;
+    const auto received = session_->read(chunk, sizeof(chunk));
+    if (received < 0) break;
+    if (!received) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
     buffer.append(chunk, static_cast<std::size_t>(received));
     std::size_t newline;
     while ((newline = buffer.find('\n')) != std::string::npos) {
@@ -339,15 +273,13 @@ bool RemoteCiSink::connect() {
     return false;
   }
   reply_buffer_ = buffer;
-  ::fcntl(session_.to_server, F_SETFL, ::fcntl(session_.to_server, F_GETFL) | O_NONBLOCK);
-  ::fcntl(session_.from_server, F_SETFL, ::fcntl(session_.from_server, F_GETFL) | O_NONBLOCK);
   connected_ = true;
   resend();
   return true;
 }
 
 void RemoteCiSink::disconnect() {
-  if (session_.pid > 0 || session_.to_server >= 0) CiRemoteTransport::close(session_);
+  CiRemoteTransport::close(session_);
   connected_ = false;
   out_buffer_.clear();
 }
@@ -379,12 +311,12 @@ void RemoteCiSink::send(const std::string& frame) {
 // Writes as much of the outgoing buffer as the connection takes now.
 void RemoteCiSink::pump() {
   while (connected_ && !out_buffer_.empty()) {
-    const ssize_t written = ::write(session_.to_server, out_buffer_.data(), out_buffer_.size());
+    const auto written = session_->write(out_buffer_);
     if (written > 0) {
       out_buffer_.erase(0, static_cast<std::size_t>(written));
       continue;
     }
-    if (written < 0 && (errno == EAGAIN || errno == EINTR)) return;
+    if (written == 0) return;
     disconnect();  // the connection broke; tick() reconnects and resends
     return;
   }
@@ -448,12 +380,12 @@ void RemoteCiSink::readReplies() {
   if (!connected_) return;
   char chunk[4096];
   for (;;) {
-    const ssize_t received = ::read(session_.from_server, chunk, sizeof(chunk));
+    const auto received = session_->read(chunk, sizeof(chunk));
     if (received > 0) {
       reply_buffer_.append(chunk, static_cast<std::size_t>(received));
       continue;
     }
-    if (received < 0 && (errno == EAGAIN || errno == EINTR)) break;
+    if (received == 0) break;
     disconnect();  // the main host closed the stream
     break;
   }

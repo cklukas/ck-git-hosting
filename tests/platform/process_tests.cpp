@@ -157,6 +157,45 @@ int run(const std::vector<std::string>& args) {
       catch (const std::exception&) { refused = true; }
       require(refused, "non-regular or relative process input refused");
     }
+    {
+      ckgit::ProcessStream stream({args[0], "input"});
+      std::size_t sent = 0;
+      std::string received;
+      bool closed = false;
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      while (std::chrono::steady_clock::now() < deadline) {
+        if (sent < payload.size()) {
+          const auto count = stream.write(std::string_view(payload).substr(sent));
+          require(count >= 0, "stream stays open while transmitting binary input");
+          sent += static_cast<std::size_t>(count);
+        } else stream.closeInput();
+        char buffer[16384];
+        const auto count = stream.read(buffer, sizeof(buffer));
+        if (count > 0) received.append(buffer, static_cast<std::size_t>(count));
+        if (count < 0) closed = true;
+        if (closed && stream.poll()) break;
+        if (!count) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      require(closed && stream.poll() == 0 && sent == payload.size(), "stream completes bidirectional transfer");
+      require(received == std::string(1024 * 1024, 'o') + payload, "stream preserves binary data under backpressure");
+    }
+    {
+      ckgit::ProcessStream stream({args[0], "sleep"});
+      std::size_t accepted = 0;
+      bool blocked = false;
+      while (accepted < 4 * 1024 * 1024) {
+        const auto count = stream.write(payload);
+        require(count >= 0, "live sleeper stream accepts input");
+        if (!count) { blocked = true; break; }
+        accepted += static_cast<std::size_t>(count);
+      }
+      require(blocked, "stream input is bounded when child does not read");
+      const auto before = std::chrono::steady_clock::now();
+      stream.stop();
+      require(std::chrono::steady_clock::now() - before < std::chrono::seconds(3), "pending stream write cancels promptly");
+      require(stream.poll().has_value() && stream.poll() != 0, "stopped stream has terminal status");
+      require(stream.write("late") < 0, "closed stream refuses more input");
+    }
   }
   result = ckgit::runProcess({args[0], "large"}, std::chrono::seconds(5), 127);
   require(result.exit_code == 0 && result.output.size() == 127 && result.output_truncated, "bounded pipe drain");
@@ -192,6 +231,14 @@ int run(const std::vector<std::string>& args) {
   const auto event = CreateEventW(&security, TRUE, FALSE, nullptr);
   require(event != nullptr, "create inherited-handle fixture");
   result = ckgit::runProcess({args[0], "handle", std::to_string(reinterpret_cast<std::uintptr_t>(event))});
+  {
+    ckgit::ProcessStream stream({args[0], "handle", std::to_string(reinterpret_cast<std::uintptr_t>(event))});
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!stream.poll() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    require(stream.poll() == 0, "stream does not inherit unlisted handles");
+    require(stream.write("after-exit") < 0, "stream detects closed child input");
+  }
   const auto event_status = WaitForSingleObject(event, 0);
   CloseHandle(event);
   require(result.exit_code == 0 && event_status == WAIT_TIMEOUT, "unlisted handle not inherited");

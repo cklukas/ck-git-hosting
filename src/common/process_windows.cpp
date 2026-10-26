@@ -5,6 +5,7 @@
 #include "ckgit/windows_sandbox.hpp"
 #include <windows.h>
 #include <sddl.h>
+#include <bcrypt.h>
 #include <algorithm>
 #include <array>
 #include <cwctype>
@@ -402,4 +403,164 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
   Handle process(info.hProcess), thread(info.hThread);
   return static_cast<int>(info.dwProcessId);
 }
+
+struct ProcessStream::State {
+  Handle process, job, input, output, event;
+  OVERLAPPED write_operation{};
+  std::array<char, 65536> outgoing{};
+  DWORD queued = 0;
+  bool pending = false;
+  std::optional<int> exit;
+  int finishWrite() {
+    if (!pending) return 1;
+    DWORD transferred = 0;
+    if (!GetOverlappedResult(input.value, &write_operation, &transferred, FALSE)) {
+      if (GetLastError() == ERROR_IO_INCOMPLETE) return 0;
+      pending = false;
+      input.close();
+      return -1;
+    }
+    pending = false;
+    if (transferred != queued) { input.close(); return -1; }
+    return 1;
+  }
+};
+ProcessStream::ProcessStream(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+  auto command = commandLine(arguments);
+  if (arguments.empty()) throw std::invalid_argument("empty stream command");
+  const auto application = executable(arguments.front());
+  Handle token;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token.value)) fail("query stream owner");
+  DWORD size = 0;
+  GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
+  std::vector<unsigned char> user(size);
+  if (!GetTokenInformation(token.value, TokenUser, user.data(), size, &size)) fail("query stream owner SID");
+  LPWSTR sid = nullptr;
+  if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &sid)) fail("format stream owner SID");
+  const auto sddl = L"D:P(A;;GA;;;" + std::wstring(sid) + L")(A;;GA;;;SY)";
+  LocalFree(sid);
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr))
+    fail("create private stream ACL");
+  struct Descriptor { PSECURITY_DESCRIPTOR value; ~Descriptor() { LocalFree(value); } } descriptor_owner{descriptor};
+  SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
+  std::array<unsigned char, 16> random{};
+  if (BCryptGenRandom(nullptr, random.data(), static_cast<ULONG>(random.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+    throw std::runtime_error("cannot generate private stream name");
+  std::wstring name = LR"(\\.\pipe\ckgit-stream-)";
+  for (const auto byte : random) { name += L"0123456789abcdef"[byte >> 4]; name += L"0123456789abcdef"[byte & 15]; }
+  state_->input.value = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED |
+      FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+      1, 65536, 65536, 0, &security);
+  if (state_->input.value == INVALID_HANDLE_VALUE) fail("create private stream input");
+  security.bInheritHandle = TRUE;
+  Handle child_input(CreateFileW(name.c_str(), GENERIC_READ, 0, &security, OPEN_EXISTING, 0, nullptr));
+  if (child_input.value == INVALID_HANDLE_VALUE) fail("open child stream input");
+  state_->event.value = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!state_->event.value) fail("create stream write event");
+  state_->write_operation.hEvent = state_->event.value;
+  // The synchronous client is already connected before the server starts I/O.
+  if (!ConnectNamedPipe(state_->input.value, &state_->write_operation) && GetLastError() != ERROR_PIPE_CONNECTED)
+    fail("connect private stream input");
+  Handle child_output, child_error;
+  if (!CreatePipe(&state_->output.value, &child_output.value, &security, 0) ||
+      !SetHandleInformation(state_->output.value, HANDLE_FLAG_INHERIT, 0)) fail("create stream output");
+  if (!DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(),
+      &child_error.value, 0, TRUE, DUPLICATE_SAME_ACCESS)) fail("duplicate stream stderr");
+  std::array<HANDLE, 3> inherited{child_input.value, child_output.value, child_error.value};
+  Attributes attributes;
+  if (!UpdateProcThreadAttribute(attributes.list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+      inherited.data(), sizeof(inherited), nullptr, nullptr)) fail("restrict stream inherited handles");
+  state_->job.value = CreateJobObjectW(nullptr, nullptr);
+  if (!state_->job.value) fail("create stream process job");
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(state_->job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    fail("configure stream process job");
+  STARTUPINFOEXW startup{};
+  startup.StartupInfo.cb = sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  startup.StartupInfo.hStdInput = child_input.value;
+  startup.StartupInfo.hStdOutput = child_output.value;
+  startup.StartupInfo.hStdError = child_error.value;
+  startup.lpAttributeList = attributes.list;
+  PROCESS_INFORMATION info{};
+  {
+    const std::lock_guard lock(windowsProcessCreationMutex());
+    if (!CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE,
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+        nullptr, nullptr, &startup.StartupInfo, &info)) fail("start stream process");
+  }
+  state_->process.value = info.hProcess;
+  Handle thread(info.hThread);
+  if (!AssignProcessToJobObject(state_->job.value, state_->process.value)) {
+    const auto error = GetLastError();
+    TerminateProcess(state_->process.value, 127);
+    WaitForSingleObject(state_->process.value, INFINITE);
+    SetLastError(error); fail("assign stream process job");
+  }
+  if (ResumeThread(thread.value) == static_cast<DWORD>(-1)) fail("resume stream process");
+}
+ProcessStream::~ProcessStream() { stop(); }
+std::ptrdiff_t ProcessStream::read(char* buffer, std::size_t capacity) {
+  if (!capacity) return 0;
+  if (!state_->output.value) return -1;
+  DWORD available = 0;
+  if (!PeekNamedPipe(state_->output.value, nullptr, 0, nullptr, &available, nullptr)) {
+    state_->output.close(); return -1;
+  }
+  if (!available) return 0;
+  DWORD received = 0;
+  if (!ReadFile(state_->output.value, buffer, static_cast<DWORD>(std::min<std::size_t>(capacity, available)),
+      &received, nullptr)) { state_->output.close(); return -1; }
+  return received;
+}
+std::ptrdiff_t ProcessStream::write(std::string_view bytes) {
+  if (!state_->input.value) return -1;
+  const int ready = state_->finishWrite();
+  if (ready <= 0) return ready;
+  if (bytes.empty()) return 0;
+  state_->queued = static_cast<DWORD>(std::min(bytes.size(), state_->outgoing.size()));
+  std::copy_n(bytes.data(), state_->queued, state_->outgoing.data());
+  state_->write_operation = {};
+  state_->write_operation.hEvent = state_->event.value;
+  ResetEvent(state_->event.value);
+  DWORD written = 0;
+  if (WriteFile(state_->input.value, state_->outgoing.data(), state_->queued, &written, &state_->write_operation))
+    return written;
+  if (GetLastError() == ERROR_IO_PENDING) { state_->pending = true; return state_->queued; }
+  state_->input.close(); return -1;
+}
+bool ProcessStream::closeInput() {
+  if (!state_->input.value) return true;
+  if (state_->finishWrite() == 0) return false;
+  state_->input.close(); return true;
+}
+std::optional<int> ProcessStream::poll() {
+  if (state_->exit || !state_->process.value) return state_->exit;
+  const auto waited = WaitForSingleObject(state_->process.value, 0);
+  if (waited == WAIT_OBJECT_0) {
+    DWORD code = 0;
+    if (!GetExitCodeProcess(state_->process.value, &code)) fail("read stream exit status");
+    state_->exit = static_cast<int>(code);
+  } else if (waited == WAIT_FAILED) fail("poll stream process");
+  return state_->exit;
+}
+void ProcessStream::stop() noexcept {
+  if (state_->job.value) TerminateJobObject(state_->job.value, 137);
+  if (state_->process.value) {
+    WaitForSingleObject(state_->process.value, INFINITE);
+    DWORD code = 137;
+    GetExitCodeProcess(state_->process.value, &code);
+    state_->exit = static_cast<int>(code);
+  }
+  if (state_->pending) {
+    CancelIoEx(state_->input.value, &state_->write_operation);
+    DWORD ignored = 0;
+    GetOverlappedResult(state_->input.value, &state_->write_operation, &ignored, TRUE);
+    state_->pending = false;
+  }
+  state_->input.close(); state_->output.close(); state_->job.close(); state_->process.close();
+}
+
 }

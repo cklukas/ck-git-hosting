@@ -4,7 +4,9 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 #include <optional>
@@ -66,6 +68,27 @@ class ManagedProcess {
   std::optional<int> poll();
   void stop() noexcept;
   unsigned long id() const;
+ private:
+  struct State;
+  std::unique_ptr<State> state_;
+};
+
+// Nonblocking, single-caller stdin/stdout transport for a long-lived child.
+// stderr remains attached. read/write return -1 on closure, 0 when no progress
+// is possible, otherwise the number of bytes received/accepted. At most 64 KiB
+// is queued internally on Windows. Acceptance is not a peer acknowledgement.
+// Destroying the stream terminates its entire child tree.
+class ProcessStream {
+ public:
+  explicit ProcessStream(const std::vector<std::string>& arguments);
+  ~ProcessStream();
+  ProcessStream(const ProcessStream&) = delete;
+  ProcessStream& operator=(const ProcessStream&) = delete;
+  std::ptrdiff_t read(char* buffer, std::size_t capacity);
+  std::ptrdiff_t write(std::string_view bytes);
+  bool closeInput();  // false while an accepted asynchronous write is pending
+  std::optional<int> poll();
+  void stop() noexcept;
  private:
   struct State;
   std::unique_ptr<State> state_;

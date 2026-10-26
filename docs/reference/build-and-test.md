@@ -55,7 +55,13 @@ One-shot runner SSH requests use the shared process implementation, staging
 request input in a private directory under the configured build root. The
 directory is removed after the request. Native process tests cover binary
 input larger than pipe buffers, concurrent output draining, output limits and
-timeouts. The persistent runner log stream still needs its Windows transport.
+timeouts. The persistent log stream now uses the shared `ProcessStream`
+interface. Its Windows backend uses a private local named pipe with bounded
+asynchronous writes and a Job Object for process cleanup; native tests exercise
+bidirectional binary traffic, backpressure, cancellation of pending writes and
+handle inheritance. The Unix remote-runner integration test covers checkout,
+live logs and output uploads through the same interface. The connected Windows
+runner still requires checkout/execution integration and deployment qualification.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

@@ -19,6 +19,7 @@
 #include <string_view>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -340,6 +341,120 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
                              std::string(std::strerror(spawn_result)));
   }
   return static_cast<int>(child);
+}
+
+
+struct ProcessStream::State {
+  int input = -1, output = -1;
+  pid_t child = -1;
+  std::optional<int> exit;
+  ~State() { if (input >= 0) close(input); if (output >= 0) close(output); }
+};
+
+ProcessStream::ProcessStream(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+  if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty stream command");
+  std::vector<char*> argv;
+  for (const auto& argument : arguments) {
+    if (argument.find('\0') != std::string::npos) throw std::invalid_argument("NUL in stream argument");
+    argv.push_back(const_cast<char*>(argument.c_str()));
+  }
+  argv.push_back(nullptr);
+  struct Pipes {
+    int in[2]{-1, -1}, out[2]{-1, -1};
+    ~Pipes() { for (const auto fd : {in[0], in[1], out[0], out[1]}) if (fd >= 0) close(fd); }
+  } pipes;
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, pipes.in) || pipe(pipes.out))
+    throw std::runtime_error("cannot create stream pipes");
+  for (const auto fd : {pipes.in[0], pipes.in[1], pipes.out[0], pipes.out[1]})
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) throw std::runtime_error("cannot protect stream pipes");
+  for (const auto fd : {pipes.in[0], pipes.out[0]})
+    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) < 0) throw std::runtime_error("cannot configure stream pipes");
+#ifdef __APPLE__
+  int enabled = 1;
+  if (setsockopt(pipes.in[0], SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)))
+    throw std::runtime_error("cannot suppress stream SIGPIPE");
+#endif
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_adddup2(&actions, pipes.in[1], STDIN_FILENO);
+  posix_spawn_file_actions_adddup2(&actions, pipes.out[1], STDOUT_FILENO);
+  posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDERR_FILENO);
+  for (const auto fd : {pipes.in[0], pipes.in[1], pipes.out[0], pipes.out[1]})
+    if (fd > STDERR_FILENO) posix_spawn_file_actions_addclose(&actions, fd);
+  posix_spawnattr_t attributes;
+  posix_spawnattr_init(&attributes);
+#ifdef POSIX_SPAWN_SETSID
+#ifdef __APPLE__
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT);
+#else
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSID);
+#endif
+#else
+  posix_spawnattr_setpgroup(&attributes, 0);
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+#endif
+  pid_t child = -1;
+  const int result = posix_spawnp(&child, argv[0], &actions, &attributes, argv.data(), environ);
+  posix_spawn_file_actions_destroy(&actions);
+  posix_spawnattr_destroy(&attributes);
+  if (result) throw std::runtime_error("cannot start stream process: " + std::string(std::strerror(result)));
+  state_->child = child;
+  state_->input = pipes.in[0]; pipes.in[0] = -1;
+  state_->output = pipes.out[0]; pipes.out[0] = -1;
+  registerActiveChild(child);
+}
+ProcessStream::~ProcessStream() { stop(); }
+std::ptrdiff_t ProcessStream::read(char* buffer, std::size_t capacity) {
+  if (!capacity) return 0;
+  if (state_->output < 0) return -1;
+  const auto received = ::read(state_->output, buffer, capacity);
+  if (received > 0) return received;
+  if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return 0;
+  close(state_->output); state_->output = -1;
+  return -1;
+}
+std::ptrdiff_t ProcessStream::write(std::string_view bytes) {
+  if (state_->input < 0) return -1;
+  if (bytes.empty()) return 0;
+#ifdef MSG_NOSIGNAL
+  const auto sent = send(state_->input, bytes.data(), bytes.size(), MSG_NOSIGNAL);
+#else
+  const auto sent = send(state_->input, bytes.data(), bytes.size(), 0);
+#endif
+  if (sent >= 0) return sent;
+  if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+  closeInput(); return -1;
+}
+bool ProcessStream::closeInput() {
+  if (state_->input >= 0) { close(state_->input); state_->input = -1; }
+  return true;
+}
+std::optional<int> ProcessStream::poll() {
+  if (state_->exit || state_->child <= 0) return state_->exit;
+  // Keep the exited leader waitable until stop(), reserving its PID while
+  // the stream still owns (and may need to terminate) the process group.
+  siginfo_t info{};
+  const auto result = waitid(P_PID, static_cast<id_t>(state_->child), &info, WEXITED | WNOHANG | WNOWAIT);
+  if (result == 0 && info.si_pid == state_->child) {
+    state_->exit = info.si_code == CLD_EXITED ? info.si_status : 128 + info.si_status;
+  } else if (result < 0 && errno != EINTR) {
+    state_->exit = -1;
+    unregisterActiveChild(state_->child);
+    state_->child = -1;
+  }
+  return state_->exit;
+}
+void ProcessStream::stop() noexcept {
+  closeInput();
+  if (state_->child <= 0) return;
+  signalProcessTree(state_->child, SIGKILL, !state_->exit);
+  int status = 0;
+  pid_t done;
+  do { done = waitpid(state_->child, &status, 0); } while (done < 0 && errno == EINTR);
+  if (!state_->exit) state_->exit = done < 0 ? -1 : WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+  unregisterActiveChild(state_->child);
+  state_->child = -1;
+  if (state_->output >= 0) { close(state_->output); state_->output = -1; }
 }
 
 }  // namespace ckgit

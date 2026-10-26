@@ -9,7 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <sys/types.h>
+#include "ckgit/process.hpp"
 #include <vector>
 
 #include "ckgit/ci_runner.hpp"
@@ -44,11 +44,7 @@ class CiRemoteTransport {
   Result run(const CiRunnerCommand& command, std::string_view input, std::chrono::seconds timeout) const;
 
   // A long-lived operation (stream) with both pipes open.
-  struct Session {
-    pid_t pid = -1;
-    int to_server = -1;    // the child's stdin
-    int from_server = -1;  // the child's stdout
-  };
+  using Session = std::unique_ptr<ProcessStream>;
   Session open(const CiRunnerCommand& command) const;
   static void close(Session& session);
 
