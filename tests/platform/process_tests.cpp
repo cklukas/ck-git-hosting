@@ -6,6 +6,7 @@
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/ci_workflow.hpp"
+#include "ckgit/ci_runner_protocol.hpp"
 #include "ckgit/web_renderer.hpp"
 #include <chrono>
 #include <iostream>
@@ -56,6 +57,46 @@ int run(const std::vector<std::string>& args) {
   require(ckgit::parseControlRequest("CKGIT-CONTROL/1 test ping\n").has_value(), "portable control grammar");
   require(!ckgit::parseControlRequest("CKGIT-CONTROL/1 test ping\r\n"), "wire CRLF remains invalid");
   require(ckgit::parseCiWorkflow("version: 1\njobs:\n  - name: test\n    steps:\n      - run: [echo, hello]\n").jobs.size() == 1, "workflow parser");
+  {
+    ckgit::CiPreparedJob prepared;
+    prepared.job.job_id = "child-windows";
+    prepared.job.parent_run_id = "parent-workflow";
+    prepared.job.workflow_job = "windows";
+    prepared.job.project_name = "demo";
+    prepared.job.ref = "refs/heads/main";
+    prepared.job.commit_id = std::string(40, 'a');
+    prepared.workflow_text = "version: 2\njobs:\n"
+        "  - name: linux\n    runs_on: [linux]\n    steps:\n      - run: [echo, linux]\n"
+        "  - name: windows\n    runs_on: [windows]\n    steps:\n      - run: [cl.exe, /help]\n";
+    ckgit::CiLease lease;
+    lease.token = std::string(32, 'b');
+    const auto wire = ckgit::formatCiClaimResponse(prepared, lease, {}, 2);
+    const auto remote = ckgit::parseCiClaimResponse(wire);
+    require(remote && remote->prepared.workflow.jobs.size() == 1 &&
+        remote->prepared.workflow.jobs.front().name == "windows" &&
+        remote->prepared.job.parent_run_id == "parent-workflow", "native distributed claim selects only assigned job");
+    ckgit::CiRunnerCommand upload;
+    upload.protocol_version = 2;
+    upload.op = ckgit::CiRunnerOp::kPut;
+    upload.job_id = prepared.job.job_id;
+    upload.token = lease.token;
+    upload.kind = "asset";
+    upload.name = "windows-x64";
+    upload.total = 3;
+    upload.sha256 = ckgit::sha256Hex("abc");
+    const auto parsed_upload = ckgit::parseCiRunnerCommand(ckgit::formatCiRunnerCommand(upload));
+    require(parsed_upload && parsed_upload->protocol_version == 2 && parsed_upload->total == 3,
+        "native runner artifact upload grammar");
+    ckgit::CiFinishReport report;
+    report.status = ckgit::CiRunStatus::Success;
+    report.detail = "Windows build \xc3\xbc";
+    const auto finished = ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report));
+    require(finished.status == report.status && finished.detail == report.detail, "native runner finish report");
+    bool refused = false;
+    try { ckgit::formatCiClaimResponse(prepared, lease, {}, 1); }
+    catch (const std::invalid_argument&) { refused = true; }
+    require(refused, "distributed claim cannot be downgraded to protocol 1");
+  }
   std::vector<std::string> command{args[0], "echo", "", "space value", "quote\"value", "trailing\\", "\xc3\xbc\xf0\x9f\x98\x80", "&|<>%^$()"};
   std::string expected;
   for (std::size_t i = 2; i < command.size(); ++i) expected += std::to_string(command[i].size()) + ':' + command[i] + '\n';

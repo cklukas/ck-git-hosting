@@ -185,22 +185,6 @@ std::string readTagNotes(const std::filesystem::path& repository, const std::str
 
 }  // namespace
 
-std::string_view ciUploadKindName(CiUploadKind kind) {
-  switch (kind) {
-    case CiUploadKind::kArtifact: return "artifact";
-    case CiUploadKind::kAsset: return "asset";
-    case CiUploadKind::kPages: return "pages";
-  }
-  return "artifact";
-}
-
-std::optional<CiUploadKind> ciUploadKindFromName(std::string_view name) {
-  if (name == "artifact") return CiUploadKind::kArtifact;
-  if (name == "asset") return CiUploadKind::kAsset;
-  if (name == "pages") return CiUploadKind::kPages;
-  return std::nullopt;
-}
-
 std::uint64_t appendCiStagedUpload(const std::filesystem::path& state_root, std::string_view project,
                                    std::string_view run_id, CiUploadKind kind, std::string_view name,
                                    std::uint64_t total, std::string_view sha256, std::uint64_t offset,

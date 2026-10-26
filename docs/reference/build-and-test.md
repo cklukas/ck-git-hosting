@@ -48,6 +48,9 @@ must be absolute; drive-relative paths such as `V:build` are rejected. Windows
 also rejects `ci_allow_degraded=true`: there is no unsandboxed fallback. Native
 configuration tests cover Unicode paths, spaces and these refusal cases. This
 configuration support does not yet constitute a connected Windows runner.
+The native Windows test binary also links the shared runner wire protocol:
+tests decode a version-2 child assignment, select only that job, encode an
+artifact upload and a finish report, and reject a version-1 child envelope.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

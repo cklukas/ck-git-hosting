@@ -33,7 +33,7 @@ endif()
 set(PORTABLE_SOURCES
   src/common/checkout_path.cpp src/common/ci_types.cpp src/common/sync_lock.cpp src/common/directory_identity.cpp
   src/common/client_config.cpp src/common/client_state.cpp src/common/runner_config.cpp
-  src/common/ci_control.cpp src/common/server_identity.cpp
+  src/common/ci_control.cpp src/common/server_identity.cpp src/common/ci_runner_protocol.cpp
   src/common/release_control.cpp src/common/display_format.cpp
   src/common/ci_workflow.cpp src/common/cli_help.cpp src/common/control_rpc.cpp
   src/common/docs_i18n.cpp src/common/emoji.cpp src/common/hash.cpp

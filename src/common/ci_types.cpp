@@ -1,8 +1,26 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_results.hpp"
 #include <algorithm>
 namespace ckgit {
+std::string_view ciUploadKindName(CiUploadKind kind) {
+  switch (kind) {
+    case CiUploadKind::kArtifact: return "artifact";
+    case CiUploadKind::kAsset: return "asset";
+    case CiUploadKind::kPages: return "pages";
+  }
+  return "artifact";
+}
+
+std::optional<CiUploadKind> ciUploadKindFromName(std::string_view name) {
+  if (name == "artifact") return CiUploadKind::kArtifact;
+  if (name == "asset") return CiUploadKind::kAsset;
+  if (name == "pages") return CiUploadKind::kPages;
+  return std::nullopt;
+}
+
+
 std::string_view ciRunStatusName(CiRunStatus status) {
   switch (status) {
     case CiRunStatus::Pending: return "pending";
