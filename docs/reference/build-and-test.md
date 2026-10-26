@@ -243,6 +243,24 @@ with every SDK, build system or installer tool; the connected runner's full
 installer qualification is recorded separately above. Non-admin ckdocs installation is independent of this
 broker requirement.
 
+For a small path-compatibility diagnostic without staging the compiler, run:
+
+```powershell
+ckgit-lpac-probe.exe --path-diagnostics V:\tmp\YOUR-TASK
+```
+
+Keep `ckgit-job-launcher.exe` beside the probe. This mode creates one disposable
+LPAC profile and workspace, stages only these two executables, and reports the
+results and Win32 error codes for file attributes, full/long path conversion,
+and directory changes. It does not grant access to workspace ancestors.
+On the workstation, querying attributes and changing into the job's own work
+directory succeeded, while `GetLongPathNameW` failed with error 5 (access denied).
+The ancestors outside the sandbox were inaccessible. Microsoft documents that
+[GetLongPathNameW may require access to parent directories](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlongpathnamew),
+even when the target is accessible. This is consistent with the absolute-path
+failures observed in Ninja's `cmd.exe` commands; it is not a successful Ninja
+qualification. The probe removes its profile and workspace on normal exit.
+
 ## Compile and test
 
 The source tree is never used for build products; every build directory must

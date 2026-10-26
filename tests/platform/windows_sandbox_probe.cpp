@@ -133,6 +133,51 @@ int wmain(int argc, wchar_t** argv) {
       Sleep(30000);
       return 0;
     }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--path-child") {
+      // Diagnose absolute-path compatibility without granting ancestor access.
+      // A successful directory change does not imply GetLongPathName can walk
+      // the same path: tools may use both APIs before starting a compiler.
+      const fs::path original = fs::current_path();
+      for (fs::path path(argv[2]); !path.empty();) {
+        wchar_t buffer[32768]{};
+        SetLastError(ERROR_SUCCESS);
+        const auto attributes = GetFileAttributesW(path.c_str());
+        const auto attribute_error = GetLastError();
+        SetLastError(ERROR_SUCCESS);
+        const auto full = GetFullPathNameW(path.c_str(), 32768, buffer, nullptr);
+        const auto full_error = GetLastError();
+        SetLastError(ERROR_SUCCESS);
+        const auto long_path = GetLongPathNameW(path.c_str(), buffer, 32768);
+        const auto long_error = GetLastError();
+        SetLastError(ERROR_SUCCESS);
+        const auto changed = SetCurrentDirectoryW(path.c_str());
+        const auto change_error = GetLastError();
+        require(SetCurrentDirectoryW(original.c_str()) != FALSE, "restore diagnostic working directory");
+        std::cout << ckgit::wideToUtf8(path.native())
+                  << " attributes=" << attributes << "/" << attribute_error
+                  << " full=" << full << "/" << full_error
+                  << " long=" << long_path << "/" << long_error
+                  << " chdir=" << changed << "/" << change_error << "\n";
+        const auto parent = path.parent_path();
+        if (parent == path) break;
+        path = parent;
+      }
+      return 0;
+    }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--path-diagnostics") {
+      ckgit::WindowsSandbox sandbox{fs::path(argv[2])};
+      const auto executable = sandbox.tools() / "path-probe.exe";
+      fs::copy_file(fs::path(argv[0]), executable);
+      fs::copy_file(fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe",
+                    sandbox.tools() / "ckgit-job-launcher.exe");
+      sandbox.sealTools();
+      const auto result = ckgit::runWindowsSandboxProcess(sandbox,
+          {ckgit::wideToUtf8(executable.native()), "--path-child", ckgit::wideToUtf8(sandbox.work().native())},
+          ckgit::ProcessOptions{}, {});
+      std::cout << result.output;
+      require(result.exit_code == 0 && !result.timed_out, "LPAC path diagnostics failed");
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--child") return child(argc, argv);
     require(argc == 5, "usage: probe TEMP_PARENT MSVC_HOSTX64_X64 CMAKE_ROOT KERNEL32_LIB");
     ckgit::WindowsSandbox sandbox{fs::path(argv[1])};
