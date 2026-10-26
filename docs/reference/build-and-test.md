@@ -9,7 +9,7 @@ The CMake build produces native x64 `ckgit`, `ckdocs`, their tests, and the
 AppContainer qualification tools. The connected Windows CI runner is still
 under development; the hosting server remains Linux-only.
 The version-2 workflow parser supports per-job `runs_on`, dependency lists
-(`needs`), and script shells (`sh`, `powershell`, `pwsh`). The push hook now
+(`needs`), and job/step script shells (`sh`, `powershell`, `pwsh`). The push hook now
 queues distributed graphs, and the primary runner and protocol-2 gateway
 prepare only the assigned child. Protocol 1 cannot claim these children.
 The installed Windows runner has completed the native installer job against
@@ -117,8 +117,13 @@ Compilation and packaging took 576 seconds. The uploaded `windows-installers`
 bundle was downloaded through `ckgit ci download`; its 19,148,800 bytes matched
 SHA-256 `2b1859ceb5500146c6e4976774d86367ed5a9ec868fcb329b896fa13ddcc9d14`.
 All four package hashes and 291 source-file hashes were verified against the
-manifest and exact Git commit. This records the Windows child result; the
-parent workflow and its Linux child have independent completion status.
+manifest and exact Git commit. Parent workflow
+`00001793018912498671-aea47bb2` completed successfully at 13:36 UTC with both
+children successful (48 minutes 17 seconds total). Its combined artifact list
+contains `packages` and `windows-installers`. The Linux bundle was also
+downloaded through the parent: 7,454,720 bytes, SHA-256
+`5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
+This was a branch build; live tag-release publication is a separate check.
 
 The Windows job in [GitHub run 40326726111](https://github.com/cklukas/ck-git-hosting/actions/runs/40326726111)
 built all three installers and the portable ZIP from commit `1f94b843ca9f`,

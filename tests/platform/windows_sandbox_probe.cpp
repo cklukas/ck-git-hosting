@@ -252,6 +252,19 @@ int wmain(int argc, wchar_t** argv) {
         "native executor child identity and live logs");
     require(fs::is_regular_file(execution.cache_root / "windows-x64" / "fixture" / "compiler" / "written"), "native executor cache persistence");
     require(fs::is_empty(execution.build_root), "native executor removes scratch");
+    // This fixture deliberately stages no PowerShell. A default script must
+    // request pwsh, fail clearly, and never fall back to a host shell.
+    prepared.workflow.jobs[0].steps = {{"script", {}, "exit 0", {}}};
+    ExecutorSource missing_shell_source;
+    ExecutorSink missing_shell_sink;
+    const auto missing_shell = ckgit::executeWindowsCiJob(
+        prepared, execution, toolchain, missing_shell_source, missing_shell_sink);
+    require(missing_shell.status == ckgit::CiRunStatus::Error &&
+            missing_shell.detail == "tool is not staged: pwsh",
+            "Windows default shell must be staged PowerShell 7");
+    require(missing_shell_sink.steps == 0 && !missing_shell_sink.artifact && !missing_shell_sink.pages,
+            "missing shell cannot execute or publish outputs");
+    require(fs::is_empty(execution.build_root), "missing shell removes scratch");
     std::cout << "LPAC native executor lifecycle passed\n";
     std::cout << "LPAC native build qualification passed\n";
     return 0;

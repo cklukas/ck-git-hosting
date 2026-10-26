@@ -235,16 +235,20 @@ std::vector<std::string> interpretLabels(const Node* runs_on) {
   return {};
 }
 
+std::string interpretShell(const Node* node) {
+  if (node == nullptr) return {};
+  const auto& shell = requireKind(*node, Node::Kind::Scalar, "shell to be a name").scalar;
+  if (shell != "sh" && shell != "powershell" && shell != "pwsh")
+    malformed("shell must be sh, powershell, or pwsh", node->line);
+  return shell;
+}
+
 CiStep interpretStep(const Node& node, int version) {
   requireKind(node, Node::Kind::Mapping, "a step to be a mapping");
   if (version == 1) rejectUnknownKeys(node, {"name", "run", "script"});
   else rejectUnknownKeys(node, {"name", "run", "script", "shell"});
   CiStep step;
-  if (const Node* shell = findEntry(node, "shell")) {
-    step.shell = requireKind(*shell, Node::Kind::Scalar, "shell to be a name").scalar;
-    if (step.shell != "sh" && step.shell != "powershell" && step.shell != "pwsh")
-      malformed("shell must be sh, powershell, or pwsh", node.line);
-  }
+  step.shell = interpretShell(findEntry(node, "shell"));
   if (const Node* name = findEntry(node, "name")) {
     step.name = requireKind(*name, Node::Kind::Scalar, "a step name to be a scalar").scalar;
     if (step.name.empty() || step.name.size() > kMaximumCiNameBytes) {
@@ -282,8 +286,9 @@ CiStep interpretStep(const Node& node, int version) {
 CiJob interpretJob(const Node& node, int version) {
   requireKind(node, Node::Kind::Mapping, "each job to be a mapping");
   if (version == 1) rejectUnknownKeys(node, {"name", "env", "steps", "artifacts"});
-  else rejectUnknownKeys(node, {"name", "env", "steps", "artifacts", "runs_on", "needs"});
+  else rejectUnknownKeys(node, {"name", "env", "steps", "artifacts", "runs_on", "needs", "shell"});
   CiJob job;
+  const auto shell = interpretShell(findEntry(node, "shell"));
   job.runs_on = interpretLabels(findEntry(node, "runs_on"));
   if (const Node* needs = findEntry(node, "needs")) {
     requireKind(*needs, Node::Kind::Sequence, "needs to be a list of job names");
@@ -306,7 +311,13 @@ CiJob interpretJob(const Node& node, int version) {
   requireKind(*steps, Node::Kind::Sequence, "steps to be a list");
   if (steps->items.empty()) malformed("job '" + job.name + "' has no steps", node.line);
   if (steps->items.size() > kMaximumCiStepsPerJob) tooLarge("a job has too many steps");
-  for (const Node& step : steps->items) job.steps.push_back(interpretStep(step, version));
+  for (const Node& step : steps->items) {
+    auto parsed = interpretStep(step, version);
+    // Resolve inheritance once so local and remote execution use the same
+    // effective shell; exact argv steps never acquire a shell implicitly.
+    if (parsed.usesShell() && parsed.shell.empty()) parsed.shell = shell;
+    job.steps.push_back(std::move(parsed));
+  }
   if (const Node* artifacts = findEntry(node, "artifacts")) job.artifact = interpretArtifact(*artifacts, job.name);
   return job;
 }

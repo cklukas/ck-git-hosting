@@ -59,11 +59,21 @@ void testDistributedWorkflow() {
   require(rejected(single("    runs_on: Windows\n", "run: make")), "invalid job runner label");
   require(rejected(single("", "run: [make]\n        shell: sh")), "argv cannot select shell");
   require(rejected(single("", "run: make\n        shell: cmd")), "unsupported shell rejected");
+  const auto shells = ckgit::parseCiWorkflow(single("    shell: pwsh\n",
+      "run: build\n      - script: test\n      - run: [compiler, input.cpp]\n"
+      "      - run: legacy\n        shell: powershell"));
+  require(shells.jobs[0].steps[0].shell == "pwsh" && shells.jobs[0].steps[1].shell == "pwsh",
+          "job shell applies to both scalar run and script steps");
+  require(shells.jobs[0].steps[2].shell.empty() && !shells.jobs[0].steps[2].usesShell(),
+          "job shell does not change exact argv execution");
+  require(shells.jobs[0].steps[3].shell == "powershell", "explicit step shell overrides job shell");
+  require(rejected(single("    shell: cmd\n", "run: build")), "unsupported job shell rejected");
+  require(rejected(single("    shell: [pwsh]\n", "run: build")), "job shell must be scalar");
   require(rejected("version: 2\njobs:\n"
                    "  - name: a\n    needs: [b]\n    steps:\n      - run: a\n"
                    "  - name: b\n    needs: [c]\n    steps:\n      - run: b\n"
                    "  - name: c\n    needs: [a]\n    steps:\n      - run: c\n"), "dependency cycle");
-  for (const auto& extra : {"runs_on: windows", "needs: []"})
+  for (const auto& extra : {"runs_on: windows", "needs: []", "shell: pwsh"})
     require(rejected("version: 1\njobs:\n  - name: build\n    " + std::string(extra) +
                      "\n    steps:\n      - run: make\n"), "v1 rejects job scheduling keys");
   require(rejected("version: 1\njobs:\n  - name: build\n    steps:\n      - run: make\n        shell: sh\n"),

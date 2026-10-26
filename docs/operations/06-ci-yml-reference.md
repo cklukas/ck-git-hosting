@@ -157,7 +157,8 @@ exact same subset — one syntax, two schemas.
 | `steps[].run` (list form) | list of strings | exactly one of `run`/`script` required | — | executed as a literal argument vector, **no shell** |
 | `steps[].run` (scalar form) | string | (same) | — | executed with the selected shell |
 | `steps[].script` | string, typically a `\|` block | (same) | — | executed with the selected shell |
-| `steps[].shell` | string | no; version 2 only | runner default | `sh`, `powershell`, or `pwsh`; forbidden with an argv list |
+| `jobs[].shell` | string | no; version 2 only | runner default | Job default for script steps: `sh`, `pwsh`, or explicitly `powershell` |
+| `steps[].shell` | string | no; version 2 only | job shell, then runner default | Overrides the job shell; forbidden with an argv list |
 | `artifacts.name` | string | no | the owning job's name | valid CI name; **must not be `release`** — that name is reserved for the tag build's own release record |
 | `artifacts.paths` | list of strings | required, non-empty | — | each a safe relative path under the checkout |
 | `artifacts.retention_days` | integer | no | `0` (use the server default) | `0` is rejected if written explicitly; capped to the server's configured maximum; **ignored entirely on a tag/release build**, which is always durable regardless of this value |
@@ -283,8 +284,11 @@ Windows inside the [AppContainer runner](ci-remote-runners.md#windows-runner).
 
 Give every platform-specific job explicit labels, including legacy workflows:
 Windows runners skip unlabelled workflows. Linux scripts default to
-`sh`; Windows scripts default to `powershell`. An explicitly selected shell
-must be present in the runner's staged tools. Argument-list steps need no shell.
+`sh`; Windows scripts default to `pwsh` (PowerShell 7). Set `shell` on the job
+to choose a default for its script steps, or on an individual script step to
+override that default. Set `shell: powershell` explicitly for Windows PowerShell
+5.1. The selected shell must be present in the runner's staged tools; missing
+tools fail the job. Argument-list steps need no shell and ignore the job default.
 
 For Pages in version 2, select exactly one producer with
 `pages: { job: linux, path: public }`. A successful tag workflow combines its

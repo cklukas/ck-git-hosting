@@ -193,7 +193,7 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
         if (!continuing()) return finish(CiRunStatus::Cancelled, "cancelled before step");
         std::vector<std::string> command = step.argv;
         if (step.usesShell()) {
-          const auto shell = step.shell.empty() ? "powershell" : step.shell;
+          const auto shell = step.shell.empty() ? "pwsh" : step.shell;
           if (shell == "sh") command = {shell, "-ec", step.script};
           else command = {shell, "-NoProfile", "-NonInteractive", "-Command",
               "$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; & {\n" + step.script +

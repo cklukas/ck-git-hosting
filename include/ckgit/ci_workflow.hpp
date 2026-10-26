@@ -38,7 +38,7 @@ namespace ckgit {
 //             make docs
 //
 // Version 2 additionally accepts per-job runs_on and needs (a list of job
-// names), and a shell on script steps (sh, powershell, pwsh). Top-level
+// names), and a shell on jobs and script steps (sh, powershell, pwsh). Top-level
 // runs_on supplies job defaults. Empty needs means independent execution;
 // unknown dependencies, self dependencies and cycles are rejected.
 //
@@ -104,7 +104,7 @@ struct CiStep {
   std::vector<std::string> argv;  // set for the list `run:` form
   std::string script;             // set for the scalar `run:` / block `script:` form
 
-  // Version 2 only: empty selects the runner platform default.
+  // Version 2 only: resolved job/step shell; empty selects sh on POSIX, pwsh on Windows.
   std::string shell;  // sh, powershell, or pwsh; illegal with exact argv
 
   bool usesShell() const { return argv.empty(); }
