@@ -8,6 +8,7 @@
 
 #include "ckgit/ci_store.hpp"
 #include "ckgit/text.hpp"
+#include "ckgit/validation.hpp"
 #include "ckgit/web_renderer.hpp"
 
 namespace ckgit {
@@ -109,7 +110,7 @@ std::string renderCiRuns(const ProjectSummary& project) {
 
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
                               const std::optional<std::string>& live_log, std::size_t live_step,
-                              const std::string& nonce) {
+                              const std::string& nonce, const std::vector<CiWorkflowJobSummary>& jobs) {
   const CiRunDisplay display = ciRunDisplay(run);
   const std::string project_url = "/project/" + htmlEscape(project.name);
   std::string out = "<p><a href=\"" + project_url + "/ci\">\xe2\x86\x90 Back to CI</a></p>";
@@ -160,8 +161,24 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
            "The recorded status settles at the next runner sweep.</p>";
   }
 
-  out += "<h2>Steps</h2><ol class=\"ci-steps\">";
-  for (std::size_t index = 0; index < run.steps.size(); ++index) {
+  if (!run.parent_run_id.empty()) {
+    out += "<p>Job <strong>" + htmlEscape(run.workflow_job) + "</strong> of <a href=\"" + project_url +
+           "/ci/" + htmlEscape(run.parent_run_id) + "\">workflow " + htmlEscape(run.parent_run_id) + "</a></p>";
+  }
+  if (!jobs.empty()) {
+    out += "<h2>Jobs</h2><table><thead><tr><th>Job</th><th>Status</th><th>Requested labels</th>"
+           "<th>Runner</th><th>Attempt</th></tr></thead><tbody>";
+    for (const auto& job : jobs) {
+      out += "<tr><td><a href=\"" + project_url + "/ci/" + htmlEscape(job.run_id) + "\">" + htmlEscape(job.name) +
+             "</a></td><td>" + htmlEscape(ciRunStatusName(job.status)) + "</td><td>" +
+             htmlEscape(formatCiLabelList(job.runs_on)) + "</td><td>" +
+             (job.placement.runner.empty() ? "Waiting for matching labels" : htmlEscape(job.placement.runner)) +
+             "</td><td>" + std::to_string(job.placement.attempt) + "</td></tr>";
+    }
+    out += "</tbody></table>";
+  }
+  if (jobs.empty()) out += "<h2>Steps</h2><ol class=\"ci-steps\">";
+  if (jobs.empty()) for (std::size_t index = 0; index < run.steps.size(); ++index) {
     const CiStepResult& step = run.steps[index];
     const std::string label = step.name.empty() ? ("step " + std::to_string(index)) : step.name;
     const std::string url = project_url + "/ci/" + htmlEscape(run.run_id) + "/" + std::to_string(index) + ".log";
@@ -170,14 +187,14 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
            url + "\">" + htmlEscape(label) + "</a> <span class=\"muted\">(" + htmlEscape(state) +
            (step.output_truncated ? ", log truncated" : "") + ")</span></li>";
   }
-  const bool show_live = display.active && live_log.has_value();
+  const bool show_live = jobs.empty() && display.active && live_log.has_value();
   if (show_live) {
     out += "<li class=\"ci-step-running\"><span class=\"ci-icon\" aria-hidden=\"true\">" +
            std::string(ciRunStatusIcon(CiRunStatus::Running)) + "</span> <a href=\"" + project_url + "/ci/" +
            htmlEscape(run.run_id) + "/" + std::to_string(live_step) + ".log\">step " + std::to_string(live_step) +
            "</a> <span class=\"muted\">(running\xe2\x80\xa6)</span></li>";
   }
-  out += "</ol>";
+  if (jobs.empty()) out += "</ol>";
 
   if (show_live) {
     // project.name and run.run_id are validated tokens ([A-Za-z0-9._-] etc.), so

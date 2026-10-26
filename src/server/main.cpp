@@ -358,7 +358,7 @@ std::string ciStatusResponse(const std::filesystem::path& state_root, std::strin
   ckgit::CiStatusReport report;
   report.server_epoch_seconds = currentEpochSeconds();
   ckgit::CiProjectStatus status{std::string(project), ckgit::isProjectCiEnabled(state_root, project), {}};
-  for (const auto& run : ckgit::loadCiRuns(state_root, project, ckgit::kMaximumControlCiRuns)) {
+  for (const auto& run : ckgit::loadCiRuns(state_root, project, ckgit::kMaximumControlCiRuns, true)) {
     status.runs.push_back(ckgit::summarizeCiRun(run));
   }
   report.projects.push_back(std::move(status));
@@ -373,7 +373,7 @@ std::string ciOverviewResponse(const std::filesystem::path& root, const std::fil
   report.server_epoch_seconds = currentEpochSeconds();
   for (const auto& project : listProjects(root)) {
     ckgit::CiProjectStatus status{project, ckgit::isProjectCiEnabled(state_root, project), {}};
-    const auto runs = ckgit::loadCiRuns(state_root, project, ckgit::kControlCiOverviewScanRuns);
+    const auto runs = ckgit::loadCiRuns(state_root, project, ckgit::kControlCiOverviewScanRuns, true);
     if (!runs.empty()) {
       status.runs.push_back(ckgit::summarizeCiRun(runs.front()));
       if (!ckgit::ciRunStatusIsActive(runs.front().status)) {
@@ -498,6 +498,8 @@ void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const 
     sendAll(client, ckgit::formatCiRunControlResponse({currentEpochSeconds(), *run}));
   } else if (request.operation == "ci-placement") {
     sendAll(client, ckgit::formatCiPlacementControlResponse(*run));
+  } else if (request.operation == "ci-jobs") {
+    sendAll(client, ckgit::formatCiJobsControlResponse(ckgit::loadCiJobsReport(state_root, project, run->run_id)));
   } else if (!ckgit::ciRunStatusIsActive(run->status)) {
     sendError(client, "finished", "the CI run already finished");
   } else if (!ckgit::requestCiCancel(state_root, project, run->run_id)) {
@@ -601,7 +603,7 @@ void answerControlRequest(int client, const ckgit::ControlRequest& request,
     sendAll(client, releasesResponse(requireState(), arguments[0]));
   } else if (operation == "ci-overview") {
     sendAll(client, ciOverviewResponse(repository_root, requireState()));
-  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-placement" || operation == "ci-log" ||
+  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-placement" || operation == "ci-jobs" || operation == "ci-log" ||
              operation == "ci-cancel") {
     const auto& state = requireState();
     const std::string& project = arguments[0];
@@ -1100,7 +1102,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
         }
         ckgit::PageContext ci_context{{}, {}, "ci", {}, 0, 0};
         response.body = ckgit::pageLayout(project->name + " \xc2\xb7 CI run",
-            ckgit::renderCiRunDetail(*project, *run, live_log, live_step, nonce), &*project, &ci_context,
+            ckgit::renderCiRunDetail(*project, *run, live_log, live_step, nonce, index.readCiJobs(project->name, run->run_id)), &*project, &ci_context,
             display.active ? 3u : 0u);
         if (display.active) {
           // Scope the relaxation to this page only, matching the per-step log

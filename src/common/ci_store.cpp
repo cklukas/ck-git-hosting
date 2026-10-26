@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_control.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -1175,7 +1176,7 @@ std::vector<CiRunRecord> ciRunsToShow(const std::vector<CiRunRecord>& newest_fir
 }
 
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
-                                    std::string_view project_name, std::size_t maximum) {
+                                    std::string_view project_name, std::size_t maximum, bool workflows_only) {
   std::vector<CiRunRecord> runs;
   if (maximum == 0 || !isValidProjectName(project_name)) return runs;
   const std::filesystem::path root = validatedMetadataRoot(state_root);
@@ -1203,6 +1204,7 @@ std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
     if (record_missing) continue;
     try {
       CiRunRecord run = parseRun(content);
+      if (workflows_only && !run.parent_run_id.empty()) continue;
       run.artifacts = loadArtifactsFor(run_fd);
       runs.push_back(std::move(run));
     } catch (const std::exception&) {
@@ -1670,6 +1672,19 @@ std::vector<CiJobRequest> loadCiWorkflowJobs(const std::filesystem::path& state_
   if (group.parent.project_name != project || group.parent.job_id != parent_run_id)
     fail("distributed workflow identity mismatch");
   return std::move(group.children);
+}
+
+CiJobsReport loadCiJobsReport(const std::filesystem::path& state_root,
+    std::string_view project, std::string_view parent_run_id) {
+  CiJobsReport report{std::string(parent_run_id), {}};
+  for (const auto& job : loadCiWorkflowJobs(state_root, project, parent_run_id)) {
+    const auto child = loadCiRun(state_root, project, job.job_id);
+    if (!child || child->parent_run_id != parent_run_id || child->workflow_job != job.workflow_job)
+      throw std::runtime_error("workflow child record is unavailable");
+    report.jobs.push_back({job.workflow_job, job.job_id, child->status,
+                          {child->runner, child->attempt}, job.runs_on});
+  }
+  return report;
 }
 
 void refreshCiWorkflowGroups(const std::filesystem::path& state_root) {

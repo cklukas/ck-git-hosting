@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "ckgit/control_rpc.hpp"
+#include "ckgit/ci_workflow.hpp"
+#include <set>
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
 
@@ -350,6 +352,48 @@ CiRunPlacement parseCiPlacementControlResponse(std::string_view response) {
   if (attempt == 0 || attempt > std::numeric_limits<unsigned>::max()) invalid(kWhat, "has an invalid attempt");
   placement.attempt = static_cast<unsigned>(attempt);
   return placement;
+}
+
+std::string formatCiJobsControlResponse(const CiJobsReport& report) {
+  if (!isValidCiId(report.parent_run_id) || report.jobs.size() > kMaximumCiJobs)
+    throw std::invalid_argument("invalid workflow job report");
+  std::string response = "ok " + report.parent_run_id + " " + std::to_string(report.jobs.size()) + "\n";
+  std::set<std::string> names, ids;
+  for (const auto& job : report.jobs) {
+    if (!isValidCiArtifactName(job.name) || !isValidCiId(job.run_id) || job.run_id == report.parent_run_id ||
+        !names.insert(job.name).second || !ids.insert(job.run_id).second ||
+        job.runs_on.size() > kMaximumCiLabels ||
+        !std::all_of(job.runs_on.begin(), job.runs_on.end(), [](const auto& label) { return isValidCiLabel(label); }) ||
+        (!job.placement.runner.empty() && !isValidClientId(job.placement.runner)) || job.placement.attempt == 0)
+      throw std::invalid_argument("invalid workflow job summary");
+    append(response, "job " + job.name + " " + job.run_id + " " + std::string(ciRunStatusName(job.status)) +
+        " " + (job.placement.runner.empty() ? "-" : job.placement.runner) + " " +
+        std::to_string(job.placement.attempt) + " " +
+        (job.runs_on.empty() ? "-" : formatCiLabelList(*parseCiLabelList(formatCiLabelList(job.runs_on)))) + "\n", "CI jobs");
+  }
+  return response;
+}
+
+CiJobsReport parseCiJobsControlResponse(std::string_view response) {
+  constexpr std::string_view what = "CI jobs";
+  ResponseLines lines(response, what);
+  const auto header = lines.fields("ok", 3);
+  CiJobsReport report{std::string(header[1]), {}};
+  const auto count = parseNumber(header[2], what);
+  if (count > kMaximumCiJobs) invalid(what, "has too many jobs");
+  for (std::uint64_t i = 0; i < count; ++i) {
+    const auto fields = lines.fields("job", 7);
+    const auto status = ciRunStatusFromName(fields[3]);
+    const auto labels = parseCiLabelList(fields[6] == "-" ? "" : fields[6]);
+    const auto attempt = parseNumber(fields[5], what);
+    if (!status || !labels || (fields[6] != "-" && formatCiLabelList(*labels) != fields[6]) ||
+        attempt == 0 || attempt > std::numeric_limits<unsigned>::max()) invalid(what, "has invalid job fields");
+    report.jobs.push_back({std::string(fields[1]), std::string(fields[2]), *status,
+        {fields[4] == "-" ? "" : std::string(fields[4]), static_cast<unsigned>(attempt)}, *labels});
+  }
+  if (!lines.done()) invalid(what, "has records beyond its declared count");
+  (void)formatCiJobsControlResponse(report);  // same identity and uniqueness checks in both directions
+  return report;
 }
 
 std::string formatCiLogControlResponse(const CiLogChunk& chunk) {

@@ -19,6 +19,7 @@ constexpr int kCiWatchPollAttempts = 3;
 struct CiOptions {
   std::optional<std::filesystem::path> config_path;
   std::optional<std::string> project;
+  std::optional<std::string> job;
   std::optional<std::string> rev;
   std::optional<std::string> dashboard_url;
   std::filesystem::path into{"."};
@@ -55,6 +56,8 @@ CiOptions parseCiOptions(const std::vector<std::string>& arguments) {
       options.config_path = arguments[++index];
     } else if (argument == "--project" && has_value) {
       options.project = arguments[++index];
+    } else if (argument == "--job" && has_value) {
+      options.job = arguments[++index];
     } else if (argument == "--rev" && has_value) {
       options.rev = arguments[++index];
     } else if (argument == "--dashboard-url" && has_value) {
@@ -247,6 +250,15 @@ std::optional<ckgit::CiRunPlacement> fetchCiPlacement(const ckgit::ClientConfig&
   }
 }
 
+std::optional<ckgit::CiJobsReport> fetchCiJobs(const ckgit::ClientConfig& config,
+    const std::string& project, const std::string& run_id) {
+  try {
+    auto report = ckgit::parseCiJobsControlResponse(ciControlReply(config, "ci-jobs", {project, run_id}));
+    if (report.parent_run_id != run_id) throw std::runtime_error("CI jobs response describes a different workflow");
+    return report;
+  } catch (const UnsupportedOperationError&) { return std::nullopt; }
+}
+
 // --- text and JSON renderings ------------------------------------------------
 
 std::string ciRunJson(const ckgit::CiRunRecord& run, std::size_t completed_steps, std::uint64_t now) {
@@ -431,9 +443,11 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   const std::string& run_id = options.positional.at(0);
   ckgit::CiRunReport report;
   std::optional<ckgit::CiRunPlacement> placement;
+  std::optional<ckgit::CiJobsReport> jobs;
   try {
     report = fetchCiRun(config, *project, run_id);
     placement = fetchCiPlacement(config, *project, run_id);
+    jobs = fetchCiJobs(config, *project, run_id);
   } catch (const ControlReplyError& error) {
     return reportControlReplyError(error, *project, run_id);
   }
@@ -441,7 +455,8 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   const auto& run = report.run;
   const std::uint64_t now = report.server_epoch_seconds;
   const auto display = ckgit::ciRunDisplayAt(run, now);
-  const bool running_step = display.name == "running";
+  const bool workflow = jobs && !jobs->jobs.empty();
+  const bool running_step = display.name == "running" && !workflow;
   if (options.json) {
     std::cout << "{\"schema_version\":1,\"project\":\"" << *project << "\",\"server_epoch\":" << now
               << ",\"run\":" << ciRunJson(run, run.steps.size(), now) << ",\"detail\":\"" << jsonText(run.detail)
@@ -459,7 +474,18 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
       std::cout << (run.steps.empty() ? "" : ",") << "\n    {\"index\":" << run.steps.size()
                 << ",\"name\":null,\"exit_code\":null,\"timed_out\":false,\"output_truncated\":false,\"running\":true}";
     }
-    std::cout << "\n  ],\"artifacts\":" << ciArtifactsJson(run.artifacts) << "}\n";
+    std::cout << "\n  ],\"artifacts\":" << ciArtifactsJson(run.artifacts) << ",\"jobs\":[";
+    if (jobs) for (std::size_t i = 0; i < jobs->jobs.size(); ++i) {
+      const auto& job = jobs->jobs[i];
+      std::cout << (i ? "," : "") << "{\"name\":\"" << job.name << "\",\"run_id\":\"" << job.run_id
+                << "\",\"status\":\"" << ckgit::ciRunStatusName(job.status) << "\",\"runner\":"
+                << (job.placement.runner.empty() ? "null" : "\"" + job.placement.runner + "\"")
+                << ",\"attempt\":" << job.placement.attempt << ",\"runs_on\":[";
+      for (std::size_t j = 0; j < job.runs_on.size(); ++j)
+        std::cout << (j ? "," : "") << "\"" << job.runs_on[j] << "\"";
+      std::cout << "]}";
+    }
+    std::cout << "]}\n";
     return 0;
   }
   const std::string timing = ckgit::ciRunTiming(display);
@@ -475,7 +501,7 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
     std::cout << "  finished:  " << ckgit::formatUtcTimestamp(run.finished_epoch_seconds) << "\n";
   }
   if (!timing.empty()) std::cout << "  " << (display.active ? "elapsed:   " : "duration:  ") << timing << "\n";
-  if (placement.has_value()) {
+  if (placement.has_value() && !workflow) {
     std::cout << "  runner:    "
               << (placement->runner.empty() ? std::string("not yet claimed")
                   : placement->runner == ckgit::kCiPrimaryRunnerName ? std::string("primary (the server's own runner)")
@@ -485,6 +511,16 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   if (!run.detail.empty()) std::cout << "  detail:    " << terminalText(run.detail) << "\n";
   if (display.name == "interrupted") {
     std::cout << "  note:      the runner stopped reporting progress; the next runner sweep settles the status\n";
+  }
+  if (workflow) {
+    std::cout << "Jobs:\n";
+    for (const auto& job : jobs->jobs)
+      std::cout << "  " << job.name << "  " << ckgit::ciRunStatusName(job.status) << "  ["
+                << ckgit::formatCiLabelList(job.runs_on) << "]  "
+                << (job.placement.runner.empty() ? "waiting for matching labels" : job.placement.runner)
+                << "  attempt " << job.placement.attempt << "  " << job.run_id << "\n";
+    if (!run.artifacts.empty()) { std::cout << "Artifacts:\n"; printCiArtifacts(run.artifacts); }
+    return 0;
   }
   std::cout << "Steps:\n";
   for (std::size_t index = 0; index < run.steps.size(); ++index) {
@@ -908,10 +944,21 @@ int ciCommand(const std::vector<std::string>& arguments) {
     return kUsage;
   }
   const std::string& subcommand = arguments.front();
-  const CiOptions options = parseCiOptions(std::vector<std::string>(arguments.begin() + 1, arguments.end()));
+  CiOptions options = parseCiOptions(std::vector<std::string>(arguments.begin() + 1, arguments.end()));
   if (subcommand == "lint") return ciLintCommand(options);
   const auto config = ckgit::loadClientConfig(resolveConfigPath(options.config_path));
   try {
+    if (options.job) {
+      const auto project = resolveCiProject(config, options);
+      if (!project) return kUsage;
+      const auto jobs = fetchCiJobs(config, *project, options.positional.at(0));
+      if (!jobs) throw std::runtime_error("the server does not support workflow job selection; upgrade the server");
+      const auto selected = std::find_if(jobs->jobs.begin(), jobs->jobs.end(),
+          [&](const auto& job) { return job.name == *options.job; });
+      if (selected == jobs->jobs.end()) throw std::runtime_error("workflow has no job named " + *options.job);
+      options.project = *project;
+      options.positional[0] = selected->run_id;
+    }
     if (subcommand == "status") return ciStatusCommand(config, options);
     if (subcommand == "list") return ciListCommand(config, options);
     if (subcommand == "show") return ciShowCommand(config, options);

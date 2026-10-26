@@ -110,3 +110,30 @@ default branch, whether sister projects exist, or the server's limits.
 - [Configure the runner and sandbox](ci-runner.md)
 - [Share CI load with remote runners](ci-remote-runners.md)
 - [Workflow reference and troubleshooting](06-ci-yml-reference.md)
+
+## Inspect a distributed workflow
+
+`ckgit ci list`, `status` and the dashboard overview list whole workflows;
+child jobs do not consume the run-list limit.
+
+`ckgit ci show RUN --project PROJECT` lists the jobs of a version-2 workflow,
+with their status, requested runner labels, assigned runner, attempt and child
+run ID. The dashboard workflow page shows the same job mapping; each job links
+to its own steps and artifacts, and child pages link back to the workflow. `--json` includes the same mapping in `jobs`. Labels describe requested
+placement; they are not an isolation attestation.
+
+Select a job by its workflow name without looking up its child run ID:
+
+```sh
+ckgit ci show RUN --project ck-git-hosting --job windows-installers
+ckgit ci log RUN --project ck-git-hosting --job windows-installers --follow
+ckgit ci artifacts RUN --project ck-git-hosting --job windows-installers
+ckgit ci download RUN windows-installers --project ck-git-hosting --job windows-installers --into downloads
+```
+
+The download directory must already exist. A finished child's artifact can be
+inspected and downloaded while other jobs still run; release publication still
+waits for the whole workflow. An unknown job fails explicitly. Omitting `--job`
+keeps the existing workflow-level command behavior. Named-job selection needs
+both the updated client and server; ordinary inspection still works against
+older servers.

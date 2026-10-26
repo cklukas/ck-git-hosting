@@ -267,7 +267,33 @@ void testLogView() {
   require(html.find("EventSource") != std::string::npos, "the follow script uses Server-Sent Events");
 }
 
+void testDistributedJobDetail() {
+  ckgit::ProjectSummary project;
+  project.name = "demo";
+  ckgit::CiRunRecord parent;
+  parent.run_id = "00000000001727000000-abcd1234";
+  parent.status = ckgit::CiRunStatus::Pending;
+  const std::vector<ckgit::CiWorkflowJobSummary> jobs{
+    {"windows", "00000000001727000001-abcd1234", ckgit::CiRunStatus::Pending, {"", 2}, {"windows", "x64"}}};
+  auto html = ckgit::renderCiRunDetail(project, parent, "not a parent log", 0, "nonce", jobs);
+  require(html.find("<h2>Jobs</h2>") != std::string::npos && html.find("windows,x64") != std::string::npos &&
+      html.find("Waiting for matching labels") != std::string::npos && html.find("<td>2</td>") != std::string::npos,
+      "workflow displays child placement and attempt");
+  require(html.find("<h2>Steps</h2>") == std::string::npos && html.find("not a parent log") == std::string::npos,
+      "parent never pretends to execute a step");
+  auto hostile = jobs;
+  hostile[0].name = "<script>";
+  html = ckgit::renderCiRunDetail(project, parent, std::nullopt, 0, "", hostile);
+  require(html.find("&lt;script&gt;") != std::string::npos && html.find("<script>") == std::string::npos,
+      "job names are escaped");
+  auto child = parent;
+  child.run_id = jobs[0].run_id; child.parent_run_id = parent.run_id; child.workflow_job = "windows";
+  html = ckgit::renderCiRunDetail(project, child, std::nullopt, 0, "");
+  require(html.find("workflow " + parent.run_id) != std::string::npos, "child links to its workflow");
+}
+
 void testCiWeb() {
+  testDistributedJobDetail();
   testRoutes();
   testRender();
   testRunDetailAndDisplay();

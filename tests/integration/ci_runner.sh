@@ -599,4 +599,56 @@ if grep -rq auto-end "$(dirname "$policy_active")/steps"; then fail "superseded 
 [ "$(policy_pending)" = 0 ] || fail "replacement job remained blocked"
 grep -l '^status=success$' "$state"/ci/runs/policy/*/run.ini >/dev/null || fail "replacement did not succeed"
 
+# Job selection resolves through the immutable workflow graph, including before
+# all child artifacts have been merged into the parent.
+cat > "$work/.ckgit/ci.yml" <<'YML'
+version: 2
+jobs:
+  - name: alpha
+    runs_on: [primary]
+    steps:
+      - run: sh -ec 'echo alpha-job; mkdir out; echo alpha > out/value'
+    artifacts:
+      name: alpha
+      paths: [out]
+  - name: beta
+    runs_on: [primary]
+    steps:
+      - run: sh -ec 'echo beta-job; mkdir out; echo beta > out/value'
+    artifacts:
+      name: beta
+      paths: [out]
+YML
+git -C "$work" add .ckgit/ci.yml
+git -C "$work" -c user.email=t@example.invalid -c user.name=Test commit -q -m distributed
+git -C "$work" push -q "$repos/demo.git" main
+next=$(git -C "$work" rev-parse HEAD)
+printf '%s %s refs/heads/main\n' "$commit" "$next" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
+      CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE"
+parent=$(basename "$(dirname "$(ls "$state"/ci/runs/demo/*/workflow.ini)")")
+curl --fail --silent "$base/project/demo/ci/$parent" > "$test_root/jobs-dashboard.html"
+grep -q '<h2>Jobs</h2>' "$test_root/jobs-dashboard.html" || fail 'dashboard job table missing'
+grep -q '>beta</a>' "$test_root/jobs-dashboard.html" || fail 'dashboard child link missing'
+if grep -q '<h2>Steps</h2>' "$test_root/jobs-dashboard.html"; then fail 'dashboard parent displayed fake steps'; fi
+ci list --project demo --limit 1 --json > "$test_root/jobs-list.json"
+grep -q "$parent" "$test_root/jobs-list.json" || fail 'list limit hid parent behind child runs'
+ci status --project demo --json > "$test_root/jobs-status.json"
+grep -q "$parent" "$test_root/jobs-status.json" || fail 'status did not select the parent workflow'
+ci show "$parent" --project demo > "$test_root/jobs-pending.txt"
+grep -q 'alpha  pending' "$test_root/jobs-pending.txt" || fail 'pending workflow child missing'
+if grep -q '^Steps:' "$test_root/jobs-pending.txt"; then fail 'workflow parent displayed a fake running step'; fi
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/jobs-runner.log" 2>&1
+ci show "$parent" --project demo --json > "$test_root/jobs.json"
+grep -q '"jobs":\[{"name":"alpha"' "$test_root/jobs.json" || fail 'JSON workflow jobs missing'
+grep -q '"name":"beta".*"status":"success".*"runs_on":\["primary"\]' "$test_root/jobs.json" || fail 'JSON job status/placement missing'
+ci show "$parent" --project demo --job beta | grep -q 'beta' || fail 'named child show failed'
+[ "$(ci log "$parent" --project demo --job beta)" = 'beta-job' ] || fail 'named child log differs'
+ci artifacts "$parent" --project demo --job beta | grep -q 'beta.*sha256' || fail 'named child artifact missing'
+mkdir "$test_root/job-download"
+ci download "$parent" beta --project demo --job beta --dashboard-url "$base" --into "$test_root/job-download" >/dev/null
+[ "$(tar -xOf "$test_root/job-download/beta.tar" out/value)" = beta ] || fail 'download selected the wrong child'
+if ci log "$parent" --project demo --job absent > "$test_root/missing-job.txt" 2>&1; then fail 'unknown workflow job accepted'; fi
+grep -q 'workflow has no job named absent' "$test_root/missing-job.txt" || fail 'missing job error unclear'
+
 echo "ci_runner integration OK"

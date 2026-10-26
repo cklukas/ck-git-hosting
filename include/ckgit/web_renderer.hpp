@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ckgit/project_summary.hpp"
+#include "ckgit/ci_control.hpp"
 
 namespace ckgit {
 
@@ -41,7 +42,7 @@ std::string renderCiRunners(const std::vector<CiRunnerRecord>& runners, const st
 // (may be empty) when `live_log` is std::nullopt.
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
                               const std::optional<std::string>& live_log, std::size_t live_step,
-                              const std::string& nonce);
+                              const std::string& nonce, const std::vector<CiWorkflowJobSummary>& jobs = {});
 // The step-log page body: the captured output, plus a "Follow live" control that
 // tails the running step over Server-Sent Events. Progressive enhancement — the
 // static log is the whole page without JavaScript. `nonce` authorizes the small

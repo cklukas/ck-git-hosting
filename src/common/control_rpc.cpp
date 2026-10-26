@@ -52,6 +52,7 @@ constexpr std::array kOperations{
     OperationGrammar{"ci-run", 2, {kProject, kRunId}},
     OperationGrammar{"ci-cancel", 2, {kProject, kRunId}},
     OperationGrammar{"ci-placement", 2, {kProject, kRunId}},
+    OperationGrammar{"ci-jobs", 2, {kProject, kRunId}},
     OperationGrammar{"ci-log", 4, {kProject, kRunId, ArgumentKind::kStepIndex, ArgumentKind::kByteOffset}},
 };
 

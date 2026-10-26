@@ -359,8 +359,9 @@ std::vector<CiRunRecord> ciRunsToShow(const std::vector<CiRunRecord>& newest_fir
 
 // Loads up to `maximum` newest run records for a project, newest first. A
 // missing runs directory means no runs; a malformed record is skipped.
+// workflows_only excludes distributed children before applying the limit.
 std::vector<CiRunRecord> loadCiRuns(const std::filesystem::path& state_root,
-                                    std::string_view project_name, std::size_t maximum = 16);
+                                    std::string_view project_name, std::size_t maximum = 16, bool workflows_only = false);
 
 // Loads one run record fresh from disk (with its artifacts). Unlike the cached
 // dashboard snapshot this always reflects the record's current bytes, so a live

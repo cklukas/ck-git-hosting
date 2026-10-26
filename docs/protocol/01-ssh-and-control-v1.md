@@ -41,6 +41,7 @@ ckgit-rpc 1 ci-overview
 ckgit-rpc 1 ci-status project
 ckgit-rpc 1 ci-run project run-id
 ckgit-rpc 1 ci-placement project run-id
+ckgit-rpc 1 ci-jobs project run-id
 ckgit-rpc 1 ci-log project run-id step offset
 ckgit-rpc 1 ci-cancel project run-id
 ```
@@ -115,7 +116,7 @@ operation, and at most four arguments.
 For version 1, `operation` is `ping`, `version`, `versions`, `list-projects`,
 `checkouts`, `refs`, `refresh`, `create`, `default-branch`,
 `set-default-branch`, `register`, `replace-checkout`, `forget-checkout`,
-`releases`, `ci-overview`, `ci-status`, `ci-run`, `ci-placement`, `ci-log`, or
+`releases`, `ci-overview`, `ci-status`, `ci-run`, `ci-placement`, `ci-jobs`, `ci-log`, or
 `ci-cancel`,
 each with exactly the arguments the SSH forms above
 show. `ping`, `version`, `versions`, `list-projects`, `checkouts`, and
@@ -283,6 +284,17 @@ ok <more|end> <offset> <byte-count>
   appended (or the note alone for an empty detail) when the runner is not
   `primary` or the attempt is above 1, and the result is cut at the detail
   limit.
+- `ci-jobs project run-id` returns the immutable child mapping of a workflow:
+  `ok <parent-run-id> <count>`, then one
+  `job <name> <child-run-id> <status> <runner-or-dash> <attempt> <labels-or-dash>`
+  line per job, in workflow order. Labels are sorted comma-separated tokens;
+  `-` represents no labels in historical records. The count is bounded to 64;
+  child IDs and names are unique and may not name the parent itself. A legacy
+  or child run returns count zero. Missing projects/runs return `noproject` or
+  `norun`. This additive operation preserves the existing `ci-run` wire format.
+  Clients use it for `ci show` job summaries and explicit `--job NAME`
+  selection on `show`, `log`, `artifacts` and `download`. An older server still
+  supports ordinary run inspection; named-job selection requires an upgrade.
 - `ci-placement project run-id` returns which runner executes or executed
   the run -- `primary` for the server's own runner, a remote runner's name
   (the client-ID grammar) otherwise, `-` while the run is queued -- and its
