@@ -93,7 +93,12 @@ From an elevated shell, check the configuration before serving:
 `--once` drains available jobs and exits when the queue is empty. The build
 root has an exclusive instance lock. Each invocation owns a private session
 workspace; each job has a separate AppContainer and tool copy. Caches are
-separated under `windows-x64/<project>/<cache>` and copied into the job while
+separated by platform, project, job, toolchain fingerprint and cache name under
+`windows-x64-v2/<scope-sha256>/<cache-sha256>`. The fingerprint covers the sealed
+tool files, executable search order and configured toolchain environment.
+Names are hashed with case preserved; Windows case folding cannot merge them.
+Changing tools or their configuration starts a fresh cache. Older unscoped
+Windows caches are not imported. Each cache is copied into the job while
 the persistent cache is locked. Lease monitoring continues during tool staging,
 Git checkout and build steps. The repository's `windows-installers` job uses
 CMake directly and does not need PowerShell inside the sandbox; other script

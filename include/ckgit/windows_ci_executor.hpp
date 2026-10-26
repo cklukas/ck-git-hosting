@@ -14,6 +14,13 @@ struct WindowsCiToolchain {
   std::vector<std::filesystem::path> binary_directories{"bin"};
   std::map<std::string, std::string> environment;
 };
+// Hash the sealed staged tree (including the launcher), binary search order,
+// and configured environment. Absolute staging paths do not affect identity.
+std::string windowsCiToolchainFingerprint(const WindowsCiToolchain& staged,
+    const std::function<bool()>& monitor = {});
+std::filesystem::path windowsCiCacheDirectory(const std::filesystem::path& root,
+    std::string_view project, std::string_view job, std::string_view toolchain,
+    std::string_view cache);
 CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecutionOptions& options,
     const WindowsCiToolchain& toolchain, CiSourceProvider& source, CiResultSink& sink,
     CiSandboxReport* report = nullptr);

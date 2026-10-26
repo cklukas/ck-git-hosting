@@ -95,7 +95,8 @@ call the result sink's heartbeat and stop on cancellation or lease loss.
 Its standalone LPAC fixture exercises pinned source and sister checkouts,
 compiler execution in the checkout directory, child-result identity, artifact
 packing, Pages handoff and a persistent cache copied into the job. Cache storage
-is separated under `windows-x64/<project>/<cache>` and locked during use;
+is separated by platform, project, job, toolchain content/configuration and
+cache name under `windows-x64-v2/<scope-sha256>/<cache-sha256>`, and locked during use;
 only the per-job copy is exposed to LPAC. Tools are copied from an
 operator-selected tree and sealed read-only. The native daemon now provides
 `serve --remote`, `check` and the Git SSH shim. Its startup qualification covers

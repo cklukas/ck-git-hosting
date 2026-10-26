@@ -122,6 +122,12 @@ int wmain(int argc, wchar_t** argv) {
       std::cout << "executor environment checked\n";
       return 0;
     }
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--empty-cache-child") {
+      const auto cache = _wgetenv(L"COMPILER_CACHE");
+      require(cache && fs::is_empty(fs::path(cache)), "another job must start with an independent cache");
+      std::ofstream(fs::path(cache) / "second-job") << "independent output";
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--wait") {
       std::cout << "ready" << std::flush;
       Sleep(30000);
@@ -131,6 +137,40 @@ int wmain(int argc, wchar_t** argv) {
     require(argc == 5, "usage: probe TEMP_PARENT MSVC_HOSTX64_X64 CMAKE_ROOT KERNEL32_LIB");
     ckgit::WindowsSandbox sandbox{fs::path(argv[1])};
     ckgit::WindowsSandbox other{fs::path(argv[1])};
+    ckgit::WindowsCiToolchain identity_fixture;
+    identity_fixture.root = sandbox.work() / "fingerprint";
+    fs::create_directories(identity_fixture.root / "bin");
+    std::ofstream(identity_fixture.root / "bin" / "compiler.exe") << "first compiler";
+    const auto first_identity = ckgit::windowsCiToolchainFingerprint(identity_fixture);
+    std::ofstream(identity_fixture.root / "bin" / "compiler.exe") << "other compiler";
+    require(first_identity != ckgit::windowsCiToolchainFingerprint(identity_fixture),
+            "toolchain identity includes tool contents");
+    std::ofstream(identity_fixture.root / "bin" / "compiler.exe") << "first compiler";
+    identity_fixture.environment["SDK"] = "v2";
+    require(first_identity != ckgit::windowsCiToolchainFingerprint(identity_fixture),
+            "toolchain identity includes configured environment");
+    identity_fixture.environment.clear();
+    identity_fixture.binary_directories = {".", "bin"};
+    const auto search_identity = ckgit::windowsCiToolchainFingerprint(identity_fixture);
+    identity_fixture.binary_directories = {"bin", "."};
+    require(search_identity != ckgit::windowsCiToolchainFingerprint(identity_fixture),
+            "toolchain identity includes executable search order");
+    identity_fixture.binary_directories = {"bin"};
+    const auto relocated = sandbox.work() / "fingerprint-relocated";
+    fs::rename(identity_fixture.root, relocated);
+    identity_fixture.root = relocated;
+    require(first_identity == ckgit::windowsCiToolchainFingerprint(identity_fixture),
+            "identical toolchains can reuse caches after staging relocation");
+    const auto cache_path = [&](std::string_view project, std::string_view job,
+                                std::string_view tools, std::string_view name) {
+      return ckgit::windowsCiCacheDirectory(sandbox.work(), project, job, tools, name);
+    };
+    const auto base_cache = cache_path("project", "job", first_identity, "compiler");
+    require(base_cache != cache_path("Project", "job", first_identity, "compiler") &&
+            base_cache != cache_path("project", "Job", first_identity, "compiler") &&
+            base_cache != cache_path("project", "job", search_identity, "compiler") &&
+            base_cache != cache_path("project", "job", first_identity, "Compiler"),
+            "persistent cache identity separates projects, jobs, toolchains and case-sensitive cache names");
     std::ofstream(other.work() / "other-job.txt") << "fixture";
     const auto executable = sandbox.tools() / "probe.exe";
     fs::copy_file(fs::path(argv[0]), executable);
@@ -229,6 +269,10 @@ int wmain(int argc, wchar_t** argv) {
     ci_job.steps.push_back({"execute", {"./result.exe"}, {}, {}});
     ci_job.artifact = ckgit::CiArtifact{"native-result", {"result.exe"}, 7};
     prepared.workflow.jobs.push_back(ci_job);
+    ckgit::CiJob second_job;
+    second_job.name = "other-job";
+    second_job.steps.push_back({"separate cache", {"probe.exe", "--empty-cache-child"}, {}, {}});
+    prepared.workflow.jobs.push_back(second_job);
     ckgit::WindowsCiToolchain toolchain;
     toolchain.root = sandbox.tools();
     toolchain.launcher = fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe";
@@ -239,18 +283,25 @@ int wmain(int argc, wchar_t** argv) {
     execution.cache_root = sandbox.work() / "executor-cache";
     execution.runner = "windows-fixture";
     execution.timeout_seconds = 60;
-    fs::create_directories(execution.cache_root / "windows-x64" / "fixture" / "compiler");
-    std::ofstream(execution.cache_root / "windows-x64" / "fixture" / "compiler" / "seed") << "cached input";
+    const auto toolchain_identity = ckgit::windowsCiToolchainFingerprint(toolchain);
+    const auto stored_cache = ckgit::windowsCiCacheDirectory(execution.cache_root,
+        "fixture", "windows", toolchain_identity, "compiler");
+    fs::create_directories(stored_cache);
+    std::ofstream(stored_cache / "seed") << "cached input";
     ExecutorSource source;
     ExecutorSink sink;
     const auto record = ckgit::executeWindowsCiJob(prepared, execution, toolchain, source, sink);
     if (record.status != ckgit::CiRunStatus::Success)
       throw std::runtime_error("native executor failed: " + record.detail + "\n" + sink.logs);
-    require(source.checkouts == 2 && sink.started && sink.steps == 3 && sink.artifact && sink.pages,
+    require(source.checkouts == 2 && sink.started && sink.steps == 4 && sink.artifact && sink.pages,
         "native executor checkout, logs, artifacts and Pages lifecycle");
     require(record.parent_run_id == "parent-fixture" && record.workflow_job == "windows" && !sink.logs.empty(),
         "native executor child identity and live logs");
-    require(fs::is_regular_file(execution.cache_root / "windows-x64" / "fixture" / "compiler" / "written"), "native executor cache persistence");
+    require(fs::is_regular_file(stored_cache / "written"), "native executor cache persistence");
+    const auto other_cache = ckgit::windowsCiCacheDirectory(execution.cache_root,
+        "fixture", "other-job", toolchain_identity, "compiler");
+    require(fs::is_regular_file(other_cache / "second-job") && !fs::exists(other_cache / "written") &&
+            !fs::exists(stored_cache / "second-job"), "native executor stores each job cache independently");
     require(fs::is_empty(execution.build_root), "native executor removes scratch");
     // This fixture deliberately stages no PowerShell. A default script must
     // request pwsh, fail clearly, and never fall back to a host shell.

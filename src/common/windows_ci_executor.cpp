@@ -5,6 +5,7 @@
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows.hpp"
 #include "ckgit/path_utf8.hpp"
+#include "ckgit/hash.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <chrono>
@@ -64,6 +65,43 @@ struct Cache {
   HANDLE lock = INVALID_HANDLE_VALUE;
   ~Cache() { if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock); }
 };
+}
+std::string windowsCiToolchainFingerprint(const WindowsCiToolchain& staged,
+    const std::function<bool()>& monitor) {
+  Sha256 hash;
+  const auto field = [&](std::string_view value) {
+    hash.add(std::to_string(value.size())); hash.add(":"); hash.add(value);
+  };
+  field("ckgit-windows-toolchain-v1");
+  ordinary(staged.root);
+  std::vector<fs::path> entries;
+  for (const auto& entry : fs::recursive_directory_iterator(staged.root)) {
+    if (monitor && !monitor()) throw std::runtime_error("toolchain fingerprint cancelled");
+    ordinary(entry.path());
+    entries.push_back(entry.path().lexically_relative(staged.root));
+  }
+  std::sort(entries.begin(), entries.end());
+  for (const auto& relative : entries) {
+    if (monitor && !monitor()) throw std::runtime_error("toolchain fingerprint cancelled");
+    const auto path = staged.root / relative;
+    field(pathToUtf8(relative));
+    if (fs::is_directory(path)) field("directory");
+    else { field("file"); field(sha256HexOfFile(path)); }
+  }
+  field("paths");
+  for (const auto& path : staged.binary_directories) field(pathToUtf8(path));
+  field("environment");
+  for (const auto& [key, value] : staged.environment) { field(key); field(value); }
+  return hash.finish();
+}
+fs::path windowsCiCacheDirectory(const fs::path& root, std::string_view project,
+    std::string_view job, std::string_view toolchain, std::string_view cache) {
+  // Hash names as well: Windows case folding must not merge distinct CI names.
+  Sha256 scope;
+  for (const auto value : {project, job, toolchain}) {
+    scope.add(std::to_string(value.size())); scope.add(":"); scope.add(value);
+  }
+  return root / "windows-x64-v2" / scope.finish() / sha256Hex(cache);
 }
 CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecutionOptions& options,
     const WindowsCiToolchain& toolchain, CiSourceProvider& source, CiResultSink& sink, CiSandboxReport* report) {
@@ -130,22 +168,11 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
       inspectTree(destination);
       run_environment[variable("CKGIT_SISTER_", sister.name)] = pathToUtf8(destination);
     }
-    for (const auto& declared : prepared.workflow.caches) {
-      auto cache = std::make_unique<Cache>();
-      cache->work = sandbox->work() / ".cache" / declared.name;
-      if (!options.cache_root.empty()) {
-        const auto parent = options.cache_root / "windows-x64" / job.project_name;
-        fs::create_directories(parent);
-        cache->stored = parent / declared.name;
-        cache->lock = CreateFileW((parent / (declared.name + ".lock")).c_str(), GENERIC_READ | GENERIC_WRITE,
-            0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-        if (cache->lock == INVALID_HANDLE_VALUE) throw std::runtime_error("build cache is busy or unavailable");
-        if (fs::exists(cache->stored)) copyTree(cache->stored, cache->work, continuing);
-      }
-      fs::create_directories(cache->work);
-      run_environment[variable("CKGIT_CACHE_", declared.name)] = pathToUtf8(cache->work);
-      for (const auto& name : declared.env) run_environment[upper(name)] = pathToUtf8(cache->work);
-      caches.push_back(std::move(cache));
+    std::string toolchain_identity;
+    if (!options.cache_root.empty() && !prepared.workflow.caches.empty()) {
+      auto staged = toolchain;
+      staged.root = sandbox->tools();
+      toolchain_identity = windowsCiToolchainFingerprint(staged, continuing);
     }
     std::vector<fs::path> bins;
     for (const auto& relative : toolchain.binary_directories) bins.push_back(below(sandbox->tools(), relative));
@@ -162,6 +189,27 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
     };
     std::size_t index = 0;
     for (const auto& ci_job : prepared.workflow.jobs) {
+      auto job_environment = run_environment;
+      for (const auto& declared : prepared.workflow.caches) {
+        auto cache = std::make_unique<Cache>();
+        cache->work = sandbox->work() / ".cache" /
+            sha256Hex(std::to_string(ci_job.name.size()) + ":" + ci_job.name + declared.name);
+        if (!options.cache_root.empty()) {
+          cache->stored = windowsCiCacheDirectory(options.cache_root, job.project_name,
+              ci_job.name, toolchain_identity, declared.name);
+          fs::create_directories(cache->stored.parent_path());
+          auto lock_path = cache->stored;
+          lock_path += L".lock";
+          cache->lock = CreateFileW(lock_path.c_str(), GENERIC_READ | GENERIC_WRITE,
+              0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+          if (cache->lock == INVALID_HANDLE_VALUE) throw std::runtime_error("build cache is busy or unavailable");
+          if (fs::exists(cache->stored)) copyTree(cache->stored, cache->work, continuing);
+        }
+        fs::create_directories(cache->work);
+        job_environment[variable("CKGIT_CACHE_", declared.name)] = pathToUtf8(cache->work);
+        for (const auto& name : declared.env) job_environment[upper(name)] = pathToUtf8(cache->work);
+        caches.push_back(std::move(cache));
+      }
       std::map<std::string, std::string> environment;
       for (const auto& [key, raw] : toolchain.environment) {
         auto value = raw;
@@ -181,7 +229,7 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
         const auto equal = assignment.find('=');
         if (equal != std::string::npos) environment[upper(assignment.substr(0, equal))] = assignment.substr(equal + 1);
       }
-      for (const auto& [key, value] : run_environment) environment[key] = value;
+      for (const auto& [key, value] : job_environment) environment[key] = value;
       environment["CI"] = "true"; environment["CKGIT_CI"] = "1";
       environment["CKGIT_COMMIT"] = job.commit_id; environment["CKGIT_REF"] = job.ref;
       environment["HOME"] = pathToUtf8(sandbox->work() / "home");
