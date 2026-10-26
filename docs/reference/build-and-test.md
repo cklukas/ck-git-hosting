@@ -38,7 +38,8 @@ Gateway integration tests cover split assignment, upload, combined release,
 and recovery. A live combined tag release still needs separate qualification.
 
 Use Visual Studio 2022 Build Tools with the C++ workload, a Windows SDK, and
-CMake 3.24 or later. Install Git for Windows and make `git.exe` available on
+CMake 3.24 or later and Ninja. Use an x64 Visual Studio Developer PowerShell
+so MSVC and the Windows SDK environment are initialized. Install Git for Windows and make `git.exe` available on
 PATH for repository inspection and its integration tests. The executables
 link the C++ runtime statically.
 
@@ -120,7 +121,8 @@ SHA-256 `2b1859ceb5500146c6e4976774d86367ed5a9ec868fcb329b896fa13ddcc9d14`.
 All four package hashes and 291 source-file hashes were verified against the
 manifest and exact Git commit. Parent workflow
 `00001793018912498671-aea47bb2` completed successfully at 13:36 UTC with both
-children successful (48 minutes 17 seconds total). Its combined artifact list
+children successful (48 minutes 17 seconds total). This first live qualification
+used the NMake entry point. Its combined artifact list
 contains `packages` and `windows-installers`. The Linux bundle was also
 downloaded through the parent: 7,454,720 bytes, SHA-256
 `5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
@@ -144,11 +146,15 @@ if (!(Test-Path V:\)) { throw 'Development drive V: is unavailable' }
 $scratch = Join-Path V:\tmp ('ckgit-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $env:TEMP = $scratch; $env:TMP = $scratch; $env:TMPDIR = $scratch
-cmake -S . -B "$scratch\build" -G 'Visual Studio 17 2022' -A x64
-cmake --build "$scratch\build" --config Release --parallel 4
-ctest --test-dir "$scratch\build" -C Release --output-on-failure
-cpack --config "$scratch\build\CPackConfig.cmake" -C Release -B "$scratch\dist"
+cmake --preset windows-release
+cmake --build --preset windows-release
+ctest --preset windows-release
+cpack --config "$scratch\ckgit-ninja-release\CPackConfig.cmake" -C Release -B "$scratch\dist"
 ```
+
+The native AppContainer runner uses the separate `windows-lpac-release`
+preset with NMake. Ninja is supported for development and GitHub builds;
+its current LPAC limitations are described under [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 
 Check each command's exit code before continuing. Supply
 `-DCKGIT_BUILD_VERSION=<exact-version>` when configuring a release; the default
@@ -190,8 +196,10 @@ unsigned.
 
 ### AppContainer qualification
 
-`ckgit-lpac-probe` explicitly exercises the sandbox with staged compiler and
-CMake binaries. It is separate from CTest because it creates Windows-managed
+`ckgit-lpac-probe` explicitly exercises the sandbox with staged compiler,
+CMake and NMake binaries. Pass the temporary parent, MSVC Hostx64/x64 directory,
+CMake directory and `kernel32.lib` path, in that order.
+It is separate from CTest because it creates Windows-managed
 AppContainer profiles in the user's profile directory. Job data, tools and
 temporary output stay beneath the explicit test directory on `V:`.
 
@@ -204,8 +212,8 @@ tools; it does not launch Explorer or display a graphical session.
 
 The qualification covers compiler/linker execution, a minimal native program,
 a CMake/NMake build, live output, cancellation and isolation checks. It does not establish compatibility
-with every SDK, build system or installer tool, and is not yet a connected
-production runner. Non-admin ckdocs installation is independent of this
+with every SDK, build system or installer tool; the connected runner's full
+installer qualification is recorded separately above. Non-admin ckdocs installation is independent of this
 broker requirement.
 
 ## Compile and test

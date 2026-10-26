@@ -28,8 +28,14 @@ jobs:
         run: |
           $version = $env:RELEASE_VERSION
           if (!$version) { $version = (Get-Content VERSION -Raw).Trim() + '+g' + (git rev-parse --short=12 HEAD) }
-          # Let CMake discover the Visual Studio version installed on the hosted image.
-          cmake -S . -B "$env:RUNNER_TEMP/build" -A x64 "-DCKGIT_BUILD_VERSION=$version"
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'An x64 MSVC toolchain is required' }
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          if (!(Get-Command ninja.exe -ErrorAction SilentlyContinue)) {
+            $env:PATH = "$vs/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja;" + $env:PATH
+          }
+          cmake --preset windows-release -B "$env:RUNNER_TEMP/build" "-DCKGIT_BUILD_VERSION=$version"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cmake --build "$env:RUNNER_TEMP/build" --config Release --parallel 4
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
@@ -45,7 +51,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if (!(Test-Path $iscc)) { throw 'Inno Setup 6 is required on this build image' }
           foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
-            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin/Release" "/DOutputDir=$env:RUNNER_TEMP/dist" "/DReleaseVersion=$version" "packaging/windows/$product.iss"
+            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin" "/DOutputDir=$env:RUNNER_TEMP/dist" "/DReleaseVersion=$version" "packaging/windows/$product.iss"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
       - name: Installer lifecycle in both installation scopes
@@ -56,7 +62,7 @@ jobs:
             foreach ($mode in @('CurrentUser','AllUsers')) {
               $selections = if ($product -eq 'ckgit') { @('both','ckgit','ckdocs') } else { @('both') }
               foreach ($selection in $selections) {
-                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/Release/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection
+                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection
               }
             }
           }

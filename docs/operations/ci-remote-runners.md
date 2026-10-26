@@ -75,6 +75,16 @@ Supply `-Destination`, `-TemporaryRoot`, `-MsvcRoot`, `-SdkRoot`, `-SdkVersion`,
 file is checked against its source SHA-256; installed tool permissions are
 unchanged. The optional `vctip.exe` telemetry uploader is omitted from the
 staged copy so resident uploaders cannot exhaust the job's process limit.
+The repository's installer job explicitly uses the `windows-lpac-release`
+CMake preset (NMake). Development and GitHub CI use the `windows-release`
+preset (Ninja). This is a configured build-tool choice, not an isolation
+fallback. In local qualification, stock Ninja 1.12.1 failed to create its output
+pipe in LPAC. A Ninja 1.13.2 build using Windows' documented `LOCAL` pipe
+namespace passed that point, but CMake-generated command-interpreter steps
+still failed with access denied, including the full project's compiler link
+test. Ninja inside LPAC is therefore not currently supported; do not switch the
+runner to it or broaden filesystem permissions to make it run.
+
 The example configuration matches this staged directory layout:
 
 - `ci_toolchain_root`: absolute path to the operator-controlled tool tree.
