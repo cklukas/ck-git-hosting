@@ -52,6 +52,11 @@ int child(int argc, wchar_t** argv) {
 }
 int wmain(int argc, wchar_t** argv) {
   try {
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--wait") {
+      std::cout << "ready" << std::flush;
+      Sleep(30000);
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--child") return child(argc, argv);
     require(argc == 5, "usage: probe TEMP_PARENT MSVC_HOSTX64_X64 CMAKE_ROOT KERNEL32_LIB");
     ckgit::WindowsSandbox sandbox{fs::path(argv[1])};
@@ -81,6 +86,18 @@ int wmain(int argc, wchar_t** argv) {
         ckgit::wideToUtf8((sandbox.work() / "tmp").native())}, options, {});
     std::cout << result.output;
     require(result.exit_code == 0 && !result.timed_out, "LPAC child qualification failed");
+    std::string streamed;
+    options.output_limit = 2;
+    options.on_output = [&](std::string_view bytes) { streamed.append(bytes); };
+    options.should_continue = [&] { return streamed != "ready"; };
+    result = ckgit::runWindowsSandboxProcess(sandbox,
+        {ckgit::wideToUtf8(executable.native()), "--wait"}, options, {});
+    require(result.cancelled && !result.timed_out && streamed == "ready" && result.output_truncated,
+        "LPAC live output and cancellation failed");
+    options.on_output = {};
+    options.should_continue = {};
+    options.output_limit = 256 * 1024;
+    std::cout << "LPAC live output and cancellation checks passed\n";
     // Real compiler -> linker -> produced executable, driven by CMake/NMake.
     // No CRT/SDK headers are needed by this minimal console executable.
     std::ofstream(sandbox.work() / "probe.c") <<

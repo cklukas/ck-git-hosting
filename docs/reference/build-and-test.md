@@ -84,6 +84,14 @@ report. Relay files live in a private temporary subdirectory that is removed
 when the sink closes; failed local writes or short upload reads stop reporting
 those bytes as successfully transferred. Pages packaging currently requires
 `tar` on the runner's PATH.
+The process API also supports synchronous live-output and continuation
+callbacks. Live output is delivered beyond the bounded in-memory capture;
+callers must cap any logs they retain. A false continuation result cancels the
+process tree, including a silent child. Callback exceptions stop the tree
+before propagating. Native tests cover cancellation, complete streamed output
+and Windows descendant cleanup after cancellation or a log callback failure.
+These hooks are available to the LPAC backend; wiring them to the production
+Windows executor's lease and log lifecycle remains part of runner integration.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed
@@ -151,7 +159,7 @@ This desktop supports initialization of Windows libraries used by console
 tools; it does not launch Explorer or display a graphical session.
 
 The qualification covers compiler/linker execution, a minimal native program,
-a CMake/NMake build and isolation checks. It does not establish compatibility
+a CMake/NMake build, live output, cancellation and isolation checks. It does not establish compatibility
 with every SDK, build system or installer tool, and is not yet a connected
 production runner. Non-admin ckdocs installation is independent of this
 broker requirement.

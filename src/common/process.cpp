@@ -208,72 +208,77 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
   std::array<char, 4096> buffer{};
 
   const auto abandon = [&](const std::string& message, int saved_errno) {
-    signalProcessTree(child, SIGKILL, !child_reaped);
-    if (pipe_open) {
-      close(pipe_fds[0]);
-    }
-    if (!child_reaped) {
-      waitpid(child, nullptr, 0);
-    }
-    unregisterActiveChild(child);
     throw std::runtime_error(message + ": " + std::string(std::strerror(saved_errno)));
   };
 
-  while (pipe_open || !child_reaped) {
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= deadline && !result.timed_out) {
-      result.timed_out = true;
-      signalProcessTree(child, SIGKILL, !child_reaped);
-      // Whatever still holds the pipe after the kill has left the session; it
-      // must not keep this caller waiting, so reading simply stops here.
-      if (pipe_open) {
-        close(pipe_fds[0]);
-        pipe_open = false;
-      }
-      if (!child_reaped) {
-        waitpid(child, &child_status, 0);
-        child_reaped = true;
-      }
-      break;
-    }
-
-    if (pipe_open) {
-      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-      const int poll_timeout = static_cast<int>(std::min<std::int64_t>(std::max<std::int64_t>(remaining.count(), 0), 100));
-      pollfd descriptor{pipe_fds[0], POLLIN | POLLHUP, 0};
-      const int poll_result = poll(&descriptor, 1, poll_timeout);
-      if (poll_result < 0 && errno != EINTR) {
-        abandon("could not read process output", errno);
-      }
-      if (poll_result > 0 && (descriptor.revents & (POLLIN | POLLHUP)) != 0) {
-        const ssize_t bytes_read = read(pipe_fds[0], buffer.data(), buffer.size());
-        if (bytes_read > 0) {
-          const std::size_t available = options.output_limit > result.output.size()
-                                            ? options.output_limit - result.output.size()
-                                            : 0;
-          const std::size_t to_copy =
-              std::min<std::size_t>(available, static_cast<std::size_t>(bytes_read));
-          result.output.append(buffer.data(), to_copy);
-          result.output_truncated = result.output_truncated ||
-                                    to_copy != static_cast<std::size_t>(bytes_read);
-        } else if (bytes_read == 0) {
+  try {
+    while (pipe_open || !child_reaped) {
+      const auto now = std::chrono::steady_clock::now();
+      const bool cancelled = options.should_continue && !options.should_continue();
+      if (cancelled || now >= deadline) {
+        result.cancelled = cancelled;
+        result.timed_out = !cancelled;
+        signalProcessTree(child, SIGKILL, !child_reaped);
+        // Whatever still holds the pipe after the kill has left the session; it
+        // must not keep this caller waiting, so reading simply stops here.
+        if (pipe_open) {
           close(pipe_fds[0]);
           pipe_open = false;
-        } else if (errno != EINTR) {
+        }
+        if (!child_reaped) {
+          waitpid(child, &child_status, 0);
+          child_reaped = true;
+        }
+        break;
+      }
+
+      if (pipe_open) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        const int poll_timeout = static_cast<int>(std::min<std::int64_t>(std::max<std::int64_t>(remaining.count(), 0), 100));
+        pollfd descriptor{pipe_fds[0], POLLIN | POLLHUP, 0};
+        const int poll_result = poll(&descriptor, 1, poll_timeout);
+        if (poll_result < 0 && errno != EINTR) {
           abandon("could not read process output", errno);
         }
+        if (poll_result > 0 && (descriptor.revents & (POLLIN | POLLHUP)) != 0) {
+          const ssize_t bytes_read = read(pipe_fds[0], buffer.data(), buffer.size());
+          if (bytes_read > 0) {
+            if (options.on_output) options.on_output(std::string_view(buffer.data(), static_cast<std::size_t>(bytes_read)));
+            const std::size_t available = options.output_limit > result.output.size()
+                                              ? options.output_limit - result.output.size()
+                                              : 0;
+            const std::size_t to_copy =
+                std::min<std::size_t>(available, static_cast<std::size_t>(bytes_read));
+            result.output.append(buffer.data(), to_copy);
+            result.output_truncated = result.output_truncated ||
+                                      to_copy != static_cast<std::size_t>(bytes_read);
+          } else if (bytes_read == 0) {
+            close(pipe_fds[0]);
+            pipe_open = false;
+          } else if (errno != EINTR) {
+            abandon("could not read process output", errno);
+          }
+        }
+      } else {
+        sleepBriefly();  // Output is finished; only the exit status is pending.
       }
-    } else {
-      sleepBriefly();  // Output is finished; only the exit status is pending.
+      if (!child_reaped) {
+        const pid_t wait_result = waitpid(child, &child_status, WNOHANG);
+        if (wait_result == child) {
+          child_reaped = true;
+        } else if (wait_result < 0 && errno != EINTR) {
+          abandon("could not wait for process", errno);
+        }
+      }
     }
+  } catch (...) {
+    signalProcessTree(child, SIGKILL, !child_reaped);
+    if (pipe_open) close(pipe_fds[0]);
     if (!child_reaped) {
-      const pid_t wait_result = waitpid(child, &child_status, WNOHANG);
-      if (wait_result == child) {
-        child_reaped = true;
-      } else if (wait_result < 0 && errno != EINTR) {
-        abandon("could not wait for process", errno);
-      }
+      while (waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
     }
+    unregisterActiveChild(child);
+    throw;
   }
   unregisterActiveChild(child);
 

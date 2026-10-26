@@ -12,12 +12,14 @@
 #include <optional>
 #include <filesystem>
 #include <map>
+#include <functional>
 
 namespace ckgit {
 
 struct ProcessResult {
   int exit_code{-1};
   bool timed_out{false};
+  bool cancelled{false};
   bool output_truncated{false};
   std::string output;
 };
@@ -35,6 +37,13 @@ struct ProcessOptions {
   // Per-child overrides, without changing this process's environment. nullopt
   // removes an inherited variable. Sandboxed jobs use their explicit allowlist.
   std::map<std::string, std::optional<std::string>> environment;
+  // Synchronous callbacks on the caller's thread; keep them bounded. Output is
+  // delivered in full even after the capture limit, and the view lasts only
+  // for the call. should_continue also runs while the child produces no output.
+  // Returning false kills the tree and sets cancelled. Callback exceptions
+  // terminate the tree before propagating to the caller.
+  std::function<void(std::string_view)> on_output;
+  std::function<bool()> should_continue;
 };
 
 // Executes an argument vector directly, without a shell.  Output is combined

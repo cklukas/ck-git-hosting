@@ -359,6 +359,28 @@ int run(const std::vector<std::string>& args) {
   require(result.timed_out && result.exit_code != 0, "timeout");
   require(ckgit::runProcess({args[0], "exit"}).exit_code == 37, "exit status");
   {
+    ckgit::ProcessOptions options;
+    options.output_limit = 7;
+    std::string streamed;
+    options.on_output = [&](std::string_view bytes) { streamed.append(bytes); };
+    result = ckgit::runProcess(command, options);
+    require(result.exit_code == 0 && result.output_truncated && streamed == expected,
+        "live output is complete beyond capture limit");
+    options.on_output = {};
+    const auto start = std::chrono::steady_clock::now();
+    options.should_continue = [&] { return std::chrono::steady_clock::now() - start < std::chrono::milliseconds(150); };
+    result = ckgit::runProcess({args[0], "sleep"}, options);
+    require(result.cancelled && !result.timed_out && result.exit_code != 0,
+        "silent child can be cancelled independently of timeout");
+    require(std::chrono::steady_clock::now() - start < std::chrono::seconds(3), "cancellation is prompt");
+    options.should_continue = []() -> bool { throw std::runtime_error("callback failure"); };
+    bool propagated = false;
+    try { ckgit::runProcess({args[0], "sleep"}, options); }
+    catch (const std::runtime_error& error) { propagated = std::string(error.what()) == "callback failure"; }
+    require(propagated, "callback exceptions propagate after child cleanup");
+  }
+
+  {
     ckgit::ManagedProcess child({args[0], "exit"});
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!child.poll() && std::chrono::steady_clock::now() < deadline)
@@ -383,6 +405,31 @@ int run(const std::vector<std::string>& args) {
     CloseHandle(descendant);
     require(waited == WAIT_OBJECT_0, "timeout terminates descendants");
   } else require(GetLastError() == ERROR_INVALID_PARAMETER, "descendant termination observable");
+  for (bool throw_from_output : {false, true}) {
+    ckgit::ProcessOptions options;
+    std::string child_output;
+    options.on_output = [&](std::string_view bytes) {
+      child_output.append(bytes);
+      if (throw_from_output) throw std::runtime_error("log sink failed");
+    };
+    options.should_continue = [&] { return child_output.empty(); };
+    bool threw = false;
+    try {
+      const auto stopped = ckgit::runProcess({args[0], "tree"}, options);
+      require(stopped.cancelled && !stopped.timed_out, "monitor cancels process tree");
+    } catch (const std::runtime_error& error) {
+      threw = std::string(error.what()) == "log sink failed";
+      if (!threw) throw;
+    }
+    require(threw == throw_from_output && !child_output.empty(), "tree monitor observed descendant");
+    const auto descendant_id = static_cast<DWORD>(std::stoul(child_output));
+    const auto handle = OpenProcess(SYNCHRONIZE, FALSE, descendant_id);
+    if (handle) {
+      const auto stopped = WaitForSingleObject(handle, 2000);
+      CloseHandle(handle);
+      require(stopped == WAIT_OBJECT_0, "monitor failure or cancellation terminates descendants");
+    } else require(GetLastError() == ERROR_INVALID_PARAMETER, "monitor descendant termination observable");
+  }
   SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
   const auto event = CreateEventW(&security, TRUE, FALSE, nullptr);
   require(event != nullptr, "create inherited-handle fixture");

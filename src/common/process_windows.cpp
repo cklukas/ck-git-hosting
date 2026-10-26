@@ -287,29 +287,38 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   const auto deadline = std::chrono::steady_clock::now() + options.timeout;
   std::array<char, 16384> buffer{};
   bool pipe_open = true;
-  while (true) {
-    DWORD available = 0;
-    if (pipe_open && !PeekNamedPipe(read.value, nullptr, 0, nullptr, &available, nullptr)) {
-      if (GetLastError() != ERROR_BROKEN_PIPE) fail("inspect process output");
-      pipe_open = false;
+  try {
+    while (true) {
+      DWORD available = 0;
+      if (pipe_open && !PeekNamedPipe(read.value, nullptr, 0, nullptr, &available, nullptr)) {
+        if (GetLastError() != ERROR_BROKEN_PIPE) fail("inspect process output");
+        pipe_open = false;
+      }
+      if (available) {
+        DWORD received = 0;
+        if (!ReadFile(read.value, buffer.data(), std::min<DWORD>(available, static_cast<DWORD>(buffer.size())), &received, nullptr)) fail("read process output");
+        if (options.on_output) options.on_output(std::string_view(buffer.data(), received));
+        const auto keep = std::min<std::size_t>(received, options.output_limit - result.output.size());
+        result.output.append(buffer.data(), keep);
+        result.output_truncated |= keep != received;
+      }
+      const DWORD waited = WaitForSingleObject(process.value, 0);
+      if (waited == WAIT_FAILED) fail("wait for process");
+      if (!pipe_open && waited == WAIT_OBJECT_0) break;
+      const bool cancelled = options.should_continue && !options.should_continue();
+      if (cancelled || std::chrono::steady_clock::now() >= deadline) {
+        result.cancelled = cancelled;
+        result.timed_out = !cancelled;
+        if (!TerminateJobObject(job.value, cancelled ? 125 : 124)) fail("terminate process job");
+        WaitForSingleObject(process.value, INFINITE);
+        break;
+      }
+      if (!available) Sleep(10);
     }
-    if (available) {
-      DWORD received = 0;
-      if (!ReadFile(read.value, buffer.data(), std::min<DWORD>(available, static_cast<DWORD>(buffer.size())), &received, nullptr)) fail("read process output");
-      const auto keep = std::min<std::size_t>(received, options.output_limit - result.output.size());
-      result.output.append(buffer.data(), keep);
-      result.output_truncated |= keep != received;
-    }
-    const DWORD waited = WaitForSingleObject(process.value, 0);
-    if (waited == WAIT_FAILED) fail("wait for process");
-    if (!pipe_open && waited == WAIT_OBJECT_0) break;
-    if (std::chrono::steady_clock::now() >= deadline) {
-      result.timed_out = true;
-      if (!TerminateJobObject(job.value, 124)) fail("terminate process job");
-      WaitForSingleObject(process.value, INFINITE);
-      break;
-    }
-    if (!available) Sleep(10);
+  } catch (...) {
+    TerminateJobObject(job.value, 125);
+    WaitForSingleObject(process.value, INFINITE);
+    throw;
   }
   DWORD exit_code = 0;
   if (!GetExitCodeProcess(process.value, &exit_code)) fail("read process exit code");
