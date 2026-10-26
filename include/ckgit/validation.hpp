@@ -45,7 +45,8 @@ bool isValidCiLabel(std::string_view label);
 std::optional<std::vector<std::string>> parseCiLabelList(std::string_view text);
 std::string formatCiLabelList(const std::vector<std::string>& labels);
 // Whether a runner with `labels` (plus its `name`) may run a job that asks
-// for `runs_on`: every requested label must be among them.
+// for `runs_on`: every requested label must be among them. Runners registered
+// with the windows label require an explicitly labelled job.
 bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
                      const std::vector<std::string>& runs_on);
 

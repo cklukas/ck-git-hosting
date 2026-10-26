@@ -142,7 +142,7 @@ exact same subset — one syntax, two schemas.
 | `checkout.tags` | boolean | no | `false` | `true` also fetches the tags inside that history (for `git describe`) |
 | `checkout.mode` | `git` or `archive` | no | `git` | `archive` removes `.git` after the checkout: the plain tree earlier runners produced |
 | `auto_cancel` | boolean | no | `true` | `true` or `false`; supersede older runs on the same branch |
-| `runs_on` | a label, or a list of up to 16 labels | no | any runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
+| `runs_on` | a label, or a list of up to 16 labels | no | any eligible runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
 | `pages.job` | string | required within version-2 `pages` | — | name of the producing job; forbidden in version 1 |
@@ -222,7 +222,8 @@ for `ci_claim_delay_ms` to a free remote runner first (see
 ### Choose a runner: `runs_on`
 
 `runs_on:` sends the workflow's runs only to a runner that carries every
-label it names. Without it, any runner takes them.
+label it names. Without it, POSIX runners remain eligible; a runner registered
+with the `windows` label skips unlabelled work.
 
 ```yaml
 version: 1
@@ -281,7 +282,7 @@ source fingerprints, the commit, and build timing. These commands execute on
 Windows inside the [AppContainer runner](ci-remote-runners.md#windows-runner).
 
 Give every platform-specific job explicit labels, including legacy workflows:
-an unlabelled workflow is eligible for any runner. Linux scripts default to
+Windows runners skip unlabelled workflows. Linux scripts default to
 `sh`; Windows scripts default to `powershell`. An explicitly selected shell
 must be present in the runner's staged tools. Argument-list steps need no shell.
 

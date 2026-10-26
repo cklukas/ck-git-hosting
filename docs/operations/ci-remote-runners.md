@@ -13,8 +13,9 @@ the server ran, and nothing ever connects to the runner.
 
 ## How jobs are shared
 
-Remote runners negotiate protocol version 2 before claiming work and fall back
-to version 1 when connecting to an older server. Version 2 permits individual
+Remote runners negotiate protocol version 2 before claiming work. POSIX runners
+can fall back to version 1 when connecting to an older server; Windows runners
+require version 2 and refuse legacy-only servers before claiming work. Version 2 permits individual
 jobs from a workflow with `version: 2` to run on different labelled runners;
 version-1 runners only receive legacy workflows. The negotiated version stays
 fixed throughout a lease, including source checkout, logs and artifact uploads.
@@ -242,6 +243,8 @@ registered. Set `ci_runner_labels` in `server.ini` for the server's own runner
 and restart `ck-ci-runner.service`. A runner's name always counts as a label
 too. `runner list` and the dashboard's Runners page show every runner's
 labels.
+
+Runners registered with the `windows` label never claim unlabelled jobs.
 
 Labels come only from the server's records, never from the runner, so a
 runner cannot take jobs meant for another kind of machine by claiming a label.

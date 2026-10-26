@@ -87,6 +87,7 @@ int run(const std::vector<std::string>& args) {
         return 2;
       }
       if (command->op == ckgit::CiRunnerOp::kHello) {
+        if (std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER") && command->protocol_version > 1) return 1;
         std::cout << "ok\nprotocol=" << command->protocol_version << "\n";
       } else if (command->op == ckgit::CiRunnerOp::kClaim) {
         std::cout << "none\n";

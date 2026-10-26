@@ -25,6 +25,23 @@ try {
     & $Runner serve --remote --config $config --once
     if ($LASTEXITCODE) { throw 'Runner did not negotiate and drain empty queue' }
     if (@(Get-ChildItem "$fixture\build" -Directory).Count) { throw 'Runner left a session workspace' }
+    $oldLegacy=$env:CKGIT_TEST_LEGACY_RUNNER_SERVER
+    try {
+        $env:CKGIT_TEST_LEGACY_RUNNER_SERVER='1'
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $Runner
+        $start.Arguments = 'serve --remote --once --config "' + $config + '"'
+        $start.UseShellExecute = $false
+        $start.RedirectStandardError = $true
+        $process = [Diagnostics.Process]::Start($start)
+        $errorText = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -eq 0 -or $errorText -notmatch 'requires runner protocol 2') {
+            throw 'Windows runner accepted a legacy-only server'
+        }
+        $process.Dispose()
+    } finally { $env:CKGIT_TEST_LEGACY_RUNNER_SERVER=$oldLegacy }
+    if (@(Get-ChildItem "$fixture\build" -Directory).Count) { throw 'Rejected server left a session workspace' }
     $lock = [IO.File]::Open("$fixture\build\runner.lock", 'Open', 'ReadWrite', 'None')
     try {
         $start = New-Object Diagnostics.ProcessStartInfo

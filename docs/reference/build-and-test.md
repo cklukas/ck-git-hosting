@@ -12,17 +12,17 @@ The version-2 workflow parser supports per-job `runs_on`, dependency lists
 (`needs`), and script shells (`sh`, `powershell`, `pwsh`). The push hook now
 queues distributed graphs, and the primary runner and protocol-2 gateway
 prepare only the assigned child. Protocol 1 cannot claim these children.
-The production Windows runner and the final deployment qualification remain
-under development; continue using version 1 for deployed workflows until
-those checks are complete.
+The installed Windows runner has completed the native installer job against
+the Linux hosting server on rpi4. Full portability qualification remains in
+progress; automatic runner startup and broader client journeys are separate checks.
 
 The queue implementation stores parent/child membership and dependency IDs.
 A durable graph journal repairs an interrupted enqueue before claims resume;
 independent children can run concurrently, failed dependencies skip downstream
 jobs, and a parent cancellation reaches queued and running children. Retention
 counts a workflow and its children as one run and preserves active graphs.
-These storage and scheduling paths have unit tests; they do not yet constitute
-the rpi4-to-Windows end-to-end qualification.
+These storage and scheduling paths have unit tests. The live Windows child
+qualification is recorded below; it does not establish every graph recovery case.
 
 Version 2 requires unique artifact names across jobs and an explicit
 `pages: {path: public, job: <producer>}` for Pages output. Child results retain
@@ -35,7 +35,7 @@ publication without repeating already completed child steps. A pending
 publication preserves its place in branch order and its retained outputs;
 a newer auto-cancelling push also supersedes an unpublished older parent.
 Gateway integration tests cover split assignment, upload, combined release,
-and recovery; the actual Windows workstation qualification is still pending.
+and recovery. A live combined tag release still needs separate qualification.
 
 Use Visual Studio 2022 Build Tools with the C++ workload, a Windows SDK, and
 CMake 3.24 or later. Install Git for Windows and make `git.exe` available on
@@ -47,7 +47,7 @@ paths and LF or CRLF line endings. Windows build, cache and credential paths
 must be absolute; drive-relative paths such as `V:build` are rejected. Windows
 also rejects `ci_allow_degraded=true`: there is no unsandboxed fallback. Native
 configuration tests cover Unicode paths, spaces and these refusal cases. This
-configuration support does not yet constitute a connected Windows runner.
+configuration support is also used by the connected Windows runner.
 The native Windows test binary also links the shared runner wire protocol:
 tests decode a version-2 child assignment, select only that job, encode an
 artifact upload and a finish report, and reject a version-1 child envelope.
@@ -61,13 +61,13 @@ asynchronous writes and a Job Object for process cleanup; native tests exercise
 bidirectional binary traffic, backpressure, cancellation of pending writes and
 handle inheritance. The Unix remote-runner integration test covers checkout,
 live logs and output uploads through the same interface. The connected Windows
-runner still requires checkout/execution integration and deployment qualification.
+runner's live checkout/execution qualification is recorded below.
 The SSH transport itself is now a separately linked native library. Windows
 tests exercise protocol negotiation, claims, binary request input and the log
 stream through a local SSH stand-in. Paths are passed as UTF-8, and Git's
 `GIT_SSH_COMMAND` quotes executable/configuration paths for its shell. Windows
 does not use the Unix ControlMaster socket. These transport tests do not yet
-establish a connection from the installed Windows runner to rpi4.
+replace the installed runner's separate live connection qualification below.
 CI checkout now uses per-child environment overrides instead of the Unix
 `env` command. Native Git tests cover fetching a selected commit with depth 1,
 a detached checkout, Unicode paths, unchanged committed line endings and
@@ -77,7 +77,7 @@ real Git pack traffic through a local SSH stand-in that checks the exact job
 ID, token and protocol version. Configuration paths include spaces, Unicode
 and an apostrophe. The Windows shim inherits only standard I/O and keeps its
 SSH child in a kill-on-close Job Object. The connected AppContainer executor
-and rpi4 deployment qualification remain outstanding.
+has built this repository's Windows installers from a live rpi4 assignment.
 The remote result sink now also builds natively. Its local SSH fixture checks
 acknowledged log frames, artifact and Pages upload checksums, and the terminal
 report. Relay files live in a private temporary subdirectory that is removed
@@ -102,7 +102,7 @@ operator-selected tree and sealed read-only. The native daemon now provides
 protocol negotiation against a local SSH fixture, empty-queue exit, workspace
 cleanup and the single-instance lock. The runner installer passes install,
 reinstall and uninstall in both scopes, including CurrentUser with a non-admin
-token. Automatic startup and the live rpi4 job remain to be qualified.
+token. Automatic startup remains to be implemented and qualified.
 
 The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
 `windows-installers` job selected by the `windows` and `x64` labels. The Windows
@@ -110,17 +110,25 @@ job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
 with MSVC/NMake, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
 and places installer files plus input/output hashes in the `windows-installers`
 artifact. The Linux job remains the Pages producer. This workflow is the
-required live rpi4-to-Windows acceptance case; its installer build inside the
-connected LPAC runner has not yet been qualified.
+live rpi4-to-Windows acceptance case. On 2026-10-26, Windows child
+`00001793018912592353-4e89d914` succeeded for commit
+`8dcf98e5cc33af8074b419b6f02cdf2086b8e363` inside the connected LPAC runner.
+Compilation and packaging took 576 seconds. The uploaded `windows-installers`
+bundle was downloaded through `ckgit ci download`; its 19,148,800 bytes matched
+SHA-256 `2b1859ceb5500146c6e4976774d86367ed5a9ec868fcb329b896fa13ddcc9d14`.
+All four package hashes and 291 source-file hashes were verified against the
+manifest and exact Git commit. This records the Windows child result; the
+parent workflow and its Linux child have independent completion status.
 
-The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
-built both installers and the portable ZIP from commit `ae982d1d6295`, passed
-native tests, and tested both installer scopes. Those exact installers were
-installed on the development workstation on 2026-10-26 with a non-admin token
-in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
-Installed executable hashes matched the CI ZIP, and both reported
-`0.8.2+gae982d1d6295`. This verifies client installation; runner installation
-and the rpi4-to-Windows job qualification remain outstanding.
+The Windows job in [GitHub run 40326726111](https://github.com/cklukas/ck-git-hosting/actions/runs/40326726111)
+built all three installers and the portable ZIP from commit `1f94b843ca9f`,
+passed native tests, and tested both installer scopes. Those exact client
+installers were installed on the workstation on 2026-10-26 with a non-admin
+token in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
+The runner was installed with an administrator token in AllUsers mode under
+`V:\Programs\ck-git-runner`. Installed executable hashes matched the CI ZIP,
+and the executables reported `0.8.2+g1f94b843ca9f`. The installed runner then
+negotiated protocol 2 with rpi4 and exited successfully on an empty queue.
 
 On the development workstation, keep sources in a permanent directory on
 `V:` and select a unique temporary directory before running development tools:
@@ -144,8 +152,8 @@ Native tests cover private client configuration and checkout selection files,
 process locks, Git repository discovery (including Unicode paths and linked
 worktrees), process execution, file serving, diagrams, and the docs preview.
 These tests also run without an administrator token and exercise the native
-CLI's setup, configuration and scan commands. Remote Windows command journeys
-and the connected runner require additional end-to-end qualification.
+CLI's setup, configuration and scan commands. Broader remote Windows command
+journeys require additional end-to-end qualification.
 
 Inno Setup 6 builds `packaging/windows/ckdocs.iss` and
 `packaging/windows/ckgit.iss` with explicit

@@ -550,6 +550,18 @@ void testVersionOneJobStillClaims() {
         << "commit=" << std::string(40, 'b') << "\nclient_id=mac\nqueued_epoch=1700000000\n";
   }
   require(chmod(file.c_str(), 0600) == 0, "could not secure the legacy job");
+  ckgit::CiClaimOptions windows;
+  windows.runner = "windows-desktop";
+  windows.labels = {"windows", "x64"};
+  windows.protocol_version = 2;
+  require(!ckgit::claimCiJob(fixture.state, windows), "Windows must leave an unlabelled legacy job queued");
+  require(!ckgit::loadCiClaim(fixture.state, id), "rejecting a legacy job must not create a lease");
+  auto explicit_windows = sampleJob(ckgit::generateCiId(), "refs/heads/windows");
+  explicit_windows.runs_on = {"windows", "x64"};
+  ckgit::enqueueCiJob(fixture.state, explicit_windows);
+  const auto windows_claim = ckgit::claimCiJob(fixture.state, windows);
+  require(windows_claim && windows_claim->job.job_id == explicit_windows.job_id,
+          "Windows skips older unlabelled work and claims its explicitly labelled job");
   const auto claim = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
   require(claim.has_value() && claim->job.attempt == 1 && claim->job.ref == "refs/heads/main",
           "a version-1 job is claimed as a first attempt");

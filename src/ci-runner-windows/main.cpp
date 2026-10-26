@@ -81,6 +81,8 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
   while (!stop_requested) {
     if (!negotiated) {
       negotiated = transport.negotiate(ckgit::hexEncode(ckgit::buildVersion()));
+      if (negotiated && transport.protocolVersion() < 2)
+        throw std::runtime_error("Windows runner requires runner protocol 2 and explicit platform routing; upgrade the server");
       if (negotiated) std::cout << "Connected to " << config.server << " as " << config.name
           << " (protocol " << transport.protocolVersion() << ")\n";
     }
