@@ -128,33 +128,36 @@ downloaded through the parent: 7,454,720 bytes, SHA-256
 `5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
 This was a branch build; live tag-release publication is a separate check.
 
-A second native Windows build of commit `93f70771e500` succeeded as child
-`00001793026967533567-8878469f` in 368 seconds. Its artifact contains exactly
+The installed GitHub runner subsequently built commit `d9b77de324f1` as child
+`00001793030294304599-54199f45`: compilation and packaging took 343 seconds,
+with 113 compilation actions in a fresh job workspace. Its artifact contains exactly
 three setup executables (ckgit, ckdocs and the runner), the portable ZIP, and
 three build/input/package manifests; CPack intermediate files are excluded.
-The downloaded bundle is 11,366,400 bytes with SHA-256
-`ddbbd2372de10fdc4f3a517c9e2b890993ee465e2d023014d67f15f32711dd9a`.
+The downloaded bundle is 11,376,640 bytes with SHA-256
+`cf7e2c5ba69feded532bd0d6a82e44188974a5679d83cff7470ed2a66c03c2d3`.
 All four package hashes and 292 source-file hashes matched the exact commit.
 The child artifact can be downloaded before the Linux sibling finishes,
 including with servers that do not yet support named job selection:
 
 ```sh
 mkdir -p downloads
-ckgit ci download 00001793026967533567-8878469f windows-installers --project ck-git-hosting --into downloads
+ckgit ci download 00001793030294304599-54199f45 windows-installers --project ck-git-hosting --into downloads
 ```
 
-This test artifact expires on 2026-11-02 at 15:09 UTC; it is not a durable
+This child test artifact expires on 2026-11-02 at 16:04 UTC; it is not a durable
 tagged release. Later runs have their own run IDs and retention deadlines.
 
-The Windows job in [GitHub run 40326726111](https://github.com/cklukas/ck-git-hosting/actions/runs/40326726111)
-built all three installers and the portable ZIP from commit `1f94b843ca9f`,
+The Windows job in [GitHub run 40345259988](https://github.com/cklukas/ck-git-hosting/actions/runs/40345259988)
+built all three installers and the portable ZIP from commit `93f70771e500`,
 passed native tests, and tested both installer scopes. Those exact client
 installers were installed on the workstation on 2026-10-26 with a non-admin
 token in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
 The runner was installed with an administrator token in AllUsers mode under
 `V:\Programs\ck-git-runner`. Installed executable hashes matched the CI ZIP,
-and the executables reported `0.8.2+g1f94b843ca9f`. The installed runner then
-negotiated protocol 2 with rpi4 and exited successfully on an empty queue.
+and the executables reported `0.8.2+g93f70771e500`. That installed runner then
+negotiated protocol 2 with rpi4 and completed the `d9b77de324f1` job above.
+Its executable SHA-256 was
+`e5ffda77c668f0006848bfddd5c4e88356a57b61b0a2fe586a25c4961ecacea3`.
 
 On the development workstation, keep sources in a permanent directory on
 `V:` and select a unique temporary directory before running development tools:
@@ -242,6 +245,15 @@ a CMake/NMake build, live output, cancellation and isolation checks. It does not
 with every SDK, build system or installer tool; the connected runner's full
 installer qualification is recorded separately above. Non-admin ckdocs installation is independent of this
 broker requirement.
+
+Two alternative desktop approaches were tested in the workstation's SSH
+session, including with a confirmed non-administrator token. A system-named
+window station with `CWF_CREATE_ONLY` failed with `ERROR_ALREADY_EXISTS` (183).
+A new private desktop on the existing station, without changing its ACL,
+failed to initialize the LPAC child (`0xc0000142`). Neither experiment is
+enabled in the runner. These results do not qualify a standard-user broker;
+that requirement remains open. In particular, reopening a pre-existing station
+does not establish that the runner owns its security descriptor.
 
 For a small path-compatibility diagnostic without staging the compiler, run:
 
