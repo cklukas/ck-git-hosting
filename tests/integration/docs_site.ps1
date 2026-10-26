@@ -16,7 +16,8 @@ $oldTemp = $env:TEMP; $oldTmp = $env:TMP; $oldTmpdir = $env:TMPDIR
 try {
     New-Item -ItemType Directory -Path $source,(Join-Path $fixture 'tmp') | Out-Null
     $env:TEMP = Join-Path $fixture 'tmp'; $env:TMP = $env:TEMP; $env:TMPDIR = $env:TEMP
-    [IO.File]::WriteAllText((Join-Path $source 'README.md'), "# Windows preview`n`nFirst version.`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $source 'ckdocs.yml'), "version: 1`r`nsite:`r`n  title: Windows preview`r`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $source 'README.md'), "---`r`ntitle: Windows preview`r`n---`r`n# Windows preview`r`n`r`nFirst version.`r`n", $utf8)
     & $Ckdocs build --root $source --out $output --strict
     if ($LASTEXITCODE -ne 0) { throw 'ckdocs build failed' }
     if (!(Test-Path (Join-Path $output 'index.html'))) { throw 'Missing index.html' }

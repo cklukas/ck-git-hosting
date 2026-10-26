@@ -80,13 +80,13 @@ exact same subset — one syntax, two schemas.
 - `#` comments: a `#` starts a comment only outside quotes and outside flow
   brackets, and only at the start of a line or immediately after a space —
   `value#not-a-comment` keeps the `#`, `value # comment` strips it.
-- Spaces-only indentation, LF-only line endings, UTF-8-only content.
+- Spaces-only indentation, LF or CRLF line endings, UTF-8-only content.
 
 **Rejected, with the exact reason:**
 
 - **Tabs for indentation** — `"tabs may not be used for indentation"`.
-- **Carriage returns** — `"carriage returns are not allowed (use LF line
-  endings)"`. A file with CRLF endings must be converted first.
+- **Bare carriage returns** — a CR must be followed by LF. Regular Windows
+  CRLF line endings are accepted and normalize to LF in script blocks.
 - **`>` folded block style, and `|-`/`|+`/`>-`/`>+` chomping indicators** —
   none of these are recognized as block-style syntax at all; only the exact
   token `|` triggers block-literal parsing. `script: >` or `script: |-`

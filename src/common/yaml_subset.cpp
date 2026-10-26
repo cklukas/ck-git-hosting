@@ -450,9 +450,9 @@ std::vector<RawLine> splitLines(const YamlDialect& dialect, std::string_view con
     }
     std::string_view physical = content.substr(start, newline - start);
     if (physical.size() > dialect.bounds.line_bytes) yamlTooLarge(dialect, "a line exceeds its length limit");
-    if (!physical.empty() && physical.back() == '\r') {
-      throw std::runtime_error(std::string(dialect.prefix) + ": carriage returns are not allowed (use LF line endings)");
-    }
+    if (!last && !physical.empty() && physical.back() == '\r') physical.remove_suffix(1);
+    if (physical.find('\r') != std::string_view::npos)
+      yamlMalformed(dialect, "bare carriage returns are not allowed (use LF or CRLF line endings)", number);
     std::size_t indent = 0;
     while (indent < physical.size() && physical[indent] == ' ') ++indent;
     if (indent < physical.size() && physical[indent] == '\t') {

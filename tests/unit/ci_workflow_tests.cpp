@@ -196,7 +196,8 @@ void testRejections() {
   require(rejected("version: 1\non: { branches: ['bad branch'] }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"),
           "invalid branch name");
   require(rejected("version: 1\njobs:\n\t- name: a\n    steps:\n      - run: [x]\n"), "tab indentation");
-  require(rejected("version: 1\r\njobs:\r\n  - name: a\r\n"), "carriage returns");
+  require(ckgit::parseCiWorkflow("version: 1\r\njobs:\r\n  - name: a\r\n    steps:\r\n      - run: [x]\r\n").jobs.size() == 1,
+          "Windows CRLF workflow is accepted");
   require(rejected(std::string("version: 1\nenv: { X: \"") + std::string(3, static_cast<char>(0xff)) + "\" }\n"),
           "invalid utf-8");
 }
