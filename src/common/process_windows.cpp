@@ -116,6 +116,8 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
     const WindowsSandbox* sandbox, const std::map<std::wstring, std::wstring>& supplied_environment) {
   if (options.input_file && (sandbox || !options.input_file->is_absolute()))
     throw std::invalid_argument("host input file requires an absolute path and an unsandboxed transport process");
+  if (sandbox && !options.environment.empty())
+    throw std::invalid_argument("sandbox environment must use its explicit allowlist");
   auto command = commandLine(arguments);
   if (sandbox && !std::filesystem::path(utf8ToWide(arguments.front())).is_absolute())
     throw std::invalid_argument("sandbox executable must be an absolute host-selected path");
@@ -182,6 +184,34 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
       environment_block += L'\0';
     }
     environment_block += L'\0';
+  } else if (!options.environment.empty()) {
+    struct Less {
+      bool operator()(const std::wstring& a, const std::wstring& b) const {
+        return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+      }
+    };
+    std::map<std::wstring, std::wstring, Less> environment;
+    const auto inherited = GetEnvironmentStringsW();
+    if (!inherited) fail("read inherited process environment");
+    struct Environment { wchar_t* value; ~Environment() { FreeEnvironmentStringsW(value); } } owner{inherited};
+    for (const wchar_t* item = inherited; *item; item += wcslen(item) + 1) {
+      const std::wstring entry(item);
+      const auto equals = entry.find(L'=', entry.front() == L'=' ? 1 : 0);
+      if (equals != std::wstring::npos) environment[entry.substr(0, equals)] = entry.substr(equals + 1);
+    }
+    for (const auto& [key, value] : options.environment) {
+      if (key.empty() || key.find('=') != std::string::npos || key.find('\0') != std::string::npos ||
+          (value && value->find('\0') != std::string::npos)) throw std::invalid_argument("invalid process environment");
+      const auto wide_key = utf8ToWide(key);
+      environment.erase(wide_key);
+      if (value) environment.emplace(wide_key, utf8ToWide(*value));
+    }
+    for (const auto& [key, value] : environment) {
+      environment_block += key + L"=" + value;
+      environment_block += L'\0';
+    }
+    environment_block += L'\0';
+    if (environment.empty()) environment_block += L'\0';
   }
   Handle job(CreateJobObjectW(nullptr, nullptr));
   if (!job.value) fail("create process job");
@@ -216,7 +246,7 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   const std::lock_guard lock(windowsProcessCreationMutex());
   if (!CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE,
                       EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                      sandbox ? environment_block.data() : nullptr, sandbox ? directory.c_str() : nullptr,
+                      environment_block.empty() ? nullptr : environment_block.data(), sandbox ? directory.c_str() : nullptr,
                       &startup.StartupInfo, &info)) fail("start process");
   }
   Handle process(info.hProcess), thread(info.hThread);

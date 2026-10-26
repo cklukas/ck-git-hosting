@@ -5,6 +5,7 @@
 #include "ckgit/process.hpp"
 #include "ckgit/temp_directory.hpp"
 #include "ckgit/windows.hpp"
+#include "ckgit/ci_runner.hpp"
 #include <fstream>
 #include <iostream>
 
@@ -26,7 +27,7 @@ int run(const std::vector<std::string>& args) {
     if (result.exit_code || result.timed_out) throw std::runtime_error("Git fixture failed: " + result.output);
   };
   git({"init", "--initial-branch=main", "--template=" + ckgit::pathToUtf8(empty)});
-  std::ofstream(repo / "file.txt") << "initial\n";
+  std::ofstream(repo / "file.txt", std::ios::binary) << "initial\n";
   git({"add", "file.txt"});
   git({"commit", "-m", "Initial fixture"});
   git({"remote", "add", "ckgit", "ckgit@example.invalid:fixture.git"});
@@ -70,7 +71,40 @@ int run(const std::vector<std::string>& args) {
     cli({"setup", "--dry-run", "--overwrite", "--config", ckgit::pathToUtf8(config), "--scan-root", "~"});
 #endif
   }
-  std::cout << "native Git discovery and Unicode inspection tests passed\n";
+  {
+    std::ofstream(repo / "newer.txt", std::ios::binary) << "second commit\n";
+    git({"add", "newer.txt"});
+    git({"commit", "-m", "Second fixture", "--", "newer.txt"});
+    const auto head = ckgit::runProcess({"git", "-C", ckgit::pathToUtf8(repo), "rev-parse", "HEAD"});
+    require(head.exit_code == 0, "checkout fixture commit");
+    auto commit = head.output;
+    while (!commit.empty() && (commit.back() == '\n' || commit.back() == '\r')) commit.pop_back();
+    ckgit::CiCheckoutRequest request;
+    request.project = "fixture";
+    request.commit = commit;
+    request.ref = "refs/heads/main";
+    request.spec.depth = 1;
+    const auto generic = repo.generic_u8string();
+    std::string url = "file://";
+#ifdef _WIN32
+    url += '/';
+#endif
+    url.append(generic.begin(), generic.end());
+    const auto checkout = root / ckgit::pathFromUtf8("CI checkout \xc3\xbc");
+    ckgit::cloneCiCheckout(url, request, checkout);
+    const auto count = ckgit::runProcess({"git", "-C", ckgit::pathToUtf8(checkout), "rev-list", "--count", "HEAD"});
+    require(count.exit_code == 0 && (count.output == "1\n" || count.output == "1\r\n"), "native CI checkout is shallow");
+    require(ckgit::inspectRepository(checkout).detached_head, "native CI checkout is detached");
+    std::ifstream contents(checkout / "file.txt", std::ios::binary);
+    require(std::string(std::istreambuf_iterator<char>(contents), {}) == "initial\n",
+        "CI checkout uses committed bytes without host line-ending conversion");
+    request.spec.archive = true;
+    const auto archive = root / "archive-checkout";
+    ckgit::cloneCiCheckout(url, request, archive);
+    require(!std::filesystem::exists(archive / ".git") && std::filesystem::exists(archive / "newer.txt"),
+        "native CI archive checkout drops Git metadata");
+  }
+  std::cout << "native Git discovery, CI checkout and Unicode inspection tests passed\n";
   return 0;
 }
 }

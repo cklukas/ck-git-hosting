@@ -107,6 +107,21 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
     throw std::invalid_argument("cannot run an empty command");
   }
 
+  std::vector<std::string> environment;
+  std::vector<char*> environment_pointers;
+  if (!options.environment.empty()) {
+    for (char** item = environ; item && *item; ++item) environment.emplace_back(*item);
+    for (const auto& [key, value] : options.environment) {
+      if (key.empty() || key.find('=') != std::string::npos || key.find('\0') != std::string::npos ||
+          (value && value->find('\0') != std::string::npos)) throw std::invalid_argument("invalid process environment");
+      const auto prefix = key + "=";
+      std::erase_if(environment, [&](const auto& entry) { return entry.rfind(prefix, 0) == 0; });
+      if (value) environment.push_back(prefix + *value);
+    }
+    for (auto& entry : environment) environment_pointers.push_back(entry.data());
+    environment_pointers.push_back(nullptr);
+  }
+
   struct Input {
     int fd = -1;
     ~Input() { if (fd >= 0) close(fd); }
@@ -173,7 +188,8 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
 
   pid_t child = 0;
   const int spawn_result =
-      posix_spawnp(&child, argv[0], &actions, &attributes, argv.data(), environ);
+      posix_spawnp(&child, argv[0], &actions, &attributes, argv.data(),
+                   options.environment.empty() ? environ : environment_pointers.data());
   posix_spawn_file_actions_destroy(&actions);
   posix_spawnattr_destroy(&attributes);
   close(pipe_fds[1]);

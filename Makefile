@@ -68,6 +68,7 @@ COMMON_SOURCES := \
 	src/common/ci_gateway.cpp \
 	src/common/ci_results.cpp \
 	src/common/ci_runner.cpp \
+	src/common/ci_checkout.cpp \
 	src/common/ci_runner_protocol.cpp \
 	src/common/ci_store.cpp \
 	src/common/ci_workflow.cpp \

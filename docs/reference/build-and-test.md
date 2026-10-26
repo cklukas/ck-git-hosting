@@ -68,6 +68,12 @@ stream through a local SSH stand-in. Paths are passed as UTF-8, and Git's
 `GIT_SSH_COMMAND` quotes executable/configuration paths for its shell. Windows
 does not use the Unix ControlMaster socket. These transport tests do not yet
 establish a connection from the installed Windows runner to rpi4.
+CI checkout now uses per-child environment overrides instead of the Unix
+`env` command. Native Git tests cover fetching a selected commit with depth 1,
+a detached checkout, Unicode paths, unchanged committed line endings and
+archive mode without `.git`. User/system Git configuration and templates are
+disabled. The Windows lease-scoped SSH shim and AppContainer executor still
+need to be connected to this checkout implementation.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

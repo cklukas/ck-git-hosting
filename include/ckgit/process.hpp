@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <filesystem>
+#include <map>
 
 namespace ckgit {
 
@@ -31,6 +32,9 @@ struct ProcessOptions {
   // Must be absolute and is opened before spawning; no shell or input pipe
   // can block the caller while it drains the child's output.
   std::optional<std::filesystem::path> input_file;
+  // Per-child overrides, without changing this process's environment. nullopt
+  // removes an inherited variable. Sandboxed jobs use their explicit allowlist.
+  std::map<std::string, std::optional<std::string>> environment;
 };
 
 // Executes an argument vector directly, without a shell.  Output is combined

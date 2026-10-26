@@ -60,7 +60,7 @@ endif()
 target_link_libraries(ckgit_process PUBLIC ckgit_portable)
 add_library(ckgit_remote_transport STATIC src/common/ci_remote_transport.cpp)
 target_link_libraries(ckgit_remote_transport PUBLIC ckgit_process)
-add_library(ckgit_client_support STATIC src/common/git_repository.cpp)
+add_library(ckgit_client_support STATIC src/common/git_repository.cpp src/common/ci_checkout.cpp)
 target_link_libraries(ckgit_client_support PUBLIC ckgit_process)
 if(WIN32)
   add_executable(ckgit src/client/main.cpp)
@@ -73,7 +73,7 @@ if(NOT WIN32)
   list(REMOVE_ITEM HOST_SOURCES ${PORTABLE_SOURCES} src/common/process.cpp
     src/common/process_windows.cpp src/common/windows.cpp src/common/windows_sandbox.cpp
     src/common/private_file_windows.cpp src/common/git_repository.cpp src/common/docs_site.cpp
-    src/common/ci_remote_transport.cpp)
+    src/common/ci_remote_transport.cpp src/common/ci_checkout.cpp)
   add_library(ckgit_host STATIC ${HOST_SOURCES})
   target_link_libraries(ckgit_host PUBLIC ckgit_docs ckgit_client_support ckgit_remote_transport)
   foreach(pair "ckgit|client" "ckgit-admin|admin" "ck-git-shell|ssh-dispatcher"

@@ -29,6 +29,11 @@ void require(bool condition, const char* message) {
 }
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
+    if (args[1] == "environment") {
+      const auto value = std::getenv("CKGIT_PROCESS_TEST_ENV");
+      if (value) std::cout << value;
+      return value ? 0 : 3;
+    }
     if (args[1] == "-o") {
 #ifdef _WIN32
       _setmode(_fileno(stdin), _O_BINARY);
@@ -143,6 +148,16 @@ int run(const std::vector<std::string>& args) {
   expected = windows_expected;
 #endif
   require(result.exit_code == 0 && result.output == expected, "literal UTF-8 argument roundtrip");
+  {
+    ckgit::ProcessOptions options;
+    options.environment["CKGIT_PROCESS_TEST_ENV"] = "literal spaces & $ characters";
+    const auto child = ckgit::runProcess({args[0], "environment"}, options);
+    require(child.exit_code == 0 && child.output == *options.environment["CKGIT_PROCESS_TEST_ENV"],
+        "per-child environment is literal");
+    options.environment["CKGIT_PROCESS_TEST_ENV"] = std::nullopt;
+    require(ckgit::runProcess({args[0], "environment"}, options).exit_code == 3,
+        "per-child environment can remove a variable");
+  }
   {
     const char* temporary = std::getenv("TMPDIR");
     require(temporary && *temporary, "explicit TMPDIR required for process input tests");
