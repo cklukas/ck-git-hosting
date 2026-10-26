@@ -4,6 +4,7 @@
 #include "ckgit/path_utf8.hpp"
 #include "ckgit/temp_directory.hpp"
 #include "ckgit/validation.hpp"
+#include "ckgit/ssh_command.hpp"
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
@@ -166,6 +167,24 @@ std::string CiRemoteTransport::gitSshCommand(const std::string& job_id, const st
 
 std::string CiRemoteTransport::fetchUrl(const std::string& project) const {
   return config_.server + ":" + (project.front() == '-' ? "./" : "") + project + ".git";
+}
+
+int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
+                 const std::vector<std::string>& git_arguments, unsigned protocol_version) {
+  if (git_arguments.empty()) return 2;
+  const std::optional<SshCommand> wanted = parseSshOriginalCommand(git_arguments.back());
+  if (!wanted.has_value() || wanted->kind != SshCommandKind::kUploadPack) return 2;
+  const CiRemoteTransport transport(loadRunnerConfig(config_path), config_path, protocol_version);
+  CiRunnerCommand command;
+  command.protocol_version = transport.protocolVersion();
+  command.op = CiRunnerOp::kUploadPack;
+  command.job_id = job_id;
+  command.token = token;
+  command.project = wanted->project_name;
+  std::vector<std::string> argv = transport.sshArguments();
+  argv.insert(argv.end() - 1, {"-o", "SendEnv=GIT_PROTOCOL"});
+  argv.push_back(formatCiRunnerCommand(command));
+  return execProcess(argv);
 }
 
 }  // namespace ckgit

@@ -52,28 +52,6 @@ std::string firstLine(const std::string& text) {
 
 }  // namespace
 
-int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
-                 const std::vector<std::string>& git_arguments, unsigned protocol_version) {
-  if (git_arguments.empty()) return 2;
-  const std::optional<SshCommand> wanted = parseSshOriginalCommand(git_arguments.back());
-  if (!wanted.has_value() || wanted->kind != SshCommandKind::kUploadPack) return 2;
-  const CiRemoteTransport transport(loadRunnerConfig(config_path), config_path, protocol_version);
-  CiRunnerCommand command;
-  command.protocol_version = transport.protocolVersion();
-  command.op = CiRunnerOp::kUploadPack;
-  command.job_id = job_id;
-  command.token = token;
-  command.project = wanted->project_name;
-  std::vector<std::string> argv = transport.sshArguments();
-  argv.insert(argv.end() - 1, {"-o", "SendEnv=GIT_PROTOCOL"});
-  argv.push_back(formatCiRunnerCommand(command));
-  std::vector<char*> raw;
-  for (const std::string& argument : argv) raw.push_back(const_cast<char*>(argument.c_str()));
-  raw.push_back(nullptr);
-  ::execvp(raw[0], raw.data());
-  return 127;
-}
-
 // --- remote source -------------------------------------------------------------
 
 RemoteCiSource::RemoteCiSource(const CiRemoteTransport& transport, std::string job_id, std::string token)

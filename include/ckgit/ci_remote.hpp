@@ -68,7 +68,7 @@ class CiRemoteTransport {
 // `ck-ci-runnerd ssh-shim`: what GIT_SSH_COMMAND runs. Git calls it as
 // `<shim> [ssh options] <host> "git-upload-pack '<project>.git'"`; the shim
 // turns that into the gateway's lease-scoped `upload-pack` and executes ssh.
-// Returns only on failure.
+// Replaces the caller on POSIX; on Windows returns the SSH exit status.
 int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
                  const std::vector<std::string>& git_arguments, unsigned protocol_version = 1);
 

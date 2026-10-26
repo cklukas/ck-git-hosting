@@ -29,6 +29,11 @@ void require(bool condition, const char* message) {
 }
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
+    if (args[1] == "bridge") {
+      std::vector<std::string> command{args[0]};
+      command.insert(command.end(), args.begin() + 2, args.end());
+      return ckgit::execProcess(command);
+    }
     if (args[1] == "environment") {
       const auto value = std::getenv("CKGIT_PROCESS_TEST_ENV");
       if (value) std::cout << value;
@@ -148,6 +153,13 @@ int run(const std::vector<std::string>& args) {
   expected = windows_expected;
 #endif
   require(result.exit_code == 0 && result.output == expected, "literal UTF-8 argument roundtrip");
+  auto bridged_command = command;
+  bridged_command.insert(bridged_command.begin() + 1, "bridge");
+  result = ckgit::runProcess(bridged_command);
+  require(result.exit_code == 0 && result.output == expected, "inherited-I/O shim preserves literal arguments");
+  require(ckgit::runProcess({args[0], "bridge", "exit"}).exit_code == 37, "inherited-I/O shim preserves exit code");
+  require(ckgit::runProcess({args[0], "bridge", "sleep"}, std::chrono::milliseconds(100)).timed_out,
+      "timeout terminates shim and child together");
   {
     ckgit::ProcessOptions options;
     options.environment["CKGIT_PROCESS_TEST_ENV"] = "literal spaces & $ characters";

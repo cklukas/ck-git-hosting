@@ -60,6 +60,12 @@ ProcessResult runProcess(const std::vector<std::string>& arguments,
 // without a shell.  The caller owns the returned process ID and must reap it.
 int spawnAttachedProcess(const std::vector<std::string>& arguments);
 
+// For a protocol shim: preserve stdin/stdout/stderr without copying bytes or
+// invoking a shell. POSIX replaces the caller (returns 127 on exec failure).
+// Windows runs a child with only those handles inherited and returns its exit
+// status; a kill-on-close job prevents orphan descendants if the shim dies.
+int execProcess(const std::vector<std::string>& arguments);
+
 // Owns a long-running background child (e.g. an SSH tunnel), including its
 // descendants. stdin is closed to interaction; stdout/stderr stay attached.
 // The destructor stops the tree. Exit status is normalized, not a waitpid word.

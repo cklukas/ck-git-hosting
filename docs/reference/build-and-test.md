@@ -72,8 +72,12 @@ CI checkout now uses per-child environment overrides instead of the Unix
 `env` command. Native Git tests cover fetching a selected commit with depth 1,
 a detached checkout, Unicode paths, unchanged committed line endings and
 archive mode without `.git`. User/system Git configuration and templates are
-disabled. The Windows lease-scoped SSH shim and AppContainer executor still
-need to be connected to this checkout implementation.
+disabled. The lease-scoped SSH shim is also native: its integration test runs
+real Git pack traffic through a local SSH stand-in that checks the exact job
+ID, token and protocol version. Configuration paths include spaces, Unicode
+and an apostrophe. The Windows shim inherits only standard I/O and keeps its
+SSH child in a kill-on-close Job Object. The connected AppContainer executor
+and rpi4 deployment qualification remain outstanding.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

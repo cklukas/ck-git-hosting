@@ -434,6 +434,55 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
   return static_cast<int>(info.dwProcessId);
 }
 
+int execProcess(const std::vector<std::string>& arguments) {
+  if (arguments.empty()) throw std::invalid_argument("empty exec command");
+  auto command = commandLine(arguments);
+  const auto application = executable(arguments.front());
+  std::array<Handle, 3> standard;
+  const std::array<DWORD, 3> identifiers{STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+  std::array<HANDLE, 3> inherited{};
+  for (std::size_t i = 0; i < standard.size(); ++i) {
+    if (!DuplicateHandle(GetCurrentProcess(), GetStdHandle(identifiers[i]), GetCurrentProcess(),
+        &standard[i].value, 0, TRUE, DUPLICATE_SAME_ACCESS)) fail("duplicate shim standard handle");
+    inherited[i] = standard[i].value;
+  }
+  Attributes attributes;
+  if (!UpdateProcThreadAttribute(attributes.list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+      inherited.data(), sizeof(inherited), nullptr, nullptr)) fail("restrict shim handles");
+  Handle job(CreateJobObjectW(nullptr, nullptr));
+  if (!job.value) fail("create shim process job");
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    fail("configure shim process job");
+  STARTUPINFOEXW startup{};
+  startup.StartupInfo.cb = sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  startup.StartupInfo.hStdInput = inherited[0];
+  startup.StartupInfo.hStdOutput = inherited[1];
+  startup.StartupInfo.hStdError = inherited[2];
+  startup.lpAttributeList = attributes.list;
+  PROCESS_INFORMATION info{};
+  {
+    const std::lock_guard lock(windowsProcessCreationMutex());
+    if (!CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE,
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+        nullptr, nullptr, &startup.StartupInfo, &info)) fail("start shim child");
+  }
+  Handle process(info.hProcess), thread(info.hThread);
+  if (!AssignProcessToJobObject(job.value, process.value)) {
+    const auto error = GetLastError();
+    TerminateProcess(process.value, 127);
+    WaitForSingleObject(process.value, INFINITE);
+    SetLastError(error); fail("contain shim child");
+  }
+  if (ResumeThread(thread.value) == static_cast<DWORD>(-1)) fail("resume shim child");
+  if (WaitForSingleObject(process.value, INFINITE) != WAIT_OBJECT_0) fail("wait for shim child");
+  DWORD code = 0;
+  if (!GetExitCodeProcess(process.value, &code)) fail("read shim exit status");
+  return static_cast<int>(code);
+}
+
 struct ProcessStream::State {
   Handle process, job, input, output, event;
   OVERLAPPED write_operation{};

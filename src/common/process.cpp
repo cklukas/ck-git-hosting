@@ -360,6 +360,18 @@ int spawnAttachedProcess(const std::vector<std::string>& arguments) {
 }
 
 
+int execProcess(const std::vector<std::string>& arguments) {
+  if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty exec command");
+  std::vector<char*> argv;
+  for (const auto& argument : arguments) {
+    if (argument.find('\0') != std::string::npos) throw std::invalid_argument("NUL in exec argument");
+    argv.push_back(const_cast<char*>(argument.c_str()));
+  }
+  argv.push_back(nullptr);
+  execvp(argv.front(), argv.data());
+  return 127;
+}
+
 struct ProcessStream::State {
   int input = -1, output = -1;
   pid_t child = -1;
