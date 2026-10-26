@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/process.hpp"
+#include "ckgit/path_utf8.hpp"
 
 #include <algorithm>
 #include <array>
@@ -83,6 +84,37 @@ void sleepBriefly() {
 }
 
 }  // namespace
+
+std::string resolveProcessExecutable(const std::string& name) {
+  if (name.empty() || name.find('\0') != std::string::npos)
+    throw std::invalid_argument("invalid executable name");
+  const auto usable = [](const std::filesystem::path& candidate) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(candidate, error) &&
+           ::access(candidate.c_str(), X_OK) == 0;
+  };
+  const auto program = pathFromUtf8(name);
+  if (name.find('/') != std::string::npos) {
+    if (usable(program)) return pathToUtf8(std::filesystem::absolute(program));
+  } else {
+    const char* inherited = std::getenv("PATH");
+    std::string search;
+    if (inherited) search = inherited;
+    else {
+      const auto size = confstr(_CS_PATH, nullptr, 0);
+      if (size) { search.resize(size); confstr(_CS_PATH, search.data(), size); search.pop_back(); }
+    }
+    for (std::size_t start = 0; start <= search.size();) {
+      const auto end = search.find(':', start);
+      const auto directory = search.substr(start, end == std::string::npos ? end : end - start);
+      const auto candidate = pathFromUtf8(directory.empty() ? "." : directory) / program;
+      if (usable(candidate)) return pathToUtf8(std::filesystem::absolute(candidate));
+      if (end == std::string::npos) break;
+      start = end + 1;
+    }
+  }
+  throw std::runtime_error("cannot resolve executable: " + name);
+}
 
 void installChildTerminationForwarding() {
   for (const int signal_number : {SIGINT, SIGTERM, SIGHUP, SIGPIPE}) {

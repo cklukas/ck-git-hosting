@@ -102,6 +102,12 @@ std::wstring executable(const std::string& name) {
 
 // Each captured child belongs to a non-inheritable kill-on-close job. Windows
 // closes these handles on caller termination, including console termination.
+std::string resolveProcessExecutable(const std::string& name) {
+  if (name.empty() || name.find('\0') != std::string::npos)
+    throw std::invalid_argument("invalid executable name");
+  return wideToUtf8(executable(name));
+}
+
 void installChildTerminationForwarding() {}
 
 ProcessResult runProcess(const std::vector<std::string>& arguments,

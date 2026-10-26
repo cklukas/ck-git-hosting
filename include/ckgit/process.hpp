@@ -16,6 +16,11 @@
 
 namespace ckgit {
 
+// Resolve a program using the platform's process PATH rules, without running
+// it. Returns an absolute UTF-8 path or throws when no executable is found.
+// Pass the result to runProcess to test the exact executable being reported.
+std::string resolveProcessExecutable(const std::string& name);
+
 struct ProcessResult {
   int exit_code{-1};
   bool timed_out{false};

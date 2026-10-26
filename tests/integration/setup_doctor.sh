@@ -147,6 +147,8 @@ capture doctor
 [ "$result" -eq 0 ] || fail "$output"
 contains "$output" 'OK   Configuration:'
 contains "$output" 'OK   Git:'
+contains "$output" "$test_root/bin/git"
+contains "$output" "OK   SSH executable: $test_root/bin/ssh"
 contains "$output" 'OK   Git server: restricted SSH control answered on ckgit@fixture (server 0.1.0+fixture)'
 contains "$output" 'OK   Dashboard: HTTP answered through admin@fixture on server port 8422'
 contains "$output" 'All checks passed'

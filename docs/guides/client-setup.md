@@ -17,7 +17,9 @@ saves a private configuration; it requires `--overwrite` before replacing an
 existing file. The device ID must match its paired SSH key. The Git account
 (`server=ckgit@rpi4`, for example) and ordinary dashboard SSH login
 (`web_host=rpi4`) are separate settings. Optional `web_port` defaults to 8420.
-Doctor checks Git, the restricted control connection, and an actual dashboard
+Doctor reports the absolute Git and SSH executable paths resolved from PATH,
+tests that Git executable, and uses that SSH executable for its connection tests.
+It checks the restricted control connection and an actual dashboard
 HTTP request through a temporary tunnel, then closes it. SSH keys and trusted
 host keys must already be configured; diagnostic failures explain the next step.
 

@@ -219,6 +219,21 @@ int run(const std::vector<std::string>& args) {
       std::filesystem::path path;
       ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
     } cleanup{root};
+    const auto copied_program = root / ckgit::pathFromUtf8("program space \xc3\xbc.exe");
+    std::filesystem::copy_file(ckgit::pathFromUtf8(args[0]), copied_program);
+    const auto resolved = ckgit::resolveProcessExecutable(ckgit::pathToUtf8(copied_program));
+    require(ckgit::pathFromUtf8(resolved).is_absolute() &&
+        std::filesystem::equivalent(ckgit::pathFromUtf8(resolved), copied_program),
+        "resolve executable preserves spaces and Unicode");
+    require(ckgit::runProcess({resolved, "exit"}).exit_code == 37,
+        "reported executable is runnable");
+    for (const auto& invalid : {std::string{}, std::string("bad\0name", 8),
+                               ckgit::pathToUtf8(root / "missing.exe")}) {
+      bool rejected = false;
+      try { (void)ckgit::resolveProcessExecutable(invalid); }
+      catch (const std::exception&) { rejected = true; }
+      require(rejected, "invalid or missing executable is rejected");
+    }
     const auto file = root / ckgit::pathFromUtf8("payload \xc3\xbc.bin");
     std::string payload(1024 * 1024, '\0');
     for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>(i % 256);

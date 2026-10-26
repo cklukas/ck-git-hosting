@@ -268,14 +268,22 @@ int doctorCommand(const std::vector<std::string>& arguments) {
     report(false, "Configuration", failure.what(), "run ckgit setup, or repair the displayed configuration file");
   }
   try {
-    const auto git = ckgit::runProcess({"git", "--version"}, std::chrono::seconds(seconds), 4096);
+    const auto program = ckgit::resolveProcessExecutable("git");
+    const auto git = ckgit::runProcess({program, "--version"}, std::chrono::seconds(seconds), 4096);
     report(git.exit_code == 0 && !git.timed_out && !git.output_truncated && git.output.starts_with("git version "),
-           "Git", git.exit_code == 0 ? git.output.substr(0, git.output.find('\n')) : describeProcessFailure(git, std::chrono::seconds(seconds)),
+           "Git", program + " · " + (git.exit_code == 0 ? git.output.substr(0, git.output.find('\n')) : describeProcessFailure(git, std::chrono::seconds(seconds))),
            "install Git and ensure git is available on PATH");
   } catch (const std::exception& failure) {
     report(false, "Git", failure.what(), "install Git and ensure git is available on PATH");
   }
-  const std::vector<std::string> ssh_options{"ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+  std::string ssh_program = "ssh";
+  try {
+    ssh_program = ckgit::resolveProcessExecutable("ssh");
+    report(true, "SSH executable", ssh_program);
+  } catch (const std::exception& failure) {
+    report(false, "SSH executable", failure.what(), "install OpenSSH and ensure ssh is available on PATH");
+  }
+  const std::vector<std::string> ssh_options{ssh_program, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
       "-o", "UpdateHostKeys=no", "-o", "ConnectTimeout=" + std::to_string(seconds),
       "-o", "ConnectionAttempts=1", "-o", "RequestTTY=no", "-o", "ControlMaster=no", "-o", "ControlPath=none",
       "-o", "PermitLocalCommand=no"};
