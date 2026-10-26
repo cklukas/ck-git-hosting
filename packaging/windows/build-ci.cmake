@@ -55,7 +55,7 @@ file(MAKE_DIRECTORY "${output}")
 fingerprint(inputs_before)
 string(TIMESTAMP start "%s" UTC)
 run("${CMAKE_COMMAND}" -S "${source}" -B "${build}" -G "NMake Makefiles"
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF "-DCKGIT_BUILD_VERSION=${stamp}")
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_CONFIGURATION=Release -DBUILD_TESTING=OFF "-DCKGIT_BUILD_VERSION=${stamp}")
 run("${CMAKE_COMMAND}" --build "${build}" --config Release)
 fingerprint(inputs_after)
 if(NOT inputs_before STREQUAL inputs_after)
