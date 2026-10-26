@@ -51,6 +51,11 @@ configuration support does not yet constitute a connected Windows runner.
 The native Windows test binary also links the shared runner wire protocol:
 tests decode a version-2 child assignment, select only that job, encode an
 artifact upload and a finish report, and reject a version-1 child envelope.
+One-shot runner SSH requests use the shared process implementation, staging
+request input in a private directory under the configured build root. The
+directory is removed after the request. Native process tests cover binary
+input larger than pipe buffers, concurrent output draining, output limits and
+timeouts. The persistent runner log stream still needs its Windows transport.
 
 The Windows job in [GitHub run 40305821882](https://github.com/cklukas/ck-git-hosting/actions/runs/40305821882)
 built both installers and the portable ZIP from commit `ae982d1d6295`, passed

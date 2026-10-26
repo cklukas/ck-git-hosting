@@ -8,6 +8,7 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <filesystem>
 
 namespace ckgit {
 
@@ -24,12 +25,17 @@ struct ProcessOptions {
   // When set, the child's standard error stays on this process's own standard
   // error (for Git's live transfer progress); only standard output is captured.
   bool inherit_stderr{false};
+  // Optional regular file supplied as stdin (e.g. an SSH upload payload).
+  // Must be absolute and is opened before spawning; no shell or input pipe
+  // can block the caller while it drains the child's output.
+  std::optional<std::filesystem::path> input_file;
 };
 
 // Executes an argument vector directly, without a shell.  Output is combined
 // and bounded so a malformed repository cannot make an audit consume memory
 // without limit.  The child runs in its own session with standard input from
-// /dev/null (NUL on Windows): it can never wait on a terminal prompt, and a timeout kills the
+// /dev/null (NUL on Windows), or the explicitly supplied input file: it cannot
+// wait on a terminal prompt. A timeout kills the
 // whole process tree (a Windows Job Object, or a POSIX process group) so
 // nothing keeps running or keeps the caller waiting afterwards.
 ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options);

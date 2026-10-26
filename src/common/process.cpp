@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -105,6 +106,18 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
     throw std::invalid_argument("cannot run an empty command");
   }
 
+  struct Input {
+    int fd = -1;
+    ~Input() { if (fd >= 0) close(fd); }
+  } input;
+  if (options.input_file) {
+    if (!options.input_file->is_absolute()) throw std::invalid_argument("process input must be absolute");
+    input.fd = open(options.input_file->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    struct stat status{};
+    if (input.fd < 0 || fstat(input.fd, &status) != 0 || !S_ISREG(status.st_mode))
+      throw std::runtime_error("process input must be a readable regular file");
+  }
+
   int pipe_fds[2] = {-1, -1};
 #ifdef __linux__
   const int pipe_result = pipe2(pipe_fds, O_CLOEXEC);
@@ -122,7 +135,12 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
 #endif
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  if (input.fd >= 0) {
+    posix_spawn_file_actions_adddup2(&actions, input.fd, STDIN_FILENO);
+    if (input.fd != STDIN_FILENO) posix_spawn_file_actions_addclose(&actions, input.fd);
+  } else {
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  }
   posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDOUT_FILENO);
   if (!options.inherit_stderr) {
     posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], STDERR_FILENO);

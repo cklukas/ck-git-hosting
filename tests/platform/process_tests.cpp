@@ -7,6 +7,10 @@
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
+#include "ckgit/temp_directory.hpp"
+#include "ckgit/path_utf8.hpp"
+#include <fstream>
+#include <cstdlib>
 #include "ckgit/web_renderer.hpp"
 #include <chrono>
 #include <iostream>
@@ -14,6 +18,8 @@
 #include <thread>
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 #endif
 
 namespace {
@@ -22,6 +28,17 @@ void require(bool condition, const char* message) {
 }
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
+    if (args[1] == "input") {
+#ifdef _WIN32
+      _setmode(_fileno(stdin), _O_BINARY);
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      // Fill stdout before reading stdin: a pipe writer must not deadlock
+      // the parent while the child waits for its output to be drained.
+      std::cout << std::string(1024 * 1024, 'o');
+      std::cout << std::cin.rdbuf();
+      return 0;
+    }
     if (args[1] == "echo") {
       for (std::size_t i = 2; i < args.size(); ++i) std::cout << args[i].size() << ':' << args[i] << '\n';
       return 0;
@@ -108,6 +125,39 @@ int run(const std::vector<std::string>& args) {
   expected = windows_expected;
 #endif
   require(result.exit_code == 0 && result.output == expected, "literal UTF-8 argument roundtrip");
+  {
+    const char* temporary = std::getenv("TMPDIR");
+    require(temporary && *temporary, "explicit TMPDIR required for process input tests");
+    const auto root = ckgit::createTempDirectory(ckgit::pathFromUtf8(temporary), "process-input-");
+    struct Cleanup {
+      std::filesystem::path path;
+      ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } cleanup{root};
+    const auto file = root / ckgit::pathFromUtf8("payload \xc3\xbc.bin");
+    std::string payload(1024 * 1024, '\0');
+    for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>(i % 256);
+    { std::ofstream stream(file, std::ios::binary); stream.write(payload.data(), payload.size()); }
+    ckgit::ProcessOptions options;
+    options.input_file = file;
+    options.output_limit = 3 * 1024 * 1024;
+    result = ckgit::runProcess({args[0], "input"}, options);
+    require(result.exit_code == 0 && result.output == std::string(1024 * 1024, 'o') + payload,
+        "binary stdin and output larger than pipe buffers survive without deadlock");
+    options.output_limit = 127;
+    result = ckgit::runProcess({args[0], "input"}, options);
+    require(result.exit_code == 0 && result.output.size() == 127 && result.output_truncated,
+        "file input preserves bounded output draining");
+    options.timeout = std::chrono::milliseconds(100);
+    result = ckgit::runProcess({args[0], "sleep"}, options);
+    require(result.timed_out, "file input preserves process timeout");
+    for (const auto& invalid : {std::filesystem::path("relative"), root}) {
+      options.input_file = invalid;
+      bool refused = false;
+      try { ckgit::runProcess({args[0], "input"}, options); }
+      catch (const std::exception&) { refused = true; }
+      require(refused, "non-regular or relative process input refused");
+    }
+  }
   result = ckgit::runProcess({args[0], "large"}, std::chrono::seconds(5), 127);
   require(result.exit_code == 0 && result.output.size() == 127 && result.output_truncated, "bounded pipe drain");
   result = ckgit::runProcess({args[0], "sleep"}, std::chrono::milliseconds(100));

@@ -1301,7 +1301,7 @@ void testRunnerNegotiation() {
     std::ofstream out(config.ssh_program);
     out << "#!/bin/sh\nfor arg do command=$arg; done\ncase \"$command\" in\n"
         << hello
-        << "*) printf '%s\\n' \"$command\";;\nesac\n";
+        << "*) printf '%s\\n' \"$command\"; cat;;\nesac\n";
     out.close();
     require(chmod(config.ssh_program.c_str(), 0700) == 0, "fake SSH is executable");
   };
@@ -1312,6 +1312,12 @@ void testRunnerNegotiation() {
   command.op = ckgit::CiRunnerOp::kClaim;
   require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 2 claim 0\n",
           "operations use the negotiated version even with legacy command defaults");
+  std::filesystem::create_directory(config.build_root);
+  const std::string payload("binary\0payload", 14);
+  const auto echoed = transport.run(command, payload, std::chrono::seconds(2));
+  require(echoed.exit_code == 0 && echoed.output == "ckgit-runner 2 claim 0\n" + payload,
+          "transport delivers binary request input through the child stdin");
+  require(std::filesystem::is_empty(config.build_root), "request staging is removed after completion");
   require(transport.gitSshCommand(ckgit::generateCiId(), "token").find("--protocol 2") != std::string::npos,
           "Git's separate SSH shim inherits v2");
   gateway("'ckgit-runner 2 hello '* ) exit 2;;\n'ckgit-runner 1 hello '* ) printf 'ok\\nprotocol=1\\n';;\n");

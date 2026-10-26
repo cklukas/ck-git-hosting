@@ -25,6 +25,7 @@
 #include "ckgit/ci_results.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/process.hpp"
+#include "ckgit/temp_directory.hpp"
 #include "ckgit/server_config.hpp"
 #include "ckgit/ssh_command.hpp"
 #include "ckgit/text.hpp"
@@ -183,56 +184,26 @@ CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command,
   auto negotiated = command;
   negotiated.protocol_version = protocol_version_;
   argv.push_back(formatCiRunnerCommand(negotiated));
-  Result result;
-  Spawned child = spawnPiped(argv);
-  ::fcntl(child.in, F_SETFL, ::fcntl(child.in, F_GETFL) | O_NONBLOCK);
-  std::size_t written = 0;
-  if (input.empty()) {
-    ::close(child.in);
-    child.in = -1;
-  }
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  char buffer[65536];
-  bool open_output = true;
-  while (open_output) {
-    const auto remaining =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-    if (remaining <= std::chrono::milliseconds::zero()) {
-      result.timed_out = true;
-      ::kill(child.pid, SIGKILL);
-      break;
+  struct PayloadDirectory {
+    std::filesystem::path path;
+    ~PayloadDirectory() {
+      if (!path.empty()) { std::error_code error; std::filesystem::remove_all(path, error); }
     }
-    pollfd descriptors[2] = {{child.out, POLLIN, 0}, {child.in, POLLOUT, 0}};
-    const int count = child.in >= 0 ? 2 : 1;
-    const int ready = ::poll(descriptors, static_cast<nfds_t>(count),
-                             static_cast<int>(std::min<long long>(remaining.count(), 1000)));
-    if (ready < 0 && errno != EINTR) break;
-    if (count == 2 && (descriptors[1].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
-      const ssize_t sent = ::write(child.in, input.data() + written, input.size() - written);
-      if (sent > 0) written += static_cast<std::size_t>(sent);
-      if ((sent < 0 && errno != EAGAIN && errno != EINTR) || written == input.size()) {
-        ::close(child.in);
-        child.in = -1;
-      }
-    }
-    if ((descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-      const ssize_t received = ::read(child.out, buffer, sizeof(buffer));
-      if (received > 0) {
-        if (result.output.size() < kMaximumCiClaimResponseBytes + 4096) {
-          result.output.append(buffer, static_cast<std::size_t>(received));
-        }
-      } else if (received == 0 || (errno != EINTR && errno != EAGAIN)) {
-        open_output = false;
-      }
-    }
+  } payload;
+  ProcessOptions options;
+  options.timeout = timeout;
+  options.output_limit = kMaximumCiClaimResponseBytes + 4096;
+  options.inherit_stderr = true;
+  if (!input.empty()) {
+    payload.path = createTempDirectory(config_.build_root, "request-");
+    options.input_file = payload.path / "stdin";
+    std::ofstream file(*options.input_file, std::ios::binary | std::ios::trunc);
+    file.write(input.data(), static_cast<std::streamsize>(input.size()));
+    file.close();
+    if (!file) throw std::runtime_error("could not stage runner request payload");
   }
-  if (child.in >= 0) ::close(child.in);
-  ::close(child.out);
-  int status = 0;
-  while (::waitpid(child.pid, &status, 0) < 0 && errno == EINTR) {
-  }
-  if (!result.timed_out) result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-  return result;
+  const auto child = runProcess(argv, options);
+  return Result{child.output_truncated ? -1 : child.exit_code, child.timed_out, child.output};
 }
 
 CiRemoteTransport::Session CiRemoteTransport::open(const CiRunnerCommand& command) const {

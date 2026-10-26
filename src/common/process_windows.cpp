@@ -113,6 +113,8 @@ ProcessResult runProcess(const std::vector<std::string>& arguments,
 
 static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, const ProcessOptions& options,
     const WindowsSandbox* sandbox, const std::map<std::wstring, std::wstring>& supplied_environment) {
+  if (options.input_file && (sandbox || !options.input_file->is_absolute()))
+    throw std::invalid_argument("host input file requires an absolute path and an unsandboxed transport process");
   auto command = commandLine(arguments);
   if (sandbox && !std::filesystem::path(utf8ToWide(arguments.front())).is_absolute())
     throw std::invalid_argument("sandbox executable must be an absolute host-selected path");
@@ -121,9 +123,17 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   Handle read, write;
   if (!CreatePipe(&read.value, &write.value, &security, 0)) fail("create process pipe");
   if (!SetHandleInformation(read.value, HANDLE_FLAG_INHERIT, 0)) fail("protect process pipe");
-  Handle input(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                           &security, OPEN_EXISTING, 0, nullptr));
+  Handle input(CreateFileW(options.input_file ? options.input_file->c_str() : L"NUL", GENERIC_READ,
+                           options.input_file ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           &security, OPEN_EXISTING, options.input_file ? FILE_FLAG_OPEN_REPARSE_POINT : 0, nullptr));
   if (input.value == INVALID_HANDLE_VALUE) fail("open process input");
+  if (options.input_file) {
+    FILE_ATTRIBUTE_TAG_INFO attributes{};
+    if (GetFileType(input.value) != FILE_TYPE_DISK ||
+        !GetFileInformationByHandleEx(input.value, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
+        (attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+      throw std::runtime_error("process input must be a readable regular file");
+  }
   Handle error;
   HANDLE stderr_handle = write.value;
   if (options.inherit_stderr) {
