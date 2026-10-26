@@ -78,6 +78,60 @@ Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Name: addtopath; Description: "Add {#Product} to PATH for this installation scope"
 
 [Code]
+function DependencyOnPath(Name: String): String;
+var
+  Paths, Directory, Candidate: String;
+  Separator: Integer;
+begin
+  Result := '';
+  Paths := GetEnv('PATH');
+  while Paths <> '' do begin
+    Separator := Pos(';', Paths);
+    if Separator = 0 then begin Directory := Paths; Paths := ''; end
+    else begin Directory := Copy(Paths, 1, Separator - 1); Delete(Paths, 1, Separator); end;
+    Directory := Trim(Directory);
+    if (Length(Directory) >= 2) and (Directory[1] = '"') and
+       (Directory[Length(Directory)] = '"') then
+      Directory := Copy(Directory, 2, Length(Directory) - 2);
+    { Never search the installer's current directory or execute discovered files. }
+    if ((Length(Directory) >= 3) and (Directory[2] = ':') and
+        ((Directory[3] = '\') or (Directory[3] = '/'))) or
+       ((Length(Directory) >= 2) and (Copy(Directory, 1, 2) = '\\')) then begin
+      Candidate := AddBackslash(Directory) + Name;
+      if FileExists(Candidate) then begin Result := Candidate; Exit; end;
+    end;
+  end;
+end;
+
+function DependencySummary(NewLine: String): String;
+var
+  Git, Ssh: String;
+begin
+  Git := DependencyOnPath('git.exe');
+  Ssh := DependencyOnPath('ssh.exe');
+  if Git = '' then Git := 'not found on PATH';
+  if Ssh = '' then Ssh := 'not found on PATH';
+  Result := 'Git on installer PATH: ' + Git + NewLine +
+            'SSH on installer PATH: ' + Ssh + NewLine +
+            'Git and SSH are needed for remote operations. Local documentation builds work without them.' + NewLine +
+            'Setup only checks file presence. It does not install tools or change your tool configuration.';
+#if Product == "ck-git-runner"
+  Result := Result + NewLine + 'Before starting the runner, select the SSH client in runner.ini and check the configuration.';
+#elif Product == "ckgit"
+  Result := Result + NewLine + 'Run ckgit doctor after setup to test the programs selected by your client configuration.';
+#else
+  Result := Result + NewLine + 'Git is needed for documentation portals built from repository refs.';
+#endif
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
+  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := MemoUserInfoInfo + NewLine + MemoDirInfo + NewLine + MemoTypeInfo + NewLine +
+            MemoComponentsInfo + NewLine + MemoGroupInfo + NewLine + MemoTasksInfo + NewLine + NewLine +
+            DependencySummary(NewLine);
+end;
+
 function EnvironmentKey: String;
 begin
   if IsAdminInstallMode then
@@ -157,6 +211,7 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  Log(DependencySummary(#13#10));
   if Pos(';', ExpandConstant('{app}')) <> 0 then
     Result := 'Choose an installation path without a semicolon.';
 #if Product == "ckgit"

@@ -172,6 +172,15 @@ Inno Setup 6 builds `packaging/windows/ckdocs.iss` and
 `/DBinaryDir`, `/DOutputDir`, and `/DReleaseVersion` definitions. The installer
 supports `/CURRENTUSER` without elevation and `/ALLUSERS` with administrator
 rights. It tracks its own PATH entry and preserves user files on uninstall.
+The Ready to Install page and setup log report `git.exe` and `ssh.exe` files
+found in absolute directories on the installer's PATH, including quoted paths
+and portable Git directories. This preflight checks presence, not executable
+version or trust, and does not run discovered programs with installer rights.
+Missing tools do not block local documentation use or offline installation;
+remote operations require Git and SSH, and ref portals require Git. Existing
+client/runner tool settings remain unchanged. Run `ckgit doctor` after client
+setup to verify the programs selected by that user's configuration.
+
 The combined `ckgit` installer offers `ckgit`, `ckdocs`, or both (the default).
 For unattended selection, pass `/COMPONENTS="ckgit"`, `/COMPONENTS="ckdocs"`,
 or `/COMPONENTS="ckgit,ckdocs"`. An empty selection is rejected. Reinstalling

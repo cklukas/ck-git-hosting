@@ -10,6 +10,7 @@ param(
     [string]$LauncherBinary,
     [ValidateSet('both','ckgit','ckdocs')][string]$InitialComponents = 'both',
     [ValidatePattern('^\{[0-9A-Fa-f-]{36}\}$')][string]$TestAppId,
+    [ValidateSet('Inherited','Present','Missing')][string]$DependencyPathMode = 'Inherited',
     [switch]$RequireNonAdmin
 )
 $ErrorActionPreference = 'Stop'
@@ -59,7 +60,27 @@ try {
         if ($Product -eq 'ckgit' -and ($attempt -ne 0 -or $InitialComponents -ne 'both')) {
             $args += ' /COMPONENTS="' + $components + '"'
         }
-        $process = Start-Process -FilePath $Installer -ArgumentList $args -PassThru -Wait
+        $previousProcessPath = $env:PATH
+        try {
+            if ($DependencyPathMode -ne 'Inherited') {
+                $dependencyDirectory = Join-Path $fixture ('portable tools ' + [char]0x00FC)
+                New-Item -ItemType Directory $dependencyDirectory -Force | Out-Null
+                if ($DependencyPathMode -eq 'Present') {
+                    # Presence-only preflight must not execute these fixture files.
+                    [IO.File]::WriteAllText((Join-Path $dependencyDirectory 'git.exe'), 'not executable')
+                    [IO.File]::WriteAllText((Join-Path $dependencyDirectory 'ssh.exe'), 'not executable')
+                }
+                $env:PATH = '"' + $dependencyDirectory + '"'
+            }
+            $process = Start-Process -FilePath $Installer -ArgumentList $args -PassThru -Wait
+        } finally { $env:PATH = $previousProcessPath }
+        $installLog = Get-Content (Join-Path $fixture "install-$attempt.log") -Raw
+        foreach ($tool in @('Git','SSH')) {
+            $expectedTool = if ($DependencyPathMode -eq 'Missing') { 'not found on PATH' }
+                elseif ($DependencyPathMode -eq 'Present') { Join-Path $dependencyDirectory ($tool.ToLowerInvariant() + '.exe') }
+                else { '' }
+            if (!$installLog.Contains("$tool on installer PATH: $expectedTool")) { throw "Installer dependency check missing or incorrect: $tool" }
+        }
         if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
         $expected = @{}; $expected[$executable] = $Binary
         if ($Product -eq 'ckgit') {
@@ -89,7 +110,7 @@ try {
     if ($previousPath -cne $afterPath) { throw 'PATH did not return to its previous value' }
     if (Test-Path $uninstallKey) { throw 'Uninstall registration remains' }
     $passed = $true
-    Write-Output "Installer $Product $Mode install/reinstall/uninstall passed; initial components=$InitialComponents; administrator token=$admin"
+    Write-Output "Installer $Product $Mode install/reinstall/uninstall passed; initial components=$InitialComponents; dependency PATH=$DependencyPathMode; administrator token=$admin"
 } finally {
     $env:TEMP=$oldTemp; $env:TMP=$oldTmp; $env:TMPDIR=$oldTmpdir
     # Preserve a failed installation and its logs for diagnosis. Never delete

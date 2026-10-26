@@ -62,7 +62,8 @@ jobs:
             foreach ($mode in @('CurrentUser','AllUsers')) {
               $selections = if ($product -eq 'ckgit') { @('both','ckgit','ckdocs') } else { @('both') }
               foreach ($selection in $selections) {
-                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection
+                $dependencyMode = if ($selection -eq 'ckgit') { 'Missing' } elseif ($selection -eq 'ckdocs') { 'Present' } else { 'Inherited' }
+                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection -DependencyPathMode $dependencyMode
               }
             }
           }
