@@ -210,10 +210,40 @@ CiArtifact interpretArtifact(const Node& node, const std::string& job_name) {
   return artifact;
 }
 
-CiStep interpretStep(const Node& node) {
+std::vector<std::string> interpretLabels(const Node* runs_on) {
+  if (runs_on != nullptr) {
+    std::vector<std::string> labels;
+    if (runs_on->kind == Node::Kind::Scalar) {
+      labels.push_back(runs_on->scalar);
+    } else {
+      requireKind(*runs_on, Node::Kind::Sequence, "runs_on to be a label or a list of labels");
+      if (runs_on->items.size() > kMaximumCiLabels) tooLarge("too many runs_on labels");
+      for (const Node& item : runs_on->items) {
+        labels.push_back(requireKind(item, Node::Kind::Scalar, "each runs_on label to be a scalar").scalar);
+      }
+    }
+    for (const auto& label : labels) {
+      if (!isValidCiLabel(label)) {
+        malformed("invalid runs_on label '" + label + "' (lowercase letters, digits, '.', '_', '-'; at most 32)", runs_on->line);
+      }
+    }
+    std::sort(labels.begin(), labels.end());
+    labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
+    return labels;
+  }
+  return {};
+}
+
+CiStep interpretStep(const Node& node, int version) {
   requireKind(node, Node::Kind::Mapping, "a step to be a mapping");
-  rejectUnknownKeys(node, {"name", "run", "script"});
+  if (version == 1) rejectUnknownKeys(node, {"name", "run", "script"});
+  else rejectUnknownKeys(node, {"name", "run", "script", "shell"});
   CiStep step;
+  if (const Node* shell = findEntry(node, "shell")) {
+    step.shell = requireKind(*shell, Node::Kind::Scalar, "shell to be a name").scalar;
+    if (step.shell != "sh" && step.shell != "powershell" && step.shell != "pwsh")
+      malformed("shell must be sh, powershell, or pwsh", node.line);
+  }
   if (const Node* name = findEntry(node, "name")) {
     step.name = requireKind(*name, Node::Kind::Scalar, "a step name to be a scalar").scalar;
     if (step.name.empty() || step.name.size() > kMaximumCiNameBytes) {
@@ -236,6 +266,7 @@ CiStep interpretStep(const Node& node) {
     if (step.script.empty()) malformed("a run command is empty", node.line);
     return step;
   }
+  if (!step.shell.empty()) malformed("shell cannot be combined with an argv list", node.line);
   requireKind(*run, Node::Kind::Sequence, "run to be a command line or an argv list");
   if (run->items.empty()) malformed("a run argv list is empty", node.line);
   if (run->items.size() > kMaximumCiArgvItems) tooLarge("a run argv list is too long");
@@ -247,10 +278,23 @@ CiStep interpretStep(const Node& node) {
   return step;
 }
 
-CiJob interpretJob(const Node& node) {
+CiJob interpretJob(const Node& node, int version) {
   requireKind(node, Node::Kind::Mapping, "each job to be a mapping");
-  rejectUnknownKeys(node, {"name", "env", "steps", "artifacts"});
+  if (version == 1) rejectUnknownKeys(node, {"name", "env", "steps", "artifacts"});
+  else rejectUnknownKeys(node, {"name", "env", "steps", "artifacts", "runs_on", "needs"});
   CiJob job;
+  job.runs_on = interpretLabels(findEntry(node, "runs_on"));
+  if (const Node* needs = findEntry(node, "needs")) {
+    requireKind(*needs, Node::Kind::Sequence, "needs to be a list of job names");
+    if (needs->items.size() > kMaximumCiJobs) tooLarge("too many job dependencies");
+    std::set<std::string> seen;
+    for (const Node& item : needs->items) {
+      const auto& value = requireKind(item, Node::Kind::Scalar, "dependency to be a job name").scalar;
+      if (!isValidCiName(value) || !seen.insert(value).second)
+        malformed("invalid or duplicate job dependency", item.line);
+      job.needs.push_back(value);
+    }
+  }
   const Node* name = findEntry(node, "name");
   if (name == nullptr) malformed("a job is missing 'name'", node.line);
   job.name = requireKind(*name, Node::Kind::Scalar, "a job name to be a scalar").scalar;
@@ -261,7 +305,7 @@ CiJob interpretJob(const Node& node) {
   requireKind(*steps, Node::Kind::Sequence, "steps to be a list");
   if (steps->items.empty()) malformed("job '" + job.name + "' has no steps", node.line);
   if (steps->items.size() > kMaximumCiStepsPerJob) tooLarge("a job has too many steps");
-  for (const Node& step : steps->items) job.steps.push_back(interpretStep(step));
+  for (const Node& step : steps->items) job.steps.push_back(interpretStep(step, version));
   if (const Node* artifacts = findEntry(node, "artifacts")) job.artifact = interpretArtifact(*artifacts, job.name);
   return job;
 }
@@ -275,15 +319,15 @@ CiWorkflow interpret(const Node& root) {
   const std::string& version_text = requireKind(*version, Node::Kind::Scalar, "version to be a number").scalar;
   int version_value = 0;
   const auto [end, error] = std::from_chars(version_text.data(), version_text.data() + version_text.size(), version_value);
-  if (error != std::errc{} || end != version_text.data() + version_text.size() || version_value != 1) {
-    malformed("version must be 1", root.line);
+  if (error != std::errc{} || end != version_text.data() + version_text.size() || (version_value != 1 && version_value != 2)) {
+    malformed("version must be 1 or 2", root.line);
   }
 
   CiWorkflow workflow;
   if (const Node* value = findEntry(root, "auto_cancel")) {
     workflow.auto_cancel = interpretBoolean(*value, "auto_cancel must be a boolean");
   }
-  workflow.version = 1;
+  workflow.version = version_value;
 
   if (const Node* on = findEntry(root, "on")) {
     requireKind(*on, Node::Kind::Mapping, "'on' to be a mapping");
@@ -345,26 +389,7 @@ CiWorkflow interpret(const Node& root) {
 
   if (const Node* checkout = findEntry(root, "checkout")) workflow.checkout = interpretCheckout(*checkout);
 
-  if (const Node* runs_on = findEntry(root, "runs_on")) {
-    std::vector<std::string> labels;
-    if (runs_on->kind == Node::Kind::Scalar) {
-      labels.push_back(runs_on->scalar);
-    } else {
-      requireKind(*runs_on, Node::Kind::Sequence, "runs_on to be a label or a list of labels");
-      if (runs_on->items.size() > kMaximumCiLabels) tooLarge("too many runs_on labels");
-      for (const Node& item : runs_on->items) {
-        labels.push_back(requireKind(item, Node::Kind::Scalar, "each runs_on label to be a scalar").scalar);
-      }
-    }
-    for (const auto& label : labels) {
-      if (!isValidCiLabel(label)) {
-        malformed("invalid runs_on label '" + label + "' (lowercase letters, digits, '.', '_', '-'; at most 32)", runs_on->line);
-      }
-    }
-    std::sort(labels.begin(), labels.end());
-    labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
-    workflow.runs_on = std::move(labels);
-  }
+  workflow.runs_on = interpretLabels(findEntry(root, "runs_on"));
 
   if (const Node* caches = findEntry(root, "cache")) {
     requireKind(*caches, Node::Kind::Sequence, "cache to be a list");
@@ -401,7 +426,14 @@ CiWorkflow interpret(const Node& root) {
 
   if (const Node* pages = findEntry(root, "pages")) {
     requireKind(*pages, Node::Kind::Mapping, "pages to be a mapping");
-    rejectUnknownKeys(*pages, {"path"});
+    if (workflow.version == 1) rejectUnknownKeys(*pages, {"path"});
+    else rejectUnknownKeys(*pages, {"path", "job"});
+    if (workflow.version == 2) {
+      const Node* job = findEntry(*pages, "job");
+      if (!job) malformed("version-2 pages requires its producing job", pages->line);
+      workflow.pages_job = requireKind(*job, Node::Kind::Scalar, "pages job to be a name").scalar;
+      if (!isValidCiName(workflow.pages_job)) malformed("invalid pages job name", pages->line);
+    }
     const Node* path = findEntry(*pages, "path");
     if (path == nullptr) malformed("pages needs a 'path'", pages->line);
     const std::string& value = requireKind(*path, Node::Kind::Scalar, "pages path to be a scalar").scalar;
@@ -416,9 +448,35 @@ CiWorkflow interpret(const Node& root) {
   if (jobs->items.size() > kMaximumCiJobs) tooLarge("too many jobs");
   std::set<std::string> job_names;
   for (const Node& job_node : jobs->items) {
-    CiJob job = interpretJob(job_node);
+    CiJob job = interpretJob(job_node, workflow.version);
     if (!job_names.insert(job.name).second) malformed("duplicate job name '" + job.name + "'", job_node.line);
+    if (workflow.version == 2 && findEntry(job_node, "runs_on") == nullptr) job.runs_on = workflow.runs_on;
     workflow.jobs.push_back(std::move(job));
+  }
+  if (workflow.version == 2) {
+    if (!workflow.pages_job.empty() && !job_names.count(workflow.pages_job))
+      malformed("pages names an unknown producing job", jobs->line);
+    std::set<std::string> artifacts;
+    for (const auto& job : workflow.jobs)
+      if (job.artifact && !artifacts.insert(job.artifact->name).second)
+        malformed("distributed jobs must use unique artifact names", jobs->line);
+  }
+  // Resolve the full graph after all names are known; forward references are legal.
+  // Kahn's algorithm is bounded by the schema's 64 jobs, without recursion.
+  std::set<std::string> completed;
+  for (const auto& job : workflow.jobs) {
+    for (const auto& dependency : job.needs) {
+      if (dependency == job.name || !job_names.count(dependency))
+        malformed("unknown or self dependency '" + dependency + "' in job '" + job.name + "'", jobs->line);
+    }
+  }
+  while (completed.size() < workflow.jobs.size()) {
+    const auto before = completed.size();
+    for (const auto& job : workflow.jobs) {
+      if (std::all_of(job.needs.begin(), job.needs.end(), [&](const auto& name) { return completed.count(name); }))
+        completed.insert(job.name);
+    }
+    if (completed.size() == before) malformed("job dependencies contain a cycle", jobs->line);
   }
   return workflow;
 }
@@ -427,6 +485,18 @@ CiWorkflow interpret(const Node& root) {
 
 CiWorkflow parseCiWorkflow(std::string_view content) {
   return interpret(parseYamlSubset(content, kCiWorkflowYamlDialect));
+}
+
+CiWorkflow selectCiWorkflowJob(CiWorkflow workflow, std::string_view name) {
+  if (workflow.version != 2) throw std::invalid_argument("job selection requires workflow version 2");
+  const auto found = std::find_if(workflow.jobs.begin(), workflow.jobs.end(),
+                                  [&](const auto& job) { return job.name == name; });
+  if (found == workflow.jobs.end()) throw std::invalid_argument("assigned workflow job does not exist");
+  CiJob selected = *found;
+  if (workflow.pages_job != name) workflow.pages_path.reset();
+  workflow.runs_on = selected.runs_on;
+  workflow.jobs = {std::move(selected)};
+  return workflow;
 }
 
 }  // namespace ckgit

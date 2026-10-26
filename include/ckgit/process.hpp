@@ -6,6 +6,8 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <memory>
+#include <optional>
 
 namespace ckgit {
 
@@ -27,8 +29,8 @@ struct ProcessOptions {
 // Executes an argument vector directly, without a shell.  Output is combined
 // and bounded so a malformed repository cannot make an audit consume memory
 // without limit.  The child runs in its own session with standard input from
-// /dev/null: it can never wait on a terminal prompt, and a timeout kills the
-// whole process tree (for example git together with its ssh transport) so
+// /dev/null (NUL on Windows): it can never wait on a terminal prompt, and a timeout kills the
+// whole process tree (a Windows Job Object, or a POSIX process group) so
 // nothing keeps running or keeps the caller waiting afterwards.
 ProcessResult runProcess(const std::vector<std::string>& arguments, const ProcessOptions& options);
 
@@ -45,5 +47,22 @@ ProcessResult runProcess(const std::vector<std::string>& arguments,
 // Starts a long-running child that shares this process's terminal, again
 // without a shell.  The caller owns the returned process ID and must reap it.
 int spawnAttachedProcess(const std::vector<std::string>& arguments);
+
+// Owns a long-running background child (e.g. an SSH tunnel), including its
+// descendants. stdin is closed to interaction; stdout/stderr stay attached.
+// The destructor stops the tree. Exit status is normalized, not a waitpid word.
+class ManagedProcess {
+ public:
+  explicit ManagedProcess(const std::vector<std::string>& arguments);
+  ~ManagedProcess();
+  ManagedProcess(const ManagedProcess&) = delete;
+  ManagedProcess& operator=(const ManagedProcess&) = delete;
+  std::optional<int> poll();
+  void stop() noexcept;
+  unsigned long id() const;
+ private:
+  struct State;
+  std::unique_ptr<State> state_;
+};
 
 }  // namespace ckgit

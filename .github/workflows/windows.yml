@@ -1,0 +1,64 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+name: Windows clients
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select temporary workspace
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP 'ckgit-windows'
+          New-Item -ItemType Directory -Path $scratch | Out-Null
+          foreach ($key in @('TEMP','TMP','TMPDIR')) { "$key=$scratch" >> $env:GITHUB_ENV }
+      - name: Build
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          if (!$version) { $version = (Get-Content VERSION -Raw).Trim() + '+g' + (git rev-parse --short=12 HEAD) }
+          cmake -S . -B "$env:RUNNER_TEMP/build" -G 'Visual Studio 17 2022' -A x64 "-DCKGIT_BUILD_VERSION=$version"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build "$env:RUNNER_TEMP/build" --config Release --parallel 4
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native process, file safety, diagrams and preview tests
+        run: |
+          ctest --test-dir "$env:RUNNER_TEMP/build" -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package portable ZIP and installer
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          cpack --config "$env:RUNNER_TEMP/build/CPackConfig.cmake" -C Release -B "$env:RUNNER_TEMP/dist"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (!(Test-Path $iscc)) { throw 'Inno Setup 6 is required on this build image' }
+          foreach ($product in @('ckdocs','ckgit')) {
+            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin/Release" "/DOutputDir=$env:RUNNER_TEMP/dist" "/DReleaseVersion=$version" "packaging/windows/$product.iss"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Installer lifecycle in both installation scopes
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          foreach ($product in @('ckdocs','ckgit')) {
+            foreach ($mode in @('CurrentUser','AllUsers')) {
+              & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$product.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode
+            }
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64
+          path: |
+            ${{ runner.temp }}/dist/*.zip
+            ${{ runner.temp }}/dist/*-setup.exe
+          if-no-files-found: error

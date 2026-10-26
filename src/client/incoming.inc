@@ -88,40 +88,24 @@ std::string incomingOutput(const ckgit::ProcessResult& result, std::string_view 
 class IncomingIdentity {
  public:
   explicit IncomingIdentity(const ckgit::RepositoryAudit& audit) : path_(audit.path) {
-    git_path_ = incomingOutput(incomingGit(path_, {"rev-parse", "--absolute-git-dir"}),
-                               "could not locate checkout metadata");
-    common_path_ = incomingOutput(incomingGit(path_, {"rev-parse", "--git-common-dir"}),
-                                  "could not locate shared checkout metadata");
+    git_path_ = ckgit::pathFromUtf8(incomingOutput(incomingGit(path_, {"rev-parse", "--absolute-git-dir"}),
+                               "could not locate checkout metadata"));
+    common_path_ = ckgit::pathFromUtf8(incomingOutput(incomingGit(path_, {"rev-parse", "--git-common-dir"}),
+                                  "could not locate shared checkout metadata"));
     if (common_path_.is_relative()) common_path_ = path_ / common_path_;
     common_path_ = std::filesystem::canonical(common_path_);
-    root_fd_ = open(path_.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    git_fd_ = open(git_path_.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    common_fd_ = open(common_path_.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (root_fd_ < 0 || git_fd_ < 0 || common_fd_ < 0) {
-      if (root_fd_ >= 0) close(root_fd_);
-      if (git_fd_ >= 0) close(git_fd_);
-      if (common_fd_ >= 0) close(common_fd_);
-      throw std::runtime_error("checkout or its Git metadata is unavailable; inspect its location before retrying");
-    }
-  }
-  ~IncomingIdentity() {
-    close(root_fd_);
-    close(git_fd_);
-    close(common_fd_);
+    root_identity_ = std::make_unique<ckgit::DirectoryIdentity>(path_);
+    git_identity_ = std::make_unique<ckgit::DirectoryIdentity>(git_path_);
+    common_identity_ = std::make_unique<ckgit::DirectoryIdentity>(common_path_);
   }
   IncomingIdentity(const IncomingIdentity&) = delete;
   IncomingIdentity& operator=(const IncomingIdentity&) = delete;
 
   void verify() const {
-    const auto unchanged = [](int fd, const std::filesystem::path& path) {
-      struct stat held {}, current {};
-      return fstat(fd, &held) == 0 && lstat(path.c_str(), &current) == 0 && S_ISDIR(current.st_mode) &&
-             held.st_dev == current.st_dev && held.st_ino == current.st_ino;
-    };
-    auto common = std::filesystem::path(incomingOutput(incomingGit(path_, {"rev-parse", "--git-common-dir"}),
+    auto common = ckgit::pathFromUtf8(incomingOutput(incomingGit(path_, {"rev-parse", "--git-common-dir"}),
                                                        "could not recheck shared checkout metadata"));
     if (common.is_relative()) common = path_ / common;
-    if (!unchanged(root_fd_, path_) || !unchanged(git_fd_, git_path_) || !unchanged(common_fd_, common_path_) ||
+    if (!root_identity_->matches(path_) || !git_identity_->matches(git_path_) || !common_identity_->matches(common_path_) ||
         std::filesystem::canonical(common) != common_path_ ||
         incomingOutput(incomingGit(path_, {"rev-parse", "--absolute-git-dir"}),
                        "could not recheck checkout metadata") != git_path_.string()) {
@@ -133,9 +117,7 @@ class IncomingIdentity {
   std::filesystem::path path_;
   std::filesystem::path git_path_;
   std::filesystem::path common_path_;
-  int root_fd_{-1};
-  int git_fd_{-1};
-  int common_fd_{-1};
+  std::unique_ptr<ckgit::DirectoryIdentity> root_identity_, git_identity_, common_identity_;
 };
 
 void requireIncomingPairing(const ckgit::RepositoryAudit& audit, const ckgit::ClientConfig& config,

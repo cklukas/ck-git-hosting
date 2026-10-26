@@ -1,5 +1,5 @@
 ---
-description: Which packages are built where, installing on Debian, Raspberry Pi, other Linux and macOS (Homebrew), and cutting a release.
+description: Which packages are built where, installing on Linux, macOS and Windows, and cutting a release.
 ---
 # Packages, continuous integration, and releases
 
@@ -13,6 +13,9 @@ description: Which packages are built where, installing on Debian, Raspberry Pi,
 | `ck-git-runner_V_arm64.deb`, `ck-git-runner_V_amd64.deb` | same | a [remote CI runner](ci-remote-runners.md) for another machine (its own binary path, account and unit; no file overlap with the server package) |
 | `ck-git-hosting-V-linux-{arm64,amd64}.tar.gz` | `packaging/build-tarball.sh` | other systemd distributions with glibc 2.41 or newer; carries `bin/ckdocs` too |
 | `ckgit-V-macos-{arm64,x86_64}.tar.gz` | same, `--client-only` | macOS clients; carries `bin/ckdocs` too |
+| `ckgit-V-windows-x64.zip` | CMake/CPack in the Windows workflow | portable Windows 11 x64 client and ckdocs |
+| `ckgit-V-windows-x64-setup.exe` | `packaging/windows/ckgit.iss` with Inno Setup 6 | Windows client plus ckdocs; current-user or all-users installation |
+| `ckdocs-V-windows-x64-setup.exe` | `packaging/windows/ckdocs.iss` with Inno Setup 6 | standalone Windows documentation tool |
 | `ck-git-hosting-V-source.tar.gz` | `git archive` | Homebrew formula source |
 | `SHA256SUMS` | release job | verification |
 | `packages` (a `.tar` bundling the arm64/amd64 `.deb`s, a source tarball, and `build-version`) | this project's own self-hosted CI (`.ckgit/ci.yml`), stored as a release asset on the server | `ck-git-hosting-deploy` (the server package) and `ckgit release download` / `packaging/update-cli.sh` (the source tarball) |
@@ -26,6 +29,13 @@ own hosted `ckgit` remote produces the two channels side by side -- see
 [self-hosted release and deploy guide](05-releases-and-deploy.md).
 
 ## Continuous integration
+
+The reusable Windows workflow builds native binaries, checks the client and
+documentation tools, and tests installer installation, reinstallation and
+uninstallation in both scopes. It uploads the portable ZIP and installer
+files; the release workflow includes them in the shared release and checksums.
+Windows installers are unsigned. Git for Windows and OpenSSH are external
+client prerequisites; see [client setup](../guides/client-setup.md).
 
 `.github/workflows/ci.yml` runs on every push and pull request:
 

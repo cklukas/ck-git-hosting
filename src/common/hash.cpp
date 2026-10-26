@@ -5,12 +5,16 @@
 
 #include <bit>
 #include <cerrno>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace ckgit {
 
@@ -80,6 +84,27 @@ std::string sha256Hex(std::string_view data) {
 }
 
 std::string sha256HexOfFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+  const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                  OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("could not open checksum file");
+  struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};
+  FILE_ATTRIBUTE_TAG_INFO info{};
+  if (GetFileType(file) != FILE_TYPE_DISK ||
+      !GetFileInformationByHandleEx(file, FileAttributeTagInfo, &info, sizeof(info)) ||
+      (info.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)))
+    throw std::runtime_error("could not checksum regular file");
+  Sha256 hash;
+  std::array<unsigned char, 65536> buffer{};
+  for (;;) {
+    DWORD count = 0;
+    if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr))
+      throw std::runtime_error("could not read checksum file");
+    if (!count) break;
+    hash.add(buffer.data(), count);
+  }
+  return hash.finish();
+#else
   const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
   struct stat status {};
   if (fd < 0 || ::fstat(fd, &status) != 0 || !S_ISREG(status.st_mode)) {
@@ -100,6 +125,7 @@ std::string sha256HexOfFile(const std::filesystem::path& path) {
   }
   ::close(fd);
   return hash.finish();
+#endif
 }
 
 }  // namespace ckgit

@@ -4,17 +4,29 @@
 
 std::string setupQuote(std::string_view value) {
   std::string quoted = "'";
+#ifdef _WIN32
+  for (const char c : value) quoted += c == '\'' ? "''" : std::string(1, c);
+#else
   for (const char c : value) quoted += c == '\'' ? "'\\''" : std::string(1, c);
+#endif
   return quoted + "'";
 }
 
 std::filesystem::path setupPath(const std::string& value) {
-  std::filesystem::path path = value;
+  std::filesystem::path path = ckgit::pathFromUtf8(value);
+#ifdef _WIN32
+  if (value == "~" || value.starts_with("~/") || value.starts_with("~\\")) {
+    const wchar_t* home = _wgetenv(L"USERPROFILE");
+    if (!home || !*home) throw std::runtime_error("USERPROFILE is unavailable; enter an absolute path");
+    path = std::filesystem::path(home) / ckgit::pathFromUtf8(value == "~" ? "" : value.substr(2));
+  }
+#else
   if (value == "~" || value.starts_with("~/")) {
     const char* home = std::getenv("HOME");
     if (!home || !*home) throw std::runtime_error("HOME is unavailable; enter an absolute path");
     path = std::filesystem::path(home) / (value == "~" ? "" : value.substr(2));
   }
+#endif
   return std::filesystem::absolute(path).lexically_normal();
 }
 
@@ -83,7 +95,7 @@ int setupCommand(const std::vector<std::string>& arguments) {
       }
     }
     char host[256]{};
-    if (gethostname(host, sizeof(host) - 1) != 0) std::strcpy(host, "device");
+    if (gethostname(host, sizeof(host) - 1) != 0) std::copy_n("device", 7, host);
     if (config.display_name.empty()) config.display_name = host;
     if (config.client_id.empty()) {
       for (const unsigned char c : std::string(host)) {
@@ -154,64 +166,13 @@ int setupCommand(const std::vector<std::string>& arguments) {
   }
 }
 
-class DoctorSignals {
- public:
-  DoctorSignals() {
-    tunnel_stop_requested = 0;
-    struct sigaction action{};
-    sigemptyset(&action.sa_mask);
-    action.sa_handler = requestTunnelStop;
-    sigaction(SIGINT, &action, &interrupt_); sigaction(SIGTERM, &action, &terminate_);
-    sigaction(SIGHUP, &action, &hangup_);
-    action.sa_handler = SIG_IGN; sigaction(SIGPIPE, &action, &pipe_);
-  }
-  ~DoctorSignals() {
-    sigaction(SIGINT, &interrupt_, nullptr); sigaction(SIGTERM, &terminate_, nullptr);
-    sigaction(SIGHUP, &hangup_, nullptr); sigaction(SIGPIPE, &pipe_, nullptr);
-  }
- private:
-  struct sigaction interrupt_{}, terminate_{}, hangup_{}, pipe_{};
-};
-
-int spawnDoctorTunnel(const std::vector<std::string>& command) {
-  std::vector<char*> argv;
-  for (const auto& argument : command) argv.push_back(const_cast<char*>(argument.c_str()));
-  argv.push_back(nullptr);
-  const auto child = fork();
-  if (child < 0) throw std::runtime_error("could not start dashboard SSH check");
-  if (child == 0) {
-    if (setsid() < 0) _exit(127);
-    const int input = open("/dev/null", O_RDONLY);
-    if (input < 0 || dup2(input, STDIN_FILENO) < 0) _exit(127);
-    if (input != STDIN_FILENO) close(input);
-    execvp(argv.front(), argv.data());
-    _exit(127);
-  }
-  return child;
-}
-
 class DoctorTunnel {
  public:
-  explicit DoctorTunnel(int pid) : pid_(pid) {}
-  ~DoctorTunnel() {
-    if (reaped_) { kill(-pid_, SIGKILL); return; }
-    kill(-pid_, SIGTERM); kill(pid_, SIGTERM);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (std::chrono::steady_clock::now() < deadline) {
-      if (childHasExited(pid_, &status_)) { kill(-pid_, SIGKILL); return; }
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    kill(-pid_, SIGKILL); kill(pid_, SIGKILL);
-    while (waitpid(pid_, &status_, 0) < 0 && errno == EINTR) {}
-  }
-  bool exited() {
-    if (!reaped_) reaped_ = childHasExited(pid_, &status_);
-    return reaped_;
-  }
-  int status() const { return childExitCode(status_); }
+  explicit DoctorTunnel(const std::vector<std::string>& command) : process_(command) {}
+  bool exited() { return process_.poll().has_value(); }
+  int status() { return process_.poll().value_or(1); }
  private:
-  int pid_, status_{0};
-  bool reaped_{false};
+  ckgit::ManagedProcess process_;
 };
 
 // Keep the HTTP exchange within the same wall-clock deadline as SSH startup.
@@ -225,20 +186,19 @@ std::optional<std::string> probeDoctorDashboard(unsigned short port,
   const auto waitMilliseconds = [&]() {
     return static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(remaining(), 1, 100));
   };
-  const int descriptor = connectLoopback(port, waitMilliseconds());
-  if (descriptor < 0) return std::nullopt;
+  const auto descriptor = connectLoopback(port, waitMilliseconds());
+  if (descriptor == net::invalid) return std::nullopt;
   struct Connection {
-    int descriptor;
-    ~Connection() { close(descriptor); }
+    net::Socket descriptor;
+    ~Connection() { net::close(descriptor); }
   } connection{descriptor};
-  const int flags = fcntl(descriptor, F_GETFL, 0);
-  if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) return std::nullopt;
+  if (!net::nonblocking(descriptor, true)) return std::nullopt;
   const auto waitFor = [&](short event) {
     while (!tunnel_stop_requested && remaining() > 0) {
-      pollfd ready{descriptor, event, 0};
-      const auto result = poll(&ready, 1, waitMilliseconds());
+      net::Poll ready{descriptor, event, 0};
+      const auto result = net::poll(&ready, 1, waitMilliseconds());
       if (result > 0) return (ready.revents & (event | POLLHUP)) != 0;
-      if (result < 0 && errno != EINTR) return false;
+      if (result < 0 && !net::interrupted()) return false;
     }
     return false;
   };
@@ -246,16 +206,16 @@ std::optional<std::string> probeDoctorDashboard(unsigned short port,
   std::size_t sent = 0;
   while (sent < request.size()) {
     if (!waitFor(POLLOUT)) return std::nullopt;
-    const auto count = send(descriptor, request.data() + sent, request.size() - sent, 0);
-    if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    const auto count = net::write(descriptor, request.data() + sent, request.size() - sent);
+    if (count < 0 && (net::interrupted() || net::wouldBlock())) continue;
     if (count <= 0) return std::nullopt;
     sent += static_cast<std::size_t>(count);
   }
   std::string response;
   char buffer[256];
   while (response.size() < 1024 && waitFor(POLLIN)) {
-    const auto count = recv(descriptor, buffer, sizeof(buffer), 0);
-    if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    const auto count = net::read(descriptor, buffer, sizeof(buffer));
+    if (count < 0 && (net::interrupted() || net::wouldBlock())) continue;
     if (count <= 0) return std::nullopt;
     response.append(buffer, static_cast<std::size_t>(count));
     const auto end = response.find("\r\n");
@@ -360,12 +320,12 @@ int doctorCommand(const std::vector<std::string>& arguments) {
       auto command = ssh_options;
       command.insert(command.end(), {"-N", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5",
           "-o", "ServerAliveCountMax=1", "-L", "127.0.0.1:" + std::to_string(local) + ":127.0.0.1:" + std::to_string(remote), target});
-      DoctorTunnel tunnel(spawnDoctorTunnel(command));
+      DoctorTunnel tunnel(command);
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
       bool ready = false;
       while (!tunnel_stop_requested && std::chrono::steady_clock::now() < deadline && !tunnel.exited()) {
-        const int connection = connectLoopback(local, 100);
-        if (connection >= 0) { close(connection); ready = true; break; }
+        const auto connection = connectLoopback(local, 100);
+        if (connection != net::invalid) { net::close(connection); ready = true; break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
       }
       const auto http = ready && !tunnel_stop_requested ? probeDoctorDashboard(local, deadline) : std::nullopt;

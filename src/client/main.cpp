@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <cctype>
 #include <cerrno>
 #include <charconv>
@@ -16,22 +15,29 @@
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <optional>
-#include <poll.h>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <thread>
 #include <tuple>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+#include "ckgit/socket.hpp"
+#include "ckgit/windows.hpp"
+#include "ckgit/path_utf8.hpp"
+#include "ckgit/directory_identity.hpp"
+#ifdef _WIN32
+#include <io.h>
+#include <shellapi.h>
+#else
+#include <netdb.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "ckgit/ci_control.hpp"
 #include "ckgit/ci_store.hpp"
@@ -52,6 +58,16 @@
 #include "ckgit/web_renderer.hpp"
 
 namespace {
+namespace net = ckgit::net;
+#ifdef _WIN32
+constexpr int STDIN_FILENO = 0, STDOUT_FILENO = 1, STDERR_FILENO = 2;
+int isatty(int descriptor) { return _isatty(descriptor); }
+int setenv(const char* name, const char* value, int overwrite) {
+  if (!overwrite && std::getenv(name)) return 0;
+  return _wputenv_s(ckgit::utf8ToWide(name).c_str(), ckgit::utf8ToWide(value).c_str());
+}
+int unsetenv(const char* name) { return _wputenv_s(ckgit::utf8ToWide(name).c_str(), L""); }
+#endif
 
 constexpr int kUsage = 2;
 constexpr int kPartial = 3;
@@ -442,6 +458,11 @@ std::string describeProcessFailure(const ckgit::ProcessResult& result, std::chro
 
 // Without --config, every command uses the standard per-user location.
 std::filesystem::path defaultClientConfigPath() {
+#ifdef _WIN32
+  const wchar_t* local = _wgetenv(L"LOCALAPPDATA");
+  if (!local || !*local) throw std::runtime_error("LOCALAPPDATA is not set; pass --config PATH");
+  return std::filesystem::path(local) / L"ck-git-hosting" / L"client.ini";
+#else
   const char* xdg = std::getenv("XDG_CONFIG_HOME");
   if (xdg != nullptr && *xdg != '\0') {
     return std::filesystem::path(xdg) / "ck-git-hosting" / "client.ini";
@@ -451,6 +472,7 @@ std::filesystem::path defaultClientConfigPath() {
     throw std::runtime_error("HOME is not set; pass --config PATH");
   }
   return std::filesystem::path(home) / ".config" / "ck-git-hosting" / "client.ini";
+#endif
 }
 
 std::filesystem::path resolveConfigPath(const std::optional<std::filesystem::path>& requested) {
@@ -2112,6 +2134,39 @@ void requestTunnelStop(int) {
   tunnel_stop_requested = 1;
 }
 
+class DoctorSignals {
+ public:
+  DoctorSignals() {
+    tunnel_stop_requested = 0;
+#ifdef _WIN32
+    interrupt_ = std::signal(SIGINT, requestTunnelStop);
+    terminate_ = std::signal(SIGTERM, requestTunnelStop);
+#else
+    struct sigaction action{};
+    sigemptyset(&action.sa_mask);
+    action.sa_handler = requestTunnelStop;
+    sigaction(SIGINT, &action, &interrupt_); sigaction(SIGTERM, &action, &terminate_);
+    sigaction(SIGHUP, &action, &hangup_);
+    action.sa_handler = SIG_IGN; sigaction(SIGPIPE, &action, &pipe_);
+#endif
+  }
+  ~DoctorSignals() {
+#ifdef _WIN32
+    std::signal(SIGINT, interrupt_); std::signal(SIGTERM, terminate_);
+#else
+    sigaction(SIGINT, &interrupt_, nullptr); sigaction(SIGTERM, &terminate_, nullptr);
+    sigaction(SIGHUP, &hangup_, nullptr); sigaction(SIGPIPE, &pipe_, nullptr);
+#endif
+  }
+ private:
+#ifdef _WIN32
+  using Handler = void (*)(int);
+  Handler interrupt_{}, terminate_{};
+#else
+  struct sigaction interrupt_{}, terminate_{}, hangup_{}, pipe_{};
+#endif
+};
+
 bool isValidSshTarget(std::string_view target) {
   const std::size_t at = target.find('@');
   const std::string_view user = at == std::string_view::npos ? std::string_view{} : target.substr(0, at);
@@ -2127,9 +2182,9 @@ bool isValidSshTarget(std::string_view target) {
          target.find('@', at == std::string_view::npos ? 0 : at + 1) == std::string_view::npos;
 }
 
-int loopbackSocket() {
-  const int descriptor = socket(AF_INET, SOCK_STREAM, 0);
-  if (descriptor < 0) {
+net::Socket loopbackSocket() {
+  const auto descriptor = socket(AF_INET, SOCK_STREAM, 0);
+  if (descriptor == net::invalid) {
     throw std::runtime_error("could not create a loopback socket");
   }
   return descriptor;
@@ -2148,12 +2203,11 @@ sockaddr_in loopbackAddress(unsigned short port) {
 // SO_REUSEADDR matches ssh's own listener: connections left in TIME_WAIT by a
 // previous tunnel do not make the port count as busy, a live listener does.
 bool localPortIsFree(unsigned short port) {
-  const int descriptor = loopbackSocket();
-  const int enabled = 1;
-  setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  const auto descriptor = loopbackSocket();
+  net::reuse(descriptor);
   const auto address = loopbackAddress(port);
   const bool free_port = bind(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0;
-  close(descriptor);
+  net::close(descriptor);
   return free_port;
 }
 
@@ -2167,69 +2221,61 @@ unsigned short pickLocalPort(const std::optional<unsigned short>& requested) {
   if (localPortIsFree(kDefaultDashboardPort)) {
     return kDefaultDashboardPort;
   }
-  const int descriptor = loopbackSocket();
-  const int enabled = 1;
-  setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  const auto descriptor = loopbackSocket();
+  net::reuse(descriptor);
   auto address = loopbackAddress(0);
-  socklen_t size = sizeof(address);
+  net::Length size = sizeof(address);
   if (bind(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0 ||
       getsockname(descriptor, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
-    close(descriptor);
+    net::close(descriptor);
     throw std::runtime_error("could not allocate a free local port");
   }
-  close(descriptor);
+  net::close(descriptor);
   return ntohs(address.sin_port);
 }
 
-int connectLoopback(unsigned short port, int timeout_milliseconds) {
-  const int descriptor = loopbackSocket();
-  const int flags = fcntl(descriptor, F_GETFL, 0);
-  fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
+net::Socket connectLoopback(unsigned short port, int timeout_milliseconds) {
+  const auto descriptor = loopbackSocket();
+  if (!net::nonblocking(descriptor, true)) { net::close(descriptor); return net::invalid; }
   const auto address = loopbackAddress(port);
   if (connect(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
-    if (errno != EINPROGRESS) {
-      close(descriptor);
-      return -1;
+    if (!net::connecting()) {
+      net::close(descriptor);
+      return net::invalid;
     }
-    pollfd ready{descriptor, POLLOUT, 0};
-    int status = 0;
-    socklen_t status_size = sizeof(status);
-    if (poll(&ready, 1, timeout_milliseconds) <= 0 ||
-        getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &status, &status_size) != 0 || status != 0) {
-      close(descriptor);
-      return -1;
+    net::Poll ready{descriptor, POLLOUT, 0};
+    if (net::poll(&ready, 1, timeout_milliseconds) <= 0 || !net::connected(descriptor)) {
+      net::close(descriptor);
+      return net::invalid;
     }
   }
-  fcntl(descriptor, F_SETFL, flags);
+  if (!net::nonblocking(descriptor, false)) { net::close(descriptor); return net::invalid; }
   return descriptor;
 }
 
 // Sends one bounded HEAD request through the tunnel and returns the status
 // line, so "tunnel up, dashboard disabled" is reported instead of a blank page.
 std::optional<std::string> probeDashboard(unsigned short port) {
-  const int descriptor = connectLoopback(port, 3000);
-  if (descriptor < 0) {
+  const auto descriptor = connectLoopback(port, 3000);
+  if (descriptor == net::invalid) {
     return std::nullopt;
   }
-  timeval timeout{};
-  timeout.tv_sec = 3;
-  setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  net::timeout(descriptor, 3);
   const std::string request = "HEAD / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-  if (send(descriptor, request.data(), request.size(), 0) != static_cast<ssize_t>(request.size())) {
-    close(descriptor);
+  if (net::write(descriptor, request.data(), request.size()) != static_cast<std::ptrdiff_t>(request.size())) {
+    net::close(descriptor);
     return std::nullopt;
   }
   std::string reply;
   char buffer[256];
   while (reply.find("\r\n") == std::string::npos && reply.size() < 1024) {
-    const ssize_t received = recv(descriptor, buffer, sizeof(buffer), 0);
+    const auto received = net::read(descriptor, buffer, sizeof(buffer));
     if (received <= 0) {
       break;
     }
     reply.append(buffer, static_cast<std::size_t>(received));
   }
-  close(descriptor);
+  net::close(descriptor);
   const std::size_t end = reply.find("\r\n");
   if (end == std::string::npos) {
     return std::nullopt;
@@ -2237,22 +2283,24 @@ std::optional<std::string> probeDashboard(unsigned short port) {
   return reply.substr(0, end);
 }
 
-bool childHasExited(int child, int* status) {
-  const pid_t reaped = waitpid(child, status, WNOHANG);
-  return reaped == child;
+bool childHasExited(ckgit::ManagedProcess& child, int* status) {
+  const auto result = child.poll();
+  if (!result) return false;
+  *status = *result;
+  return true;
 }
-
-int childExitCode(int status) {
-  if (WIFEXITED(status)) {
-    return WEXITSTATUS(status);
-  }
-  return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
-}
+int childExitCode(int status) { return status; }
 
 // The opener may stay in the foreground for as long as the browser runs on
 // some Linux desktops, so it is never waited for or killed; it is reaped
 // alongside the tunnel loop.
 int openBrowser(const std::string& url) {
+#ifdef _WIN32
+  if (!url.starts_with("http://") && !url.starts_with("https://")) throw std::invalid_argument("unsupported browser URL");
+  const auto result = ShellExecuteW(nullptr, L"open", ckgit::utf8ToWide(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<std::intptr_t>(result) <= 32) std::cerr << "ckgit: no browser opener available; visit the URL manually\n";
+  return -1;
+#else
 #ifdef __APPLE__
   const std::vector<std::string> command{"open", url};
 #else
@@ -2264,6 +2312,7 @@ int openBrowser(const std::string& url) {
     std::cerr << "ckgit: no browser opener available; visit the URL manually\n";
     return -1;
   }
+#endif
 }
 
 // `page`, when given, is the dashboard path to open (ckgit open) instead of
@@ -2328,21 +2377,15 @@ int webCommand(const std::vector<std::string>& arguments, const std::string& pag
       (!page.empty() ? page : project.has_value() ? "/project/" + *project : "/");
   const std::string forward = "127.0.0.1:" + std::to_string(port) + ":127.0.0.1:" + std::to_string(remote_port);
 
-  struct sigaction action {};
-  action.sa_handler = requestTunnelStop;
-  sigemptyset(&action.sa_mask);
-  if (sigaction(SIGINT, &action, nullptr) != 0 || sigaction(SIGTERM, &action, nullptr) != 0) {
-    throw std::runtime_error("could not install signal handlers");
-  }
+  const DoctorSignals signals;
   std::cout << "Opening tunnel to " << *admin_host << " ...\n" << std::flush;
-  const int child = ckgit::spawnAttachedProcess(
+  ckgit::ManagedProcess child(
       {"ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "RequestTTY=no",
        "-o", "ServerAliveInterval=30", "-L", forward, *admin_host});
   int status = 0;
   const auto stopChild = [&]() {
     if (!childHasExited(child, &status)) {
-      kill(child, SIGTERM);
-      waitpid(child, &status, 0);
+      child.stop();
     }
   };
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
@@ -2352,9 +2395,9 @@ int webCommand(const std::vector<std::string>& arguments, const std::string& pag
       std::cerr << "ckgit: ssh exited before the tunnel was ready\n";
       return childExitCode(status) == 0 ? 1 : childExitCode(status);
     }
-    const int probe = connectLoopback(port, 250);
-    if (probe >= 0) {
-      close(probe);
+    const auto probe = connectLoopback(port, 250);
+    if (probe != net::invalid) {
+      net::close(probe);
       listening = true;
       break;
     }
@@ -2383,9 +2426,13 @@ int webCommand(const std::vector<std::string>& arguments, const std::string& pag
   while (!tunnel_stop_requested) {
     if (opener > 0) {
       int opener_status = 0;
+#ifndef _WIN32
       if (waitpid(opener, &opener_status, WNOHANG) == opener) {
         opener = -1;
       }
+#else
+      (void)opener_status;
+#endif
     }
     if (childHasExited(child, &status)) {
       std::cerr << "ckgit: the tunnel was closed by ssh\n";
@@ -2411,21 +2458,15 @@ void withDashboardTunnel(const ckgit::ClientConfig& config, Fn&& fn) {
   const unsigned short remote_port = config.web_port;
   const unsigned short port = pickLocalPort(std::nullopt);
 
-  struct sigaction action {};
-  action.sa_handler = requestTunnelStop;
-  sigemptyset(&action.sa_mask);
-  if (sigaction(SIGINT, &action, nullptr) != 0 || sigaction(SIGTERM, &action, nullptr) != 0) {
-    throw std::runtime_error("could not install signal handlers");
-  }
-  const int child = ckgit::spawnAttachedProcess(
+  const DoctorSignals signals;
+  ckgit::ManagedProcess child(
       {"ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "RequestTTY=no",
        "-o", "ServerAliveInterval=30", "-L",
        "127.0.0.1:" + std::to_string(port) + ":127.0.0.1:" + std::to_string(remote_port), admin_host});
   int status = 0;
   const auto stopChild = [&]() {
     if (!childHasExited(child, &status)) {
-      kill(child, SIGTERM);
-      waitpid(child, &status, 0);
+      child.stop();
     }
   };
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
@@ -2434,9 +2475,9 @@ void withDashboardTunnel(const ckgit::ClientConfig& config, Fn&& fn) {
     if (childHasExited(child, &status)) {
       throw std::runtime_error("ssh exited before the tunnel to " + admin_host + " was ready");
     }
-    const int probe = connectLoopback(port, 250);
-    if (probe >= 0) {
-      close(probe);
+    const auto probe = connectLoopback(port, 250);
+    if (probe != net::invalid) {
+      net::close(probe);
       listening = true;
       break;
     }
@@ -2511,27 +2552,25 @@ std::string fetchHttpBody(const std::string& host, unsigned short port, const st
     throw std::runtime_error("could not resolve " + host + ": " +
                              (resolve_error != 0 ? gai_strerror(resolve_error) : "no address"));
   }
-  int descriptor = -1;
+  net::Socket descriptor = net::invalid;
   for (const addrinfo* candidate = resolved; candidate != nullptr; candidate = candidate->ai_next) {
     descriptor = socket(candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
-    if (descriptor < 0) continue;
-    if (connect(descriptor, candidate->ai_addr, candidate->ai_addrlen) == 0) break;
-    close(descriptor);
-    descriptor = -1;
+    if (descriptor == net::invalid) continue;
+    if (connect(descriptor, candidate->ai_addr, static_cast<net::Length>(candidate->ai_addrlen)) == 0) break;
+    net::close(descriptor);
+    descriptor = net::invalid;
   }
   freeaddrinfo(resolved);
-  if (descriptor < 0) {
+  if (descriptor == net::invalid) {
     throw std::runtime_error("could not connect to " + host + ":" + std::to_string(port));
   }
-  const timeval timeout{30, 0};
-  setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  net::timeout(descriptor, 30);
   const std::string request = "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n";
   std::size_t sent = 0;
   while (sent < request.size()) {
-    const ssize_t written = send(descriptor, request.data() + sent, request.size() - sent, 0);
+    const auto written = net::write(descriptor, request.data() + sent, request.size() - sent);
     if (written <= 0) {
-      close(descriptor);
+      net::close(descriptor);
       throw std::runtime_error("could not send the request to " + host);
     }
     sent += static_cast<std::size_t>(written);
@@ -2541,39 +2580,39 @@ std::string fetchHttpBody(const std::string& host, unsigned short port, const st
   char chunk[8192];
   std::size_t header_end = std::string::npos;
   while (header_end == std::string::npos) {
-    const ssize_t received = recv(descriptor, chunk, sizeof(chunk), 0);
+    const auto received = net::read(descriptor, chunk, sizeof(chunk));
     if (received <= 0) {
-      close(descriptor);
+      net::close(descriptor);
       throw std::runtime_error("connection closed before the response headers arrived");
     }
     buffer.append(chunk, static_cast<std::size_t>(received));
     if (buffer.size() > 16384) {
-      close(descriptor);
+      net::close(descriptor);
       throw std::runtime_error("response headers exceed the expected size");
     }
     header_end = buffer.find("\r\n\r\n");
   }
   const std::string_view status_line(buffer.data(), buffer.find("\r\n"));
   if (status_line.rfind("HTTP/1.1 200", 0) != 0) {
-    close(descriptor);
+    net::close(descriptor);
     throw std::runtime_error("server returned " + std::string(status_line));
   }
 
   std::string body = buffer.substr(header_end + 4);
   while (body.size() < expected_bytes) {
-    const ssize_t received = recv(descriptor, chunk, sizeof(chunk), 0);
+    const auto received = net::read(descriptor, chunk, sizeof(chunk));
     if (received < 0) {
-      close(descriptor);
+      net::close(descriptor);
       throw std::runtime_error("could not read the response body");
     }
     if (received == 0) break;
     if (body.size() + static_cast<std::size_t>(received) > expected_bytes) {
-      close(descriptor);
+      net::close(descriptor);
       throw std::runtime_error("asset is larger than the size listed for it");
     }
     body.append(chunk, static_cast<std::size_t>(received));
   }
-  close(descriptor);
+  net::close(descriptor);
   if (body.size() != expected_bytes) {
     throw std::runtime_error("asset size mismatch: expected " + std::to_string(expected_bytes) +
                              " bytes, got " + std::to_string(body.size()));
@@ -2856,12 +2895,21 @@ int versionCommand(const std::vector<std::string>& arguments) {
 
 }  // namespace
 
+#ifdef _WIN32
+int wmain(int argc, wchar_t* argv[]) {
+#else
 int main(int argc, char* argv[]) {
+#endif
   try {
+    [[maybe_unused]] const ckgit::net::Runtime network;
     ckgit::installChildTerminationForwarding();
     std::vector<std::string> raw_arguments;
     for (int index = 1; index < argc; ++index) {
+#ifdef _WIN32
+      raw_arguments.push_back(ckgit::wideToUtf8(argv[index]));
+#else
       raw_arguments.emplace_back(argv[index]);
+#endif
     }
     const auto invocation = ckgit::prepareClientInvocation(raw_arguments);
     if (invocation.exit_code.has_value()) {

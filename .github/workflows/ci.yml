@@ -17,6 +17,9 @@ permissions:
   contents: read
 
 jobs:
+  windows:
+    uses: ./.github/workflows/windows.yml
+
   linux:
     name: Linux ${{ matrix.arch }} ${{ matrix.compiler }}
     runs-on: ${{ matrix.runner }}

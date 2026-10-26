@@ -96,4 +96,19 @@ CiRunRecord commitCiRun(const CiCommitPolicy& policy, const CiPreparedJob& prepa
                         const std::vector<CiDeclaredOutput>& outputs,
                         const std::optional<std::filesystem::path>& site_dir = std::nullopt);
 
+// Collect verified outputs from a completed distributed graph and publish them
+// through the parent. Returns nullopt while any child is active. Idempotent
+// after its durable completion marker; child leases never publish directly.
+std::optional<CiRunRecord> finalizeCiWorkflowResults(const CiCommitPolicy& policy,
+                                                    const CiPreparedJob& parent);
+
+// Reconstruct the immutable parent definition for a completed child and attempt
+// group publication. Legacy jobs are a no-op.
+std::optional<CiRunRecord> finalizeCiParentForChild(const CiCommitPolicy& policy, const CiJobRequest& child);
+
+// Retry interrupted parent publication before claiming more work. Each parent
+// is independent; failures are returned for logging without blocking other refs.
+std::vector<std::string> recoverCiWorkflowResults(const CiCommitPolicy& defaults,
+                                                const std::filesystem::path& repository_root);
+
 }  // namespace ckgit

@@ -14,7 +14,7 @@
 
 namespace ckgit {
 
-// The runner protocol, version 1: how a remote runner works on the main
+// The runner protocol, versions 1 and 2: how a remote runner works on the main
 // host's queue through the restricted SSH account. A runner key's forced
 // command accepts only
 //
@@ -34,7 +34,7 @@ namespace ckgit {
 // lease token its claim returned; a request with any other token is refused,
 // so a runner that lost its job can never write into the next attempt.
 
-inline constexpr int kCiRunnerProtocolVersion = 1;
+inline constexpr int kCiRunnerProtocolVersion = 2;
 inline constexpr unsigned kMaximumCiClaimWaitSeconds = 120;
 inline constexpr std::size_t kMaximumCiFinishPayloadBytes = 512 * 1024;
 inline constexpr std::size_t kMaximumCiClaimResponseBytes = 256 * 1024;
@@ -44,6 +44,7 @@ inline constexpr std::size_t kMaximumCiLogFrameBytes = 64 * 1024;
 enum class CiRunnerOp { kHello, kClaim, kUploadPack, kStream, kHeartbeat, kPut, kFinish, kAbandon };
 
 struct CiRunnerCommand {
+  unsigned protocol_version = 1;  // legacy default until explicitly negotiated
   CiRunnerOp op = CiRunnerOp::kHello;
   std::string version_hex;  // hello
   unsigned wait_seconds = 0;  // claim
@@ -80,8 +81,9 @@ struct CiRemoteJob {
   CiRemotePolicy policy;
 };
 
-// `claim`'s answer: "none\n", or "job\n" followed by the prepared job.
-std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& lease, const CiRemotePolicy& policy);
+// `claim`'s answer: "none\n", "job\n" (v1), or "job2\n" with child assignment (v2).
+std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& lease, const CiRemotePolicy& policy,
+                                  unsigned protocol_version = 1);
 // std::nullopt for "none"; throws std::invalid_argument for a malformed answer.
 std::optional<CiRemoteJob> parseCiClaimResponse(std::string_view response);
 

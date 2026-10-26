@@ -32,12 +32,12 @@
 #include <system_error>
 #include <vector>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
+#include "ckgit/socket.hpp"
+#include "ckgit/temp_directory.hpp"
+#ifdef _WIN32
+#include "ckgit/windows.hpp"
+#include <process.h>
+#endif
 
 #include "ckgit/cli_help.hpp"
 #include "ckgit/docs_site.hpp"
@@ -49,6 +49,7 @@
 namespace {
 
 namespace fs = std::filesystem;
+namespace net = ckgit::net;
 
 constexpr int kOk = 0;
 constexpr int kFailed = 1;
@@ -277,11 +278,7 @@ struct ScopedTempDirectory {
   fs::path path;
 
   explicit ScopedTempDirectory(std::string_view prefix) {
-    auto pattern = (fs::temp_directory_path() / (std::string(prefix) + "-XXXXXX")).string();
-    std::vector<char> writable(pattern.begin(), pattern.end());
-    writable.push_back('\0');
-    if (::mkdtemp(writable.data()) == nullptr) throw std::runtime_error("cannot create a temporary directory for check");
-    path = writable.data();
+    path = ckgit::createTempDirectory(fs::temp_directory_path(), std::string(prefix) + "-");
   }
   ~ScopedTempDirectory() {
     std::error_code error;
@@ -313,30 +310,30 @@ constexpr std::size_t kMaximumListedChanges = 512;
 // need a `__ckdocs` directory, which is reserved.
 constexpr std::string_view kLiveEventsPath = "/__ckdocs/events";
 
-bool readServeHeaders(int fd, std::string* out) {
+bool readServeHeaders(net::Socket fd, std::string* out) {
   char buffer[4096];
   while (out->find("\r\n\r\n") == std::string::npos) {
     if (out->size() > kMaximumServeRequestBytes) return false;
-    const ssize_t received = ::read(fd, buffer, sizeof(buffer));
-    if (received < 0 && errno == EINTR) continue;
+    const auto received = net::read(fd, buffer, sizeof(buffer));
+    if (received < 0 && net::interrupted()) continue;
     if (received <= 0) return false;
     out->append(buffer, static_cast<std::size_t>(received));
   }
   return true;
 }
 
-bool writeServeAll(int fd, std::string_view data) {
+bool writeServeAll(net::Socket fd, std::string_view data) {
   std::size_t offset = 0;
   while (offset < data.size()) {
-    const ssize_t written = ::write(fd, data.data() + offset, data.size() - offset);
-    if (written < 0 && errno == EINTR) continue;
+    const auto written = net::write(fd, data.data() + offset, data.size() - offset);
+    if (written < 0 && net::interrupted()) continue;
     if (written <= 0) return false;
     offset += static_cast<std::size_t>(written);
   }
   return true;
 }
 
-void sendServeResponse(int fd, int status, std::string_view reason, std::string_view content_type,
+void sendServeResponse(net::Socket fd, int status, std::string_view reason, std::string_view content_type,
                        std::string_view body, bool head_only) {
   const std::string headers = "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason) +
                               "\r\nContent-Type: " + std::string(content_type) +
@@ -349,7 +346,7 @@ void sendServeResponse(int fd, int status, std::string_view reason, std::string_
   if (!head_only) writeServeAll(fd, body);
 }
 
-void sendServeError(int fd, int status, std::string_view reason, bool head_only) {
+void sendServeError(net::Socket fd, int status, std::string_view reason, bool head_only) {
   const std::string body =
       "<!doctype html><meta charset=utf-8><title>" + std::to_string(status) + "</title><p>" + std::string(reason) + "</p>\n";
   sendServeResponse(fd, status, reason, "text/html; charset=utf-8", body, head_only);
@@ -390,7 +387,7 @@ std::string jsonString(std::string_view value) {
 // site: the script is added to HTML responses on the way out.
 
 struct LiveState {
-  std::vector<int> clients;
+  std::vector<net::Socket> clients;
   std::string session;  // tells a page that the server restarted (it reloads then)
   std::uint64_t build = 1;
   std::map<std::string, std::string> files;  // output path ("/x/y.html") -> SHA-256 of its bytes
@@ -468,10 +465,10 @@ source.addEventListener('failure',function(e){showError(JSON.parse(e.data).messa
 // Sends one event to every live page, dropping those that are gone.
 void broadcast(LiveState& live, std::string_view event, const std::string& data) {
   const std::string message = "event: " + std::string(event) + "\ndata: " + data + "\n\n";
-  std::vector<int> kept;
-  for (const int client : live.clients) {
+  std::vector<net::Socket> kept;
+  for (const net::Socket client : live.clients) {
     if (writeServeAll(client, message)) kept.push_back(client);
-    else ::close(client);
+    else net::close(client);
   }
   live.clients = std::move(kept);
 }
@@ -482,7 +479,7 @@ std::string helloEvent(const LiveState& live) {
 
 // Answers one request. Returns true when the connection became a live-update
 // stream the caller keeps open; false when it is done with it.
-bool handleServeConnection(int fd, const fs::path& site, LiveState* live) {
+bool handleServeConnection(net::Socket fd, const fs::path& site, LiveState* live) {
   std::string raw;
   if (!readServeHeaders(fd, &raw)) return false;
   const std::optional<ckgit::HttpRequest> request = ckgit::parseReadOnlyHttpRequest(raw);
@@ -556,7 +553,7 @@ std::uint64_t fingerprint(const WatchSet& watch) {
   const auto mixEntry = [&](const fs::path& path) {
     std::error_code error;
     const auto status = fs::symlink_status(path, error);
-    mix(path.native());
+    mix(path.generic_string());
     if (error || !fs::exists(status)) {
       mix("-");
       return;
@@ -595,21 +592,25 @@ std::uint64_t fingerprint(const WatchSet& watch) {
 // calls `rebuild` (which answers its error, or "") and tells the open pages
 // what changed.
 int runServe(const fs::path& site, unsigned short port, const std::function<std::string()>& rebuild, const WatchSet& watch) {
-  const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (listener < 0) throw std::runtime_error("could not create the listening socket");
-  const int enabled = 1;
-  ::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  [[maybe_unused]] net::Runtime network;
+  const net::Socket listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (listener == net::invalid) throw std::runtime_error("could not create the listening socket");
+  net::reuse(listener);
   sockaddr_in address{};
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // loopback only: a local preview, never LAN-exposed
   address.sin_port = htons(port);
   if (::bind(listener, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0 ||
       ::listen(listener, 16) != 0) {
-    const int bind_errno = errno;
-    ::close(listener);
-    throw std::runtime_error("could not bind 127.0.0.1:" + std::to_string(port) + ": " + std::strerror(bind_errno));
+    const int bind_errno = net::error();
+    net::close(listener);
+    throw std::runtime_error("could not bind 127.0.0.1:" + std::to_string(port) + ": " + std::to_string(bind_errno));
   }
 
+#ifdef _WIN32
+  std::signal(SIGTERM, onServeStop);
+  std::signal(SIGINT, onServeStop);
+#else
   struct sigaction action {};
   action.sa_handler = onServeStop;
   ::sigaction(SIGTERM, &action, nullptr);
@@ -617,9 +618,11 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
   // A page that goes away mid-write must not end the server.
   std::signal(SIGPIPE, SIG_IGN);
 
+#endif
+
   unsigned short bound_port = port;
   sockaddr_in bound{};
-  socklen_t bound_size = sizeof(bound);
+  net::Length bound_size = sizeof(bound);
   if (::getsockname(listener, reinterpret_cast<sockaddr*>(&bound), &bound_size) == 0 && bound_size == sizeof(bound)) {
     bound_port = ntohs(bound.sin_port);
   }
@@ -628,7 +631,13 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
   if (rebuild) {
     live.emplace();
     live->session = std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + "-" +
-                    std::to_string(static_cast<long long>(::getpid()));
+                    std::to_string(static_cast<long long>(
+#ifdef _WIN32
+                    ::_getpid()
+#else
+                    ::getpid()
+#endif
+));
     live->files = snapshotSite(site);
   }
   std::cout << "ckdocs: serve ready on " << bound_port << "\n" << std::flush;
@@ -646,22 +655,22 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
   auto next_scan = Clock::now() + scan_interval;
   auto next_heartbeat = Clock::now() + kHeartbeat;
   while (g_serve_stop == 0) {
-    std::vector<pollfd> waiting{{listener, POLLIN, 0}};
+    std::vector<net::Poll> waiting{{listener, POLLIN, 0}};
     if (live) {
-      for (const int client : live->clients) waiting.push_back({client, POLLIN, 0});
+      for (const net::Socket client : live->clients) waiting.push_back({client, POLLIN, 0});
     }
-    const int ready = ::poll(waiting.data(), static_cast<nfds_t>(waiting.size()), rebuild ? 50 : -1);
-    if (ready < 0 && errno != EINTR) break;
+    const int ready = net::poll(waiting.data(), waiting.size(), rebuild ? 50 : 200);
+    if (ready < 0 && !net::interrupted()) break;
     if (ready > 0 && live) {
       // A live page sends nothing; readable means it went away.
-      std::vector<int> kept;
+      std::vector<net::Socket> kept;
       for (std::size_t index = 1; index < waiting.size(); ++index) {
-        const int client = waiting[index].fd;
+        const net::Socket client = waiting[index].fd;
         if ((waiting[index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
           char ignored[256];
-          const ssize_t received = ::recv(client, ignored, sizeof(ignored), MSG_DONTWAIT);
+          const auto received = net::read(client, ignored, sizeof(ignored));
           if (received <= 0) {
-            ::close(client);
+            net::close(client);
             continue;
           }
         }
@@ -670,27 +679,25 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
       live->clients = std::move(kept);
     }
     if (ready > 0 && (waiting[0].revents & POLLIN) != 0) {
-      const int client = ::accept(listener, nullptr, nullptr);
-      if (client >= 0) {
-        const timeval timeout{10, 0};
-        ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+      const net::Socket client = ::accept(listener, nullptr, nullptr);
+      if (client != net::invalid) {
+        net::timeout(client, 10);
         bool kept = false;
         try {
           kept = handleServeConnection(client, site, live ? &*live : nullptr);
         } catch (const std::exception&) {
         }
-        if (!kept) ::close(client);
+        if (!kept) net::close(client);
       }
     }
     if (!rebuild) continue;
     const auto now = Clock::now();
     if (live && now >= next_heartbeat) {
       next_heartbeat = now + kHeartbeat;
-      std::vector<int> kept;
-      for (const int client : live->clients) {
+      std::vector<net::Socket> kept;
+      for (const net::Socket client : live->clients) {
         if (writeServeAll(client, ": ping\n\n")) kept.push_back(client);
-        else ::close(client);
+        else net::close(client);
       }
       live->clients = std::move(kept);
     }
@@ -734,9 +741,9 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
     }
   }
   if (live) {
-    for (const int client : live->clients) ::close(client);
+    for (const net::Socket client : live->clients) net::close(client);
   }
-  ::close(listener);
+  net::close(listener);
   return kOk;
 }
 
@@ -893,7 +900,7 @@ int run(const std::string& command_name, int argc, char** argv) {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int ckdocsMain(int argc, char* argv[]) {
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
     if (argument == "--help" || argument == "-h" || (index == 1 && argument == "help")) {
@@ -924,3 +931,21 @@ int main(int argc, char* argv[]) {
     return kFailed;
   }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+  try {
+    std::vector<std::string> values;
+    for (int i = 0; i < argc; ++i) values.push_back(ckgit::wideToUtf8(argv[i]));
+    std::vector<char*> arguments;
+    for (auto& value : values) arguments.push_back(value.data());
+    arguments.push_back(nullptr);
+    return ckdocsMain(argc, arguments.data());
+  } catch (const std::exception& error) {
+    std::cerr << "ckdocs: " << error.what() << '\n';
+    return 1;
+  }
+}
+#else
+int main(int argc, char** argv) { return ckdocsMain(argc, argv); }
+#endif

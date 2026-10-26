@@ -16,7 +16,11 @@
 #include <string_view>
 #include <unordered_set>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
+#include "ckgit/path_utf8.hpp"
+#include "ckgit/private_file_windows.hpp"
 
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
@@ -163,11 +167,11 @@ ClientConfig loadClientConfig(const std::filesystem::path& path) {
         configError(path, line_number, "web_port must be between 1 and 65535");
       config.web_port = static_cast<unsigned short>(port);
     } else if (key == "scan_root") {
-      if (value.empty() || value.front() != '/' || !isValidUtf8(value) ||
+      if (value.empty() || !isValidUtf8(value) || !pathFromUtf8(value).is_absolute() ||
           config.scan_roots.size() == kMaximumListEntries) {
         configError(path, line_number, "invalid or excessive scan_root");
       }
-      config.scan_roots.emplace_back(value);
+      config.scan_roots.push_back(pathFromUtf8(value));
     } else if (key == "exclude") {
       if (value.empty() || value.size() > 256 || !isValidUtf8(value) ||
           config.exclusions.size() == kMaximumListEntries) {
@@ -226,7 +230,7 @@ std::string renderClientConfig(const ClientConfig& config) {
   add("web_port", std::to_string(config.web_port));
   for (const auto& root : config.scan_roots) {
     if (!root.is_absolute()) throw std::invalid_argument("scan_root must be an absolute path");
-    add("scan_root", root.string());
+    add("scan_root", pathToUtf8(root));
   }
   for (const auto& pattern : config.exclusions) {
     if (pattern.size() > 256) throw std::invalid_argument("exclude pattern exceeds 256 bytes");
@@ -238,6 +242,9 @@ std::string renderClientConfig(const ClientConfig& config) {
 void saveClientConfig(const std::filesystem::path& requested, const ClientConfig& config, bool overwrite) {
   const auto content = renderClientConfig(config);  // Validate before creating any directory.
   if (requested.empty() || requested.filename().empty()) throw std::invalid_argument("configuration file path is required");
+#ifdef _WIN32
+  writePrivateWindowsFile(requested, content, overwrite, true);
+#else
   const auto path = std::filesystem::absolute(requested).lexically_normal();
   auto directory = path.root_path();
   for (const auto& component : path.parent_path().relative_path()) {
@@ -293,6 +300,7 @@ void saveClientConfig(const std::filesystem::path& requested, const ClientConfig
     unlink(staging.c_str());
     throw;
   }
+#endif
 }
 
 }  // namespace ckgit

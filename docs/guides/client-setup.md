@@ -23,6 +23,27 @@ host keys must already be configured; diagnostic failures explain the next step.
 
 ## Configuration
 
+On Windows, the x64 client installer bundles `ckgit.exe` and `ckdocs.exe`.
+Choose installation for the current user without elevation, or for all users
+with administrator rights. The portable ZIP requires no installation. Git
+for Windows and an OpenSSH client must be available on PATH; the installer
+does not install Git, generate SSH keys or change trusted host keys.
+
+The Windows default configuration is
+`%LOCALAPPDATA%\ck-git-hosting\client.ini`. Use `--config` to select another
+location, including when development data must stay on a dedicated drive:
+
+```powershell
+ckgit setup --config V:\ckgit\client.ini --server ckgit@server --client-id workstation --web-host server --scan-root V:\projects
+ckgit doctor --config V:\ckgit\client.ini
+```
+
+Windows configuration and checkout-selection files use UTF-8, absolute drive
+paths, and a private owner/SYSTEM ACL. Setup writes LF line endings; the strict
+configuration reader requires those line endings. `~` in setup paths expands
+to the Windows user profile. Reopen a terminal after changing PATH during
+installation.
+
 `client.ini` is a strict, bounded key/value file.  Its required fields are
 `schema_version=1`, `client_id`, `display_name`, `server` (`user@host`), and
 `remote_name`; it may also contain repeated `scan_root` and `exclude` entries.
@@ -34,7 +55,7 @@ mismatched tip is fast-forwardable.
 ## SSH connections
 
 Git and SSH children of the client run in their own session with standard
-input from `/dev/null`: they can never wait on a terminal prompt, so the
+input from `/dev/null` (`NUL` on Windows): they can never wait on a terminal prompt, so the
 server's host key must already be known and a passphrase-protected device key
 needs an agent. Unless `GIT_SSH_COMMAND`, `GIT_SSH`, or `core.sshCommand` is
 already configured, transfers use `ssh` with batch mode, a connect timeout,

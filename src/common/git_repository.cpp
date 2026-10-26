@@ -9,12 +9,29 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
+#include "ckgit/path_utf8.hpp"
 
 #include "ckgit/process.hpp"
 
 namespace ckgit {
 namespace {
+bool canInspectDirectory(const std::filesystem::path& path, bool enumerate) {
+#ifdef _WIN32
+  const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE |
+      (enumerate ? FILE_LIST_DIRECTORY : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+  if (handle == INVALID_HANDLE_VALUE) return false;
+  CloseHandle(handle);
+  return true;
+#else
+  return access(path.c_str(), X_OK | (enumerate ? R_OK : 0)) == 0;
+#endif
+}
 
 std::string trimTrailingNewlines(std::string value) {
   while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
@@ -46,7 +63,7 @@ constexpr std::size_t kListingOutputLimit = 8 * 1024 * 1024;
 
 ProcessResult git(const std::filesystem::path& path,
                   std::initializer_list<std::string> arguments) {
-  std::vector<std::string> command{"git", "-C", path.string()};
+  std::vector<std::string> command{"git", "-C", pathToUtf8(path)};
   command.insert(command.end(), arguments.begin(), arguments.end());
   return runProcess(command, kInspectionTimeout, kListingOutputLimit);
 }
@@ -80,7 +97,7 @@ std::string requireGitOutput(const std::filesystem::path& path,
   const ProcessResult result = git(path, arguments);
   if (result.timed_out || result.output_truncated || result.exit_code != 0) {
     throw std::runtime_error("Git could not " + std::string(operation) + " for " +
-                             path.string() + " (" + describeGitFailure(result) + ")");
+                             pathToUtf8(path) + " (" + describeGitFailure(result) + ")");
   }
   return trimTrailingNewlines(result.output);
 }
@@ -100,7 +117,7 @@ std::filesystem::path canonicalDirectory(const std::filesystem::path& path) {
   std::error_code error;
   const auto resolved = std::filesystem::canonical(path, error);
   if (error) {
-    throw std::runtime_error("cannot resolve " + path.string() + ": " + error.message());
+    throw std::runtime_error("cannot resolve " + pathToUtf8(path) + ": " + error.message());
   }
   return resolved;
 }
@@ -137,7 +154,8 @@ bool isExcluded(const std::filesystem::path& entry, const std::filesystem::path&
   if (error) {
     return false;
   }
-  const std::string candidate = relative.generic_string();
+  const auto utf8 = relative.generic_u8string();
+  const std::string candidate(utf8.begin(), utf8.end());
   for (const auto& pattern : exclusions) {
     if (globMatches(pattern, candidate)) {
       return true;
@@ -161,20 +179,20 @@ DiscoveryResult discoverWorkingTrees(const std::vector<std::filesystem::path>& r
     std::error_code error;
     const auto root = std::filesystem::canonical(requested_root, error);
     if (error || !std::filesystem::is_directory(root, error)) {
-      result.warnings.push_back("unavailable scan root: " + requested_root.string());
+      result.warnings.push_back("unavailable scan root: " + pathToUtf8(requested_root));
       continue;
     }
-    if (access(root.c_str(), R_OK | X_OK) != 0) {
+    if (!canInspectDirectory(root, true)) {
       // The iterator below skips permission errors silently; an unreadable
       // root must not look like a root without repositories.
-      result.warnings.push_back("unreadable scan root: " + requested_root.string());
+      result.warnings.push_back("unreadable scan root: " + pathToUtf8(requested_root));
       continue;
     }
 
     std::filesystem::recursive_directory_iterator iterator(
         root, std::filesystem::directory_options::skip_permission_denied, error);
     if (error) {
-      result.warnings.push_back("cannot scan root: " + root.string());
+      result.warnings.push_back("cannot scan root: " + pathToUtf8(root));
       continue;
     }
     const std::filesystem::recursive_directory_iterator end;
@@ -182,7 +200,7 @@ DiscoveryResult discoverWorkingTrees(const std::vector<std::filesystem::path>& r
       const auto entry = *iterator;
       const auto status = entry.symlink_status(error);
       if (error) {
-        result.warnings.push_back("cannot inspect: " + entry.path().string());
+        result.warnings.push_back("cannot inspect: " + pathToUtf8(entry.path()));
         error.clear();
         iterator.increment(error);
         continue;
@@ -200,7 +218,7 @@ DiscoveryResult discoverWorkingTrees(const std::vector<std::filesystem::path>& r
         const auto parent = std::filesystem::canonical(entry.path().parent_path(), parent_error);
         if (parent_error) {
           result.warnings.push_back("cannot resolve repository: " +
-                                    entry.path().parent_path().string());
+                                    pathToUtf8(entry.path().parent_path()));
         } else {
           found.insert(parent);
         }
@@ -210,7 +228,7 @@ DiscoveryResult discoverWorkingTrees(const std::vector<std::filesystem::path>& r
       }
       iterator.increment(error);
       if (error) {
-        result.warnings.push_back("cannot continue scan at: " + entry.path().string());
+        result.warnings.push_back("cannot continue scan at: " + pathToUtf8(entry.path()));
         error.clear();
       }
     }
@@ -222,16 +240,16 @@ DiscoveryResult discoverWorkingTrees(const std::vector<std::filesystem::path>& r
 bool hasRepositoryContext(const std::filesystem::path& requested_path) {
   auto path = canonicalDirectory(requested_path);
   if (!std::filesystem::is_directory(path)) {
-    throw std::runtime_error(path.string() + " is not a directory");
+    throw std::runtime_error(pathToUtf8(path) + " is not a directory");
   }
   for (;;) {
-    if (access(path.c_str(), X_OK) != 0) {
-      throw std::runtime_error("cannot inspect directory: " + path.string());
+    if (!canInspectDirectory(path, false)) {
+      throw std::runtime_error("cannot inspect directory: " + pathToUtf8(path));
     }
     std::error_code error;
     const auto metadata = std::filesystem::symlink_status(path / ".git", error);
     if (error && error != std::errc::no_such_file_or_directory) {
-      throw std::runtime_error("cannot inspect Git metadata: " + (path / ".git").string() +
+      throw std::runtime_error("cannot inspect Git metadata: " + pathToUtf8((path / ".git")) +
                                ": " + error.message());
     }
     // symlink_status also recognizes a dangling .git symlink. An invalid
@@ -243,17 +261,17 @@ bool hasRepositoryContext(const std::filesystem::path& requested_path) {
     const bool head = std::filesystem::exists(
         std::filesystem::symlink_status(path / "HEAD", error));
     if (error && error != std::errc::no_such_file_or_directory) {
-      throw std::runtime_error("cannot inspect Git HEAD: " + path.string() + ": " + error.message());
+      throw std::runtime_error("cannot inspect Git HEAD: " + pathToUtf8(path) + ": " + error.message());
     }
     if (head) {
       const bool objects = std::filesystem::is_directory(path / "objects", error);
       if (error && error != std::errc::no_such_file_or_directory) {
-        throw std::runtime_error("cannot inspect Git objects: " + path.string() + ": " + error.message());
+        throw std::runtime_error("cannot inspect Git objects: " + pathToUtf8(path) + ": " + error.message());
       }
       error.clear();
       const bool refs = std::filesystem::is_directory(path / "refs", error);
       if (error && error != std::errc::no_such_file_or_directory) {
-        throw std::runtime_error("cannot inspect Git refs: " + path.string() + ": " + error.message());
+        throw std::runtime_error("cannot inspect Git refs: " + pathToUtf8(path) + ": " + error.message());
       }
       if (objects && refs) {
         return true;
@@ -271,15 +289,15 @@ DiscoveryResult discoverImmediateWorkingTrees(const std::filesystem::path& folde
   DiscoveryResult result;
   const auto root = canonicalDirectory(folder);
   if (!std::filesystem::is_directory(root)) {
-    throw std::runtime_error(root.string() + " is not a directory");
+    throw std::runtime_error(pathToUtf8(root) + " is not a directory");
   }
-  if (access(root.c_str(), R_OK | X_OK) != 0) {
-    throw std::runtime_error("unreadable scan folder: " + root.string());
+  if (!canInspectDirectory(root, true)) {
+    throw std::runtime_error("unreadable scan folder: " + pathToUtf8(root));
   }
   std::error_code error;
   std::filesystem::directory_iterator iterator(root, error);
   if (error) {
-    throw std::runtime_error("cannot scan folder: " + root.string() + ": " + error.message());
+    throw std::runtime_error("cannot scan folder: " + pathToUtf8(root) + ": " + error.message());
   }
   const std::filesystem::directory_iterator end;
   while (iterator != end) {
@@ -287,50 +305,50 @@ DiscoveryResult discoverImmediateWorkingTrees(const std::filesystem::path& folde
     const auto inspect_child = [&] {
       const auto status = iterator->symlink_status(error);
       if (error) {
-        result.warnings.push_back("cannot inspect: " + child.string() + ": " + error.message());
+        result.warnings.push_back("cannot inspect: " + pathToUtf8(child) + ": " + error.message());
         return;
       }
       if (!std::filesystem::is_directory(status)) {
         return;
       }
-      if (access(child.c_str(), R_OK | X_OK) != 0) {
-        result.warnings.push_back("unreadable directory: " + child.string());
+      if (!canInspectDirectory(child, true)) {
+        result.warnings.push_back("unreadable directory: " + pathToUtf8(child));
         return;
       }
       const auto git_entry = child / ".git";
       const auto git_status = std::filesystem::symlink_status(git_entry, error);
       if (error && error != std::errc::no_such_file_or_directory) {
-        result.warnings.push_back("cannot inspect: " + git_entry.string() + ": " + error.message());
+        result.warnings.push_back("cannot inspect: " + pathToUtf8(git_entry) + ": " + error.message());
         return;
       }
       if (!std::filesystem::exists(git_status)) {
         return;
       }
       if (std::filesystem::is_symlink(git_status)) {
-        result.warnings.push_back("skipping symlinked Git metadata: " + git_entry.string());
+        result.warnings.push_back("skipping symlinked Git metadata: " + pathToUtf8(git_entry));
         return;
       }
       if (!isRepositoryEntry(git_entry, git_status)) {
-        result.warnings.push_back("malformed Git metadata: " + git_entry.string());
+        result.warnings.push_back("malformed Git metadata: " + pathToUtf8(git_entry));
         return;
       }
       try {
         const auto repository_root = canonicalDirectory(requireGitOutput(
             child, {"rev-parse", "--show-toplevel"}, "find repository root"));
         if (repository_root != child) {
-          result.warnings.push_back("not a repository root: " + child.string());
+          result.warnings.push_back("not a repository root: " + pathToUtf8(child));
           return;
         }
         result.repositories.push_back(child);
       } catch (const std::exception& exception) {
-        result.warnings.push_back("cannot inspect repository: " + child.string() + ": " + exception.what());
+        result.warnings.push_back("cannot inspect repository: " + pathToUtf8(child) + ": " + exception.what());
       }
     };
     inspect_child();
     error.clear();
     iterator.increment(error);
     if (error) {
-      result.warnings.push_back("cannot continue scan after: " + child.string() + ": " + error.message());
+      result.warnings.push_back("cannot continue scan after: " + pathToUtf8(child) + ": " + error.message());
       break;
     }
   }
@@ -344,10 +362,10 @@ RepositoryAudit inspectRepository(const std::filesystem::path& input_path) {
   const auto inside = requireGitOutput(path, {"rev-parse", "--is-inside-work-tree"},
                                        "identify a working tree");
   if (inside != "true") {
-    throw std::runtime_error(path.string() + " is not a Git working tree");
+    throw std::runtime_error(pathToUtf8(path) + " is not a Git working tree");
   }
   const auto top_level = canonicalDirectory(
-      requireGitOutput(path, {"rev-parse", "--show-toplevel"}, "find repository root"));
+      pathFromUtf8(requireGitOutput(path, {"rev-parse", "--show-toplevel"}, "find repository root")));
 
   RepositoryAudit audit;
   audit.path = top_level;
@@ -360,15 +378,15 @@ RepositoryAudit inspectRepository(const std::filesystem::path& input_path) {
   } else if (branch.exit_code == 1 && !branch.timed_out) {
     audit.detached_head = true;
   } else {
-    throw std::runtime_error("Git could not inspect HEAD for " + top_level.string() + " (" +
+    throw std::runtime_error("Git could not inspect HEAD for " + pathToUtf8(top_level) + " (" +
                              describeGitFailure(branch) + ")");
   }
 
   const ProcessResult porcelain = runProcess(
-      {"git", "--no-optional-locks", "-C", top_level.string(), "status", "--porcelain=v1", "--untracked-files=normal"},
+      {"git", "--no-optional-locks", "-C", pathToUtf8(top_level), "status", "--porcelain=v1", "--untracked-files=normal"},
       kInspectionTimeout, kStatusOutputLimit);
   if (porcelain.timed_out || porcelain.exit_code != 0) {
-    throw std::runtime_error("Git could not read worktree status for " + top_level.string() + " (" +
+    throw std::runtime_error("Git could not read worktree status for " + pathToUtf8(top_level) + " (" +
                              describeGitFailure(porcelain) + ")");
   }
   // A truncated listing still proves the tree is dirty; only the count is a lower bound.
@@ -382,7 +400,7 @@ RepositoryAudit inspectRepository(const std::filesystem::path& input_path) {
   for (const auto& line : splitLines(refs)) {
     const auto separator = line.find('\t');
     if (separator == std::string::npos) {
-      throw std::runtime_error("Git returned an invalid ref record for " + top_level.string());
+      throw std::runtime_error("Git returned an invalid ref record for " + pathToUtf8(top_level));
     }
     RefTip ref{line.substr(0, separator), line.substr(separator + 1)};
     if (ref.name.rfind("refs/heads/", 0) == 0) {
@@ -397,7 +415,7 @@ RepositoryAudit inspectRepository(const std::filesystem::path& input_path) {
     const ProcessResult urls = git(top_level, {"remote", "get-url", "--all", remote_name});
     if (urls.exit_code != 0 || urls.timed_out || urls.output_truncated) {
       throw std::runtime_error("Git could not read remote " + remote_name + " for " +
-                               top_level.string() + " (" + describeGitFailure(urls) + ")");
+                               pathToUtf8(top_level) + " (" + describeGitFailure(urls) + ")");
     }
     for (const auto& url : splitLines(urls.output)) {
       audit.remotes.push_back(parseRemoteUrl(remote_name, url));
@@ -410,8 +428,8 @@ RepositoryAudit inspectDiscoveredRepository(const std::filesystem::path& path) {
   const auto requested = canonicalDirectory(path);
   RepositoryAudit audit = inspectRepository(requested);
   if (audit.path != requested) {
-    throw std::runtime_error(requested.string() + " is not a repository root; its .git entry is stale and Git resolves it to " +
-                             audit.path.string());
+    throw std::runtime_error(pathToUtf8(requested) + " is not a repository root; its .git entry is stale and Git resolves it to " +
+                             pathToUtf8(audit.path));
   }
   return audit;
 }

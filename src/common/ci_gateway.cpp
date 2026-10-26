@@ -4,6 +4,7 @@
 #include "ckgit/ci_gateway.hpp"
 
 #include <algorithm>
+#include <iostream>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -124,6 +125,7 @@ void recordEvent(const ServerConfig& config, std::string_view kind, const std::s
 std::optional<CiClaim> heldClaim(const ServerConfig& config, const std::string& runner, const CiRunnerCommand& command) {
   std::optional<CiClaim> claim = loadCiClaim(stateRoot(config), command.job_id);
   if (!claim.has_value() || claim->lease.token != command.token || claim->lease.runner != runner) return std::nullopt;
+  if (!claim->job.parent_run_id.empty() && command.protocol_version < 2) return std::nullopt;
   return claim;
 }
 
@@ -147,7 +149,7 @@ int hello(const ServerConfig& config, const std::string& runner, const CiRunnerC
   std::string version;
   if (std::optional<std::string> decoded = hexDecode(command.version_hex, 128)) version = *decoded;
   noteCiRunnerSeen(stateRoot(config), runner, version);
-  writeAll(out, "ok\nprotocol=" + std::to_string(kCiRunnerProtocolVersion) + "\nrunner=" + runner +
+  writeAll(out, "ok\nprotocol=" + std::to_string(command.protocol_version) + "\nrunner=" + runner +
                     "\nserver_version_hex=" + hexEncode(buildVersion()) + "\n");
   return 0;
 }
@@ -166,12 +168,15 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
   noteCiRunnerSeen(state, runner, {});
   CiClaimOptions options;
   options.runner = runner;
+  options.protocol_version = command.protocol_version;
   options.lease_seconds = leaseSeconds(config);
   for (;;) {
     try {
       CiReapOptions reap;
       reap.max_attempts = config.ci_max_attempts.value_or(kCiDefaultMaxAttempts);
       reapCiLeases(state, reap);
+      for (const auto& error : recoverCiWorkflowResults(commitPolicyOf(config, "unused"), config.repo_root))
+        std::cerr << "ci workflow publication: " << error << "\n";
     } catch (const std::exception&) {
     }
     std::optional<CiClaim> claimed;
@@ -191,6 +196,7 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
       // host: a cancel while queued, no workflow, a ref that is no trigger.
       if (isCiCancelRequested(state, job.project_name, job.job_id)) {
         recordCiOutcome(state, job, CiRunStatus::Cancelled, "cancelled before it started");
+        finalizeCiParentForChild(commitPolicyOf(config, job.project_name), job);
         releaseCiJob(state, job.job_id);
         refresh(config, job.project_name);
         continue;
@@ -198,12 +204,13 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
       const CiPreparation preparation = prepareCiJob(repositoryOf(config, job.project_name), job);
       if (!preparation.prepared.has_value()) {
         recordCiOutcome(state, job, preparation.status, preparation.detail);
+        finalizeCiParentForChild(commitPolicyOf(config, job.project_name), job);
         releaseCiJob(state, job.job_id);
         refresh(config, job.project_name);
         continue;
       }
       recordEvent(config, "ci-claimed", job.project_name, runner);
-      writeAll(out, formatCiClaimResponse(*preparation.prepared, claimed->lease, policyOf(config)));
+      writeAll(out, formatCiClaimResponse(*preparation.prepared, claimed->lease, policyOf(config), command.protocol_version));
       return 0;
     }
     const auto remaining =
@@ -281,6 +288,8 @@ int finish(const ServerConfig& config, const std::string& runner, const CiRunner
     CiRunRecord record;
     if (std::optional<CiRunRecord> existing = loadCiRun(state, job.project_name, job.job_id)) record = *existing;
     record.run_id = job.job_id;
+    record.parent_run_id = job.parent_run_id;
+    record.workflow_job = job.workflow_job;
     record.project_name = job.project_name;
     record.ref = job.ref;
     record.commit_id = job.commit_id;
@@ -293,9 +302,13 @@ int finish(const ServerConfig& config, const std::string& runner, const CiRunner
     record.finished_epoch_seconds = nowEpoch();
     record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
     const CiPreparedJob prepared = preparedOrMinimal(config, job);
-    const CiRunRecord stored =
-        commitCiRun(commitPolicyOf(config, job.project_name), prepared, std::move(record), report.outputs);
-    releaseCiJob(state, job.job_id);
+    const auto prior = loadCiRun(state, job.project_name, job.job_id);
+    const bool settled_child = !job.parent_run_id.empty() && prior && !ciRunStatusIsActive(prior->status);
+    const auto policy = commitPolicyOf(config, job.project_name);
+    const CiRunRecord stored = settled_child ? *prior :
+        commitCiRun(policy, prepared, std::move(record), report.outputs);
+    finalizeCiParentForChild(policy, job);
+    releaseCiClaim(state, job.job_id, claim->lease.token);
     recordEvent(config, "ci-finished", job.project_name, runner);
     refresh(config, job.project_name);
     writeAll(out, "ok " + std::string(ciRunStatusName(stored.status)) + "\n");

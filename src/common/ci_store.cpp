@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "ckgit/control_rpc.hpp"
+#include "ckgit/ci_workflow.hpp"
 #include "ckgit/metadata_store.hpp"
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
@@ -159,7 +160,9 @@ std::string readCappedAt(int directory, const std::string& name, std::size_t cap
 }
 
 std::vector<std::string> listNames(int descriptor) {
-  const int copy = ::dup(descriptor);
+  // dup would share the directory cursor: recovery and scheduling may scan
+  // the same locked directory several times in one operation.
+  const int copy = ::openat(descriptor, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   DIR* directory = copy < 0 ? nullptr : ::fdopendir(copy);
   if (directory == nullptr) {
     if (copy >= 0) ::close(copy);
@@ -208,10 +211,46 @@ std::string_view expectField(std::string_view line, std::string_view key) {
   return line.substr(key.size());
 }
 
+bool validJobMembership(std::string_view id, std::string_view parent, std::string_view name) {
+  return (parent.empty() && name.empty()) ||
+         (isValidCiId(parent) && parent != id && isValidCiArtifactName(name));
+}
+
+bool validDependencies(const CiJobRequest& job) {
+  if (!validJobMembership(job.job_id, job.parent_run_id, job.workflow_job) ||
+      job.needs.size() > kMaximumCiJobs || (job.parent_run_id.empty() && !job.needs.empty())) return false;
+  std::set<std::string> seen;
+  for (const auto& id : job.needs) {
+    if (!isValidCiId(id) || id == job.job_id || id == job.parent_run_id || !seen.insert(id).second) return false;
+  }
+  return true;
+}
+
+std::string dependencyList(const std::vector<std::string>& ids) {
+  std::string out;
+  for (const auto& id : ids) { if (!out.empty()) out += ','; out += id; }
+  return out;
+}
+
+std::vector<std::string> parseDependencies(std::string_view text) {
+  std::vector<std::string> out;
+  while (!text.empty()) {
+    const auto comma = text.find(',');
+    const auto id = text.substr(0, comma);
+    if (!isValidCiId(id) || out.size() >= kMaximumCiJobs) fail("invalid dependency IDs");
+    out.emplace_back(id);
+    if (comma == std::string_view::npos) break;
+    text.remove_prefix(comma + 1);
+    if (text.empty()) fail("empty dependency ID");
+  }
+  return out;
+}
+
 // Versions 2/3/4 add attempts, runner labels, and auto_cancel respectively.
+// Version 5 adds distributed parent membership and dependency IDs.
 // Earlier spool records remain readable; their cancellation policy defaults on.
 std::string serializeJob(const CiJobRequest& job) {
-  return "schema_version=4\n"
+  return "schema_version=5\n"
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
          "ref_hex=" + hexEncode(job.ref) + "\n"
@@ -220,15 +259,19 @@ std::string serializeJob(const CiJobRequest& job) {
          "queued_epoch=" + std::to_string(job.queued_epoch_seconds) + "\n"
          "attempt=" + std::to_string(job.attempt) + "\n"
          "runs_on=" + formatCiLabelList(job.runs_on) + "\n" +
-         "auto_cancel=" + (job.auto_cancel ? "true\n" : "false\n");
+         "auto_cancel=" + (job.auto_cancel ? "true\n" : "false\n") +
+         "parent_run_id=" + job.parent_run_id + "\n" +
+         "workflow_job=" + job.workflow_job + "\n" +
+         "needs=" + dependencyList(job.needs) + "\n";
 }
 
 CiJobRequest parseJob(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  const bool v4 = !lines.empty() && lines[0] == "schema_version=4";
+  const bool v5 = !lines.empty() && lines[0] == "schema_version=5";
+  const bool v4 = v5 || (!lines.empty() && lines[0] == "schema_version=4");
   const bool v3 = v4 || (!lines.empty() && lines[0] == "schema_version=3");
   const bool v2 = v3 || (!lines.empty() && lines[0] == "schema_version=2");
-  if (!((v4 && lines.size() == 10) || (!v4 && v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
+  if (!((v5 && lines.size() == 13) || (!v5 && v4 && lines.size() == 10) || (!v4 && v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
         (lines.size() == 7 && lines[0] == "schema_version=1"))) {
     fail("a CI job record has the wrong shape");
   }
@@ -254,7 +297,12 @@ CiJobRequest parseJob(std::string_view content) {
     if (flag != "true" && flag != "false") fail("invalid auto_cancel policy");
     job.auto_cancel = flag == "true";
   }
-  if (!isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
+  if (v5) {
+    job.parent_run_id = std::string(expectField(lines[10], "parent_run_id="));
+    job.workflow_job = std::string(expectField(lines[11], "workflow_job="));
+    job.needs = parseDependencies(expectField(lines[12], "needs="));
+  }
+  if (!validDependencies(job) || !isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
       !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
     fail("a CI job record contains invalid data");
   }
@@ -263,11 +311,12 @@ CiJobRequest parseJob(std::string_view content) {
 
 std::string serializeRun(const CiRunRecord& run) {
   // schema_version 2 added heartbeat_epoch after finished_epoch, and 3 adds
-  // runner and attempt after it; parseRun still reads every earlier layout
+  // runner and attempt after it; version 4 adds distributed membership.
+  // parseRun still reads every earlier layout
   // written by earlier builds so an upgrade never discards a project's run
   // history.
   std::string out =
-      "schema_version=3\n"
+      "schema_version=4\n"
       "run_id=" + run.run_id + "\n"
       "project=" + run.project_name + "\n"
       "ref_hex=" + hexEncode(run.ref) + "\n"
@@ -278,6 +327,8 @@ std::string serializeRun(const CiRunRecord& run) {
       "heartbeat_epoch=" + std::to_string(run.heartbeat_epoch_seconds) + "\n"
       "runner=" + (run.runner.empty() ? std::string("-") : run.runner) + "\n"
       "attempt=" + std::to_string(run.attempt) + "\n"
+      "parent_run_id=" + run.parent_run_id + "\n"
+      "workflow_job=" + run.workflow_job + "\n"
       "detail_hex=" + hexEncode(run.detail) + "\n"
       "step_count=" + std::to_string(run.steps.size()) + "\n";
   for (const CiStepResult& step : run.steps) {
@@ -292,10 +343,11 @@ CiRunRecord parseRun(std::string_view content) {
   if (lines.empty()) fail("a CI run record has the wrong shape");
   // Version 1 has no heartbeat line and version 2 no runner and attempt lines,
   // so their headers are shorter and the later fields sit earlier.
-  const bool v3 = lines[0] == "schema_version=3";
+  const bool v4 = lines[0] == "schema_version=4";
+  const bool v3 = v4 || lines[0] == "schema_version=3";
   const bool v2 = v3 || lines[0] == "schema_version=2";
   if (!v2 && lines[0] != "schema_version=1") fail("a CI run record has the wrong shape");
-  const std::size_t header = v3 ? 13 : v2 ? 11 : 10;
+  const std::size_t header = v4 ? 15 : v3 ? 13 : v2 ? 11 : 10;
   if (lines.size() < header) fail("a CI run record has the wrong shape");
   CiRunRecord run;
   run.run_id = std::string(expectField(lines[1], "run_id="));
@@ -319,6 +371,11 @@ CiRunRecord parseRun(std::string_view content) {
     if (attempt < 1 || attempt > 1000) fail("a CI run record has an invalid attempt");
     run.attempt = static_cast<unsigned>(attempt);
   }
+  if (v4) {
+    run.parent_run_id = std::string(expectField(lines[next++], "parent_run_id="));
+    run.workflow_job = std::string(expectField(lines[next++], "workflow_job="));
+  }
+  if (!validJobMembership(run.run_id, run.parent_run_id, run.workflow_job)) fail("invalid run membership");
   run.detail = fromHex(expectField(lines[next++], "detail_hex="), kMaximumCiDetailBytes);
   const std::string_view count_text = expectField(lines[next], "step_count=");
   std::size_t count = 0;
@@ -403,67 +460,6 @@ CiReleaseRecord parseRelease(std::string_view content) {
 
 }  // namespace
 
-std::string_view ciRunStatusName(CiRunStatus status) {
-  switch (status) {
-    case CiRunStatus::Pending: return "pending";
-    case CiRunStatus::Running: return "running";
-    case CiRunStatus::Success: return "success";
-    case CiRunStatus::Failure: return "failure";
-    case CiRunStatus::Timeout: return "timeout";
-    case CiRunStatus::Error: return "error";
-    case CiRunStatus::Skipped: return "skipped";
-    case CiRunStatus::Cancelled: return "cancelled";
-  }
-  return "error";
-}
-
-std::optional<CiRunStatus> ciRunStatusFromName(std::string_view name) {
-  if (name == "pending") return CiRunStatus::Pending;
-  if (name == "running") return CiRunStatus::Running;
-  if (name == "success") return CiRunStatus::Success;
-  if (name == "failure") return CiRunStatus::Failure;
-  if (name == "timeout") return CiRunStatus::Timeout;
-  if (name == "error") return CiRunStatus::Error;
-  if (name == "skipped") return CiRunStatus::Skipped;
-  if (name == "cancelled") return CiRunStatus::Cancelled;
-  return std::nullopt;
-}
-
-bool ciRunStatusIsActive(CiRunStatus status) {
-  return status == CiRunStatus::Pending || status == CiRunStatus::Running;
-}
-
-std::string_view ciRunStatusIcon(CiRunStatus status) {
-  switch (status) {
-    case CiRunStatus::Pending: return "\xe2\x8f\xb3";              // ⏳ hourglass
-    case CiRunStatus::Running: return "\xf0\x9f\x94\x84";          // 🔄 arrows
-    case CiRunStatus::Success: return "\xe2\x9c\x85";              // ✅ check
-    case CiRunStatus::Failure: return "\xe2\x9d\x8c";              // ❌ cross
-    case CiRunStatus::Timeout: return "\xe2\x8f\xb1\xef\xb8\x8f";  // ⏱️ stopwatch
-    case CiRunStatus::Error: return "\xe2\x9a\xa0\xef\xb8\x8f";    // ⚠️ warning
-    case CiRunStatus::Skipped: return "\xe2\x8f\xad\xef\xb8\x8f";  // ⏭️ skip
-    case CiRunStatus::Cancelled: return "\xe2\x9b\x94";            // ⛔ no entry
-  }
-  return "\xe2\x9a\xa0\xef\xb8\x8f";
-}
-
-bool isValidCiArtifactName(std::string_view name) {
-  return !name.empty() && name.size() <= kMaximumCiArtifactNameBytes &&
-         std::all_of(name.begin(), name.end(), [](unsigned char character) {
-           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
-                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
-                  character == '-';
-         });
-}
-
-bool isValidCiId(std::string_view id) {
-  return !id.empty() && id.size() <= kMaximumCiIdBytes &&
-         std::all_of(id.begin(), id.end(), [](unsigned char character) {
-           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
-                  (character >= '0' && character <= '9') || character == '-';
-         });
-}
-
 std::string generateCiId() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
   const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
@@ -477,10 +473,14 @@ std::string generateCiId() {
 
 namespace {
 void supersedeCiJobs(const std::filesystem::path& root, int spool, int working, const CiJobRequest& request);
+void reconcileWorkflowGroups(const std::filesystem::path& root, int ci, int spool, int working);
+int openRunDir(const std::filesystem::path& state_root, std::string_view project_name,
+               std::string_view run_id, bool* missing);
+
 }
 
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request) {
-  if (!isValidCiId(request.job_id) || !isValidProjectName(request.project_name) ||
+  if (!validDependencies(request) || !isValidCiId(request.job_id) || !isValidProjectName(request.project_name) ||
       !isValidClientId(request.client_id) || !isValidObjectId(request.commit_id) ||
       request.runs_on.size() > kMaximumCiLabels ||
       !std::all_of(request.runs_on.begin(), request.runs_on.end(), [](const std::string& label) { return isValidCiLabel(label); })) {
@@ -502,6 +502,8 @@ void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& r
   try {
     CiRunRecord pending;
     pending.run_id = request.job_id;
+    pending.parent_run_id = request.parent_run_id;
+    pending.workflow_job = request.workflow_job;
     pending.project_name = request.project_name;
     pending.ref = request.ref;
     pending.commit_id = request.commit_id;
@@ -611,15 +613,17 @@ std::optional<CiJobRequest> readJobAt(int directory_fd, const std::string& name)
 // terminal record and removal. Claimed jobs retain their lease/ref exclusion
 // until their runner observes the existing cancellation protocol and exits.
 void cancelQueuedJob(const std::filesystem::path& root, int spool, const CiJobRequest& job,
-                     const std::string& detail) {
+                     const std::string& detail, CiRunStatus terminal = CiRunStatus::Cancelled) {
   CiRunRecord record;
   if (const auto old = loadCiRun(root, job.project_name, job.job_id)) record = *old;
   record.run_id = job.job_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
   record.attempt = job.attempt;
-  record.status = CiRunStatus::Cancelled;
+  record.status = terminal;
   record.finished_epoch_seconds = currentEpoch();
   record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
   record.detail = detail;
@@ -633,6 +637,13 @@ void cancelQueuedJob(const std::filesystem::path& root, int spool, const CiJobRe
 void supersedeCiJobs(const std::filesystem::path& root, int spool, int working,
                      const CiJobRequest& request) {
   if (request.ref.rfind("refs/heads/", 0) != 0) return;
+  if (request.auto_cancel) {
+    const auto& group = request.parent_run_id.empty() ? request.job_id : request.parent_run_id;
+    for (const auto& parent : listCiUnpublishedWorkflows(root)) {
+      if (parent.project_name == request.project_name && parent.ref == request.ref && parent.job_id < group)
+        requestCiCancel(root, parent.project_name, parent.job_id);
+    }
+  }
   for (const int directory : {spool, working}) {
     for (const auto& name : listNames(directory)) {
       if (!endsWith(name, ".ini")) continue;
@@ -640,7 +651,12 @@ void supersedeCiJobs(const std::filesystem::path& root, int spool, int working,
       if (!old || old->project_name != request.project_name || old->ref != request.ref ||
           old->job_id == request.job_id) continue;
       // A slower receive hook may enqueue an older id after a newer hook.
-      if (old->job_id > request.job_id) {
+      const auto& old_group = old->parent_run_id.empty() ? old->job_id : old->parent_run_id;
+      const auto& new_group = request.parent_run_id.empty() ? request.job_id : request.parent_run_id;
+      if (old_group == new_group) continue;
+      if (request.auto_cancel && old_group < new_group && !old->parent_run_id.empty())
+        requestCiCancel(root, old->project_name, old->parent_run_id);
+      if (old_group > new_group) {
         if (old->auto_cancel) cancelQueuedJob(root, spool, request, "superseded by run " + old->job_id);
         continue;
       }
@@ -673,6 +689,8 @@ void resetRunForRequeue(const std::filesystem::path& state_root, const CiJobRequ
     prepareCiRunDirectory(state_root, job.project_name, job.job_id);  // a fresh, empty steps/
     CiRunRecord pending;
     pending.run_id = job.job_id;
+    pending.parent_run_id = job.parent_run_id;
+    pending.workflow_job = job.workflow_job;
     pending.project_name = job.project_name;
     pending.ref = job.ref;
     pending.commit_id = job.commit_id;
@@ -696,6 +714,19 @@ RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, c
     ::unlinkat(dirs.leases, name.c_str(), 0);
     return RequeueOutcome::kGone;
   }
+  if (!job->parent_run_id.empty()) {
+    const auto terminal = loadCiRun(dirs.root, job->project_name, job->job_id);
+    if (terminal && !ciRunStatusIsActive(terminal->status)) {
+      // The child committed before its runner disappeared. Recover parent
+      // publication, never execute these completed steps a second time.
+      for (const int directory : {dirs.spool, dirs.working, dirs.leases}) {
+        if (::unlinkat(directory, name.c_str(), 0) != 0 && errno != ENOENT)
+          fail("could not retire completed child's lease");
+        if (::fsync(directory) != 0) fail("could not persist completed child retirement");
+      }
+      return RequeueOutcome::kGone;
+    }
+  }
   if (isCiCancelRequested(dirs.root, job->project_name, job->job_id)) {
     cancelQueuedJob(dirs.root, dirs.spool, *job, "cancelled before its runner returned");
     ::unlinkat(dirs.working, name.c_str(), 0);
@@ -713,6 +744,8 @@ RequeueOutcome requeueLocked(const QueueDirs& dirs, const std::string& job_id, c
         record = *existing;
       } else {
         record.run_id = job->job_id;
+        record.parent_run_id = job->parent_run_id;
+        record.workflow_job = job->workflow_job;
         record.project_name = job->project_name;
         record.ref = job->ref;
         record.commit_id = job->commit_id;
@@ -762,6 +795,7 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
   Descriptor leases_fd(ensureDirAt(ci_fd, "leases"));
 
   lockExclusive(spool_fd);
+  reconcileWorkflowGroups(root, ci_fd, spool_fd, working_fd);
   std::vector<std::string> names;
   for (std::string& name : listNames(spool_fd)) {
     if (name.size() > 4 && name.compare(name.size() - 4, 4, ".ini") == 0) names.push_back(std::move(name));
@@ -769,14 +803,29 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
   std::sort(names.begin(), names.end());
 
   // The project/ref pairs that already have a run in progress.
-  std::set<std::pair<std::string, std::string>> busy;
+  std::map<std::pair<std::string, std::string>, std::set<std::string>> busy;
   if (options.one_per_ref) {
     for (const std::string& name : listNames(working_fd)) {
       if (!endsWith(name, ".ini")) continue;
       if (std::optional<CiJobRequest> running = readJobAt(working_fd, name)) {
-        busy.emplace(running->project_name, running->ref);
+        busy[{running->project_name, running->ref}].insert(
+            running->parent_run_id.empty() ? running->job_id : running->parent_run_id);
       }
     }
+  }
+  // A workflow still owns its place between steps even when no child is
+  // currently leased (for example its next job waits for an offline runner).
+  std::map<std::pair<std::string, std::string>, std::set<std::string>> pending_groups;
+  if (options.one_per_ref) {
+    for (const auto& name : names) {
+      const auto queued = readJobAt(spool_fd, name);
+      if (queued && !queued->parent_run_id.empty())
+        pending_groups[{queued->project_name, queued->ref}].insert(queued->parent_run_id);
+    }
+  }
+  if (options.one_per_ref) {
+    for (const auto& parent : listCiUnpublishedWorkflows(root))
+      pending_groups[{parent.project_name, parent.ref}].insert(parent.job_id);
   }
   const auto now = std::chrono::system_clock::now();
   for (const std::string& name : names) {
@@ -784,8 +833,35 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
     // cannot be read here goes through the claim below, which sets it aside.
     {
       if (std::optional<CiJobRequest> queued = readJobAt(spool_fd, name)) {
+        if (!queued->parent_run_id.empty() && isCiCancelRequested(root, queued->project_name, queued->job_id)) {
+          cancelQueuedJob(root, spool_fd, *queued, "cancelled before it started");
+          continue;
+        }
+        bool waiting = false;
+        bool failed_dependency = false;
+        for (const auto& dependency : queued->needs) {
+          const auto result = loadCiRun(root, queued->project_name, dependency);
+          if (!result) { waiting = true; continue; }
+          if (result->parent_run_id != queued->parent_run_id || result->commit_id != queued->commit_id ||
+              result->ref != queued->ref) { failed_dependency = true; break; }
+          if (ciRunStatusIsActive(result->status)) waiting = true;
+          else if (result->status != CiRunStatus::Success) failed_dependency = true;
+        }
+        if (failed_dependency) {
+          cancelQueuedJob(root, spool_fd, *queued, "skipped: a required job did not succeed", CiRunStatus::Skipped);
+          continue;
+        }
+        if (waiting) continue;
         if (!ciRunnerMatches(options.runner, options.labels, queued->runs_on)) continue;  // another runner's job
-        if (options.one_per_ref && busy.count({queued->project_name, queued->ref}) != 0) continue;
+        if (!queued->parent_run_id.empty() && options.protocol_version < 2) continue;
+        if (options.one_per_ref) {
+          const auto active = busy.find({queued->project_name, queued->ref});
+          const auto& group = queued->parent_run_id.empty() ? queued->job_id : queued->parent_run_id;
+          if (active != busy.end() &&
+              (active->second.size() != 1 || active->second.count(group) == 0)) continue;
+          const auto pending = pending_groups.find({queued->project_name, queued->ref});
+          if (pending != pending_groups.end() && *pending->second.begin() < group) continue;
+        }
         if (options.min_age.count() > 0) {
           struct stat status {};
           if (::fstatat(spool_fd, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0) {
@@ -829,6 +905,7 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
     lease.token = generateLeaseToken();
     lease.expires_epoch_seconds = currentEpoch() + options.lease_seconds;
     atomicWriteAt(leases_fd, name, serializeLease(lease));
+    if (!job.parent_run_id.empty()) reconcileWorkflowGroups(root, ci_fd, spool_fd, working_fd);
     return CiClaim{std::move(job), std::move(lease)};
   }
   return std::nullopt;
@@ -955,6 +1032,8 @@ bool releaseCiClaim(const std::filesystem::path& state_root, std::string_view jo
   const std::string name = id + ".ini";
   if (::unlinkat(working_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI job");
   if (::unlinkat(leases_fd, name.c_str(), 0) != 0 && errno != ENOENT) fail("could not release a CI lease");
+  if (::fsync(working_fd) != 0 || ::fsync(leases_fd) != 0) fail("could not commit CI release");
+  reconcileWorkflowGroups(root, ci_fd, spool_fd, working_fd);
   return true;
 }
 
@@ -1003,7 +1082,7 @@ std::filesystem::path prepareCiIncomingDirectory(const std::filesystem::path& st
 }
 
 void writeCiRunRecord(const std::filesystem::path& state_root, const CiRunRecord& record) {
-  if (!isValidCiId(record.run_id) || !isValidProjectName(record.project_name) ||
+  if (!validJobMembership(record.run_id, record.parent_run_id, record.workflow_job) || !isValidCiId(record.run_id) || !isValidProjectName(record.project_name) ||
       !isValidObjectId(record.commit_id)) {
     fail("refusing to write an invalid CI run record");
   }
@@ -1345,6 +1424,12 @@ bool requestCiCancel(const std::filesystem::path& state_root, std::string_view p
   bool missing = false;
   Descriptor run_fd(openRunDir(state_root, project_name, run_id, &missing));
   if (missing) return false;
+  // Parent publication holds this same lock, so a cancel either precedes the
+  // publication decision or observes its durable completion as a no-op.
+  lockExclusive(run_fd);
+  bool committed_missing = false;
+  (void)readCappedAt(run_fd, "outputs-committed", 128, &committed_missing);
+  if (!committed_missing) return true;
   atomicWriteAt(run_fd, kCancelMarkerName, "cancel\n");
   return true;
 }
@@ -1358,6 +1443,13 @@ bool isCiCancelRequested(const std::filesystem::path& state_root, std::string_vi
     if (missing) return false;
     bool marker_missing = false;
     static_cast<void>(readCappedAt(run_fd, kCancelMarkerName, 64, &marker_missing));
+    if (!marker_missing) return true;
+    // Read exactly one parent marker, never recurse through untrusted records.
+    const auto run = loadCiRun(state_root, project_name, run_id);
+    if (!run || run->parent_run_id.empty()) return false;
+    Descriptor parent_fd(openRunDir(state_root, project_name, run->parent_run_id, &missing));
+    if (missing) return false;
+    static_cast<void>(readCappedAt(parent_fd, kCancelMarkerName, 64, &marker_missing));
     return !marker_missing;
   } catch (const std::exception&) {
     return false;
@@ -1378,6 +1470,249 @@ void clearCiCancel(const std::filesystem::path& state_root, std::string_view pro
     // Best effort: a leftover marker only affects the run that requested it,
     // and run ids are never reused.
   }
+}
+
+namespace {
+constexpr std::size_t kMaximumWorkflowGroupBytes = 1024 * 1024;
+struct WorkflowGroup {
+  CiJobRequest parent;
+  std::vector<CiJobRequest> children;
+};
+
+void validateWorkflowGroup(const WorkflowGroup& group) {
+  const auto& parent = group.parent;
+  // Re-use the strict record parser for bounded field validation.
+  (void)parseJob(serializeJob(parent));
+  if (!parent.parent_run_id.empty() || group.children.empty() || group.children.size() > kMaximumCiJobs)
+    fail("invalid distributed workflow parent or child count");
+  std::set<std::string> ids, names;
+  for (const auto& child : group.children) {
+    (void)parseJob(serializeJob(child));
+    if (child.parent_run_id != parent.job_id || child.project_name != parent.project_name ||
+        child.commit_id != parent.commit_id || child.ref != parent.ref || child.client_id != parent.client_id ||
+        child.auto_cancel != parent.auto_cancel || child.attempt != 1 ||
+        !ids.insert(child.job_id).second || !names.insert(child.workflow_job).second)
+      fail("inconsistent distributed workflow child");
+  }
+  for (const auto& child : group.children)
+    for (const auto& dependency : child.needs)
+      if (!ids.count(dependency)) fail("distributed dependency is not a sibling");
+  std::set<std::string> ready;
+  while (ready.size() != ids.size()) {
+    const auto before = ready.size();
+    for (const auto& child : group.children)
+      if (std::all_of(child.needs.begin(), child.needs.end(), [&](const auto& id) { return ready.count(id); }))
+        ready.insert(child.job_id);
+    if (ready.size() == before) fail("distributed workflow contains a dependency cycle");
+  }
+}
+
+std::string serializeWorkflowGroup(const WorkflowGroup& group) {
+  std::string bytes = "schema_version=1\nparent_hex=" + hexEncode(serializeJob(group.parent)) + "\n";
+  for (const auto& child : group.children) bytes += "child_hex=" + hexEncode(serializeJob(child)) + "\n";
+  if (bytes.size() > kMaximumWorkflowGroupBytes) fail("distributed workflow exceeds its record limit");
+  return bytes;
+}
+
+WorkflowGroup parseWorkflowGroup(std::string_view bytes) {
+  const auto lines = frame(bytes);
+  if (lines.size() < 3 || lines.size() > kMaximumCiJobs + 2 || lines[0] != "schema_version=1")
+    fail("invalid distributed workflow record");
+  WorkflowGroup group;
+  group.parent = parseJob(fromHex(expectField(lines[1], "parent_hex="), kMaximumCiRunRecordBytes));
+  for (std::size_t i = 2; i < lines.size(); ++i)
+    group.children.push_back(parseJob(fromHex(expectField(lines[i], "child_hex="), kMaximumCiRunRecordBytes)));
+  validateWorkflowGroup(group);
+  return group;
+}
+
+CiRunRecord queuedRecord(const CiJobRequest& job) {
+  CiRunRecord record;
+  record.run_id = job.job_id;
+  record.project_name = job.project_name;
+  record.ref = job.ref;
+  record.commit_id = job.commit_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
+  record.attempt = job.attempt;
+  record.status = CiRunStatus::Pending;
+  return record;
+}
+
+void reconcileWorkflowGroups(const std::filesystem::path& root, int ci, int spool, int working) {
+  bool missing = false;
+  Descriptor groups(openDirAt(ci, "groups", &missing));
+  if (missing) return;
+  auto files = listNames(groups);
+  std::sort(files.begin(), files.end());
+  for (const auto& file : files) {
+    if (!endsWith(file, ".ini")) continue;
+    const auto bytes = readCappedAt(groups, file, kMaximumWorkflowGroupBytes, &missing);
+    if (missing) continue;
+    const auto group = parseWorkflowGroup(bytes);
+    const auto& parent = group.parent;
+    if (file != parent.job_id + ".ini") fail("distributed journal ID mismatch");
+    prepareCiRunDirectory(root, parent.project_name, parent.job_id);
+    Descriptor parent_dir(openRunDir(root, parent.project_name, parent.job_id, &missing));
+    const auto existing = readCappedAt(parent_dir, "workflow.ini", kMaximumWorkflowGroupBytes, &missing);
+    if (!missing && existing != bytes) fail("distributed workflow changed after publication");
+    if (missing) atomicWriteAt(parent_dir, "workflow.ini", bytes);
+    if (!loadCiRun(root, parent.project_name, parent.job_id)) writeCiRunRecord(root, queuedRecord(parent));
+    CiRunRecord summary = queuedRecord(parent);
+    std::size_t done = 0;
+    bool running = false;
+    CiRunStatus terminal = CiRunStatus::Success;
+    const auto priority = [](CiRunStatus status) {
+      switch (status) {
+        case CiRunStatus::Error: return 6;
+        case CiRunStatus::Timeout: return 5;
+        case CiRunStatus::Failure: return 4;
+        case CiRunStatus::Cancelled: return 3;
+        case CiRunStatus::Skipped: return 2;
+        default: return 0;
+      }
+    };
+    for (const auto& child : group.children) {
+      auto record = loadCiRun(root, child.project_name, child.job_id);
+      if (record && (record->parent_run_id != parent.job_id || record->workflow_job != child.workflow_job ||
+                     record->commit_id != child.commit_id || record->ref != child.ref))
+        fail("distributed child record identity mismatch");
+      if (!record) {
+        record = queuedRecord(child);
+        writeCiRunRecord(root, *record);
+      }
+      const auto held = readJobAt(working, child.job_id + ".ini");
+      if (ciRunStatusIsActive(record->status)) {
+        if (!held && !readJobAt(spool, child.job_id + ".ini")) {
+          auto recovered = child;
+          recovered.attempt = record->attempt;
+          atomicWriteAt(spool, child.job_id + ".ini", serializeJob(recovered));
+        }
+        if (!held && isCiCancelRequested(root, child.project_name, child.job_id)) {
+          cancelQueuedJob(root, spool, child, "workflow cancelled before job started");
+          record = loadCiRun(root, child.project_name, child.job_id);
+        }
+      }
+      if (!record) fail("distributed child record disappeared");
+      if (!ciRunStatusIsActive(record->status)) {
+        if (!held && ::unlinkat(spool, (child.job_id + ".ini").c_str(), 0) != 0 && errno != ENOENT)
+          fail("could not retire terminal child queue entry");
+        ++done;
+        if (priority(record->status) > priority(terminal)) terminal = record->status;
+      }
+      running = running || held.has_value() || record->status == CiRunStatus::Running;
+      if (record->started_epoch_seconds &&
+          (!summary.started_epoch_seconds || record->started_epoch_seconds < summary.started_epoch_seconds))
+        summary.started_epoch_seconds = record->started_epoch_seconds;
+      summary.heartbeat_epoch_seconds = std::max(summary.heartbeat_epoch_seconds, record->heartbeat_epoch_seconds);
+      summary.finished_epoch_seconds = std::max(summary.finished_epoch_seconds, record->finished_epoch_seconds);
+    }
+    for (const auto& child : group.children) supersedeCiJobs(root, spool, working, child);
+    summary.status = done == group.children.size() ? terminal : (running || done ? CiRunStatus::Running : CiRunStatus::Pending);
+    if (ciRunStatusIsActive(summary.status)) summary.finished_epoch_seconds = 0;
+    else if (!summary.finished_epoch_seconds) summary.finished_epoch_seconds = currentEpoch();
+    summary.detail = std::to_string(done) + "/" + std::to_string(group.children.size()) + " jobs completed";
+    writeCiRunRecord(root, summary);
+    if (!ciRunStatusIsActive(summary.status)) {
+      if (::unlinkat(groups, file.c_str(), 0) != 0 && errno != ENOENT) fail("could not retire workflow journal");
+      if (::fsync(groups) != 0) fail("could not commit workflow completion");
+    }
+  }
+}
+}  // namespace
+
+void enqueueCiWorkflowJobs(const std::filesystem::path& state_root, const CiJobRequest& parent,
+                           const std::vector<CiJobRequest>& children) {
+  const WorkflowGroup group{parent, children};
+  validateWorkflowGroup(group);
+  const auto bytes = serializeWorkflowGroup(group);
+  const auto root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci(ensureDirAt(root_fd, "ci"));
+  Descriptor spool(ensureDirAt(ci, "spool"));
+  Descriptor working(ensureDirAt(ci, "working"));
+  Descriptor groups(ensureDirAt(ci, "groups"));
+  lockExclusive(spool);
+  bool missing = false;
+  Descriptor parent_dir(openRunDir(root, parent.project_name, parent.job_id, &missing));
+  if (!missing) {
+    const auto old = readCappedAt(parent_dir, "workflow.ini", kMaximumWorkflowGroupBytes, &missing);
+    if (!missing) {
+      if (old != bytes) fail("refusing to replace an existing workflow graph");
+      reconcileWorkflowGroups(root, ci, spool, working);
+      return;
+    }
+    if (loadCiRun(root, parent.project_name, parent.job_id)) fail("parent ID already belongs to a run");
+  }
+  const auto existing = readCappedAt(groups, parent.job_id + ".ini", kMaximumWorkflowGroupBytes, &missing);
+  if (!missing && existing != bytes) fail("refusing to replace a workflow journal");
+  if (missing) {
+    for (const auto& child : children)
+      if (loadCiRun(root, child.project_name, child.job_id) || readJobAt(spool, child.job_id + ".ini") ||
+          readJobAt(working, child.job_id + ".ini")) fail("child ID already belongs to a job");
+    // The journal is the commit point. Recovery writes every child from these
+    // immutable bytes before claim selection, even after process termination.
+    atomicWriteAt(groups, parent.job_id + ".ini", bytes);
+  }
+  reconcileWorkflowGroups(root, ci, spool, working);
+  for (const auto& child : children) supersedeCiJobs(root, spool, working, child);
+}
+
+std::vector<CiJobRequest> loadCiWorkflowJobs(const std::filesystem::path& state_root,
+                                          std::string_view project, std::string_view parent_run_id) {
+  if (!isValidProjectName(project) || !isValidCiId(parent_run_id)) return {};
+  bool missing = false;
+  Descriptor run(openRunDir(state_root, project, parent_run_id, &missing));
+  if (missing) return {};
+  const auto bytes = readCappedAt(run, "workflow.ini", kMaximumWorkflowGroupBytes, &missing);
+  if (missing) return {};
+  auto group = parseWorkflowGroup(bytes);
+  if (group.parent.project_name != project || group.parent.job_id != parent_run_id)
+    fail("distributed workflow identity mismatch");
+  return std::move(group.children);
+}
+
+void refreshCiWorkflowGroups(const std::filesystem::path& state_root) {
+  const auto root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci(ensureDirAt(root_fd, "ci"));
+  Descriptor spool(ensureDirAt(ci, "spool"));
+  Descriptor working(ensureDirAt(ci, "working"));
+  lockExclusive(spool);
+  reconcileWorkflowGroups(root, ci, spool, working);
+}
+
+std::vector<CiJobRequest> listCiUnpublishedWorkflows(const std::filesystem::path& state_root) {
+  std::vector<CiJobRequest> pending;
+  const auto root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci(openDirAt(root_fd, "ci", &missing));
+  if (missing) return pending;
+  Descriptor runs(openDirAt(ci, "runs", &missing));
+  if (missing) return pending;
+  for (const auto& project : listNames(runs)) {
+    if (!isValidProjectName(project)) continue;
+    Descriptor project_fd(openDirAt(runs, project, &missing));
+    if (missing) continue;
+    for (const auto& id : listNames(project_fd)) {
+      if (!isValidCiId(id)) continue;
+      const auto record = loadCiRun(root, project, id);
+      if (!record || !record->parent_run_id.empty() || ciRunStatusIsActive(record->status)) continue;
+      Descriptor run(openDirAt(project_fd, id, &missing));
+      if (missing) continue;
+      (void)readCappedAt(run, "outputs-committed", 128, &missing);
+      if (!missing) continue;
+      const auto bytes = readCappedAt(run, "workflow.ini", kMaximumWorkflowGroupBytes, &missing);
+      if (missing) continue;
+      auto group = parseWorkflowGroup(bytes);
+      if (group.parent.job_id != id || group.parent.project_name != project ||
+          group.parent.commit_id != record->commit_id || group.parent.ref != record->ref)
+        fail("unpublished workflow identity mismatch");
+      pending.push_back(std::move(group.parent));
+    }
+  }
+  return pending;
 }
 
 namespace {
@@ -1548,6 +1883,10 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
   } catch (const std::exception&) {
     return 0;
   }
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  lockExclusive(spool_fd);  // do not prune a graph while its children are materialized
   const std::filesystem::path runs_root = root / "ci" / "runs";
   std::error_code ec;
   if (!std::filesystem::is_directory(runs_root, ec)) return 0;
@@ -1579,13 +1918,34 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
     }
     std::sort(ids.begin(), ids.end(), std::greater<>());  // newest first
 
-    // Prune run directories beyond runs_keep (oldest first), artifacts and all.
-    if (options.runs_keep > 0 && ids.size() > options.runs_keep) {
-      for (std::size_t index = options.runs_keep; index < ids.size(); ++index) {
-        std::error_code remove_ec;
-        std::filesystem::remove_all(project_entry.path() / ids[index], remove_ec);
+    // Retention counts pushes, not their child jobs. Keep a workflow intact,
+    // and never remove an active run (including completed siblings it needs).
+    std::map<std::string, std::vector<std::string>, std::greater<>> groups;
+    std::map<std::string, std::string> group_of;
+    std::set<std::string> active_groups;
+    for (const auto& id : ids) {
+      const auto record = loadCiRun(root, project, id);
+      const std::string group = record && !record->parent_run_id.empty() ? record->parent_run_id : id;
+      groups[group].push_back(id);
+      group_of[id] = group;
+      if (!record || ciRunStatusIsActive(record->status)) active_groups.insert(group);
+      const auto parent_dir = project_entry.path() / group;
+      if (std::filesystem::exists(parent_dir / "workflow.ini") &&
+          !std::filesystem::exists(parent_dir / "outputs-committed")) active_groups.insert(group);
+    }
+    if (options.runs_keep > 0) {
+      std::set<std::string> removed_ids;
+      std::size_t index = 0;
+      for (const auto& [group, members] : groups) {
+        const bool retain = index++ < options.runs_keep || active_groups.count(group);
+        if (retain) continue;
+        for (const auto& id : members) {
+          std::error_code remove_ec;
+          std::filesystem::remove_all(project_entry.path() / id, remove_ec);
+          if (!remove_ec) removed_ids.insert(id);
+        }
       }
-      ids.resize(options.runs_keep);
+      ids.erase(std::remove_if(ids.begin(), ids.end(), [&](const auto& id) { return removed_ids.count(id); }), ids.end());
     }
 
     for (const std::string& id : ids) {
@@ -1595,7 +1955,17 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
       std::error_code incoming_ec;
       if (std::filesystem::is_directory(incoming, incoming_ec)) {
         const std::optional<CiRunRecord> run = loadCiRun(root, project, id);
-        if (!run.has_value() || !ciRunStatusIsActive(run->status)) {
+        bool parent_needs_results = false;
+        if (run && !run->parent_run_id.empty()) {
+          bool parent_missing = false;
+          Descriptor parent(openRunDir(root, project, run->parent_run_id, &parent_missing));
+          if (!parent_missing) {
+            bool committed_missing = false;
+            (void)readCappedAt(parent, "outputs-committed", 128, &committed_missing);
+            parent_needs_results = committed_missing;
+          }
+        }
+        if ((!run.has_value() || !ciRunStatusIsActive(run->status)) && !parent_needs_results) {
           std::filesystem::remove_all(incoming, incoming_ec);
         }
       }
@@ -1622,10 +1992,10 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
           // Durable artifacts (a release asset, expires 0) are not this sweep's
           // concern; only ephemeral CI artifacts expire or are evicted.
           if (record.expires_epoch_seconds == 0) continue;
-          entries.push_back(Entry{art_dir, project, id, record.name, record.bytes,
+          entries.push_back(Entry{art_dir, project, group_of.at(id), record.name, record.bytes,
                                   record.created_epoch_seconds, record.expires_epoch_seconds, false, false});
           const auto existing = newest_run.find(project);
-          if (existing == newest_run.end() || id > existing->second) newest_run[project] = id;
+          if (existing == newest_run.end() || group_of.at(id) > existing->second) newest_run[project] = group_of.at(id);
         } catch (const std::exception&) {
         }
       }
@@ -1692,15 +2062,6 @@ std::size_t sweepCiArtifacts(const std::filesystem::path& state_root,
     }
   }
   return removed;
-}
-
-bool isValidReleaseTag(std::string_view tag) {
-  return !tag.empty() && tag.size() <= kMaximumReleaseTagBytes && tag != "." && tag != ".." &&
-         std::all_of(tag.begin(), tag.end(), [](unsigned char character) {
-           return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
-                  (character >= '0' && character <= '9') || character == '.' || character == '_' ||
-                  character == '-';
-         });
 }
 
 std::filesystem::path prepareCiReleaseDirectory(const std::filesystem::path& state_root,
@@ -1800,110 +2161,6 @@ std::vector<CiReleaseRecord> loadReleases(const std::filesystem::path& state_roo
   return releases;
 }
 
-namespace {
-
-std::vector<std::string_view> splitReleaseFields(std::string_view line, std::size_t expected_fields) {
-  std::vector<std::string_view> fields;
-  std::size_t start = 0;
-  while (true) {
-    const std::size_t space = line.find(' ', start);
-    if (space == std::string_view::npos) {
-      fields.push_back(line.substr(start));
-      break;
-    }
-    fields.push_back(line.substr(start, space - start));
-    start = space + 1;
-  }
-  if (fields.size() != expected_fields ||
-      std::any_of(fields.begin(), fields.end(), [](std::string_view field) { return field.empty(); })) {
-    throw std::invalid_argument("releases response has a malformed record");
-  }
-  return fields;
-}
-
-std::uint64_t parseReleaseCounter(std::string_view field, const char* what) {
-  std::uint64_t value = 0;
-  const auto [end, error] = std::from_chars(field.data(), field.data() + field.size(), value);
-  if (error != std::errc{} || end != field.data() + field.size()) {
-    throw std::invalid_argument(std::string("releases response has an invalid ") + what);
-  }
-  return value;
-}
-
-}  // namespace
-
-std::vector<CiReleaseRecord> parseReleasesControlResponse(std::string_view response) {
-  if (response.empty() || response.size() > kMaximumControlResponseBytes || response.back() != '\n' ||
-      response.find('\r') != std::string_view::npos || response.find('\0') != std::string_view::npos) {
-    throw std::invalid_argument("invalid releases response framing");
-  }
-  const std::size_t first_newline = response.find('\n');
-  const std::string_view first_line = response.substr(0, first_newline);
-  constexpr std::string_view prefix{"ok "};
-  if (first_line.rfind(prefix, 0) != 0 || first_line.size() == prefix.size()) {
-    throw std::invalid_argument("releases response has no valid ok count");
-  }
-  const std::size_t expected = parseReleaseCounter(first_line.substr(prefix.size()), "count");
-  if (expected > kMaximumControlReleases) {
-    throw std::invalid_argument("releases response has an invalid count");
-  }
-
-  std::vector<CiReleaseRecord> releases;
-  CiReleaseRecord* current = nullptr;
-  std::size_t start = first_newline + 1;
-  while (start < response.size()) {
-    const std::size_t newline = response.find('\n', start);
-    if (newline == std::string_view::npos || newline == start) {
-      throw std::invalid_argument("releases response has an empty or unterminated record");
-    }
-    const std::string_view line = response.substr(start, newline - start);
-    start = newline + 1;
-    if (line.rfind("release ", 0) == 0) {
-      const auto fields = splitReleaseFields(line, 4);
-      const std::string_view tag = fields[1];
-      const std::string_view commit = fields[2];
-      if (!isValidReleaseTag(tag) || !isValidObjectId(commit)) {
-        throw std::invalid_argument("releases response has an invalid release record");
-      }
-      if (std::any_of(releases.begin(), releases.end(),
-                       [&](const CiReleaseRecord& existing) { return existing.tag == tag; })) {
-        throw std::invalid_argument("releases response repeats a release tag");
-      }
-      const std::uint64_t created = parseReleaseCounter(fields[3], "release timestamp");
-      releases.push_back(CiReleaseRecord{std::string(tag), std::string(commit), created, {}, {}});
-      current = &releases.back();
-    } else if (line.rfind("asset ", 0) == 0) {
-      if (current == nullptr) {
-        throw std::invalid_argument("releases response has an asset before any release");
-      }
-      const auto fields = splitReleaseFields(line, 5);
-      if (fields[1] != current->tag) {
-        throw std::invalid_argument("releases response asset tag does not match its release");
-      }
-      const std::string_view name = fields[2];
-      if (!isValidCiArtifactName(name)) {
-        throw std::invalid_argument("releases response has an invalid asset name");
-      }
-      const std::uint64_t bytes = parseReleaseCounter(fields[3], "asset size");
-      const std::string_view sha_field = fields[4];
-      std::string sha256;
-      if (sha_field != "-") {
-        if (!isValidSha256Hex(sha_field)) {
-          throw std::invalid_argument("releases response has an invalid asset checksum");
-        }
-        sha256 = std::string(sha_field);
-      }
-      current->assets.push_back(CiArtifactRecord{std::string(name), bytes, sha256, 0, 0, {}});
-    } else {
-      throw std::invalid_argument("releases response has an unrecognized record");
-    }
-  }
-  if (releases.size() != expected) {
-    throw std::invalid_argument("releases response count does not match records");
-  }
-  return releases;
-}
-
 std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,
                                               std::string_view project_name, std::string_view tag,
                                               std::string_view asset_name, std::size_t cap) {
@@ -1920,6 +2177,9 @@ std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state
     if (missing) return std::nullopt;
     Descriptor tag_fd(openDirAt(project_fd, std::string(tag), &missing));
     if (missing) return std::nullopt;
+    bool release_missing = false;
+    const auto release = readCappedAt(tag_fd, "release.ini", kMaximumReleaseRecordBytes, &release_missing);
+    if (release_missing || parseRelease(release).tag != tag) return std::nullopt;
     bool blob_missing = false;
     const std::string content = readCappedAt(tag_fd, std::string(asset_name) + ".tar", cap, &blob_missing);
     if (blob_missing) return std::nullopt;
@@ -1940,6 +2200,37 @@ void removeCiRelease(const std::filesystem::path& state_root, std::string_view p
 void removeProjectCi(const std::filesystem::path& state_root, std::string_view project_name) {
   if (!isValidProjectName(project_name)) fail("invalid project name for CI removal");
   const std::filesystem::path root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  Descriptor ci_fd(ensureDirAt(root_fd, "ci"));
+  Descriptor spool_fd(ensureDirAt(ci_fd, "spool"));
+  lockExclusive(spool_fd);
+  bool missing = false;
+  Descriptor groups(openDirAt(ci_fd, "groups", &missing));
+  if (!missing) {
+    for (const auto& file : listNames(groups)) {
+      if (!endsWith(file, ".ini")) continue;
+      const auto bytes = readCappedAt(groups, file, kMaximumWorkflowGroupBytes, &missing);
+      if (missing) continue;
+      const auto group = parseWorkflowGroup(bytes);
+      if (group.parent.project_name != project_name) continue;
+      Descriptor working(ensureDirAt(ci_fd, "working"));
+      Descriptor leases(ensureDirAt(ci_fd, "leases"));
+      for (const auto& child : group.children) {
+        // Revocation makes a running child stop at its next heartbeat and
+        // prevents it from publishing after the project has been deleted.
+        for (const int directory : {static_cast<int>(working), static_cast<int>(leases)}) {
+          if (::unlinkat(directory, (child.job_id + ".ini").c_str(), 0) != 0 && errno != ENOENT)
+            fail("could not revoke deleted project's child lease");
+          if (::fsync(directory) != 0) fail("could not commit child lease revocation");
+        }
+        if (::unlinkat(spool_fd, (child.job_id + ".ini").c_str(), 0) != 0 && errno != ENOENT)
+          fail("could not remove deleted project's queued child");
+      }
+      if (::unlinkat(groups, file.c_str(), 0) != 0 && errno != ENOENT)
+        fail("could not remove deleted project's workflow journal");
+    }
+    if (::fsync(groups) != 0 || ::fsync(spool_fd) != 0) fail("could not commit workflow removal");
+  }
   std::error_code error;
   std::filesystem::remove_all(root / "ci" / "runs" / std::string(project_name), error);
   std::filesystem::remove(root / "ci" / "projects" / (std::string(project_name) + ".ini"), error);

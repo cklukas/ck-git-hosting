@@ -21,6 +21,12 @@
 #define CKGIT_BUILD_VERSION "development"
 #endif
 
+#ifdef _WIN32
+#define CKGIT_CONFIG_DISPLAY "%LOCALAPPDATA%\\ck-git-hosting\\client.ini"
+#else
+#define CKGIT_CONFIG_DISPLAY "~/.config/ck-git-hosting/client.ini"
+#endif
+
 namespace ckgit {
 namespace {
 
@@ -72,7 +78,7 @@ struct Command {
 };
 
 const Option kConfig{"--config", "PATH",
-                     "Client configuration (default: ~/.config/ck-git-hosting/client.ini).",
+                     "Client configuration (default: " CKGIT_CONFIG_DISPLAY ").",
                      ValueKind::kPath};
 const Option kRepo{"--repo", "PATH", "Select one checkout explicitly; use --repo . for this repository.",
                    ValueKind::kPath};
@@ -309,11 +315,11 @@ const std::vector<Command>& commands() {
        {"ckgit default-branch", "ckgit default-branch --project my-project", "ckgit default-branch develop --dry-run",
         "ckgit default-branch develop --yes"}},
       {{"config"}, "Inspect the client configuration.",
-       "Use --config PATH or ~/.config/ck-git-hosting/client.ini.",
+       "Use --config PATH or " CKGIT_CONFIG_DISPLAY ".",
        "Use show to inspect effective values. This command does not change configuration.",
        {}, {}, {"ckgit config show", "ckgit config show --config /path/to/client.ini"}},
       {{"config", "show"}, "Show effective client configuration values.",
-       "Read --config PATH, or ~/.config/ck-git-hosting/client.ini when --config is omitted.",
+       "Read --config PATH, or " CKGIT_CONFIG_DISPLAY " when --config is omitted.",
        "Read-only and local: displays the device identity, target server, remote name, scan roots, exclusions, and path privacy. Does not contact the server.",
        {}, {}, {"ckgit config show", "ckgit --config /path/to/client.ini config show"}},
       {{"completion"}, "Print shell completion definitions.",
@@ -572,7 +578,7 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
               "  ckgit web                   Open the dashboard.\n"
               "  ckgit open README.md        Open this checkout's file in the dashboard.\n\n"
               "Defaults and scope:\n"
-              "  Configuration: ~/.config/ck-git-hosting/client.ini; override with --config PATH.\n"
+              "  Configuration: " CKGIT_CONFIG_DISPLAY "; override with --config PATH.\n"
               "  The configuration selects the target server, device identity, and remote name.\n"
               "  status, sync, and checkout list share a private managed-checkout inventory.\n"
               "  Use --repo . for the current repository; scan discovers additional folders.\n"

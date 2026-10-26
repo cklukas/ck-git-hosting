@@ -87,6 +87,237 @@ ckgit::CiJobRequest sampleJob(const std::string& id, const std::string& ref = "r
   return job;
 }
 
+// Independent jobs from one push may occupy different runners, but each
+// dependent job must wait for successful terminal records of its own siblings.
+void testDistributedChildScheduling() {
+  Fixture fixture;
+  const auto parent = ckgit::generateCiId();
+  auto linux = sampleJob(idAfter(parent));
+  linux.parent_run_id = parent;
+  linux.workflow_job = "linux";
+  linux.runs_on = {"linux"};
+  linux.auto_cancel = true;
+  auto windows = linux;
+  windows.job_id = idAfter(linux.job_id);
+  windows.workflow_job = "windows";
+  windows.runs_on = {"windows"};
+  auto publish = linux;
+  publish.job_id = idAfter(windows.job_id);
+  publish.workflow_job = "publish";
+  publish.needs = {linux.job_id, windows.job_id};
+  for (const auto& job : {linux, windows, publish}) ckgit::enqueueCiJob(fixture.state, job);
+  ckgit::CiClaimOptions linux_runner;
+  linux_runner.labels = {"linux"};
+  require(!ckgit::claimCiJob(fixture.state, linux_runner), "legacy runner cannot claim a child");
+  linux_runner.protocol_version = 2;
+  auto windows_runner = linux_runner;
+  windows_runner.runner = "windows-worker";
+  windows_runner.labels = {"windows"};
+  const auto first = ckgit::claimCiJob(fixture.state, linux_runner);
+  const auto second = ckgit::claimCiJob(fixture.state, windows_runner);
+  require(first && first->job.job_id == linux.job_id && second && second->job.job_id == windows.job_id,
+          "siblings are not superseded and may run concurrently on the same ref");
+  require(!ckgit::claimCiJob(fixture.state, linux_runner), "dependencies wait for completion");
+  auto next_push = sampleJob(idAfter(publish.job_id));
+  next_push.runs_on = {"windows"};
+  ckgit::enqueueCiJob(fixture.state, next_push);
+  require(!ckgit::claimCiJob(fixture.state, linux_runner), "another push cannot overtake active siblings");
+  // Losing a Windows lease preserves the graph and permits a different runner
+  // to recover it, without allowing an old token to finish the new attempt.
+  ckgit::CiReapOptions reap;
+  reap.restarted_runner = "windows-worker";
+  require(ckgit::reapCiLeases(fixture.state, reap).requeued.size() == 1, "lost child requeued");
+  const auto recovered = ckgit::claimCiJob(fixture.state, windows_runner);
+  require(recovered && recovered->job.parent_run_id == parent && recovered->job.workflow_job == "windows" &&
+          recovered->job.attempt == 2, "recovered child retains membership");
+  const auto finish = [&](const ckgit::CiClaim& claim, ckgit::CiRunStatus status) {
+    auto record = ckgit::loadCiRun(fixture.state, "demo", claim.job.job_id);
+    require(record.has_value(), "child record exists");
+    record->status = status;
+    ckgit::writeCiRunRecord(fixture.state, *record);
+    require(ckgit::releaseCiClaim(fixture.state, claim.job.job_id, claim.lease.token), "release child lease");
+  };
+  finish(*first, ckgit::CiRunStatus::Success);
+  require(!ckgit::claimCiJob(fixture.state, linux_runner), "one completed dependency is insufficient");
+  finish(*recovered, ckgit::CiRunStatus::Success);
+  require(!ckgit::claimCiJob(fixture.state, windows_runner),
+          "next push cannot overtake a pending child when no lease is active");
+  const auto last = ckgit::claimCiJob(fixture.state, linux_runner);
+  require(last && last->job.job_id == publish.job_id && last->job.needs == publish.needs,
+          "dependent job starts only after both successful siblings");
+  finish(*last, ckgit::CiRunStatus::Success);
+  require(ckgit::claimCiJob(fixture.state, windows_runner)->job.job_id == next_push.job_id,
+          "next push becomes eligible after the workflow drains");
+}
+
+void testChildDependencyFailureAndCancellation() {
+  Fixture fixture;
+  auto dependency = sampleJob(ckgit::generateCiId());
+  dependency.parent_run_id = "parent";
+  dependency.workflow_job = "compile";
+  auto dependent = dependency;
+  dependent.job_id = idAfter(dependency.job_id);
+  dependent.workflow_job = "package";
+  dependent.needs = {dependency.job_id};
+  dependent.runs_on = {"offline"};
+  ckgit::enqueueCiJob(fixture.state, dependency);
+  ckgit::enqueueCiJob(fixture.state, dependent);
+  ckgit::CiClaimOptions runner;
+  runner.protocol_version = 2;
+  const auto claim = ckgit::claimCiJob(fixture.state, runner);
+  auto record = *ckgit::loadCiRun(fixture.state, "demo", dependency.job_id);
+  record.status = ckgit::CiRunStatus::Failure;
+  ckgit::writeCiRunRecord(fixture.state, record);
+  ckgit::releaseCiClaim(fixture.state, dependency.job_id, claim->lease.token);
+  require(!ckgit::claimCiJob(fixture.state, runner), "failed prerequisite prevents execution");
+  require(ckgit::loadCiRun(fixture.state, "demo", dependent.job_id)->status == ckgit::CiRunStatus::Skipped,
+          "dependent job records a terminal skip");
+  // Cancelling the parent reaches active and queued children, even a child
+  // whose runner is offline or whose dependencies have never completed.
+  ckgit::prepareCiRunDirectory(fixture.state, "demo", "parent");
+  auto active = dependency;
+  active.job_id = idAfter(dependent.job_id);
+  ckgit::enqueueCiJob(fixture.state, active);
+  require(ckgit::claimCiJob(fixture.state, runner).has_value(), "another child starts");
+  auto waiting = dependent;
+  waiting.job_id = idAfter(active.job_id);
+  waiting.needs = {active.job_id};
+  waiting.runs_on = {"offline"};
+  ckgit::enqueueCiJob(fixture.state, waiting);
+  require(ckgit::requestCiCancel(fixture.state, "demo", "parent"), "cancel parent");
+  require(ckgit::isCiCancelRequested(fixture.state, "demo", active.job_id), "active child sees parent cancel");
+  require(!ckgit::claimCiJob(fixture.state, runner), "cancelled waiting child never executes");
+  require(ckgit::loadCiRun(fixture.state, "demo", waiting.job_id)->status == ckgit::CiRunStatus::Cancelled,
+          "offline queued child is cancelled without its runner");
+}
+
+void testWorkflowJournalRecovery() {
+  Fixture fixture;
+  auto parent = sampleJob(ckgit::generateCiId());
+  auto a = parent;
+  a.job_id = idAfter(parent.job_id);
+  a.parent_run_id = parent.job_id;
+  a.workflow_job = "compile";
+  auto b = a;
+  b.job_id = idAfter(a.job_id);
+  b.workflow_job = "package";
+  b.needs = {a.job_id};
+  const std::vector<ckgit::CiJobRequest> jobs{a, b};
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent, jobs);
+  const auto loaded = ckgit::loadCiWorkflowJobs(fixture.state, "demo", parent.job_id);
+  require(loaded.size() == 2 && loaded[1].needs == b.needs, "immutable graph round trip");
+  require(ckgit::loadCiRun(fixture.state, "demo", parent.job_id)->status == ckgit::CiRunStatus::Pending,
+          "parent visible immediately");
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent, jobs);
+  // Model process termination immediately after the durable journal commit:
+  // none of the materialized run or queue records survived.
+  const auto queue = ckgit::ensureCiQueueDirectories(fixture.state);
+  for (const auto& job : jobs) {
+    std::filesystem::remove(queue.spool / (job.job_id + ".ini"));
+    std::filesystem::remove_all(fixture.state / "ci/runs/demo" / job.job_id);
+  }
+  std::filesystem::remove_all(fixture.state / "ci/runs/demo" / parent.job_id);
+  ckgit::CiClaimOptions runner;
+  runner.protocol_version = 2;
+  auto claim = ckgit::claimCiJob(fixture.state, runner);
+  require(claim && claim->job.job_id == a.job_id, "claim recovers incomplete graph materialization");
+  require(ckgit::loadCiWorkflowJobs(fixture.state, "demo", parent.job_id).size() == 2,
+          "historical graph restored from journal");
+  auto changed = jobs;
+  changed[1].needs.clear();
+  bool refused = false;
+  try { ckgit::enqueueCiWorkflowJobs(fixture.state, parent, changed); }
+  catch (const std::exception&) { refused = true; }
+  require(refused, "published graph cannot be replaced");
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  require(ckgit::loadCiRun(fixture.state, "demo", parent.job_id)->status == ckgit::CiRunStatus::Running,
+          "parent summarizes active lease");
+  auto finished = *ckgit::loadCiRun(fixture.state, "demo", a.job_id);
+  finished.status = ckgit::CiRunStatus::Success;
+  ckgit::writeCiRunRecord(fixture.state, finished);
+  ckgit::releaseCiClaim(fixture.state, a.job_id, claim->lease.token);
+  claim = ckgit::claimCiJob(fixture.state, runner);
+  require(claim && claim->job.job_id == b.job_id, "recovered dependency becomes runnable");
+  finished = *ckgit::loadCiRun(fixture.state, "demo", b.job_id);
+  finished.status = ckgit::CiRunStatus::Failure;
+  ckgit::writeCiRunRecord(fixture.state, finished);
+  ckgit::releaseCiClaim(fixture.state, b.job_id, claim->lease.token);
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  const auto summary = ckgit::loadCiRun(fixture.state, "demo", parent.job_id);
+  require(summary && summary->status == ckgit::CiRunStatus::Failure && summary->detail == "2/2 jobs completed",
+          "parent summarizes all children, including failure");
+  require(!std::filesystem::exists(fixture.state / "ci/groups" / (parent.job_id + ".ini")),
+          "terminal group retires active recovery journal");
+  require(ckgit::loadCiWorkflowJobs(fixture.state, "demo", parent.job_id).size() == 2,
+          "historical child mapping remains after completion");
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent, jobs);
+  require(!ckgit::claimCiJob(fixture.state, runner), "repeated enqueue cannot rerun completed children");
+}
+
+void testWorkflowRetentionAndRemoval() {
+  Fixture fixture;
+  const auto parent = sampleJob(ckgit::generateCiId());
+  auto a = parent;
+  a.job_id = idAfter(parent.job_id);
+  a.parent_run_id = parent.job_id;
+  a.workflow_job = "linux";
+  auto b = a;
+  b.job_id = idAfter(a.job_id);
+  b.workflow_job = "windows";
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent, {a, b});
+  ckgit::CiArtifactSweepOptions sweep;
+  sweep.runs_keep = 1;
+  ckgit::sweepCiArtifacts(fixture.state, sweep);
+  for (const auto& id : {parent.job_id, a.job_id, b.job_id})
+    require(ckgit::loadCiRun(fixture.state, "demo", id).has_value(), "retention counts a workflow as one run");
+  auto newer = sampleJob(idAfter(b.job_id));
+  ckgit::enqueueCiJob(fixture.state, newer);
+  ckgit::sweepCiArtifacts(fixture.state, sweep);
+  require(ckgit::loadCiRun(fixture.state, "demo", parent.job_id).has_value(), "old active workflow survives pruning");
+  for (const auto& child : {a, b}) {
+    auto record = *ckgit::loadCiRun(fixture.state, "demo", child.job_id);
+    record.status = ckgit::CiRunStatus::Success;
+    ckgit::writeCiRunRecord(fixture.state, record);
+  }
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  ckgit::sweepCiArtifacts(fixture.state, sweep);
+  require(ckgit::loadCiRun(fixture.state, "demo", parent.job_id).has_value(), "unpublished graph survives retention");
+  const auto marker = fixture.state / "ci/runs/demo" / parent.job_id / "outputs-committed";
+  std::ofstream(marker) << parent.commit_id << "\n";
+  chmod(marker.c_str(), 0600);
+  ckgit::sweepCiArtifacts(fixture.state, sweep);
+  for (const auto& id : {parent.job_id, a.job_id, b.job_id})
+    require(!ckgit::loadCiRun(fixture.state, "demo", id), "completed old workflow pruned with all children");
+  // Deleting a project cannot leave a journal that re-creates its run history.
+  auto next = sampleJob(idAfter(newer.job_id));
+  a.job_id = idAfter(next.job_id);
+  a.parent_run_id = next.job_id;
+  ckgit::enqueueCiWorkflowJobs(fixture.state, next, {a});
+  ckgit::removeProjectCi(fixture.state, "demo");
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  require(ckgit::loadCiRuns(fixture.state, "demo").empty(), "deleted project is not resurrected by recovery");
+  require(!std::filesystem::exists(fixture.state / "ci/spool" / (a.job_id + ".ini")), "deleted child removed from queue");
+}
+
+void testSupersededPublication() {
+  Fixture fixture;
+  const auto parent = sampleJob(ckgit::generateCiId());
+  auto child = parent;
+  child.job_id = idAfter(parent.job_id);
+  child.parent_run_id = parent.job_id;
+  child.workflow_job = "build";
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent, {child});
+  auto result = *ckgit::loadCiRun(fixture.state, "demo", child.job_id);
+  result.status = ckgit::CiRunStatus::Success;
+  ckgit::writeCiRunRecord(fixture.state, result);
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  auto newer = sampleJob(idAfter(child.job_id));
+  newer.auto_cancel = true;
+  ckgit::enqueueCiJob(fixture.state, newer);
+  require(ckgit::isCiCancelRequested(fixture.state, "demo", parent.job_id),
+          "new push supersedes an older workflow still awaiting publication");
+}
+
 // R0: a job queued by the hook wakes a waiting runner at once, without the
 // runner reading the spool on a timer.
 void testDirectoryWatchSeesQueuedJob() {
@@ -448,6 +679,120 @@ void testCommitVerifiesStagedOutputs() {
 
 // R2b: an older run never replaces a newer run's live Pages site, and a site
 // can arrive as a staged tar (the remote path).
+void testChildOutputsWaitForParent() {
+  Fixture fixture;
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  policy.pages_root = fixture.root / "pages";
+  const std::string workflow =
+      "version: 2\npages: {path: public, job: linux}\njobs:\n"
+      "  - name: linux\n    steps:\n      - run: [make]\n"
+      "    artifacts: {name: linux-package, paths: [out]}\n";
+  auto job = preparedJob(ckgit::generateCiId(), "refs/tags/v2", false, workflow);
+  job.job.parent_run_id = "parent";
+  job.job.workflow_job = "linux";
+  job.workflow = ckgit::selectCiWorkflowJob(job.workflow, "linux");
+  const std::string bytes = "verified-linux-release-output";
+  ckgit::appendCiStagedUpload(fixture.state, "demo", job.job.job_id, ckgit::CiUploadKind::kAsset,
+                              "linux-package", bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1024);
+  const auto stored = ckgit::commitCiRun(policy, job, finishedRecord(job, ckgit::CiRunStatus::Success),
+                                       {{"linux-package", true, 0, ""}});
+  require(stored.artifacts.size() == 1 && stored.artifacts.front().sha256 == ckgit::sha256Hex(bytes),
+          "child release output is verified and retained");
+  require(ckgit::readCiArtifact(fixture.state, "demo", job.job.job_id, "linux-package", 1024) == bytes,
+          "child retains the exact release bytes");
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "a child cannot publish a partial release");
+  auto site_parent = preparedJob(ckgit::generateCiId(), "refs/heads/main", true, workflow);
+  auto site_job = site_parent;
+  site_job.job.job_id = idAfter(site_parent.job.job_id);
+  site_job.job.parent_run_id = site_parent.job.job_id;
+  site_job.job.workflow_job = "linux";
+  site_job.workflow = ckgit::selectCiWorkflowJob(site_job.workflow, "linux");
+  ckgit::enqueueCiWorkflowJobs(fixture.state, site_parent.job, {site_job.job});
+  const auto site = fixture.root / "site";
+  std::filesystem::create_directory(site);
+  std::ofstream(site / "index.html") << "site generated by Linux";
+  ckgit::commitCiRun(policy, site_job, finishedRecord(site_job, ckgit::CiRunStatus::Success), {}, site);
+  require(!ckgit::currentPagesVersion(policy.pages_root, "demo"), "a child cannot publish the site independently");
+  std::filesystem::remove_all(site);
+  ckgit::sweepCiArtifacts(fixture.state, {});
+  const auto staged = ckgit::listCiStagedUploads(fixture.state, "demo", site_job.job.job_id);
+  require(staged.size() == 1 && staged.front().kind == ckgit::CiUploadKind::kPages && staged.front().held > 0,
+          "child site survives scratch cleanup and retention while the parent needs it");
+  const auto published = ckgit::finalizeCiWorkflowResults(policy, site_parent);
+  require(published && published->status == ckgit::CiRunStatus::Success &&
+          ckgit::currentPagesVersion(policy.pages_root, "demo") == site_parent.job.job_id,
+          "parent publishes the preserved Pages output under its own run ID");
+  require(ckgit::listCiStagedUploads(fixture.state, "demo", site_job.job.job_id).empty(),
+          "parent publication cleans the child staging");
+}
+
+void testCombinedWorkflowRelease() {
+  Fixture fixture;
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  const std::string workflow =
+      "version: 2\njobs:\n"
+      "  - name: linux\n    steps:\n      - run: [make]\n"
+      "    artifacts: {name: linux-package, paths: [out]}\n"
+      "  - name: windows\n    steps:\n      - run: [cmake]\n"
+      "    artifacts: {name: windows-package, paths: [out]}\n";
+  auto parent = preparedJob(ckgit::generateCiId(), "refs/tags/v2", false, workflow);
+  auto linux = parent;
+  linux.job.job_id = idAfter(parent.job.job_id);
+  linux.job.parent_run_id = parent.job.job_id;
+  linux.job.workflow_job = "linux";
+  linux.workflow = ckgit::selectCiWorkflowJob(parent.workflow, "linux");
+  auto windows = linux;
+  windows.job.job_id = idAfter(linux.job.job_id);
+  windows.job.workflow_job = "windows";
+  windows.workflow = ckgit::selectCiWorkflowJob(parent.workflow, "windows");
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent.job, {linux.job, windows.job});
+  require(!ckgit::finalizeCiWorkflowResults(policy, parent), "unfinished workflow cannot publish");
+  const auto finish = [&](const ckgit::CiPreparedJob& child, const std::string& name, const std::string& bytes) {
+    ckgit::appendCiStagedUpload(fixture.state, "demo", child.job.job_id, ckgit::CiUploadKind::kAsset,
+                                name, bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1024);
+    ckgit::commitCiRun(policy, child, finishedRecord(child, ckgit::CiRunStatus::Success), {{name, true, 0, ""}});
+  };
+  finish(linux, "linux-package", "linux-bytes");
+  require(!ckgit::finalizeCiWorkflowResults(policy, parent) && ckgit::loadReleases(fixture.state, "demo").empty(),
+          "one successful platform does not expose a partial release");
+  finish(windows, "windows-package", "windows-bytes");
+  const auto result = ckgit::finalizeCiWorkflowResults(policy, parent);
+  require(result && result->status == ckgit::CiRunStatus::Success, "completed graph publishes successfully");
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 1 && releases[0].assets.size() == 2, "one release contains both platforms");
+  require(ckgit::readCiReleaseAsset(fixture.state, "demo", "v2", "linux-package", 1024) == "linux-bytes" &&
+          ckgit::readCiReleaseAsset(fixture.state, "demo", "v2", "windows-package", 1024) == "windows-bytes",
+          "published platform bytes match the child results");
+  require(ckgit::finalizeCiWorkflowResults(policy, parent)->status == ckgit::CiRunStatus::Success,
+          "repeated finalization is idempotent");
+  require(ckgit::requestCiCancel(fixture.state, "demo", parent.job.job_id) &&
+          !ckgit::isCiCancelRequested(fixture.state, "demo", parent.job.job_id),
+          "cancelling an already published parent is harmless");
+  // A damaged result from either platform prevents publication of the whole
+  // new release; the prior successful tag remains available.
+  parent.job.job_id = idAfter(windows.job.job_id);
+  parent.job.ref = "refs/tags/v3";
+  parent.release_tag = "v3";
+  linux.job.job_id = idAfter(parent.job.job_id);
+  windows.job.job_id = idAfter(linux.job.job_id);
+  for (auto* child : {&linux, &windows}) {
+    child->job.parent_run_id = parent.job.job_id;
+    child->job.ref = parent.job.ref;
+    child->release_tag = "v3";
+  }
+  ckgit::enqueueCiWorkflowJobs(fixture.state, parent.job, {linux.job, windows.job});
+  finish(linux, "linux-package", "linux-bytes");
+  finish(windows, "windows-package", "windows-bytes");
+  std::ofstream(fixture.state / "ci/runs/demo" / windows.job.job_id / "artifacts/windows-package.tar") << "damaged";
+  const auto damaged = ckgit::finalizeCiWorkflowResults(policy, parent);
+  require(damaged && damaged->status == ckgit::CiRunStatus::Error, "corrupt child prevents successful release");
+  const auto remaining = ckgit::loadReleases(fixture.state, "demo");
+  require(remaining.size() == 1 && remaining.front().tag == "v2", "failed new release leaves prior tags intact");
+
+}
+
 void testCancelledSuccessDoesNotPublishPages() {
   Fixture fixture;
   ckgit::CiCommitPolicy policy;
@@ -577,7 +922,8 @@ void testRunnerCommandGrammar() {
   require(put.has_value() && put->total == 10 && put->kind == "artifact", "put parses");
   require(ckgit::formatCiRunnerCommand(*put) == "ckgit-runner 1 put " + id + " " + token + " artifact bundle 0 10 " + sha,
           "a command formats back to its line");
-  require(!parse("ckgit-runner 2 claim 60").has_value(), "another protocol version is refused");
+  require(parse("ckgit-runner 2 claim 60")->protocol_version == 2, "protocol 2 is accepted explicitly");
+  require(!parse("ckgit-runner 3 claim 60").has_value(), "unknown protocol version is refused");
   require(!parse("ckgit-runner 1 claim 600").has_value(), "a claim wait over the bound is refused");
   require(!parse("ckgit-runner 1 claim 060").has_value(), "a non-canonical number is refused");
   require(!parse("ckgit-runner 1 stream " + id + " short").has_value(), "a malformed token is refused");
@@ -619,6 +965,33 @@ void testProtocolRoundTrips() {
   require(remote->prepared.sisters.size() == 1 && remote->prepared.sisters[0].checkout.depth == 7,
           "a sister's resolved commit and history settings arrive");
   require(!ckgit::parseCiClaimResponse("none\n").has_value(), "none means no job");
+  prepared.workflow_text.replace(prepared.workflow_text.find("version: 1"), 10, "version: 2");
+  bool refused_distributed = false;
+  try {
+    (void)ckgit::parseCiClaimResponse(ckgit::formatCiClaimResponse(prepared, lease, policy));
+  } catch (const std::invalid_argument&) {
+    refused_distributed = true;
+  }
+  require(refused_distributed, "protocol 1 must not execute a distributed workflow as sequential jobs");
+
+
+  prepared.workflow_text =
+      "version: 2\njobs:\n  - name: linux\n    runs_on: linux\n    steps:\n      - run: [make]\n"
+      "  - name: windows\n    runs_on: windows\n    steps:\n      - run: [cmake, --build, build]\n";
+  prepared.sisters.clear();
+  prepared.job.parent_run_id = "parent-run";
+  prepared.job.workflow_job = "windows";
+  const auto child = ckgit::parseCiClaimResponse(ckgit::formatCiClaimResponse(prepared, lease, policy, 2));
+  require(child && child->prepared.workflow.jobs.size() == 1 &&
+          child->prepared.workflow.jobs.front().name == "windows" &&
+          child->prepared.job.parent_run_id == "parent-run" &&
+          child->prepared.job.runs_on == std::vector<std::string>{"windows"},
+          "protocol 2 selects exactly the assigned child and its runner labels");
+  prepared.job.workflow_job = "missing";
+  bool unknown_job = false;
+  try { (void)ckgit::parseCiClaimResponse(ckgit::formatCiClaimResponse(prepared, lease, policy, 2)); }
+  catch (const std::invalid_argument&) { unknown_job = true; }
+  require(unknown_job, "unknown child assignment is refused");
 
   ckgit::CiFinishReport report;
   report.status = ckgit::CiRunStatus::Timeout;
@@ -679,6 +1052,127 @@ std::string gateway(const ckgit::ServerConfig& config, const std::string& runner
   if (code != nullptr) *code = result;
   std::ifstream read(out_path, std::ios::binary);
   return std::string((std::istreambuf_iterator<char>(read)), std::istreambuf_iterator<char>());
+}
+
+void testProtocolVersionIsolation() {
+  Fixture fixture;
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  auto child = sampleJob(ckgit::generateCiId());
+  child.parent_run_id = "parent";
+  child.workflow_job = "build";
+  ckgit::enqueueCiJob(fixture.state, child);
+  require(gateway(config, "worker", "ckgit-runner 1 claim 0", "", fixture) == "none\n",
+          "legacy gateway claim leaves children queued");
+  require(gateway(config, "worker", "ckgit-runner 2 hello 74657374", "", fixture).find("protocol=2\n") != std::string::npos,
+          "hello acknowledges the explicitly selected protocol");
+  ckgit::CiClaimOptions options;
+  options.runner = "worker";
+  options.protocol_version = 2;
+  const auto claim = ckgit::claimCiJob(fixture.state, options);
+  require(claim.has_value(), "v2 runner can claim a child");
+  const auto tail = child.job_id + " " + claim->lease.token;
+  require(gateway(config, "worker", "ckgit-runner 1 heartbeat " + tail, "", fixture) == "lease-lost\n",
+          "child operations cannot downgrade to protocol 1");
+  require(gateway(config, "worker", "ckgit-runner 2 heartbeat " + tail, "", fixture) == "ok\n",
+          "protocol 2 renews the child lease");
+}
+
+void testGatewayDistributedRelease() {
+  Fixture fixture;
+  const std::string text =
+      "version: 2\non: {tags: [v*]}\njobs:\n"
+      "  - name: linux\n    runs_on: linux-worker\n    steps:\n      - run: [make]\n"
+      "    artifacts: {name: linux-package, paths: [out]}\n"
+      "  - name: windows\n    runs_on: windows-worker\n    steps:\n      - run: [cmake]\n"
+      "    artifacts: {name: windows-package, paths: [out]}\n";
+  const auto commit = hostProject(fixture, text);
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  auto skipped = sampleJob(ckgit::generateCiId(), "refs/heads/main");
+  skipped.commit_id = commit;
+  ckgit::enqueueCiWorkflow(fixture.state, config.repo_root / "demo.git", skipped);
+  require(gateway(config, "legacy-worker", "ckgit-runner 1 claim 0", "", fixture) == "none\n" &&
+          ckgit::loadCiRun(fixture.state, "demo", skipped.job_id)->status == ckgit::CiRunStatus::Skipped,
+          "non-triggering v2 pushes retain the ordinary skipped-run behavior");
+  auto parent = sampleJob(ckgit::generateCiId(), "refs/tags/v4");
+  parent.commit_id = commit;
+  ckgit::enqueueCiWorkflow(fixture.state, config.repo_root / "demo.git", parent);
+  const auto children = ckgit::loadCiWorkflowJobs(fixture.state, "demo", parent.job_id);
+  require(children.size() == 2, "push preparation creates a durable two-platform graph");
+  require(gateway(config, "linux-worker", "ckgit-runner 1 claim 0", "", fixture) == "none\n",
+          "legacy runner leaves the distributed graph untouched");
+  const auto linux = ckgit::parseCiClaimResponse(gateway(config, "linux-worker", "ckgit-runner 2 claim 0", "", fixture));
+  const auto windows = ckgit::parseCiClaimResponse(gateway(config, "windows-worker", "ckgit-runner 2 claim 0", "", fixture));
+  require(linux && windows && linux->prepared.job.parent_run_id == parent.job_id &&
+          windows->prepared.job.parent_run_id == parent.job_id &&
+          linux->prepared.workflow.jobs.size() == 1 && linux->prepared.workflow.jobs[0].name == "linux" &&
+          windows->prepared.workflow.jobs.size() == 1 && windows->prepared.workflow.jobs[0].name == "windows",
+          "gateway assigns different children of the same push to matching runners");
+  const auto finish = [&](const ckgit::CiRemoteJob& remote, const std::string& runner, const std::string& name) {
+    const auto tail = remote.prepared.job.job_id + " " + remote.token;
+    const auto bytes = runner + "-output";
+    const auto put = "ckgit-runner 2 put " + tail + " asset " + name + " 0 " + std::to_string(bytes.size()) +
+                     " " + ckgit::sha256Hex(bytes);
+    require(gateway(config, runner, put, bytes, fixture) == "ok " + std::to_string(bytes.size()) + "\n", "child upload accepted");
+    ckgit::CiFinishReport report;
+    report.status = ckgit::CiRunStatus::Success;
+    report.steps.push_back({"build", 0, false, false});
+    report.outputs.push_back({name, true, 0, ""});
+    const auto answer = gateway(config, runner, "ckgit-runner 2 finish " + tail,
+                                ckgit::formatCiFinishReport(report), fixture);
+    require(answer == "ok success\n", "gateway commits child and finalizes parent: " + answer);
+  };
+  finish(*linux, "linux-worker", "linux-package");
+  require(ckgit::loadReleases(fixture.state, "demo").empty(), "first platform cannot publish alone");
+  finish(*windows, "windows-worker", "windows-package");
+  const auto releases = ckgit::loadReleases(fixture.state, "demo");
+  require(releases.size() == 1 && releases[0].tag == "v4" && releases[0].assets.size() == 2,
+          "gateway completion publishes one combined release");
+  require(ckgit::loadCiRun(fixture.state, "demo", parent.job_id)->status == ckgit::CiRunStatus::Success,
+          "gateway completion finalizes the shared parent status");
+}
+
+void testGatewayRecoversPublication() {
+  Fixture fixture;
+  const auto commit = hostProject(fixture,
+      "version: 2\non: {tags: [v*]}\njobs:\n  - name: build\n    steps:\n      - run: [make]\n"
+      "    artifacts: {name: package, paths: [out]}\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  auto parent = sampleJob(ckgit::generateCiId(), "refs/tags/v5");
+  parent.commit_id = commit;
+  ckgit::enqueueCiWorkflow(fixture.state, config.repo_root / "demo.git", parent);
+  const auto child = ckgit::parseCiClaimResponse(gateway(config, "worker", "ckgit-runner 2 claim 0", "", fixture));
+  require(child.has_value(), "worker receives a child");
+  ckgit::CiCommitPolicy policy;
+  policy.state_root = fixture.state;
+  policy.repository = config.repo_root / "demo.git";
+  const std::string bytes = "recovered-package";
+  ckgit::appendCiStagedUpload(fixture.state, "demo", child->prepared.job.job_id, ckgit::CiUploadKind::kAsset,
+                              "package", bytes.size(), ckgit::sha256Hex(bytes), 0, bytes, 1024);
+  // Termination after the child's durable result but before parent publication
+  // and lease release: recovery must publish without repeating its build.
+  ckgit::commitCiRun(policy, child->prepared, finishedRecord(child->prepared, ckgit::CiRunStatus::Success),
+                     {{"package", true, 0, ""}});
+  ckgit::CiReapOptions reap;
+  reap.restarted_runner = "worker";
+  require(ckgit::reapCiLeases(fixture.state, reap).requeued.empty(), "completed child is not re-executed after restart");
+  require(ckgit::loadCiRun(fixture.state, "demo", child->prepared.job.job_id)->status == ckgit::CiRunStatus::Success,
+          "completed child status survives lease recovery");
+  ckgit::refreshCiWorkflowGroups(fixture.state);
+  auto next = sampleJob(idAfter(child->prepared.job.job_id), parent.ref);
+  next.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, next);
+  require(!ckgit::claimCiJob(fixture.state, {}), "later run cannot pass unpublished parent");
+  // Even an old runner polling the gateway causes server-side recovery.
+  gateway(config, "legacy-worker", "ckgit-runner 1 claim 0", "", fixture);
+  require(ckgit::readCiReleaseAsset(fixture.state, "demo", "v5", "package", 1024) == bytes,
+          "gateway recovers the interrupted publication from retained child bytes");
+  require(ckgit::listCiUnpublishedWorkflows(fixture.state).empty(), "recovery commits the completion marker");
 }
 
 // R4: a whole remote run through the gateway -- claim, live progress through
@@ -1031,6 +1525,11 @@ void testRunsToShow() {
 }  // namespace
 
 void testCiDistributed() {
+  testSupersededPublication();
+  testWorkflowRetentionAndRemoval();
+  testWorkflowJournalRecovery();
+  testDistributedChildScheduling();
+  testChildDependencyFailureAndCancellation();
   testDirectoryWatchSeesQueuedJob();
   testDirectoryWatchInactiveSleeps();
   testLeaseClaimRenewRelease();
@@ -1041,12 +1540,17 @@ void testCiDistributed() {
   testVersionOneJobStillClaims();
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();
+  testChildOutputsWaitForParent();
+  testCombinedWorkflowRelease();
   testPagesOrderingGuard();
   testCancelledSuccessDoesNotPublishPages();
   testClaimDelay();
   testOneRunPerRef();
   testRunnerCommandGrammar();
   testProtocolRoundTrips();
+  testGatewayRecoversPublication();
+  testGatewayDistributedRelease();
+  testProtocolVersionIsolation();
   testGatewayRun();
   testGatewayFinishesSkippedJobs();
   testRunnerKeyLine();

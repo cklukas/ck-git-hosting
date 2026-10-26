@@ -72,6 +72,10 @@ struct CiJobRequest {
   std::vector<std::string> runs_on;
   // Policy from the incoming commit; applies only to branch refs.
   bool auto_cancel = true;
+  // Version-2 child jobs share a parent run. Empty on legacy whole-workflow jobs.
+  std::string parent_run_id;
+  std::string workflow_job;
+  std::vector<std::string> needs;  // child run IDs, never names or paths
 };
 
 struct CiStepResult {
@@ -116,6 +120,8 @@ struct CiRunRecord {
   std::string detail;  // one short human-readable line (e.g. the failing step)
   std::vector<CiStepResult> steps;
   std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars
+  std::string parent_run_id;
+  std::string workflow_job;
 };
 
 // A released version: a tag with durable assets, produced by a tag build.
@@ -164,6 +170,19 @@ std::string generateCiId();
 // supersedes older queued/running jobs of this project and branch under the
 // queue lock. Tag jobs are never superseded.
 void enqueueCiJob(const std::filesystem::path& state_root, const CiJobRequest& request);
+
+// Commit a complete distributed workflow before making any child claimable.
+// A journal repairs interrupted materialization on the next claim. Repeating
+// the same parent/children is idempotent; changing an existing graph is refused.
+void enqueueCiWorkflowJobs(const std::filesystem::path& state_root, const CiJobRequest& parent,
+                           const std::vector<CiJobRequest>& children);
+std::vector<CiJobRequest> loadCiWorkflowJobs(const std::filesystem::path& state_root,
+                                          std::string_view project, std::string_view parent_run_id);
+// Recover active graphs and update their parent statuses under the queue lock.
+void refreshCiWorkflowGroups(const std::filesystem::path& state_root);
+// Terminal parents whose immutable graph has not completed result publication.
+std::vector<CiJobRequest> listCiUnpublishedWorkflows(const std::filesystem::path& state_root);
+
 
 // --- runner side ------------------------------------------------------------
 
@@ -214,6 +233,8 @@ struct CiClaim {
 };
 
 struct CiClaimOptions {
+  // Old callers cannot claim distributed children without explicitly opting in.
+  unsigned protocol_version = 1;
   std::string runner = kCiPrimaryRunnerName;
   unsigned lease_seconds = kCiDefaultLeaseSeconds;
   // Only jobs that have waited in the spool at least this long are eligible,

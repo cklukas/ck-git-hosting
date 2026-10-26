@@ -32,6 +32,8 @@ struct CiRunnerOptions {
   // Pending (see enqueueCiJob), rather than a second, disconnected record.
   // Empty generates a fresh id instead (the one-shot `run` command, and tests).
   std::string run_id;
+  std::string parent_run_id;
+  std::string workflow_job;
   unsigned attempt = 1;                  // the queued job's attempt, for the record
 
   unsigned timeout_seconds = 1800;       // per-step wall-clock budget
@@ -155,7 +157,8 @@ struct CiPreparation {
 
 // Prepares `job` from the bare repository `repository`; sisters are looked up
 // as siblings of it (<repository's parent>/<name>.git).
-CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job);
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job,
+                            bool allow_workflow_parent = false);
 
 // --- executing a job (on any runner) ----------------------------------------
 
@@ -320,6 +323,10 @@ struct CiQueuePolicy {
   bool auto_cancel = true;
 };
 CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit);
+// Queue the pushed workflow as one legacy job or a durable distributed graph.
+void enqueueCiWorkflow(const std::filesystem::path& state_root, const std::filesystem::path& repository,
+                       CiJobRequest parent);
+
 
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result
 // under the state root (a run.ini plus steps/<n>.log): prepareCiJob, then

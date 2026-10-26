@@ -72,10 +72,20 @@ COMMON_SOURCES := \
 	src/common/cli_help.cpp \
 	src/common/client_config.cpp \
 	src/common/client_state.cpp \
+	src/common/sync_lock.cpp \
+	src/common/directory_identity.cpp \
+	src/common/release_control.cpp \
+	src/common/display_format.cpp \
 	src/common/control_rpc.cpp \
+	src/common/control_transport_posix.cpp \
+	src/common/checkout_path.cpp \
+	src/common/ci_types.cpp \
 	src/common/dir_watch.cpp \
 	src/common/git_repository.cpp \
 	src/common/hash.cpp \
+	src/common/tree_file.cpp \
+	src/common/temp_directory.cpp \
+	src/common/site_file.cpp \
 	src/common/http_request.cpp \
 	src/common/http_router.cpp \
 	src/common/emoji.cpp \

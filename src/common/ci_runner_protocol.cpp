@@ -121,13 +121,14 @@ std::optional<CiRunnerCommand> parseCiRunnerCommand(std::string_view command, st
     reject("command is not a ckgit-runner operation", reason);
     return std::nullopt;
   }
-  if (tokens[1] != std::to_string(kCiRunnerProtocolVersion)) {
+  if (tokens[1] != "1" && tokens[1] != "2") {
     reject("unsupported ckgit-runner protocol version", reason);
     return std::nullopt;
   }
   const std::string_view op = tokens[2];
   const std::size_t arguments = tokens.size() - 3;
   CiRunnerCommand parsed;
+  parsed.protocol_version = tokens[1] == "2" ? 2 : 1;
   const auto jobAndToken = [&](std::size_t first) {
     if (!isValidCiId(tokens[first]) || !isLeaseToken(tokens[first + 1])) return false;
     parsed.job_id = std::string(tokens[first]);
@@ -177,7 +178,9 @@ std::optional<CiRunnerCommand> parseCiRunnerCommand(std::string_view command, st
 }
 
 std::string formatCiRunnerCommand(const CiRunnerCommand& command) {
-  std::string line = "ckgit-runner " + std::to_string(kCiRunnerProtocolVersion) + " ";
+  if (command.protocol_version != 1 && command.protocol_version != 2)
+    throw std::invalid_argument("unsupported runner protocol version");
+  std::string line = "ckgit-runner " + std::to_string(command.protocol_version) + " ";
   switch (command.op) {
     case CiRunnerOp::kHello: return line + "hello " + command.version_hex;
     case CiRunnerOp::kClaim: return line + "claim " + std::to_string(command.wait_seconds);
@@ -194,9 +197,14 @@ std::string formatCiRunnerCommand(const CiRunnerCommand& command) {
   return line;
 }
 
-std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& lease, const CiRemotePolicy& policy) {
+std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& lease, const CiRemotePolicy& policy,
+                                  unsigned protocol_version) {
+  if (protocol_version != 1 && protocol_version != 2)
+    throw std::invalid_argument("unsupported runner claim protocol");
   const CiJobRequest& job = prepared.job;
-  std::string out = "job\n";
+  if (protocol_version == 1 && !job.parent_run_id.empty())
+    throw std::invalid_argument("protocol 1 cannot carry a child assignment");
+  std::string out = protocol_version == 2 ? "job2\n" : "job\n";
   out += "job_id=" + job.job_id + "\n";
   out += "project=" + job.project_name + "\n";
   out += "ref_hex=" + hexEncode(job.ref) + "\n";
@@ -213,6 +221,10 @@ std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& 
   out += "sister_count=" + std::to_string(prepared.sisters.size()) + "\n";
   for (const CiResolvedSister& sister : prepared.sisters) out += "sister=" + sister.name + " " + sister.commit + "\n";
   out += "workflow_hex=" + hexEncode(prepared.workflow_text) + "\n";
+  if (protocol_version == 2) {
+    out += "parent_run_id=" + job.parent_run_id + "\n";
+    out += "workflow_job=" + job.workflow_job + "\n";
+  }
   return out;
 }
 
@@ -220,7 +232,8 @@ std::optional<CiRemoteJob> parseCiClaimResponse(std::string_view response) {
   if (response == "none\n") return std::nullopt;
   if (response.size() > kMaximumCiClaimResponseBytes) throw std::invalid_argument("claim response too large");
   const std::vector<std::string_view> lines = splitLines(response);
-  if (lines.size() < 16 || lines[0] != "job") throw std::invalid_argument("malformed claim response");
+  const bool v2 = !lines.empty() && lines[0] == "job2";
+  if (lines.size() < (v2 ? 18u : 16u) || (!v2 && lines[0] != "job")) throw std::invalid_argument("malformed claim response");
   CiRemoteJob remote;
   CiPreparedJob& prepared = remote.prepared;
   CiJobRequest& job = prepared.job;
@@ -241,7 +254,7 @@ std::optional<CiRemoteJob> parseCiClaimResponse(std::string_view response) {
   remote.policy.artifact_max_bytes = number(field(lines[12], "artifact_max_bytes="), "artifact cap");
   remote.policy.allow_network = field(lines[13], "allow_network=") == "1";
   const std::uint64_t sisters = number(field(lines[14], "sister_count="), "sister count");
-  if (sisters > kMaximumCiSisters || lines.size() != 16 + sisters) throw std::invalid_argument("malformed sister list");
+  if (sisters > kMaximumCiSisters || lines.size() != (v2 ? 18u : 16u) + sisters) throw std::invalid_argument("malformed sister list");
   std::vector<CiResolvedSister> resolved;
   for (std::uint64_t index = 0; index < sisters; ++index) {
     const std::string_view value = field(lines[15 + index], "sister=");
@@ -260,6 +273,18 @@ std::optional<CiRemoteJob> parseCiClaimResponse(std::string_view response) {
     throw std::invalid_argument("claim response contains invalid data");
   }
   prepared.workflow = parseCiWorkflow(prepared.workflow_text);
+  if (v2) {
+    job.parent_run_id = std::string(field(lines[16 + sisters], "parent_run_id="));
+    job.workflow_job = std::string(field(lines[17 + sisters], "workflow_job="));
+  }
+  if (prepared.workflow.version == 2) {
+    if (!v2 || !isValidCiId(job.parent_run_id) || job.parent_run_id == job.job_id || job.workflow_job.empty())
+      throw std::invalid_argument("distributed workflow requires a protocol-2 child assignment");
+    prepared.workflow = selectCiWorkflowJob(std::move(prepared.workflow), job.workflow_job);
+    job.runs_on = prepared.workflow.runs_on;
+  } else if (!job.parent_run_id.empty() || !job.workflow_job.empty()) {
+    throw std::invalid_argument("legacy workflow cannot carry a child assignment");
+  }
   // Each sister's history settings come from the workflow itself.
   for (CiResolvedSister& sister : resolved) {
     for (const CiSister& declared : prepared.workflow.sisters) {

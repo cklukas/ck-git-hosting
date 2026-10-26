@@ -405,7 +405,7 @@ server configuration the gateway reads):
 restrict,command="/usr/bin/ck-git-shell --client-id uconsole --repo-root /srv/ck-git-hosting/repos --control-socket /run/ck-git-hosting/control.sock --state-root /var/lib/ck-git-hosting/state --runner-config /etc/ck-git-hosting/server.ini" ssh-ed25519 AAAA... uconsole
 ```
 
-With it, `ck-git-shell` accepts **only** the runner protocol, version 1, and
+With it, `ck-git-shell` accepts **only** the runner protocol, versions 1 and 2, and
 executes `ck-ci-runnerd gateway` with the validated command line; Git services
 and `ckgit-rpc` are refused. A device key (no `--runner-config`) refuses every
 runner operation. The client id `primary` is reserved for the server's own
@@ -421,6 +421,20 @@ ckgit-runner 1 put <job-id> <token> <kind> <name> <offset> <total> <sha256>
 ckgit-runner 1 finish <job-id> <token>
 ckgit-runner 1 abandon <job-id> <token>
 ```
+
+Version 2 uses the same operations with `ckgit-runner 2`. `hello` echoes the
+explicitly requested version. Its claim response starts with `job2` and appends
+`parent_run_id` and `workflow_job` after `workflow_hex`. A version-2 workflow
+requires a valid parent ID and an existing job name; the runner selects exactly
+that job from the original workflow. Legacy workflows carry empty assignment
+fields. Version-1 claims exclude distributed children, and version-1 requests
+cannot operate on a child lease even when they supply its token.
+
+Push processing creates distributed graphs, and the gateway prepares one
+assigned child and collects the parent results at completion. Claim polling
+also retries interrupted parent publication. The production Windows runner
+and deployment qualification remain in progress; gateway integration tests
+are not yet the rpi4-to-Windows end-to-end qualification.
 
 Tokens are unquoted `[A-Za-z0-9._-]`; a command is at most 1024 bytes and ten
 tokens. `wait-seconds` is a canonical decimal from 0 to 120; `job-id` is a CI

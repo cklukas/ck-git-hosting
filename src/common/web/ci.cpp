@@ -39,52 +39,6 @@ std::string_view stepIcon(const CiStepResult& step) {
 
 }  // namespace
 
-CiRunDisplay ciRunDisplay(const CiRunRecord& run) {
-  return ciRunDisplayAt(run, static_cast<std::uint64_t>(std::time(nullptr)));
-}
-
-CiRunDisplay ciRunDisplayAt(const CiRunRecord& run, std::uint64_t now) {
-  CiRunDisplay display;
-  display.icon = ciRunStatusIcon(run.status);
-  display.name = ciRunStatusName(run.status);
-  display.seconds = 0;
-  display.active = false;
-  if (run.status == CiRunStatus::Running) {
-    const std::uint64_t beat =
-        run.heartbeat_epoch_seconds ? run.heartbeat_epoch_seconds : run.started_epoch_seconds;
-    if (beat != 0 && now > beat + kCiRunStaleSeconds) {
-      // The runner stopped reporting: show it as interrupted, not a live clock.
-      display.icon = "\xf0\x9f\x92\xa4";  // 💤
-      display.name = "interrupted";
-      display.seconds = beat > run.started_epoch_seconds ? beat - run.started_epoch_seconds : 0;
-    } else {
-      display.name = "running";
-      display.seconds =
-          run.started_epoch_seconds && now >= run.started_epoch_seconds ? now - run.started_epoch_seconds : 0;
-      display.active = true;
-    }
-    return display;
-  }
-  if (run.status == CiRunStatus::Pending) {
-    display.active = true;  // queued: keep the view live until it starts
-    return display;
-  }
-  if (run.finished_epoch_seconds >= run.started_epoch_seconds && run.started_epoch_seconds != 0) {
-    display.seconds = run.finished_epoch_seconds - run.started_epoch_seconds;
-  }
-  return display;
-}
-
-bool ciAnyActiveRun(const std::vector<CiRunRecord>& runs) {
-  return std::any_of(runs.begin(), runs.end(), [](const CiRunRecord& run) { return ciRunDisplay(run).active; });
-}
-
-std::string ciRunTiming(const CiRunDisplay& display) {
-  if (display.name == "pending") return {};
-  if (display.seconds == 0 && !display.active) return {};
-  return formatDuration(display.seconds) + (display.seconds < 3600 ? " min" : "");
-}
-
 // " on uconsole · attempt 2" after a status badge: where the run executes.
 std::string runnerNote(const CiRunRecord& run) {
   std::string note;

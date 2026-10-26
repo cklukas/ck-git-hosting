@@ -49,30 +49,6 @@ void setAboutServerComponents(std::vector<RuntimeComponent> components) {
   t_about_components = std::move(components);
 }
 
-std::string formatUtcTimestamp(std::uint64_t epoch) {
-  const auto timestamp = static_cast<std::time_t>(epoch); std::tm utc{}; char buffer[32]{};
-  if (!gmtime_r(&timestamp, &utc) || !std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M UTC", &utc)) return {};
-  return buffer;
-}
-std::string relativeTime(std::uint64_t epoch) {
-  return relativeTimeAt(epoch, static_cast<std::uint64_t>(std::time(nullptr)));
-}
-std::string relativeTimeAt(std::uint64_t epoch, std::uint64_t now) {
-  if (epoch > now) return "in the future";
-  auto delta = now - epoch;
-  if (delta < 60) return "just now";
-  for (const auto& unit : {std::pair<std::uint64_t, const char*>{31536000, "year"}, {2592000, "month"},
-                          {86400, "day"}, {3600, "hour"}, {60, "minute"}})
-    if (delta >= unit.first) { auto n = delta / unit.first; return std::to_string(n) + " " + unit.second + (n == 1 ? " ago" : "s ago"); }
-  return "just now";
-}
-std::string formatBytes(std::uint64_t bytes) {
-  if (bytes < 1024) return std::to_string(bytes) + " B";
-  double n = bytes; std::size_t unit = 0;
-  while (n >= 1024 && unit < 3) { n /= 1024; ++unit; }
-  const char* units[]{"B", "KiB", "MiB", "GiB"};
-  std::ostringstream text; text << std::fixed << std::setprecision(1) << n << " " << units[unit]; return text.str();
-}
 std::string escapePre(std::string_view value) {
   std::string result;
   std::size_t start = 0;

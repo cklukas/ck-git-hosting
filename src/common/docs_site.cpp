@@ -29,9 +29,8 @@
 #include <set>
 
 #include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include "ckgit/tree_file.hpp"
+#include "ckgit/temp_directory.hpp"
 
 #include "ckgit/ci_workflow.hpp"
 #include "ckgit/cli_help.hpp"
@@ -625,94 +624,14 @@ std::optional<std::string> normalizePath(std::string_view path) {
 // and the read. Only the root itself may be reached through a link (`/tmp` on
 // macOS is one); it is where the user pointed ckdocs.
 
-class Descriptor {
- public:
-  explicit Descriptor(int value) : value_(value) {}
-  ~Descriptor() {
-    if (value_ >= 0) close(value_);
-  }
-  Descriptor(const Descriptor&) = delete;
-  Descriptor& operator=(const Descriptor&) = delete;
-  Descriptor(Descriptor&& other) noexcept : value_(std::exchange(other.value_, -1)) {}
-  Descriptor& operator=(Descriptor&& other) noexcept {
-    if (this != &other) {
-      if (value_ >= 0) close(value_);
-      value_ = std::exchange(other.value_, -1);
-    }
-    return *this;
-  }
-  int get() const { return value_; }
-  explicit operator bool() const { return value_ >= 0; }
-
- private:
-  int value_;
-};
-
-enum class TreeFileStatus {
-  Ok,
-  Missing,     // no such file, or a path that is not one (`..` above the root, empty)
-  NotRegular,  // a directory, a symbolic link, or a path through one, or something else
-  TooLarge,    // larger than the caller's limit
-  Unreadable,
-};
-
-struct TreeFile {
-  TreeFileStatus status = TreeFileStatus::Missing;
-  std::uintmax_t size = 0;
-  std::string content;  // only when asked for and Ok
-};
-
-// `relative` below `root`, as a regular file of at most `limit` bytes, with
-// its content when `read`.
+using platform::TreeFile;
+using platform::TreeFileStatus;
 TreeFile treeFile(const fs::path& root, std::string_view relative, std::uintmax_t limit, bool read) {
-  TreeFile result;
   const auto normalized = normalizePath(relative);
-  if (!normalized || normalized->empty()) return result;
-  const auto parts = splitPath(*normalized);
-  const auto failed = [&result](int code) {
-    result.status = code == ENOENT ? TreeFileStatus::Missing
-                    : code == ELOOP || code == ENOTDIR || code == EMLINK ? TreeFileStatus::NotRegular
-                                                                         : TreeFileStatus::Unreadable;
-    return result;
-  };
-  Descriptor directory(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  if (!directory) return failed(errno);
-  for (std::size_t index = 0; index + 1 < parts.size(); ++index) {
-    Descriptor next(::openat(directory.get(), std::string(parts[index]).c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (!next) return failed(errno);
-    directory = std::move(next);
-  }
-  // O_NONBLOCK: opening a FIFO must not wait for a writer; it is refused
-  // below like anything else that is not a regular file.
-  Descriptor file(::openat(directory.get(), std::string(parts.back()).c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
-  if (!file) return failed(errno);
-  struct stat status {};
-  if (::fstat(file.get(), &status) != 0) return failed(errno);
-  if (!S_ISREG(status.st_mode)) {
-    result.status = TreeFileStatus::NotRegular;
-    return result;
-  }
-  result.size = static_cast<std::uintmax_t>(status.st_size);
-  if (result.size > limit) {
-    result.status = TreeFileStatus::TooLarge;
-    return result;
-  }
-  if (read) {
-    result.content.resize(static_cast<std::size_t>(result.size));
-    std::size_t done = 0;
-    while (done < result.content.size()) {
-      const auto count = ::read(file.get(), result.content.data() + done, result.content.size() - done);
-      if (count < 0 && errno == EINTR) continue;
-      if (count <= 0) {  // an error, or the file shrank while it was read
-        result.content.clear();
-        result.status = TreeFileStatus::Unreadable;
-        return result;
-      }
-      done += static_cast<std::size_t>(count);
-    }
-  }
-  result.status = TreeFileStatus::Ok;
-  return result;
+  if (!normalized || normalized->empty()) return {};
+  std::vector<std::string> parts;
+  for (const auto part : splitPath(*normalized)) parts.emplace_back(part);
+  return platform::readTreeFile(root, parts, limit, read, true);
 }
 
 // Whether `relative` is a regular file of the tree, reached without links.
@@ -2926,11 +2845,7 @@ class OutputTree {
       if (!empty && !marked) siteError("output directory '" + out_.string() + "' exists and was not written by ckdocs; refusing to touch it");
       if (!empty && !clean) siteError("output directory '" + out_.string() + "' already holds a site; use --clean to replace it");
     }
-    auto pattern = (out_.parent_path() / (out_.filename().string() + ".tmp-XXXXXX")).string();
-    std::vector<char> writable(pattern.begin(), pattern.end());
-    writable.push_back('\0');
-    if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory beside '" + out_.string() + "'");
-    temporary_.path = writable.data();
+    temporary_.path = createTempDirectory(out_.parent_path(), out_.filename().string() + ".tmp-");
   }
 
   // Writes one file at its output-relative path; the Pages size and entry
@@ -3745,11 +3660,8 @@ fs::path extractRef(const fs::path& root, const DocsSiteEntry& entry, std::share
     unavailable();
   }
   if (!scratch) {
-    auto pattern = (fs::temp_directory_path() / "ckdocs-refs-XXXXXX").string();
-    std::vector<char> writable(pattern.begin(), pattern.end());
-    writable.push_back('\0');
-    if (mkdtemp(writable.data()) == nullptr) siteError("cannot create a temporary directory for ref trees");
-    scratch = std::shared_ptr<const fs::path>(new fs::path(writable.data()), [](const fs::path* path) {
+    const auto temporary = createTempDirectory(fs::temp_directory_path(), "ckdocs-refs-");
+    scratch = std::shared_ptr<const fs::path>(new fs::path(temporary), [](const fs::path* path) {
       std::error_code ignored;
       fs::remove_all(*path, ignored);
       delete path;

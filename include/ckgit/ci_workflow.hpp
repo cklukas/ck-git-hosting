@@ -24,7 +24,7 @@ namespace ckgit {
 //
 // The supported subset, by example:
 //
-//   version: 1                     # required, must be 1
+//   version: 1                     # required; 1 = sequential, 2 = distributed
 //   on: { branches: [main] }       # optional; default = the repo default branch
 //   env: { BUILD_ROOT: /tmp/ck }   # optional; fixed key=value, no interpolation
 //   jobs:                          # required, non-empty, run in listed order
@@ -36,6 +36,11 @@ namespace ckgit {
 //           run: make check        # a scalar is run with `sh -ec`
 //         - script: |              # a block scalar is a multi-line `sh -ec` script
 //             make docs
+//
+// Version 2 additionally accepts per-job runs_on and needs (a list of job
+// names), and a shell on script steps (sh, powershell, pwsh). Top-level
+// runs_on supplies job defaults. Empty needs means independent execution;
+// unknown dependencies, self dependencies and cycles are rejected.
 //
 // Both flow (`{a: b}`, `[a, b]`) and block (`key:` / `- item`) styles are
 // accepted for mappings and sequences; scalars may be plain, single-quoted, or
@@ -99,6 +104,9 @@ struct CiStep {
   std::vector<std::string> argv;  // set for the list `run:` form
   std::string script;             // set for the scalar `run:` / block `script:` form
 
+  // Version 2 only: empty selects the runner platform default.
+  std::string shell;  // sh, powershell, or pwsh; illegal with exact argv
+
   bool usesShell() const { return argv.empty(); }
 };
 
@@ -119,6 +127,9 @@ struct CiJob {
   CiEnv env;
   std::vector<CiStep> steps;
   std::optional<CiArtifact> artifact;
+  // Version 2: independently placed jobs; empty needs means runnable immediately.
+  std::vector<std::string> runs_on;
+  std::vector<std::string> needs;
 };
 
 // How much Git history a checkout carries. Every checkout is a shallow Git
@@ -192,13 +203,18 @@ struct CiWorkflow {
   // directory (relative to the checkout) whose contents become the project's
   // Pages site. Empty means the workflow publishes no site.
   std::optional<std::string> pages_path;
+  std::string pages_job;  // required Pages producer in version 2; empty in version 1
 };
 
 // Parses the whole `.ckgit/ci.yml` content. Throws std::length_error when a
 // documented bound is exceeded and std::runtime_error when the content is
 // outside the supported subset or otherwise malformed. On success every field
-// is validated: version == 1, at least one job, unique job names, each job has
+// is validated: version is 1 or 2, at least one job, unique job names, each job has
 // at least one step, and each step has exactly one execution form.
 CiWorkflow parseCiWorkflow(std::string_view content);
+
+// Reduce a validated version-2 workflow to precisely the assigned job.
+// The original workflow text remains authoritative for wire transport.
+CiWorkflow selectCiWorkflowJob(CiWorkflow workflow, std::string_view name);
 
 }  // namespace ckgit

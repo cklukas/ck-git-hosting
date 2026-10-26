@@ -23,6 +23,7 @@
 #include "ckgit/ci_gateway.hpp"
 #include "ckgit/ci_remote.hpp"
 #include "ckgit/ci_runner.hpp"
+#include "ckgit/ci_results.hpp"
 #include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
@@ -185,15 +186,29 @@ int serve(const std::filesystem::path& config_path, bool once) {
     }
   };
 
+  ckgit::CiCommitPolicy publication;
+  publication.state_root = state_root;
+  publication.pages_root = config.pages_root.value_or(std::filesystem::path{});
+  publication.pages_keep_versions = config.pages_keep_versions.value_or(3);
+  publication.artifact_retention_days = config.ci_artifact_retention_days.value_or(7);
+  publication.artifact_max_retention_days = config.ci_artifact_max_retention_days.value_or(90);
+  publication.artifact_max_bytes = config.ci_artifact_max_bytes.value_or(static_cast<unsigned long long>(256) << 20);
   bool warned_degraded = false;
   bool warned_loopback = false;
   bool warned_unmasked = false;
   while (g_stop == 0) {
     reapLeases(false);
+    try {
+      for (const auto& error : ckgit::recoverCiWorkflowResults(publication, repo_root))
+        std::cerr << "ck-ci-runnerd: workflow publication: " << error << "\n";
+    } catch (const std::exception& error) {
+      std::cerr << "ck-ci-runnerd: workflow recovery: " << error.what() << "\n";
+    }
     std::optional<ckgit::CiJobRequest> job;
     std::string lease_token;
     try {
       ckgit::CiClaimOptions claim_options;
+      claim_options.protocol_version = 2;
       claim_options.labels = config.ci_runner_labels;
       claim_options.lease_seconds = lease_seconds;
       claim_options.min_age = claim_delay;
@@ -224,6 +239,8 @@ int serve(const std::filesystem::path& config_path, bool once) {
     options.ref = job->ref;
     options.commit_id = job->commit_id;
     options.run_id = job->job_id;
+    options.parent_run_id = job->parent_run_id;
+    options.workflow_job = job->workflow_job;
     options.attempt = job->attempt;
     options.state_root = state_root;
     options.build_root = build_root;

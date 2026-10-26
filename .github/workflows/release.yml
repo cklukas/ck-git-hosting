@@ -150,9 +150,15 @@ jobs:
           path: ${{ runner.temp }}/dist/*
           if-no-files-found: error
 
+  windows:
+    needs: verify-version
+    uses: ./.github/workflows/windows.yml
+    with:
+      version: ${{ needs.verify-version.outputs.version }}
+
   publish:
     name: Publish GitHub release
-    needs: [verify-version, linux, macos, source]
+    needs: [verify-version, linux, macos, source, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -181,6 +187,7 @@ jobs:
             echo "- Linux tarballs for amd64 and arm64: \`ck-git-hosting-$version-linux-*.tar.gz\`."
             echo "- macOS client tarballs for Apple Silicon and Intel: \`ckgit-$version-macos-*.tar.gz\`."
             echo "- Source archive: \`ck-git-hosting-$version-source.tar.gz\`."
+            echo "- Windows x64 ckgit and ckdocs: portable ZIP and installers (per-user or all-users; unsigned)."
             echo "- \`SHA256SUMS\` with checksums for every published artifact."
             echo
             echo "## Install"

@@ -250,6 +250,61 @@ ProcessResult runProcess(const std::vector<std::string>& arguments, const Proces
   return result;
 }
 
+struct ManagedProcess::State {
+  pid_t child = -1;
+  std::optional<int> exit;
+};
+ManagedProcess::ManagedProcess(const std::vector<std::string>& arguments) : state_(std::make_unique<State>()) {
+  if (arguments.empty() || arguments.front().empty()) throw std::invalid_argument("empty background command");
+  std::vector<char*> argv;
+  for (const auto& argument : arguments) {
+    if (argument.find('\0') != std::string::npos) throw std::invalid_argument("NUL in background argument");
+    argv.push_back(const_cast<char*>(argument.c_str()));
+  }
+  argv.push_back(nullptr);
+  const auto child = fork();
+  if (child < 0) throw std::runtime_error("could not start background process");
+  if (child == 0) {
+    if (setsid() < 0) _exit(127);
+    const int input = open("/dev/null", O_RDONLY);
+    if (input < 0 || dup2(input, STDIN_FILENO) < 0) _exit(127);
+    if (input != STDIN_FILENO) close(input);
+    execvp(argv.front(), argv.data());
+    _exit(127);
+  }
+  state_->child = child;
+  registerActiveChild(child);
+}
+ManagedProcess::~ManagedProcess() { stop(); }
+unsigned long ManagedProcess::id() const { return static_cast<unsigned long>(state_->child); }
+std::optional<int> ManagedProcess::poll() {
+  if (state_->exit) return state_->exit;
+  int status = 0;
+  const auto result = waitpid(state_->child, &status, WNOHANG);
+  if (result == 0 || (result < 0 && errno == EINTR)) return std::nullopt;
+  if (result < 0) throw std::runtime_error("could not inspect background process");
+  state_->exit = WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 1;
+  signalProcessTree(state_->child, SIGKILL, false);
+  unregisterActiveChild(state_->child);
+  return state_->exit;
+}
+void ManagedProcess::stop() noexcept {
+  if (!state_ || state_->exit || state_->child < 0) return;
+  signalProcessTree(state_->child, SIGTERM, true);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  try {
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (poll()) return;
+      sleepBriefly();
+    }
+  } catch (...) {}
+  signalProcessTree(state_->child, SIGKILL, true);
+  int status = 0;
+  while (waitpid(state_->child, &status, 0) < 0 && errno == EINTR) {}
+  state_->exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + SIGKILL;
+  unregisterActiveChild(state_->child);
+}
+
 int spawnAttachedProcess(const std::vector<std::string>& arguments) {
   if (arguments.empty() || arguments.front().empty()) {
     throw std::invalid_argument("cannot run an empty command");

@@ -4,6 +4,7 @@
 #include "ckgit/ci_runner.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -834,7 +835,8 @@ bool ciSandboxCompiledIn() {
 #endif
 }
 
-CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job) {
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job,
+                            bool allow_workflow_parent) {
   CiPreparation result;
   CiPreparedJob prepared;
   prepared.job = job;
@@ -850,6 +852,16 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
     prepared.workflow = parseCiWorkflow(*text);
   } catch (const std::exception& error) {
     return outcome(CiRunStatus::Error, std::string("workflow: ") + error.what());
+  }
+  if (prepared.workflow.version == 2) {
+    if (!job.parent_run_id.empty()) {
+      if (!isValidCiId(job.parent_run_id) || job.parent_run_id == job.job_id)
+        return outcome(CiRunStatus::Error, "invalid workflow parent assignment");
+      try { prepared.workflow = selectCiWorkflowJob(std::move(prepared.workflow), job.workflow_job); }
+      catch (const std::exception& error) { return outcome(CiRunStatus::Error, error.what()); }
+    }
+  } else if (!job.parent_run_id.empty() || !job.workflow_job.empty()) {
+    return outcome(CiRunStatus::Error, "legacy workflow cannot have a child assignment");
   }
   const CiWorkflow& workflow = prepared.workflow;
 
@@ -918,6 +930,10 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
   } catch (const std::exception& error) {
     return outcome(CiRunStatus::Error, std::string("sisters: ") + error.what());
   }
+  // Trigger and definition errors remain the same for legacy queue entries;
+  // only an actually executable distributed parent needs a child assignment.
+  if (prepared.workflow.version == 2 && job.parent_run_id.empty() && !allow_workflow_parent)
+    return outcome(CiRunStatus::Error, "distributed workflow requires a child assignment");
   result.prepared = std::move(prepared);
   return result;
 }
@@ -926,6 +942,8 @@ CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJob
                             const std::string& detail) {
   CiRunRecord record;
   record.run_id = job.job_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
@@ -949,6 +967,8 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
   const CiWorkflow& workflow = prepared.workflow;
   CiRunRecord record;
   record.run_id = job.job_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
@@ -1129,7 +1149,10 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       }
       std::vector<std::string> argv;
       if (step.usesShell()) {
-        argv = {"/bin/sh", "-ec", step.script};
+        if (step.shell.empty() || step.shell == "sh") argv = {"/bin/sh", "-ec", step.script};
+        else argv = {step.shell, "-NoProfile", "-NonInteractive", "-Command",
+                     "$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; & {\n" +
+                     step.script + "\n}; if (!$?) { exit 1 }; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }"};
       } else {
         argv = step.argv;
       }
@@ -1381,7 +1404,9 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
   policy.artifact_retention_days = options_.artifact_retention_days;
   policy.artifact_max_retention_days = options_.artifact_max_retention_days;
   policy.artifact_max_bytes = options_.artifact_max_bytes;
-  return commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
+  const auto stored = commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
+  finalizeCiParentForChild(policy, prepared_.job);
+  return stored;
 }
 
 CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit) {
@@ -1395,6 +1420,43 @@ CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, con
   return {};
 }
 
+void enqueueCiWorkflow(const std::filesystem::path& state_root, const std::filesystem::path& repository,
+                       CiJobRequest parent) {
+  const auto policy = ciWorkflowQueuePolicy(repository, parent.commit_id);
+  parent.runs_on = policy.runs_on;
+  parent.auto_cancel = policy.auto_cancel;
+  std::optional<CiWorkflow> workflow;
+  try {
+    const auto text = readWorkflowBlob(repository, parent.commit_id);
+    if (text) workflow = parseCiWorkflow(*text);
+  } catch (const std::exception&) {
+    // Preserve legacy handling of invalid definitions: the queued run gets
+    // the ordinary error record when prepared by a runner.
+  }
+  if (!workflow || workflow->version == 1) { enqueueCiJob(state_root, parent); return; }
+  const auto preparation = prepareCiJob(repository, parent, true);
+  if (!preparation.prepared) {
+    // Keep the normal queue policy (including superseding older branch runs)
+    // for skipped/error outcomes that need no distributed execution.
+    enqueueCiJob(state_root, parent);
+    return;
+  }
+  std::map<std::string, std::string> ids;
+  for (const auto& job : workflow->jobs) ids.emplace(job.name, generateCiId());
+  std::vector<CiJobRequest> children;
+  for (const auto& job : workflow->jobs) {
+    auto child = parent;
+    child.job_id = ids.at(job.name);
+    child.parent_run_id = parent.job_id;
+    child.workflow_job = job.name;
+    child.runs_on = job.runs_on;
+    child.needs.clear();
+    for (const auto& dependency : job.needs) child.needs.push_back(ids.at(dependency));
+    children.push_back(std::move(child));
+  }
+  enqueueCiWorkflowJobs(state_root, parent, children);
+}
+
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
   if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
   CiJobRequest job;
@@ -1405,6 +1467,8 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   job.client_id = kCiPrimaryRunnerName;
   job.queued_epoch_seconds = nowEpoch();
   job.attempt = options.attempt;
+  job.parent_run_id = options.parent_run_id;
+  job.workflow_job = options.workflow_job;
 
   // A cancel requested while the job was still queued ends it before anything
   // is read: no workflow, no sandbox probe, no checkout.

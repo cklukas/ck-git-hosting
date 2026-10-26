@@ -10,9 +10,13 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#ifndef _WIN32
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#include "ckgit/path_utf8.hpp"
+#include "ckgit/private_file_windows.hpp"
 
 #include "ckgit/text.hpp"
 #include "ckgit/validation.hpp"
@@ -23,14 +27,17 @@ namespace {
 constexpr std::size_t kMaximumSelectionBytes = 64 * 1024;
 constexpr std::size_t kMaximumLineBytes = 2048;
 constexpr std::size_t kMaximumSelections = 1024;
+#ifndef _WIN32
 constexpr mode_t kPrivateFileMode = 0600;
+#endif
 
 bool isAcceptableCheckoutPath(std::string_view value) {
-  return !value.empty() && value.size() <= 1024 && value.front() == '/' && isValidUtf8(value) &&
+  return !value.empty() && value.size() <= 1024 && isValidUtf8(value) && pathFromUtf8(value).is_absolute() &&
          !hasControlCharacter(value) &&
          std::isspace(static_cast<unsigned char>(value.back())) == 0;
 }
 
+#ifndef _WIN32
 void writeAll(int descriptor, std::string_view content) {
   std::size_t offset = 0;
   while (offset < content.size()) {
@@ -45,65 +52,20 @@ void writeAll(int descriptor, std::string_view content) {
   }
 }
 
+#endif
+
 std::string renderSelections(const std::map<std::string, std::filesystem::path>& selections) {
   std::string rendered = "schema_version=1\n";
   for (const auto& [project, checkout] : selections) {
     rendered += project;
     rendered += '=';
-    rendered += checkout.string();
+    rendered += pathToUtf8(checkout);
     rendered += '\n';
   }
   return rendered;
 }
 
 }  // namespace
-
-SyncLock::SyncLock(int descriptor) : descriptor_(descriptor) {}
-
-SyncLock::~SyncLock() {
-  if (descriptor_ >= 0) {
-    close(descriptor_);  // Closing releases the flock() lock.
-  }
-}
-
-SyncLock::SyncLock(SyncLock&& other) noexcept : descriptor_(other.descriptor_) {
-  other.descriptor_ = -1;
-}
-
-SyncLock& SyncLock::operator=(SyncLock&& other) noexcept {
-  if (this != &other) {
-    if (descriptor_ >= 0) {
-      close(descriptor_);
-    }
-    descriptor_ = other.descriptor_;
-    other.descriptor_ = -1;
-  }
-  return *this;
-}
-
-std::optional<SyncLock> SyncLock::tryAcquire(const std::filesystem::path& lock_path) {
-  if (lock_path.empty() || lock_path.filename().empty()) {
-    throw std::invalid_argument("sync lock path is required");
-  }
-  const int descriptor = open(lock_path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, kPrivateFileMode);
-  if (descriptor < 0) {
-    throw std::runtime_error("could not open sync lock " + lock_path.string());
-  }
-  struct stat status {};
-  if (fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid()) {
-    close(descriptor);
-    throw std::runtime_error("sync lock is not a regular file owned by this user: " + lock_path.string());
-  }
-  if (flock(descriptor, LOCK_EX | LOCK_NB) != 0) {
-    const int saved_errno = errno;
-    close(descriptor);
-    if (saved_errno == EWOULDBLOCK) {
-      return std::nullopt;
-    }
-    throw std::runtime_error("could not acquire sync lock " + lock_path.string());
-  }
-  return SyncLock(descriptor);
-}
 
 std::map<std::string, std::filesystem::path> loadCanonicalCheckouts(const std::filesystem::path& file) {
   std::error_code error;
@@ -151,7 +113,7 @@ std::map<std::string, std::filesystem::path> loadCanonicalCheckouts(const std::f
       continue;
     }
     if (key == "schema_version" || !isValidProjectName(key) || !isAcceptableCheckoutPath(value) ||
-        selections.size() == kMaximumSelections || !selections.emplace(key, value).second) {
+        selections.size() == kMaximumSelections || !selections.emplace(key, pathFromUtf8(value)).second) {
       throw std::runtime_error("invalid canonical checkout selection " + location +
                                ": expected a unique project and an absolute path");
     }
@@ -173,6 +135,9 @@ void writeCanonicalSelections(const std::filesystem::path& file,
     throw std::runtime_error("canonical checkout selection would exceed its size limit");
   }
 
+#ifdef _WIN32
+  writePrivateWindowsFile(file, content, true, false);
+#else
   const std::filesystem::path directory = file.has_parent_path() ? file.parent_path() : ".";
   const int directory_descriptor = open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (directory_descriptor < 0) {
@@ -214,13 +179,14 @@ void writeCanonicalSelections(const std::filesystem::path& file,
     close(directory_descriptor);
     throw;
   }
+#endif
 }
 
 }  // namespace
 
 void saveCanonicalCheckout(const std::filesystem::path& file, std::string_view project,
                            const std::filesystem::path& checkout) {
-  if (!isValidProjectName(project) || !isAcceptableCheckoutPath(checkout.string()) || file.filename().empty())
+  if (!isValidProjectName(project) || !isAcceptableCheckoutPath(pathToUtf8(checkout)) || file.filename().empty())
     throw std::invalid_argument("canonical checkout selection needs a valid project and an absolute path");
   auto selections = loadCanonicalCheckouts(file);
   selections[std::string(project)] = checkout;
@@ -237,7 +203,7 @@ bool forgetCanonicalCheckout(const std::filesystem::path& file, std::string_view
 }
 
 bool looksEphemeralCheckoutPath(const std::filesystem::path& path) {
-  const std::string name = path.filename().string();
+  const std::string name = pathToUtf8(path.filename());
   const std::size_t dot = name.rfind('.');
   if (dot == std::string::npos || dot == 0 || name.size() - dot - 1 != 6) {
     return false;
