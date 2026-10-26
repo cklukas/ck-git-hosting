@@ -142,14 +142,14 @@ exact same subset — one syntax, two schemas.
 | `checkout.tags` | boolean | no | `false` | `true` also fetches the tags inside that history (for `git describe`) |
 | `checkout.mode` | `git` or `archive` | no | `git` | `archive` removes `.git` after the checkout: the plain tree earlier runners produced |
 | `auto_cancel` | boolean | no | `true` | `true` or `false`; supersede older runs on the same branch |
-| `runs_on` | a label, or a list of up to 16 labels | no | any eligible runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
+| `runs_on` | a label, or a list of up to 16 labels | no; version 1 only | any eligible runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
 | `pages.job` | string | required within version-2 `pages` | — | name of the producing job; forbidden in version 1 |
 | `jobs[]` | list of mappings | required, non-empty | — | unique `name` per job |
 | `jobs[].name` | string | required | — | valid CI name |
 | `jobs[].env` | mapping | no | empty | same rule as top-level `env`; merged **over** it at run time |
-| `jobs[].runs_on` | label or label list | no; version 2 only | top-level `runs_on` | runner must carry every label |
+| `jobs[].runs_on` | label or non-empty label list | required in version 2; forbidden in version 1 | — | runner must carry every label; no workflow-level default |
 | `jobs[].needs` | list of job names | no; version 2 only | empty | existing distinct jobs; no self-dependency or cycles |
 | `jobs[].steps` | list of mappings | required, non-empty | — | — |
 | `jobs[].artifacts` | mapping | no | none | see below |
@@ -282,8 +282,9 @@ using Inno Setup and CPack. The `dist` artifact includes package checksums,
 source fingerprints, the commit, and build timing. These commands execute on
 Windows inside the [AppContainer runner](ci-remote-runners.md#windows-runner).
 
-Give every platform-specific job explicit labels, including legacy workflows:
-Windows runners skip unlabelled workflows. Linux scripts default to
+Version 2 requires explicit, non-empty `runs_on` labels on every job and rejects
+workflow-level `runs_on`. Version 1 still permits unlabelled workflows, but
+Windows runners skip them. Linux scripts default to
 `sh`; Windows scripts default to `pwsh` (PowerShell 7). Set `shell` on the job
 to choose a default for its script steps, or on an individual script step to
 override that default. Set `shell: powershell` explicitly for Windows PowerShell

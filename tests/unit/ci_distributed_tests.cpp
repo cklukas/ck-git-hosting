@@ -698,7 +698,7 @@ void testChildOutputsWaitForParent() {
   policy.pages_root = fixture.root / "pages";
   const std::string workflow =
       "version: 2\npages: {path: public, job: linux}\njobs:\n"
-      "  - name: linux\n    steps:\n      - run: [make]\n"
+      "  - name: linux\n    runs_on: linux\n    steps:\n      - run: [make]\n"
       "    artifacts: {name: linux-package, paths: [out]}\n";
   auto job = preparedJob(ckgit::generateCiId(), "refs/tags/v2", false, workflow);
   job.job.parent_run_id = "parent";
@@ -745,9 +745,9 @@ void testCombinedWorkflowRelease() {
   policy.state_root = fixture.state;
   const std::string workflow =
       "version: 2\njobs:\n"
-      "  - name: linux\n    steps:\n      - run: [make]\n"
+      "  - name: linux\n    runs_on: linux\n    steps:\n      - run: [make]\n"
       "    artifacts: {name: linux-package, paths: [out]}\n"
-      "  - name: windows\n    steps:\n      - run: [cmake]\n"
+      "  - name: windows\n    runs_on: windows\n    steps:\n      - run: [cmake]\n"
       "    artifacts: {name: windows-package, paths: [out]}\n";
   auto parent = preparedJob(ckgit::generateCiId(), "refs/tags/v2", false, workflow);
   auto linux = parent;
@@ -978,6 +978,8 @@ void testProtocolRoundTrips() {
           "a sister's resolved commit and history settings arrive");
   require(!ckgit::parseCiClaimResponse("none\n").has_value(), "none means no job");
   prepared.workflow_text.replace(prepared.workflow_text.find("version: 1"), 10, "version: 2");
+  prepared.workflow_text.insert(prepared.workflow_text.find("    steps:"), "    runs_on: worker\n");
+  (void)ckgit::parseCiWorkflow(prepared.workflow_text);  // valid v2; rejection must be the protocol gate
   bool refused_distributed = false;
   try {
     (void)ckgit::parseCiClaimResponse(ckgit::formatCiClaimResponse(prepared, lease, policy));
@@ -1150,7 +1152,7 @@ void testGatewayDistributedRelease() {
 void testGatewayRecoversPublication() {
   Fixture fixture;
   const auto commit = hostProject(fixture,
-      "version: 2\non: {tags: [v*]}\njobs:\n  - name: build\n    steps:\n      - run: [make]\n"
+      "version: 2\non: {tags: [v*]}\njobs:\n  - name: build\n    runs_on: worker\n    steps:\n      - run: [make]\n"
       "    artifacts: {name: package, paths: [out]}\n");
   ckgit::ServerConfig config;
   config.repo_root = fixture.root / "repos";

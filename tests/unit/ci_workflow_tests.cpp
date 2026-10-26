@@ -38,20 +38,33 @@ void testAutoCancelPolicy() {
 
 void testDistributedWorkflow() {
   const std::string text =
-      "version: 2\nruns_on: linux\njobs:\n"
-      "  - name: publish\n    needs: [linux, windows]\n    steps:\n      - run: [publish]\n"
-      "  - name: linux\n    steps:\n      - run: make\n        shell: sh\n"
+      "version: 2\njobs:\n"
+      "  - name: publish\n    runs_on: linux\n    needs: [linux, windows]\n    steps:\n      - run: [publish]\n"
+      "  - name: linux\n    runs_on: linux\n    steps:\n      - run: make\n        shell: sh\n"
       "  - name: windows\n    runs_on: [windows, x64, windows]\n"
       "    steps:\n      - run: cmake --build build\n        shell: powershell\n";
   const auto workflow = ckgit::parseCiWorkflow(text);
   require(workflow.version == 2, "distributed version");
   require(workflow.jobs[0].needs == std::vector<std::string>{"linux", "windows"}, "forward dependencies");
-  require(workflow.jobs[1].runs_on == std::vector<std::string>{"linux"}, "inherited runner labels");
-  require(workflow.jobs[2].runs_on == std::vector<std::string>{"windows", "x64"}, "job labels override defaults");
+  require(workflow.jobs[1].runs_on == std::vector<std::string>{"linux"}, "explicit Linux runner labels");
+  require(workflow.jobs[2].runs_on == std::vector<std::string>{"windows", "x64"}, "explicit Windows labels are deduplicated");
   require(workflow.jobs[2].steps[0].shell == "powershell", "explicit Windows shell");
   const auto single = [](const std::string& extra, const std::string& step) {
-    return "version: 2\njobs:\n  - name: build\n" + extra + "    steps:\n      - " + step + "\n";
+    return std::string("version: 2\njobs:\n  - name: build\n") +
+        (extra.find("runs_on:") == std::string::npos ? "    runs_on: linux\n" : "") +
+        extra + "    steps:\n      - " + step + "\n";
   };
+  const auto label_error = [](const std::string& yaml, const std::string& message) {
+    try { (void)ckgit::parseCiWorkflow(yaml); }
+    catch (const std::exception& error) { return std::string(error.what()).find(message) != std::string::npos; }
+    return false;
+  };
+  require(label_error("version: 2\njobs:\n  - name: build\n    steps:\n      - run: [make]\n",
+                      "requires non-empty runs_on"), "v2 rejects missing job labels with a useful error");
+  require(label_error(single("    runs_on: []\n", "run: [make]"), "requires non-empty runs_on"),
+          "an explicit empty label list cannot request an arbitrary runner");
+  require(label_error("runs_on: linux\n" + single("", "run: [make]"), "not at workflow level"),
+          "v2 rejects ambiguous workflow-level routing");
   require(rejected(single("    needs: [missing]\n", "run: make")), "unknown dependency");
   require(rejected(single("    needs: [build]\n", "run: make")), "self dependency");
   require(rejected(single("    needs: [other, other]\n", "run: make")), "duplicate dependency");
@@ -70,9 +83,9 @@ void testDistributedWorkflow() {
   require(rejected(single("    shell: cmd\n", "run: build")), "unsupported job shell rejected");
   require(rejected(single("    shell: [pwsh]\n", "run: build")), "job shell must be scalar");
   require(rejected("version: 2\njobs:\n"
-                   "  - name: a\n    needs: [b]\n    steps:\n      - run: a\n"
-                   "  - name: b\n    needs: [c]\n    steps:\n      - run: b\n"
-                   "  - name: c\n    needs: [a]\n    steps:\n      - run: c\n"), "dependency cycle");
+                   "  - name: a\n    runs_on: linux\n    needs: [b]\n    steps:\n      - run: a\n"
+                   "  - name: b\n    runs_on: linux\n    needs: [c]\n    steps:\n      - run: b\n"
+                   "  - name: c\n    runs_on: linux\n    needs: [a]\n    steps:\n      - run: c\n"), "dependency cycle");
   for (const auto& extra : {"runs_on: windows", "needs: []", "shell: pwsh"})
     require(rejected("version: 1\njobs:\n  - name: build\n    " + std::string(extra) +
                      "\n    steps:\n      - run: make\n"), "v1 rejects job scheduling keys");
@@ -300,9 +313,9 @@ void testPagesWorkflow() {
 
 void testDistributedOutputs() {
   const std::string jobs =
-      "jobs:\n  - name: linux\n    steps:\n      - run: [make]\n"
+      "jobs:\n  - name: linux\n    runs_on: linux\n    steps:\n      - run: [make]\n"
       "    artifacts: {name: linux-package, paths: [out]}\n"
-      "  - name: windows\n    steps:\n      - run: [cmake, --build, build]\n"
+      "  - name: windows\n    runs_on: windows\n    steps:\n      - run: [cmake, --build, build]\n"
       "    artifacts: {name: windows-package, paths: [out]}\n";
   const auto workflow = ckgit::parseCiWorkflow("version: 2\npages: {path: public, job: linux}\n" + jobs);
   require(ckgit::selectCiWorkflowJob(workflow, "linux").pages_path == "public", "Pages producer retains site output");

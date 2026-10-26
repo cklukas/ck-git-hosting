@@ -37,9 +37,9 @@ namespace ckgit {
 //         - script: |              # a block scalar is a multi-line `sh -ec` script
 //             make docs
 //
-// Version 2 additionally accepts per-job runs_on and needs (a list of job
-// names), and a shell on jobs and script steps (sh, powershell, pwsh). Top-level
-// runs_on supplies job defaults. Empty needs means independent execution;
+// Version 2 requires non-empty per-job runs_on and additionally accepts needs
+// (a list of job names), and a shell on jobs and script steps (sh, powershell,
+// pwsh). Top-level runs_on is version 1 only. Empty needs means independent execution;
 // unknown dependencies, self dependencies and cycles are rejected.
 //
 // Both flow (`{a: b}`, `[a, b]`) and block (`key:` / `- item`) styles are

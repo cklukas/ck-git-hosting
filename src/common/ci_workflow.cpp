@@ -305,6 +305,8 @@ CiJob interpretJob(const Node& node, int version) {
   if (name == nullptr) malformed("a job is missing 'name'", node.line);
   job.name = requireKind(*name, Node::Kind::Scalar, "a job name to be a scalar").scalar;
   if (!isValidCiName(job.name)) malformed("invalid job name '" + job.name + "'", node.line);
+  if (version == 2 && job.runs_on.empty())
+    malformed("version 2 job '" + job.name + "' requires non-empty runs_on labels", node.line);
   if (const Node* env = findEntry(node, "env")) job.env = interpretEnv(*env);
   const Node* steps = findEntry(node, "steps");
   if (steps == nullptr) malformed("job '" + job.name + "' has no steps", node.line);
@@ -401,6 +403,8 @@ CiWorkflow interpret(const Node& root) {
 
   if (const Node* checkout = findEntry(root, "checkout")) workflow.checkout = interpretCheckout(*checkout);
 
+  if (workflow.version == 2 && findEntry(root, "runs_on") != nullptr)
+    malformed("version 2 requires runs_on on each job, not at workflow level", root.line);
   workflow.runs_on = interpretLabels(findEntry(root, "runs_on"));
 
   if (const Node* caches = findEntry(root, "cache")) {
@@ -462,7 +466,6 @@ CiWorkflow interpret(const Node& root) {
   for (const Node& job_node : jobs->items) {
     CiJob job = interpretJob(job_node, workflow.version);
     if (!job_names.insert(job.name).second) malformed("duplicate job name '" + job.name + "'", job_node.line);
-    if (workflow.version == 2 && findEntry(job_node, "runs_on") == nullptr) job.runs_on = workflow.runs_on;
     workflow.jobs.push_back(std::move(job));
   }
   if (workflow.version == 2) {
