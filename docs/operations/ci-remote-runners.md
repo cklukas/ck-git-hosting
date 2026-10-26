@@ -1,5 +1,5 @@
 ---
-description: "Let other Linux machines run CI jobs for the server: register remote runners, label them, and manage them."
+description: "Register and manage remote CI runners, including the native Windows AppContainer runner."
 ---
 # Share CI load with remote runners
 
@@ -39,6 +39,62 @@ server so existing version-1 connections can use distributed jobs.
   runner holds a long poll that the server answers the moment a job appears.
 - **Every kind of build runs anywhere.** Branch, tag (release) and Pages builds
   are scheduled the same way.
+
+## Windows runner
+
+Windows uses the native `ck-ci-runnerd.exe` broker and an LPAC/AppContainer
+for every job. The broker requires an elevated administrator token to create
+its private, invisible Window Station. Build tools remain restricted; no
+interactive desktop or Explorer session is started. Network access is denied,
+even when the server would allow it, and there is no degraded execution mode.
+Windows-managed AppContainer profiles use the operating system's profile
+location. Checkouts, staged tools, caches and logs use the configured paths.
+
+The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
+`runner.ini.example`. CurrentUser installs its files without administrator
+rights; running the broker still needs elevation. AllUsers installation needs
+administrator rights. Installing the package does not automatically start a
+runner or register its SSH key. Use a dedicated runner identity with the
+server's restricted runner key, and pin the server's host key in `known_hosts`.
+
+On the development workstation, install to `V:\Programs\ck-git-runner` and
+keep configuration, credentials and the staged toolchain beneath a protected
+permanent directory such as `V:\ProgramData\ckgit-runner`. Verify `V:` exists
+before invoking development tools. Select a unique `V:\tmp` directory and set
+`TEMP`, `TMP` and `TMPDIR` to it before staging tools.
+
+`packaging/windows/stage-toolchain.ps1` copies an explicitly selected MSVC
+installation, Windows SDK, CMake and Inno Setup into a new toolchain directory.
+Supply `-Destination`, `-TemporaryRoot`, `-MsvcRoot`, `-SdkRoot`, `-SdkVersion`,
+`-CmakeRoot` and `-InnoRoot`. Existing destinations are refused. Every copied
+file is checked against its source SHA-256; installed tool permissions are
+unchanged. The example configuration matches this staged directory layout:
+
+- `ci_toolchain_root`: absolute path to the operator-controlled tool tree.
+- `ci_toolchain_paths`: semicolon-separated relative binary directories, using
+  forward slashes. Absolute paths and parent traversal are rejected.
+- `ci_toolchain_env.NAME`: explicit uppercase environment assignments. The
+  literal `${TOOLS}` expands to the current job's read-only tool copy.
+
+From an elevated shell, check the configuration before serving:
+
+```powershell
+& 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' check --config 'V:\ProgramData\ckgit-runner\runner.ini'
+& 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' serve --remote --config 'V:\ProgramData\ckgit-runner\runner.ini'
+```
+
+`--once` drains available jobs and exits when the queue is empty. The build
+root has an exclusive instance lock. Each invocation owns a private session
+workspace; each job has a separate AppContainer and tool copy. Caches are
+separated under `windows-x64/<project>/<cache>` and copied into the job while
+the persistent cache is locked. Lease monitoring continues during tool staging,
+Git checkout and build steps. The repository's `windows-installers` job uses
+CMake directly and does not need PowerShell inside the sandbox; other script
+jobs need their selected shell in the staged toolchain.
+
+The local broker, executor and installer qualifications pass. Automatic startup,
+installation of the final GitHub-built runner and the complete rpi4-triggered
+`ck-git-hosting` installer build are still pending deployment qualification.
 
 ## What happens when a runner goes away
 

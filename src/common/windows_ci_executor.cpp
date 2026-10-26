@@ -41,7 +41,7 @@ void copyTree(const fs::path& source, const fs::path& destination, const std::fu
   }
 }
 fs::path below(const fs::path& root, const fs::path& relative) {
-  if (relative.is_absolute() || relative.has_root_name()) throw std::runtime_error("expected a relative job path");
+  if (relative.is_absolute() || relative.has_root_path()) throw std::runtime_error("expected a relative job path");
   auto result = root;
   for (const auto& part : relative) {
     if (part == "..") throw std::runtime_error("job path escapes workspace");

@@ -350,7 +350,7 @@ ProcessResult runWindowsSandboxProcess(const WindowsSandbox& sandbox,
   std::vector<std::string> command{wideToUtf8((sandbox.tools() / "ckgit-job-launcher.exe").native()),
       wideToUtf8((sandbox.work() / "tmp").native())};
   if (!working_subdirectory.empty()) {
-    if (working_subdirectory.is_absolute() || working_subdirectory.has_root_name())
+    if (working_subdirectory.is_absolute() || working_subdirectory.has_root_path())
       throw std::invalid_argument("sandbox working directory must be relative");
     auto current = sandbox.work();
     for (const auto& part : working_subdirectory) {

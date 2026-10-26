@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <map>
+#include <vector>
 namespace ckgit {
 // /etc/ck-git-hosting/runner.ini, strict key=value like server.ini:
 //
@@ -35,6 +37,10 @@ struct RunnerConfig {
   bool allow_network = true;  // true = whatever the server allows
   std::optional<unsigned> timeout_seconds;
   bool allow_degraded = false;
+  // Windows: operator-prepared tool tree, copied read-only into each LPAC job.
+  std::optional<std::filesystem::path> toolchain_root;
+  std::vector<std::filesystem::path> toolchain_paths{"bin"};
+  std::map<std::string, std::string> toolchain_environment;
 };
 
 RunnerConfig loadRunnerConfig(const std::filesystem::path& path);

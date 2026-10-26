@@ -44,16 +44,17 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if (!(Test-Path $iscc)) { throw 'Inno Setup 6 is required on this build image' }
-          foreach ($product in @('ckdocs','ckgit')) {
+          foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
             & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin/Release" "/DOutputDir=$env:RUNNER_TEMP/dist" "/DReleaseVersion=$version" "packaging/windows/$product.iss"
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
       - name: Installer lifecycle in both installation scopes
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
-          foreach ($product in @('ckdocs','ckgit')) {
+          foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
+            $executable = if ($product -eq 'ck-git-runner') { 'ck-ci-runnerd' } else { $product }
             foreach ($mode in @('CurrentUser','AllUsers')) {
-              & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$product.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode
+              & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/Release/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/Release/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/Release/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode
             }
           }
       - uses: actions/upload-artifact@v7

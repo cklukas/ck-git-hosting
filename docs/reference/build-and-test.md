@@ -97,13 +97,17 @@ compiler execution in the checkout directory, child-result identity, artifact
 packing, Pages handoff and a persistent cache copied into the job. Cache storage
 is separated under `windows-x64/<project>/<cache>` and locked during use;
 only the per-job copy is exposed to LPAC. Tools are copied from an
-operator-selected tree and sealed read-only. The daemon entry point, toolchain
-configuration, installer and live rpi4 connection still require integration.
+operator-selected tree and sealed read-only. The native daemon now provides
+`serve --remote`, `check` and the Git SSH shim. Its startup qualification covers
+protocol negotiation against a local SSH fixture, empty-queue exit, workspace
+cleanup and the single-instance lock. The runner installer passes install,
+reinstall and uninstall in both scopes, including CurrentUser with a non-admin
+token. Automatic startup and the live rpi4 job remain to be qualified.
 
 The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
 `windows-installers` job selected by the `windows` and `x64` labels. The Windows
 job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
-with MSVC/NMake, invokes Inno Setup for both clients, creates the portable ZIP,
+with MSVC/NMake, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
 and places installer files plus input/output hashes in the `windows-installers`
 artifact. The Linux job remains the Pages producer. This workflow is the
 required live rpi4-to-Windows acceptance case; its installer build inside the

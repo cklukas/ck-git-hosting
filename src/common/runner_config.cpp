@@ -91,6 +91,30 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
       config.ssh_program = absolute(value);
     } else if (key == "ci_cache_root") {
       config.cache_root = absolute(value);
+    } else if (key == "ci_toolchain_root") {
+      config.toolchain_root = absolute(value);
+    } else if (key == "ci_toolchain_paths") {
+      config.toolchain_paths.clear();
+      std::size_t start = 0;
+      do {
+        const auto separator = value.find(';', start);
+        const auto part = value.substr(start, separator == std::string::npos ? separator : separator - start);
+        const auto relative = pathFromUtf8(part);
+        if (part.empty() || part.find(':') != std::string::npos || part.find('\\') != std::string::npos ||
+            hasControlCharacter(part) || relative.is_absolute() || relative.has_root_path() ||
+            std::any_of(relative.begin(), relative.end(), [](const auto& item) { return item == ".."; }))
+          configError(path, number, "toolchain paths must be relative slash-separated directories");
+        config.toolchain_paths.push_back(relative);
+        if (config.toolchain_paths.size() > 32) configError(path, number, "too many toolchain directories");
+        if (separator == std::string::npos) break;
+        start = separator + 1;
+      } while (true);
+    } else if (key.starts_with("ci_toolchain_env.")) {
+      const auto name = key.substr(std::string_view("ci_toolchain_env.").size());
+      if (name.empty() || name.size() > 128 || name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") != std::string::npos ||
+          (name.front() >= '0' && name.front() <= '9') || hasControlCharacter(value))
+        configError(path, number, "invalid uppercase toolchain environment assignment");
+      config.toolchain_environment[name] = value;
     } else if (key == "claim_wait_seconds") {
       config.claim_wait_seconds = integer(value, 1, kMaximumCiClaimWaitSeconds);
     } else if (key == "ci_timeout_seconds") {
@@ -129,6 +153,17 @@ std::string renderRunnerConfig(const RunnerConfig& config) {
   if (!config.allow_network) out += "ci_allow_network=false\n";
   if (config.timeout_seconds) out += "ci_timeout_seconds=" + std::to_string(*config.timeout_seconds) + "\n";
   if (config.allow_degraded) out += "ci_allow_degraded=true\n";
+  if (config.toolchain_root) out += "ci_toolchain_root=" + pathText(*config.toolchain_root) + "\n";
+  if (config.toolchain_paths != RunnerConfig{}.toolchain_paths) {
+    out += "ci_toolchain_paths=";
+    for (std::size_t i = 0; i < config.toolchain_paths.size(); ++i) {
+      if (i) out += ';';
+      const auto raw = config.toolchain_paths[i].generic_u8string();
+      out.append(raw.begin(), raw.end());
+    }
+    out += '\n';
+  }
+  for (const auto& [name, value] : config.toolchain_environment) out += "ci_toolchain_env." + name + "=" + value + "\n";
   return out;
 }
 

@@ -69,6 +69,9 @@ int run(const std::vector<std::string>& args) {
     runner.ssh_program = directory / "ssh.exe";
 #endif
     runner.identity = directory / "identity";
+    runner.toolchain_root = directory / "toolchain";
+    runner.toolchain_paths = {"msvc/bin", "cmake/bin", "inno"};
+    runner.toolchain_environment = {{"INCLUDE", "${TOOLS}/msvc/include;${TOOLS}/sdk/include"}};
     const auto runner_file = root / "runner.ini";
     const auto write_runner = [&](const std::string& content) {
       std::ofstream(runner_file, std::ios::binary | std::ios::trunc) << content;
@@ -80,6 +83,17 @@ int run(const std::vector<std::string>& args) {
     const auto parsed = ckgit::loadRunnerConfig(runner_file);
     require(parsed.build_root == runner.build_root && parsed.identity == runner.identity &&
         parsed.ssh_program == runner.ssh_program, "native runner paths survive UTF-8 and CRLF configuration");
+    require(parsed.toolchain_root == runner.toolchain_root && parsed.toolchain_paths == runner.toolchain_paths &&
+        parsed.toolchain_environment == runner.toolchain_environment, "runner toolchain configuration roundtrip");
+    auto minimal = runner;
+    minimal.toolchain_paths = {"bin"};
+    const auto defaults = ckgit::renderRunnerConfig(minimal);
+    for (const auto* invalid : {"../bin", "/bin", "V:bin", "bin;", "bin\\nested"}) {
+      write_runner(defaults + "ci_toolchain_paths=" + invalid + "\n");
+      rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "invalid toolchain relative directory rejected");
+    }
+    write_runner(defaults + "ci_toolchain_env.Path=bad\n");
+    rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "ambiguous environment case rejected");
     write_runner("schema_version=1\nserver=ckgit@example.test\nname=test-runner\nci_build_root=relative\n");
     rejects([&] { ckgit::loadRunnerConfig(runner_file); }, "relative runner build root rejected");
 #ifdef _WIN32

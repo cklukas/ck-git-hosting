@@ -1,0 +1,14 @@
+# Copy to a protected permanent configuration path and select your SSH identity.
+# The Windows workstation uses V: for all runner data and staged SDK files.
+schema_version=1
+server=ckgit@rpi4
+name=windows
+ci_build_root=V:/ProgramData/ckgit-runner/build
+ci_cache_root=V:/ProgramData/ckgit-runner/cache
+identity=V:/ProgramData/ckgit-runner/ssh/id_ed25519
+known_hosts=V:/ProgramData/ckgit-runner/ssh/known_hosts
+ci_allow_network=false
+ci_toolchain_root=V:/ProgramData/ckgit-runner/toolchain
+ci_toolchain_paths=msvc/bin/Hostx64/x64;sdk/bin/x64;cmake/bin;inno
+ci_toolchain_env.INCLUDE=${TOOLS}/msvc/include;${TOOLS}/sdk/include/ucrt;${TOOLS}/sdk/include/shared;${TOOLS}/sdk/include/um;${TOOLS}/sdk/include/winrt
+ci_toolchain_env.LIB=${TOOLS}/msvc/lib/x64;${TOOLS}/sdk/lib/ucrt/x64;${TOOLS}/sdk/lib/um/x64

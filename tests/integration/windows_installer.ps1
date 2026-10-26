@@ -5,8 +5,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Binary,
     [Parameter(Mandatory=$true)][string]$TestRoot,
     [ValidateSet('CurrentUser','AllUsers')][string]$Mode = 'CurrentUser',
-    [ValidateSet('ckdocs','ckgit')][string]$Product = 'ckdocs',
+    [ValidateSet('ckdocs','ckgit','ck-git-runner')][string]$Product = 'ckdocs',
     [string]$DocsBinary,
+    [string]$LauncherBinary,
     [switch]$RequireNonAdmin
 )
 $ErrorActionPreference = 'Stop'
@@ -17,8 +18,12 @@ $admin = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.Win
 if ($RequireNonAdmin -and $admin) { throw 'This test requires a token without administrator rights' }
 if ($Mode -eq 'AllUsers' -and !$admin) { throw 'AllUsers test needs an administrator token' }
 $hive = if ($Mode -eq 'AllUsers') { 'HKLM:' } else { 'HKCU:' }
-$productId = if ($Product -eq 'ckgit') { '{CDB31BA9-7F4D-4F73-9A15-5812D2493B99}' } else { '{9BA75E20-ED1F-4FBE-8F01-0F052E0F9700}' }
-$executable = "$Product.exe"
+$productId = if ($Product -eq 'ckgit') { '{CDB31BA9-7F4D-4F73-9A15-5812D2493B99}' } elseif ($Product -eq 'ck-git-runner') { '{4527D4DC-5653-4650-969F-19D76EF349B8}' } else { '{9BA75E20-ED1F-4FBE-8F01-0F052E0F9700}' }
+$executable = if ($Product -eq 'ck-git-runner') { 'ck-ci-runnerd.exe' } else { "$Product.exe" }
+if ($Product -eq 'ck-git-runner') {
+    if (!$LauncherBinary) { throw 'LauncherBinary is required for the runner installer' }
+    $LauncherBinary = (Resolve-Path -LiteralPath $LauncherBinary).Path
+}
 if ($Product -eq 'ckgit') {
     if (!$DocsBinary) { throw 'DocsBinary is required to verify the bundled ckdocs executable' }
     $DocsBinary = (Resolve-Path -LiteralPath $DocsBinary).Path
@@ -43,6 +48,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Installed executable does not run' }
         if ($Product -eq 'ckgit' -and (Get-FileHash (Join-Path $directory 'ckdocs.exe')).Hash -ne (Get-FileHash $DocsBinary).Hash) {
             throw 'Bundled ckdocs differs from the verified build'
+        }
+        if ($Product -eq 'ck-git-runner' -and (Get-FileHash (Join-Path $directory 'ckgit-job-launcher.exe')).Hash -ne (Get-FileHash $LauncherBinary).Hash) {
+            throw 'Bundled job launcher differs from the verified build'
         }
         if ($attempt -eq 0) { Set-Content (Join-Path $directory 'user-data.txt') 'preserve me' }
         elseif ((Get-Content (Join-Path $directory 'user-data.txt')) -ne 'preserve me') { throw 'Reinstall changed user data' }

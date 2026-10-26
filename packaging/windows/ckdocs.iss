@@ -16,6 +16,10 @@
   #define ProductAppId "{{9BA75E20-ED1F-4FBE-8F01-0F052E0F9700}"
 #endif
 
+#ifndef ProductExecutable
+  #define ProductExecutable Product + ".exe"
+#endif
+
 [Setup]
 AppId={#ProductAppId}
 AppName={#Product}
@@ -33,7 +37,7 @@ OutputBaseFilename={#Product}-{#ReleaseVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\{#Product}.exe
+UninstallDisplayIcon={app}\{#ProductExecutable}
 CloseApplications=yes
 RestartApplications=no
 ChangesEnvironment=yes
@@ -43,7 +47,13 @@ LicenseFile=..\..\LICENSE
 #if Product == "ckgit"
 Source: "{#BinaryDir}\ckgit.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
+#if Product == "ck-git-runner"
+Source: "{#BinaryDir}\ck-ci-runnerd.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\ckgit-job-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "runner.ini.example"; DestDir: "{app}"; Flags: ignoreversion
+#else
 Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
