@@ -233,8 +233,28 @@ std::string renderRunnerConfig(const RunnerConfig& config) {
 
 // --- transport -----------------------------------------------------------------
 
-CiRemoteTransport::CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path)
-    : config_(std::move(config)), config_path_(std::move(config_path)) {}
+CiRemoteTransport::CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version)
+    : config_(std::move(config)), config_path_(std::move(config_path)), protocol_version_(protocol_version) {
+  if (protocol_version < 1 || protocol_version > kCiRunnerProtocolVersion) {
+    throw std::invalid_argument("unsupported runner protocol version");
+  }
+}
+
+bool CiRemoteTransport::negotiate(std::string_view version_hex) {
+  for (unsigned version = kCiRunnerProtocolVersion; version > 0; --version) {
+    CiRemoteTransport candidate(config_, config_path_, version);
+    CiRunnerCommand hello;
+    hello.op = CiRunnerOp::kHello;
+    hello.version_hex = std::string(version_hex);
+    const auto answer = candidate.run(hello, {}, std::chrono::seconds(60));
+    const std::string expected = "ok\nprotocol=" + std::to_string(version) + "\n";
+    if (answer.exit_code == 0 && !answer.timed_out && answer.output.rfind(expected, 0) == 0) {
+      protocol_version_ = version;
+      return true;
+    }
+  }
+  return false;
+}
 
 std::vector<std::string> CiRemoteTransport::sshArguments() const {
   std::vector<std::string> argv = {config_.ssh_program.string(),
@@ -261,7 +281,9 @@ std::vector<std::string> CiRemoteTransport::sshArguments() const {
 CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command, std::string_view input,
                                                  std::chrono::seconds timeout) const {
   std::vector<std::string> argv = sshArguments();
-  argv.push_back(formatCiRunnerCommand(command));
+  auto negotiated = command;
+  negotiated.protocol_version = protocol_version_;
+  argv.push_back(formatCiRunnerCommand(negotiated));
   Result result;
   Spawned child = spawnPiped(argv);
   ::fcntl(child.in, F_SETFL, ::fcntl(child.in, F_GETFL) | O_NONBLOCK);
@@ -316,7 +338,9 @@ CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command,
 
 CiRemoteTransport::Session CiRemoteTransport::open(const CiRunnerCommand& command) const {
   std::vector<std::string> argv = sshArguments();
-  argv.push_back(formatCiRunnerCommand(command));
+  auto negotiated = command;
+  negotiated.protocol_version = protocol_version_;
+  argv.push_back(formatCiRunnerCommand(negotiated));
   const Spawned child = spawnPiped(argv);
   return Session{child.pid, child.in, child.out};
 }
@@ -336,7 +360,8 @@ std::string CiRemoteTransport::gitSshCommand(const std::string& job_id, const st
   if (!isShellSafe(self) || !isShellSafe(config) || !isValidCiId(job_id) || !isShellSafe(token)) {
     throw std::runtime_error("the runner's paths cannot be passed to git safely");
   }
-  return self + " ssh-shim --config " + config + " --job " + job_id + " --token " + token;
+  return self + " ssh-shim --config " + config + " --job " + job_id + " --token " + token +
+         " --protocol " + std::to_string(protocol_version_);
 }
 
 std::string CiRemoteTransport::fetchUrl(const std::string& project) const {
@@ -344,12 +369,13 @@ std::string CiRemoteTransport::fetchUrl(const std::string& project) const {
 }
 
 int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
-                 const std::vector<std::string>& git_arguments) {
+                 const std::vector<std::string>& git_arguments, unsigned protocol_version) {
   if (git_arguments.empty()) return 2;
   const std::optional<SshCommand> wanted = parseSshOriginalCommand(git_arguments.back());
   if (!wanted.has_value() || wanted->kind != SshCommandKind::kUploadPack) return 2;
-  const CiRemoteTransport transport(loadRunnerConfig(config_path), config_path);
+  const CiRemoteTransport transport(loadRunnerConfig(config_path), config_path, protocol_version);
   CiRunnerCommand command;
+  command.protocol_version = transport.protocolVersion();
   command.op = CiRunnerOp::kUploadPack;
   command.job_id = job_id;
   command.token = token;

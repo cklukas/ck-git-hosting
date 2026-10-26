@@ -59,7 +59,11 @@ std::string renderRunnerConfig(const RunnerConfig& config);
 // build root is shared between them so they cost no new handshake.
 class CiRemoteTransport {
  public:
-  CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path);
+  CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version = 1);
+  // Negotiate before claiming work; keep that version for the whole lease,
+  // including the separate Git SSH shim process. Failed greetings never claim.
+  bool negotiate(std::string_view version_hex);
+  unsigned protocolVersion() const { return protocol_version_; }
 
   struct Result {
     int exit_code = -1;
@@ -92,6 +96,7 @@ class CiRemoteTransport {
  private:
   RunnerConfig config_;
   std::filesystem::path config_path_;
+  unsigned protocol_version_ = 1;
 };
 
 // `ck-ci-runnerd ssh-shim`: what GIT_SSH_COMMAND runs. Git calls it as
@@ -99,7 +104,7 @@ class CiRemoteTransport {
 // turns that into the gateway's lease-scoped `upload-pack` and executes ssh.
 // Returns only on failure.
 int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
-                 const std::vector<std::string>& git_arguments);
+                 const std::vector<std::string>& git_arguments, unsigned protocol_version = 1);
 
 // Fetches source through the gateway (see gitSshCommand).
 class RemoteCiSource : public CiSourceProvider {

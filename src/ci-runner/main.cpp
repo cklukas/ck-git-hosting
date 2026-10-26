@@ -356,7 +356,7 @@ bool emptyDirectory(const std::filesystem::path& directory) {
 // back to the queue. With `once`, exits when the queue is empty.
 int serveRemote(const std::filesystem::path& config_path, bool once) {
   const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(config_path);
-  const ckgit::CiRemoteTransport transport(config, config_path);
+  ckgit::CiRemoteTransport transport(config, config_path);
   std::signal(SIGTERM, onStop);
   std::signal(SIGINT, onStop);
   std::signal(SIGPIPE, SIG_IGN);
@@ -373,23 +373,22 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
                  "without the sandbox (set ci_allow_degraded=true to accept that)\n";
     return 1;
   }
-  {
-    ckgit::CiRunnerCommand hello;
-    hello.op = ckgit::CiRunnerOp::kHello;
-    hello.version_hex = ckgit::hexEncode(ckgit::buildVersion());
-    const auto result = transport.run(hello, {}, std::chrono::seconds(60));
-    if (result.exit_code == 0 && result.output.rfind("ok\n", 0) == 0) {
-      std::cout << "ck-ci-runnerd: connected to " << config.server << " as " << config.name << "\n";
-    } else {
-      std::cerr << "ck-ci-runnerd: could not reach " << config.server << " yet; will keep trying\n";
-    }
-  }
+  bool negotiated = false;
   unsigned failures = 0;
   while (g_stop == 0) {
     ckgit::CiRunnerCommand claim;
     claim.op = ckgit::CiRunnerOp::kClaim;
     claim.wait_seconds = once ? 0 : config.claim_wait_seconds;
-    const auto answer = transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 60));
+    if (!negotiated) {
+      negotiated = transport.negotiate(ckgit::hexEncode(ckgit::buildVersion()));
+      if (negotiated) {
+        std::cout << "ck-ci-runnerd: connected to " << config.server << " as " << config.name
+                  << " (protocol " << transport.protocolVersion() << ")\n";
+      }
+    }
+    const auto answer = negotiated
+        ? transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 60))
+        : ckgit::CiRemoteTransport::Result{};
     std::optional<ckgit::CiRemoteJob> job;
     bool ok = answer.exit_code == 0;
     if (ok) {
@@ -401,6 +400,7 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
       }
     }
     if (!ok) {
+      negotiated = false;
       // Unreachable main host (or asleep, or rebooting): back off, try again.
       ++failures;
       const unsigned delay = std::min(60u, 1u << std::min(failures, 6u));
@@ -592,16 +592,22 @@ int main(int argc, char** argv) {
       std::filesystem::path config_path;
       std::string job_id;
       std::string token;
+      unsigned protocol_version = 1;
       int i = 2;
       for (; i + 1 < argc; i += 2) {
         const std::string option = argv[i];
         if (option == "--config") config_path = argv[i + 1];
         else if (option == "--job") job_id = argv[i + 1];
         else if (option == "--token") token = argv[i + 1];
+        else if (option == "--protocol") {
+          const std::string value = argv[i + 1];
+          if (value != "1" && value != "2") throw std::runtime_error("invalid shim protocol version");
+          protocol_version = value == "2" ? 2u : 1u;
+        }
         else break;
       }
       std::vector<std::string> git_arguments(argv + i, argv + argc);
-      return ckgit::runCiSshShim(config_path, job_id, token, git_arguments);
+      return ckgit::runCiSshShim(config_path, job_id, token, git_arguments, protocol_version);
     }
     if (command == "gateway") {
       // Started by ck-git-shell for a runner key; see ci_gateway.hpp.

@@ -1290,6 +1290,39 @@ void testRunnerKeyLine() {
 }
 
 
+// Exercise the SSH boundary with a local stand-in, including an old gateway.
+void testRunnerNegotiation() {
+  Fixture fixture;
+  ckgit::RunnerConfig config;
+  config.server = "runner@example";
+  config.build_root = fixture.root / "build";
+  config.ssh_program = fixture.root / "ssh";
+  const auto gateway = [&](const std::string& hello) {
+    std::ofstream out(config.ssh_program);
+    out << "#!/bin/sh\nfor arg do command=$arg; done\ncase \"$command\" in\n"
+        << hello
+        << "*) printf '%s\\n' \"$command\";;\nesac\n";
+    out.close();
+    require(chmod(config.ssh_program.c_str(), 0700) == 0, "fake SSH is executable");
+  };
+  gateway("'ckgit-runner 2 hello '* ) printf 'ok\\nprotocol=2\\n';;\n");
+  ckgit::CiRemoteTransport transport(config, fixture.root / "runner.ini");
+  require(transport.negotiate("31") && transport.protocolVersion() == 2, "new gateway negotiates v2");
+  ckgit::CiRunnerCommand command;
+  command.op = ckgit::CiRunnerOp::kClaim;
+  require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 2 claim 0\n",
+          "operations use the negotiated version even with legacy command defaults");
+  require(transport.gitSshCommand(ckgit::generateCiId(), "token").find("--protocol 2") != std::string::npos,
+          "Git's separate SSH shim inherits v2");
+  gateway("'ckgit-runner 2 hello '* ) exit 2;;\n'ckgit-runner 1 hello '* ) printf 'ok\\nprotocol=1\\n';;\n");
+  require(transport.negotiate("31") && transport.protocolVersion() == 1, "old gateway falls back to v1");
+  require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 1 claim 0\n",
+          "fallback applies to subsequent operations");
+  gateway("*hello*) printf 'ok\\nprotocol=99\\n';;\n");
+  require(!transport.negotiate("31"), "an invalid greeting does not authorize claims");
+  require(throws([&]() { ckgit::CiRemoteTransport invalid(config, {}, 3); }), "unknown versions are refused");
+}
+
 // R5: runner.ini is strict like server.ini.
 void testRunnerConfig() {
   Fixture fixture;
@@ -1555,6 +1588,7 @@ void testCiDistributed() {
   testGatewayFinishesSkippedJobs();
   testRunnerKeyLine();
   testRunnerConfig();
+  testRunnerNegotiation();
   testStreamEdges();
   testRunnerRegistry();
   testRunnerShownOnRuns();

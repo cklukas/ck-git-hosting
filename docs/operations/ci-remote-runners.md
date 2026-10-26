@@ -13,6 +13,15 @@ the server ran, and nothing ever connects to the runner.
 
 ## How jobs are shared
 
+Remote runners negotiate protocol version 2 before claiming work and fall back
+to version 1 when connecting to an older server. Version 2 permits individual
+jobs from a workflow with `version: 2` to run on different labelled runners;
+version-1 runners only receive legacy workflows. The negotiated version stays
+fixed throughout a lease, including source checkout, logs and artifact uploads.
+Failed greetings do not authorize a claim. After a failed claim, the runner
+negotiates again before retrying. Restart runners after upgrading an older
+server so existing version-1 connections can use distributed jobs.
+
 - **Secondary runners first.** A remote runner claims a new job the moment it
   is queued. The server's own runner (the *primary*) claims a job only after
   it has waited `ci_claim_delay_ms` (default 1000 ms) without a remote runner
