@@ -56,7 +56,8 @@ jobs:
       retention_days: 14
 ```
 
-- `version:` must be `1`.
+- `version: 1` runs the workflow on one runner. Use `version: 2` for
+  independently scheduled jobs, per-job `runs_on`, and `needs` dependencies.
 - `on: { branches: [...] }` and `on: { tags: [...] }` choose which branches and
   tags trigger the workflow (a tag pattern is an exact name or a trailing `*`,
   such as `v*`). Omit `on:` entirely to build the default branch and cut a
@@ -68,7 +69,9 @@ jobs:
 - `env:` is fixed `key: value` pairs; there is no `$VAR` expansion. A job's
   `env:` is merged over the top-level `env:`.
 - A step's `run:` written as a **list** is an exact command with no shell. A
-  `run:` **scalar** or a `script:` block runs with `sh -ec` inside the sandbox.
+  `run:` **scalar** or a `script:` block uses the runner's default shell:
+  `sh` on Linux, PowerShell on Windows. Version 2 can select `shell` explicitly;
+  that shell must be available in the job's toolchain.
 - `artifacts:` (optional, per job) packs the named `paths` into one bundle after
   the job's steps succeed. `paths` are relative to the checkout and may not be
   absolute or contain `..`; `name` defaults to the job name and may not be

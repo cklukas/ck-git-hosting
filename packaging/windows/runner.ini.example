@@ -7,6 +7,8 @@ ci_build_root=V:/ProgramData/ckgit-runner/build
 ci_cache_root=V:/ProgramData/ckgit-runner/cache
 identity=V:/ProgramData/ckgit-runner/ssh/id_ed25519
 known_hosts=V:/ProgramData/ckgit-runner/ssh/known_hosts
+# Use Git for Windows' SSH client for redirected protocol streams.
+ssh_program=C:/Program Files/Git/usr/bin/ssh.exe
 ci_allow_network=false
 ci_toolchain_root=V:/ProgramData/ckgit-runner/toolchain
 ci_toolchain_paths=msvc/bin/Hostx64/x64;sdk/bin/x64;cmake/bin;inno

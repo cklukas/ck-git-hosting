@@ -56,6 +56,10 @@ rights; running the broker still needs elevation. AllUsers installation needs
 administrator rights. Installing the package does not automatically start a
 runner or register its SSH key. Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
+The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
+qualification workstation, Windows' built-in OpenSSH returned protocol replies
+but hung at exit with redirected streams; Git for Windows' SSH completed those
+same exchanges. Adjust `ssh_program` if Git is installed in another location.
 
 On the development workstation, install to `V:\Programs\ck-git-runner` and
 keep configuration, credentials and the staged toolchain beneath a protected
@@ -94,9 +98,11 @@ Git checkout and build steps. The repository's `windows-installers` job uses
 CMake directly and does not need PowerShell inside the sandbox; other script
 jobs need their selected shell in the staged toolchain.
 
-The local broker, executor and installer qualifications pass. Automatic startup,
-installation of the final GitHub-built runner and the complete rpi4-triggered
-`ck-git-hosting` installer build are still pending deployment qualification.
+Configure the server's primary runner with `ci_runner_labels=linux,arm64`
+when it runs on an ARM64 Linux host, and register the Windows runner with
+`--labels windows,x64`. The repository's own version-2 workflow then schedules
+its Linux build and native Windows installers independently from the same push.
+See [the distributed workflow example](06-ci-yml-reference.md#build-on-linux-and-windows-from-one-push).
 
 ## What happens when a runner goes away
 

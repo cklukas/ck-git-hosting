@@ -132,7 +132,7 @@ exact same subset — one syntax, two schemas.
 
 | Key | Type | Required | Default | Validation |
 |---|---|---|---|---|
-| `version` | integer | yes | — | must be exactly `1` |
+| `version` | integer | yes | — | `1` for one runner; `2` for distributed jobs |
 | `on.branches` | list of strings | no | none | valid branch name each; see [trigger matrix](#trigger-matrix) |
 | `on.tags` | list of strings | no | none | a tag pattern: an exact name, or a name ending in a single trailing `*` wildcard |
 | `env` (top level) | mapping | no | empty | keys: `[A-Za-z_][A-Za-z0-9_]*`; values: any scalar |
@@ -145,15 +145,19 @@ exact same subset — one syntax, two schemas.
 | `runs_on` | a label, or a list of up to 16 labels | no | any runner | each label: 1–32 bytes of lowercase letters, digits, `.`, `_`, `-`, starting with a letter or digit; only a runner carrying every label takes the run (see [Choose a runner](#choose-a-runner-runs_on)) |
 | `cache[]` | list of a bare name or a `{name, env}` mapping | no | empty | `name`: a valid CI name (letters, digits, `. _ -`); `env` (optional): list of variable names to also bind to the cache path |
 | `pages.path` | string | required *within* `pages:` | — | a safe relative path: no leading `/`, no `.`/`..` component, no backslash |
+| `pages.job` | string | required within version-2 `pages` | — | name of the producing job; forbidden in version 1 |
 | `jobs[]` | list of mappings | required, non-empty | — | unique `name` per job |
 | `jobs[].name` | string | required | — | valid CI name |
 | `jobs[].env` | mapping | no | empty | same rule as top-level `env`; merged **over** it at run time |
+| `jobs[].runs_on` | label or label list | no; version 2 only | top-level `runs_on` | runner must carry every label |
+| `jobs[].needs` | list of job names | no; version 2 only | empty | existing distinct jobs; no self-dependency or cycles |
 | `jobs[].steps` | list of mappings | required, non-empty | — | — |
 | `jobs[].artifacts` | mapping | no | none | see below |
 | `steps[].name` | string | no | falls back to the job's name | no charset restriction, just a length cap |
 | `steps[].run` (list form) | list of strings | exactly one of `run`/`script` required | — | executed as a literal argument vector, **no shell** |
-| `steps[].run` (scalar form) | string | (same) | — | executed as `sh -ec '<value>'` |
-| `steps[].script` | string, typically a `\|` block | (same) | — | executed as `sh -ec '<value>'` |
+| `steps[].run` (scalar form) | string | (same) | — | executed with the selected shell |
+| `steps[].script` | string, typically a `\|` block | (same) | — | executed with the selected shell |
+| `steps[].shell` | string | no; version 2 only | runner default | `sh`, `powershell`, or `pwsh`; forbidden with an argv list |
 | `artifacts.name` | string | no | the owning job's name | valid CI name; **must not be `release`** — that name is reserved for the tag build's own release record |
 | `artifacts.paths` | list of strings | required, non-empty | — | each a safe relative path under the checkout |
 | `artifacts.retention_days` | integer | no | `0` (use the server default) | `0` is rejected if written explicitly; capped to the server's configured maximum; **ignored entirely on a tag/release build**, which is always durable regardless of this value |
@@ -242,6 +246,49 @@ its detail line says which labels it waits for. Other runners skip it and
 take later jobs. A run that no runner can take waits until an administrator
 gives a runner the labels or cancels the run. `ckgit ci lint` shows the
 labels a workflow asks for.
+
+### Build on Linux and Windows from one push
+
+Version 2 creates one parent run and a separate child run for each job. Jobs
+without dependencies can run concurrently on different machines. Each gets its
+own checkout of the same pushed commit. `needs: [build]` waits for that job to
+succeed; it does not transfer its working directory or artifacts. Dependency
+cycles and unknown names are rejected. Version 1 retains its single-runner
+behavior. Distributed jobs require a version-2 server and runner protocol.
+
+```yaml
+version: 2
+on: { branches: [main] }
+jobs:
+  - name: linux
+    runs_on: [linux]
+    steps:
+      - run: [make, all]
+  - name: windows
+    runs_on: [windows, x64]
+    steps:
+      - run: [cmake.exe, -P, packaging/windows/build-ci.cmake]
+    artifacts:
+      name: windows-installers
+      paths: [dist]
+```
+
+The Windows command above is ck-git-hosting's own build entry point; other
+projects supply their own build commands. It builds ckgit, ckdocs, and the
+Windows runner with MSVC, then creates three installers and a portable ZIP
+using Inno Setup and CPack. The `dist` artifact includes package checksums,
+source fingerprints, the commit, and build timing. These commands execute on
+Windows inside the [AppContainer runner](ci-remote-runners.md#windows-runner).
+
+Give every platform-specific job explicit labels, including legacy workflows:
+an unlabelled workflow is eligible for any runner. Linux scripts default to
+`sh`; Windows scripts default to `powershell`. An explicitly selected shell
+must be present in the runner's staged tools. Argument-list steps need no shell.
+
+For Pages in version 2, select exactly one producer with
+`pages: { job: linux, path: public }`. A successful tag workflow combines its
+jobs' release outputs; it does not publish a successful release while another
+required job remains pending or has failed.
 
 ## Checkout and history
 
