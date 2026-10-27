@@ -1,5 +1,23 @@
 # Changes
 
+## 0.9.0 — 2026-10-27
+
+### ckdocs: XY charts
+
+- Every `bar` and `line` statement in an `xychart-beta` is now a series of its
+  own, as in Mermaid: bar series stand side by side within each category and
+  lines are drawn over them. Before, only the last bar and the last line
+  statement were drawn. A series whose value count differs from the
+  categories is reported with its line number.
+- `xychart-beta horizontal` draws horizontal bars with the axes swapped.
+- New `error` line, written directly under a `bar` or `line` series: one list
+  gives symmetric amounts (`error [1.4, 0.3, 0.8]`), two lists give the lower,
+  then the upper amount. Amounts are offsets from the value; an empty entry
+  draws no whisker. This is an extension of the CWorks renderer that ckdocs
+  embeds; standard Mermaid renderers reject a diagram that uses it. See
+  `docs/ckdocs/xy-charts.md`.
+- Clickable chart regions keep their source order with several series.
+
 ## 0.8.2 — 2026-10-25
 
 ### CI scheduling
