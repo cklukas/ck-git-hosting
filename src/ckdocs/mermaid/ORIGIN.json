@@ -636,6 +636,44 @@
           "embedded_sha256": "906229e9a47f94dbcdd7620513867026d3a013bc7d6cd49edde5a8035b3cc737"
         }
       }
+    },
+    {
+      "revision": "f8dbb27ccd43a9b2bbbd9cceae8a0424be91bec7",
+      "description": "Chart regions carry an explicit source ordinal per drawn mark, so a renderer that reorders data (pie slices) keeps each mark's identity. Output-neutral for ckdocs, which requests no regions; taken so later chart fixes apply unchanged.",
+      "files": {
+        "cdiagram/src/chart_adapter.cpp": {
+          "upstream_sha256": "db0f02d6a4898d99b933cd27570c7798bf108ba2f500006e5aa33ace2dfce738",
+          "embedded_sha256": "1a76c0ca8ffdc2ea7ba4549293034adf5717fb86a0897a9a8081bd4f3044abc7"
+        },
+        "cdiagram/src/chart_adapter.hpp": {
+          "upstream_sha256": "e5e2c8d125f6b8318942a89ae540057d692513ed34aed7f4745cb8993dfa5ecf",
+          "embedded_sha256": "f1452f60610881149ae224a3929de601a4f7c14030f39d2d4239f3edc787c137"
+        },
+        "cdiagram/src/pie.cpp": {
+          "upstream_sha256": "ac672ae31706403e386d9acb3e54aa80631ca3d3c97fb17036f9e1faf047afb4",
+          "embedded_sha256": "78a8868700f733444c0c8d03c49b930034bc487262713fbf0c056acab15edd1d"
+        },
+        "cdiagram/src/quadrant.cpp": {
+          "upstream_sha256": "193711cf2a0d34a9539425504eadd0acd9ca2492ffcc7b543b85914ff53254c4",
+          "embedded_sha256": "ec96b06e94643c00b27a15f615c71d15349adbfbf30f6774b61bff223238aabe"
+        },
+        "cdiagram/src/radar.cpp": {
+          "upstream_sha256": "82cb9c3ca8de41266ca677580ae305391b3dab9b38d075ed2cd6dcbded931047",
+          "embedded_sha256": "5fa99a9645ae7b6ed01c4a4f46d5883d3ed031f82ed82a1ebe350ac3ecf04de7"
+        },
+        "cdiagram/src/sankey.cpp": {
+          "upstream_sha256": "b40f415f6fdb7b6901b3f113d98e47febf98a0139c431c63abbeeb1e7a416a2e",
+          "embedded_sha256": "de7771c894466fd06dfb1f4f17e5b1e42db605a5889fe0d77c96746c9973c61e"
+        },
+        "cdiagram/src/treemap.cpp": {
+          "upstream_sha256": "f4aa6ceb39152f533fa0ffdc1920cbce388046ae7c5320fb4c5181344dd768fe",
+          "embedded_sha256": "4c1a1878fe1ea1a09a16a0d880d46e5f83ba40dc34b16fc97913259e16f2f73f"
+        },
+        "cdiagram/src/xychart.cpp": {
+          "upstream_sha256": "351c5cb1367fb60b9d48012b8d68a3df3dac6a2c26a0a4f3a8963ff73e73de2a",
+          "embedded_sha256": "67c06fe49191f39c25793b74d96306d05119591c8136837ad173903ae870c568"
+        }
+      }
     }
   ]
 }

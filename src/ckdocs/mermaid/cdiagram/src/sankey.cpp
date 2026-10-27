@@ -122,7 +122,7 @@ cplot::Scene build_sankey(std::string_view source, const RenderOptions& options)
     // A sankey NODE is a rectangle and is what a reader aims at; a flow is a
     // ribbon whose path is not a region this map can express, so the nodes
     // are reported and the ribbons are not.
-    report_chart_regions(options, scene, ChartMark::Rect, node_count);
+    report_chart_regions(options, scene, ChartMark::Rect, chart_source_order(node_count));
     return scene;
 }
 

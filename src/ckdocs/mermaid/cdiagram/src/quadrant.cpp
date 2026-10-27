@@ -238,7 +238,7 @@ cplot::Scene build_quadrant(std::string_view source, const RenderOptions& option
                             figure.quadrant(std::move(chart));
                         });
     // A plotted point is a marker; the square around it is its hit area.
-    report_chart_regions(options, scene, ChartMark::Circle, point_count);
+    report_chart_regions(options, scene, ChartMark::Circle, chart_source_order(point_count));
     return scene;
 }
 

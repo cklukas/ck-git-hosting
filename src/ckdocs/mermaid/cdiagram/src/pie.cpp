@@ -25,6 +25,7 @@ namespace {
 struct Slice {
     std::string label;
     double value;
+    std::size_t source_ordinal;
 };
 
 struct PieModel {
@@ -79,7 +80,7 @@ PieModel parse_pie(std::string_view source, const RenderOptions& options) {
             double value = 0.0;
             if (!parse_number(tail, value)) fail("'" + tail + "' is not a number");
             if (value < 0.0) fail("value must not be negative");
-            model.slices.push_back({label, value});
+            model.slices.push_back({label, value, model.slices.size()});
             continue;
         }
 
@@ -111,7 +112,12 @@ cplot::Scene build_pie(std::string_view source, const RenderOptions& options) {
     // Descending by value, stable in source order (Mermaid's ordering).
     std::stable_sort(model.slices.begin(), model.slices.end(),
                      [](const Slice& a, const Slice& b) { return a.value > b.value; });
-    const std::size_t slice_count = model.slices.size();
+    std::vector<std::size_t> source_order;
+    source_order.reserve(model.slices.size());
+    for (const Slice& slice : model.slices) {
+        // Zero-valued slices remain in the model and legend but draw no sector.
+        if (slice.value > 0.0) source_order.push_back(slice.source_ordinal);
+    }
     cplot::Scene scene = render_chart(
         options, "pie", 680.0, 440.0,
         [model = std::move(model)](cplot::Figure& figure) mutable {
@@ -133,7 +139,7 @@ cplot::Scene build_pie(std::string_view source, const RenderOptions& options) {
         });
     // A wedge is not a rectangle, so each slice reports the outline it was
     // drawn with; see cdiagram::HitRegion::shape.
-    report_chart_regions(options, scene, ChartMark::Sector, slice_count);
+    report_chart_regions(options, scene, ChartMark::Sector, source_order);
     return scene;
 }
 

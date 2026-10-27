@@ -94,7 +94,7 @@ cplot::Scene build_treemap(std::string_view source, const RenderOptions& options
                             figure.treemap(std::move(chart));
                         });
     // A treemap box really is a rectangle, so its bounds are its shape.
-    report_chart_regions(options, scene, ChartMark::Rect, box_count);
+    report_chart_regions(options, scene, ChartMark::Rect, chart_source_order(box_count));
     return scene;
 }
 

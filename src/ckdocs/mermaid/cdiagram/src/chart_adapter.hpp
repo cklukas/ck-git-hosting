@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <functional>
+#include <span>
+#include <vector>
 #include <string_view>
 
 #include <cplot/figure.hpp>
@@ -30,15 +32,16 @@ namespace cdiagram::detail {
 /// second implementation of cplot's layout, so this reads what was actually
 /// drawn instead.
 ///
-/// The join is POSITIONAL: the n-th mark of the given kind is the n-th object.
-/// That holds because a series emits one mark per datum in datum order, and it
-/// is the same idiom the animation player already uses to join a token table
-/// to a diagram. `mark` selects which leaf type counts as a datum, so a chart
-/// says whether its data are sectors, rectangles or markers.
+/// Each matched mark is paired with an explicit source-object ordinal. The
+/// adapter must retain this identity when it sorts or omits data before drawing.
 enum class ChartMark { Sector, Rect, Circle };
 
+/// Source order for adapters that preserve every datum in its original order.
+std::vector<std::size_t> chart_source_order(std::size_t count);
+
 void report_chart_regions(const RenderOptions& options, const cplot::Scene& scene,
-                          ChartMark mark, std::size_t count, int role = 0);
+                          ChartMark mark, std::span<const std::size_t> source_order,
+                          int role = 0);
 
 cplot::Scene render_chart(const RenderOptions& options,
                           std::string_view diagram_name, double width,

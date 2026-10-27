@@ -6,6 +6,7 @@
 #include <vector>
 #include <variant>
 #include <algorithm>
+#include <numeric>
 
 #include <string>
 #include <utility>
@@ -43,13 +44,19 @@ cplot::Scene render_chart(const RenderOptions& options,
     }
 }
 
+std::vector<std::size_t> chart_source_order(std::size_t count) {
+    std::vector<std::size_t> order(count);
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    return order;
+}
+
 void report_chart_regions(const RenderOptions& options, const cplot::Scene& scene,
-                          ChartMark mark, std::size_t count, int role) {
-    if (options.regions == nullptr || count == 0) return;
+                          ChartMark mark, std::span<const std::size_t> source_order, int role) {
+    if (options.regions == nullptr || source_order.empty()) return;
 
     std::size_t ordinal = 0;
     for (const cplot::PlacedItem& placed : cplot::collect_items(scene.root)) {
-        if (ordinal >= count) break;
+        if (ordinal >= source_order.size()) break;
         std::vector<cplot::Point> shape;
         cplot::RectF bounds{};
 
@@ -84,7 +91,7 @@ void report_chart_regions(const RenderOptions& options, const cplot::Scene& scen
         }
 
         DrawnRegion region;
-        region.key = "#" + std::to_string(ordinal);
+        region.key = "#" + std::to_string(source_order[ordinal]);
         region.role = role;
         region.bounds = bounds;
         region.shape = std::move(shape);

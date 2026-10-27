@@ -153,7 +153,7 @@ cplot::Scene build_radar(std::string_view source, const RenderOptions& options) 
         });
     // A radar curve draws as a polygon, which cplot emits as a path rather than
     // a leaf this map can key on; its axis labels are what remain selectable.
-    report_chart_regions(options, scene, ChartMark::Rect, curve_count);
+    report_chart_regions(options, scene, ChartMark::Rect, chart_source_order(curve_count));
     return scene;
 }
 

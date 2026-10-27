@@ -217,7 +217,7 @@ cplot::Scene build_xychart(std::string_view source,
                     .marker(cplot::Marker::Circle, 3.5);
         });
     // Bars are rectangles and are the marks a reader aims at.
-    report_chart_regions(options, scene, ChartMark::Rect, bar_count);
+    report_chart_regions(options, scene, ChartMark::Rect, chart_source_order(bar_count));
     return scene;
 }
 
