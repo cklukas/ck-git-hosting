@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <optional>
 #include <span>
@@ -238,6 +239,9 @@ public:
     MissingPolicy missing_policy() const { return missing_; }
     bool uses_y2() const { return y2_; }
     bool uses_x2() const { return x2_; }
+    /// The producer identity this series' marks carry as native hit targets,
+    /// or 0 for none. See SeriesBase::hit_id.
+    std::uint64_t hit_id_value() const { return hit_id_; }
 
     // Type-erased setters (used by the C API; prefer the fluent setters).
     void set_label_text(std::string text) { label_ = std::move(text); }
@@ -246,6 +250,7 @@ public:
     void set_missing_policy(MissingPolicy p) { missing_ = p; }
     void set_uses_y2(bool v) { y2_ = v; }
     void set_uses_x2(bool v) { x2_ = v; }
+    void set_hit_id_value(std::uint64_t id) { hit_id_ = id; }
 
     // -- internal pipeline hooks ------------------------------------------
     virtual Extent extent() const = 0;
@@ -295,6 +300,7 @@ protected:
     bool visible_ = true;
     bool y2_ = false;
     bool x2_ = false;
+    std::uint64_t hit_id_ = 0;
     MissingPolicy missing_ = MissingPolicy::Gap;
 };
 
@@ -332,6 +338,16 @@ public:
         x2_ = value;
         return self();
     }
+    /// Make every filled mark this series draws — a bar, a marker dot, a
+    /// wedge, a filled polygon — a native hit target carrying `id`, reported
+    /// by collect_hit_regions() in paint order. Strokes (the line between
+    /// points, an error whisker) have no inside to land in and are not
+    /// targets. 0, the default, means none; nothing exported changes either
+    /// way.
+    Derived& hit_id(std::uint64_t id) {
+        hit_id_ = id;
+        return self();
+    }
 
     // Explicit-style aliases.
     Derived& set_label(std::string text) { return label(std::move(text)); }
@@ -357,6 +373,13 @@ public:
     /// be combined without a second layout implementation.
     LineSeries& set_data(std::vector<std::string> categories,
                          std::span<const double> y);
+    /// Turn a categorical line on its side to accompany horizontal bars
+    /// (barh): the categories run down the y axis and the values along x.
+    /// Error amounts on the values are then horizontal, so they are given
+    /// with x_error(). Only a categorical line has an orientation; a numeric
+    /// line is turned by swapping its x and y data, and asking for one
+    /// refuses.
+    LineSeries& horizontal(bool value = true);
     LineSeries& marker(Marker m, double size = 3.0);
     LineSeries& dash(std::string svg_dash_array);
     /// Symmetric vertical error bars, one value per point.
@@ -424,13 +447,13 @@ public:
                         std::vector<SceneItem>& out) const override;
     std::size_t point_count() const override { return x_.size(); }
     Marker legend_marker() const override { return marker_; }
-    bool wants_category_x() const override { return !categories_.empty(); }
-    std::vector<std::string> x_category_names() const override {
-        return categories_;
-    }
+    bool wants_category_x() const override { return !categories_.empty() && !horizontal_; }
+    bool wants_category_y() const override { return !categories_.empty() && horizontal_; }
+    std::vector<std::string> category_names() const override { return categories_; }
     std::vector<LegendItemInfo> legend_items(Color resolved_color,
                                              const Theme& theme) const override;
 
+    bool is_horizontal() const { return horizontal_; }
     const std::vector<double>& x_data() const { return x_; }
     const std::vector<double>& y_data() const { return y_; }
     const ErrorData& y_error_data() const { return err_y_; }
@@ -442,6 +465,7 @@ protected:
     ErrorBarStyle err_style_;
     ErrorDisplay err_display_ = ErrorDisplay::Bars;
     std::vector<std::string> categories_;
+    bool horizontal_ = false;
     Marker marker_ = Marker::None;
     double marker_size_ = 3.0;
     double band_alpha_ = 0.18;

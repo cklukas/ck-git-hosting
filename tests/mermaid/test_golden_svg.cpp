@@ -50,6 +50,26 @@ const std::vector<GoldenCase>& cases() {
          "pie title Pets\n"
          "  \"Dogs\" : 5\n"
          "  \"Cats\" : 3\n"},
+        // Every statement is its own series: two bar series grouped in each
+        // category, two lines over them, each in the next theme colour.
+        {"xychart",
+         "xychart-beta\n"
+         "  title \"Quarterly revenue\"\n"
+         "  x-axis \"Quarter\" [Q1, Q2, Q3, Q4]\n"
+         "  y-axis \"Revenue (k)\" 0 --> 100\n"
+         "  bar \"Plan\" [40, 55, 60, 80]\n"
+         "  bar \"Actual\" [35, 60, 52, 85]\n"
+         "  line [30, 45, 50, 70]\n"
+         "  line [45, 62, 58, 90]\n"},
+        // The same chart on its side: categories down y, first at the top.
+        {"xychart-horizontal",
+         "xychart-beta horizontal\n"
+         "  title \"Quarterly revenue\"\n"
+         "  x-axis \"Quarter\" [Q1, Q2, Q3, Q4]\n"
+         "  y-axis \"Revenue (k)\" 0 --> 100\n"
+         "  bar [40, 55, 60, 80]\n"
+         "  bar [35, 60, 52, 85]\n"
+         "  line [30, 45, 50, 70]\n"},
         {"flowchart-styling",
          "flowchart LR\n"
          "  subgraph pipe[Pipeline]\n"

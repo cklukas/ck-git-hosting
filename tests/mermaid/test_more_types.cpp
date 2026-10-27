@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: MIT
 #include <cworks/microtest.hpp>
 
+#include <set>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <cplot/svg.hpp>
+#include <cworks/app_error.hpp>
 
 #include "cdiagram/diagram.hpp"
 #include "cdiagram/error.hpp"
@@ -24,6 +27,39 @@ std::size_t count(const cplot::Scene& scene) {
     for (const cplot::PlacedItem& placed : cplot::collect_items(scene.root))
         if (std::holds_alternative<Item>(*placed.item)) ++n;
     return n;
+}
+
+/// The data marks of a single-panel chart, without the plot background
+/// under them: cplot nests each panel's marks as the one group inside it.
+template <class Item>
+std::vector<const Item*> marks(const cplot::Scene& scene) {
+    std::vector<const Item*> out;
+    for (const cplot::Node& panel : scene.root.children) {
+        if (!panel.is_group()) continue;
+        for (const cplot::Node& layer : panel.group().children) {
+            if (!layer.is_group()) continue;
+            for (const cplot::PlacedItem& placed : cplot::collect_items(layer.group()))
+                if (const auto* item = std::get_if<Item>(placed.item)) out.push_back(item);
+            return out;
+        }
+    }
+    return out;
+}
+
+/// The structured refusal a frontend receives for `source`.
+cworks::AppError refusal(const std::string& source) {
+    try {
+        (void)render(source);
+    } catch (const cworks::Error& e) {
+        return e.structured() != nullptr ? *e.structured() : cworks::AppError{};
+    }
+    return cworks::AppError{};
+}
+
+/// The source text a refusal's caret covers.
+std::string caret_text(const std::string& source, const cworks::AppError& error) {
+    if (!error.source_span) return {};
+    return source.substr(error.source_span->offset, error.source_span->length);
 }
 
 void check_deterministic(const std::string& src) {
@@ -54,10 +90,135 @@ TEST_CASE("xychart draws bars and a line") {
     check_deterministic(src);
 }
 
-TEST_CASE("xychart delegates strict categorical shape validation") {
-    CHECK_THROWS_AS(
-        render("xychart-beta\n  x-axis [A, B, C]\n  line [1, 2]\n"),
-        cdiagram::Error);
+TEST_CASE("xychart draws every bar and line statement as its own series") {
+    const std::string src =
+        "xychart-beta\n  x-axis [A, B, C]\n  bar [3, 6, 4]\n  bar [2, 5, 7]\n"
+        "  line [1, 2, 3]\n  line [4, 4, 4]\n";
+    const cplot::Scene scene = render(src);
+    const std::vector<const cplot::RectItem*> bars = marks<cplot::RectItem>(scene);
+    REQUIRE(bars.size() == 6u);
+    // Grouped side by side: the second series' bar in each category stands
+    // right of the first one's, at the same width, in its own colour.
+    for (std::size_t i = 0; i < 3; ++i) {
+        CHECK(bars[3 + i]->rect.x > bars[i]->rect.x);
+        CHECK_APPROX(bars[3 + i]->rect.w, bars[i]->rect.w);
+        CHECK(bars[3 + i]->rect.x + bars[3 + i]->rect.w <= bars[i]->rect.x + 2.0 * bars[i]->rect.w + 1e-9);
+    }
+    CHECK(bars[0]->style.fill != bars[3]->style.fill);
+    CHECK_EQ(count<cplot::PolylineItem>(scene), 2u);
+    CHECK_EQ(count<cplot::CircleItem>(scene), 6u);
+    check_deterministic(src);
+}
+
+TEST_CASE("xychart horizontal lays the categories down the y axis") {
+    const std::string src =
+        "xychart-beta horizontal\n  x-axis \"Month\" [Jan, Feb, Mar]\n"
+        "  y-axis \"Revenue\" 0 --> 10\n  bar [3, 6, 4]\n  line [2, 5, 3]\n";
+    const cplot::Scene scene = render(src);
+    const std::vector<const cplot::RectItem*> bars = marks<cplot::RectItem>(scene);
+    const std::vector<const cplot::CircleItem*> dots = marks<cplot::CircleItem>(scene);
+    REQUIRE(bars.size() == 3u);
+    REQUIRE(dots.size() == 3u);
+    // Bars grow along x from a shared baseline and share one thickness.
+    CHECK_APPROX(bars[0]->rect.x, bars[1]->rect.x);
+    CHECK_APPROX(bars[0]->rect.h, bars[1]->rect.h);
+    CHECK(bars[1]->rect.w > bars[0]->rect.w);
+    CHECK(bars[1]->rect.w > bars[2]->rect.w);
+    // The line's points sit in the middle of their category's band.
+    for (std::size_t i = 0; i < 3; ++i)
+        CHECK_APPROX(dots[i]->center.y, bars[i]->rect.y + bars[i]->rect.h / 2.0);
+    // The value axis title now reads along x, the category title along y.
+    bool month = false, revenue = false;
+    for (const cplot::PlacedItem& placed : cplot::collect_items(scene.root)) {
+        if (const auto* text = std::get_if<cplot::TextItem>(placed.item)) {
+            month = month || (text->text == "Month" && text->rotation != 0.0);
+            revenue = revenue || (text->text == "Revenue" && text->rotation == 0.0);
+        }
+    }
+    CHECK(month);
+    CHECK(revenue);
+    check_deterministic(src);
+
+    // Mermaid's front-matter form says the same thing.
+    const std::string configured =
+        "---\nconfig:\n  xyChart:\n    chartOrientation: horizontal\n---\n"
+        "xychart-beta\n  x-axis \"Month\" [Jan, Feb, Mar]\n"
+        "  y-axis \"Revenue\" 0 --> 10\n  bar [3, 6, 4]\n  line [2, 5, 3]\n";
+    CHECK_EQ(cplot::SvgRenderer().render(render(configured)),
+             cplot::SvgRenderer().render(scene));
+}
+
+TEST_CASE("xychart refuses a series whose length differs from the categories") {
+    const std::string src = "xychart-beta\n  x-axis [A, B, C]\n  bar [3, 6, 4]\n  line [1, 2]\n";
+    const cworks::AppError error = refusal(src);
+    CHECK(error.is(cworks::ErrorCode::ValidationFailed));
+    CHECK(error.summary.find("(line 4)") != std::string::npos);
+    CHECK(error.summary.find("line series has 2 values but the x axis has 3 categories") !=
+          std::string::npos);
+    CHECK_EQ(caret_text(src, error), std::string("[1, 2]"));
+
+    // Without categories the first series sets the count.
+    const std::string numeric = "xychart-beta\n  line [1, 2, 3]\n  line [1, 2]\n";
+    CHECK(refusal(numeric).summary.find("the first series has 3") != std::string::npos);
+}
+
+TEST_CASE("xychart refusals point at the offending text") {
+    const std::string bad_value = "xychart-beta\r\n  x-axis [A, B]\r\n  bar [3, x7]\r\n";
+    const cworks::AppError value = refusal(bad_value);
+    CHECK(value.summary.find("'x7' is not a finite number") != std::string::npos);
+    CHECK_EQ(caret_text(bad_value, value), std::string("x7"));
+
+    const std::string trailing = "xychart-beta\n  bar [3, 7] [1, 1]\n";
+    CHECK_EQ(caret_text(trailing, refusal(trailing)), std::string("[1, 1]"));
+
+    const std::string unclosed = "xychart-beta\n  bar [3, 7\n";
+    CHECK_EQ(caret_text(unclosed, refusal(unclosed)), std::string("[3, 7"));
+}
+
+TEST_CASE("xychart bars on a numeric x axis cannot group or turn") {
+    const std::string several = "xychart-beta\n  x-axis 0 --> 10\n  bar [1, 2]\n  bar [3, 4]\n";
+    const cworks::AppError grouped = refusal(several);
+    CHECK(grouped.summary.find("several bar series need categories") != std::string::npos);
+    CHECK_EQ(caret_text(several, grouped), std::string("bar [3, 4]"));
+
+    const std::string turned = "xychart-beta horizontal\n  x-axis 0 --> 10\n  bar [1, 2]\n";
+    CHECK(refusal(turned).summary.find("horizontal bars need categories") != std::string::npos);
+
+    // Lines on a numeric axis need no band, so both forms draw.
+    CHECK_EQ(count<cplot::PolylineItem>(render(
+                 "xychart-beta horizontal\n  x-axis 0 --> 10\n  line [1, 2]\n  line [2, 1]\n")),
+             2u);
+}
+
+TEST_CASE("xychart reports an orientation it does not know") {
+    const cworks::Diagnostics diagnostics =
+        cdiagram::check("xychart-beta horizontl\n  x-axis [A]\n  bar [1]\n");
+    bool found = false;
+    for (const cworks::Diagnostic& d : diagnostics)
+        found = found || d.message.find("did you mean 'horizontal'") != std::string::npos;
+    CHECK(found);
+}
+
+TEST_CASE("xychart regions name the series statement that drew each mark") {
+    // This copy has no editor scene map; the regions a renderer reports are
+    // the same identities upstream resolves to series objects.
+    const std::string src =
+        "xychart-beta\n  x-axis [A, B, C]\n  bar [3, 6, 4]\n  line [1, 2, 3]\n"
+        "  bar [2, 5, 7]\n";
+    std::vector<cdiagram::DrawnRegion> regions;
+    cdiagram::RenderOptions options;
+    options.regions = &regions;
+    const cplot::Scene scene = render(src, options);
+    REQUIRE(regions.size() == 9u);
+    // Paint order: the first bar series, the line's points, the second bars.
+    const char* expected[] = {"#0", "#0", "#0", "#1", "#1", "#1", "#2", "#2", "#2"};
+    for (std::size_t i = 0; i < regions.size(); ++i) CHECK_EQ(regions[i].key, std::string(expected[i]));
+    // Each bar region is exactly a drawn bar, never the plot background.
+    const auto bars = marks<cplot::RectItem>(scene);
+    REQUIRE(bars.size() == 6u);
+    CHECK_APPROX(regions[0].bounds.x, bars[0]->rect.x);
+    CHECK_APPROX(regions[0].bounds.h, bars[0]->rect.h);
+    CHECK_APPROX(regions[6].bounds.x, bars[3]->rect.x);
 }
 
 TEST_CASE("kanban lays out columns and cards") {

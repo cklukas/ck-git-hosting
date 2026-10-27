@@ -567,7 +567,9 @@
     },
     "tests/mermaid/test_golden_svg.cpp": {
       "origin": "cdiagram/tests/test_golden_svg.cpp",
-      "sha256": "1f5bb0176897a16ce76206b0aee09674e4dc013742339dbc265a6c3a879aebab"
+      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
+      "sha256": "960b05ea02f63595039e31b92ada090efe9471da4d85c1d7269136c4f26fdb73",
+      "adapted": true
     },
     "tests/mermaid/test_graph_types.cpp": {
       "origin": "cdiagram/tests/test_graph_types.cpp",
@@ -579,7 +581,9 @@
     },
     "tests/mermaid/test_more_types.cpp": {
       "origin": "cdiagram/tests/test_more_types.cpp",
-      "sha256": "d1aad3c8c134f5b224a8fab4d951fe614b41538e7d352f5528c9e5ccbf3ed668"
+      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
+      "sha256": "a1b9341774d70be1f06b351e52f64dffb39de6041a774d702f72e3f54cdce619",
+      "adapted": true
     },
     "tests/mermaid/test_pie.cpp": {
       "origin": "cdiagram/tests/test_pie.cpp",
@@ -594,6 +598,16 @@
       "revision": "97a7848bdaad7f164bb48abc140cc42428b41d3b",
       "sha256": "78a07e7a50c745d7827da4345bf3298d805f41fb8b282e0ea4d0c497b5c9f08a",
       "adapted": true
+    },
+    "tests/mermaid/golden/xychart.expected.svg": {
+      "origin": "cdiagram/tests/golden/xychart.expected.svg",
+      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
+      "sha256": "ddec7d5bf12b5710de75b5533dfc34c009d400cf1647b7b705356745f243ca25"
+    },
+    "tests/mermaid/golden/xychart-horizontal.expected.svg": {
+      "origin": "cdiagram/tests/golden/xychart-horizontal.expected.svg",
+      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
+      "sha256": "54ebdf90ed2e45ff0348051a1e2220b101c75033a926cdc13bcb35ace5ad3429"
     }
   },
   "backports": [
@@ -672,6 +686,28 @@
         "cdiagram/src/xychart.cpp": {
           "upstream_sha256": "351c5cb1367fb60b9d48012b8d68a3df3dac6a2c26a0a4f3a8963ff73e73de2a",
           "embedded_sha256": "67c06fe49191f39c25793b74d96306d05119591c8136837ad173903ae870c568"
+        }
+      }
+    },
+    {
+      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
+      "description": "xychart: every bar and line statement is its own series (grouped bars, overlaid lines), xychart-beta horizontal and config.xyChart.chartOrientation, length diagnostics with source spans; cplot series hit identities, native hit targets for filled marks, and LineSeries::horizontal. The editor model, scene map and C APIs of the same commit are not part of this copy. Adapted: this copy's cplot HitRegion has no outline, so add_series_hits registers a wedge's or polygon's bounding box.",
+      "files": {
+        "cdiagram/src/xychart.cpp": {
+          "upstream_sha256": "b633b9267ae8213f26cf045430bf198254077d7779cdecb750721302b4910a87",
+          "embedded_sha256": "a35466ffa8b88f5f5d77369cf10d058eaf11a79e27b178cc8a329ac64b1e6fe1"
+        },
+        "cplot/include/cplot/series.hpp": {
+          "upstream_sha256": "5a799b4197f673268d25cc9fbec89e37e325b78c1a18e1a3f19c17ce34b8559a",
+          "embedded_sha256": "91e8a8c780d9f7f3640ab34961445eca0f9e901cde8a0bef123e35f2464379df"
+        },
+        "cplot/src/series.cpp": {
+          "upstream_sha256": "e5118aef01085ec8253daf862c658b47c6edb3ab8fe108027f2d62daeb85a61f",
+          "embedded_sha256": "5e49c0f5a89f5dd2fe8b5cca91f2a3ed81411d1426e0f0858e36967c717d738d"
+        },
+        "cplot/src/layout.cpp": {
+          "upstream_sha256": "5d5f88d82751de2157836342ef52b4d1d3be1a073896e3b52ba872a680a1fc1e",
+          "embedded_sha256": "2ba15e95dbbb92e0b941cfe8632910b092da7ed839235e892403b82961e1d8d8"
         }
       }
     }

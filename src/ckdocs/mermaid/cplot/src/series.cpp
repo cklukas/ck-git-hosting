@@ -787,6 +787,7 @@ LineSeries::LineSeries(std::vector<std::string> categories,
 LineSeries& LineSeries::set_data(std::span<const double> x, std::span<const double> y) {
     check_sizes(x.size(), y.size(), "line series");
     categories_.clear();
+    horizontal_ = false;
     x_.assign(x.begin(), x.end());
     y_.assign(y.begin(), y.end());
     return *this;
@@ -812,6 +813,19 @@ LineSeries& LineSeries::set_data(std::vector<std::string> categories,
     for (std::size_t i = 0; i < x_.size(); ++i)
         x_[i] = static_cast<double>(i) + 0.5;
     y_.assign(y.begin(), y.end());
+    if (horizontal_) std::swap(x_, y_);
+    return *this;
+}
+
+LineSeries& LineSeries::horizontal(bool value) {
+    if (value && categories_.empty())
+        throw Error(cworks::validation_failed(
+            "line series: only a categorical line can be horizontal; swap the x and y "
+            "data of a numeric line instead"));
+    // The category positions and the values trade axes, so the points, their
+    // extent and every geometry pass read the turned line without a branch.
+    if (value != horizontal_) std::swap(x_, y_);
+    horizontal_ = value;
     return *this;
 }
 
@@ -1153,7 +1167,7 @@ void LineSeries::build_geometry(const detail::GeomContext& ctx,
         for (std::size_t i = 0; i < x_.size() && i < y_.size(); ++i) {
             if (is_missing(x_[i]) || is_missing(y_[i])) continue;
             std::string text = point_label_names_.empty()
-                                   ? detail::format_tick_value(y_[i], 0.0)
+                                   ? detail::format_tick_value(horizontal_ ? x_[i] : y_[i], 0.0)
                                    : (i < point_label_names_.size() ? point_label_names_[i]
                                                                     : std::string{});
             emit_point_label(out, {ctx.x.map(x_[i]), ctx.y.map(y_[i])}, std::move(text),

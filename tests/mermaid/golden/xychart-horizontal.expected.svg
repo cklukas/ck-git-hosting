@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" viewBox="0 0 760 460">
+  <title>Quarterly revenue</title>
+  <metadata>cdiagram</metadata>
+  <defs>
+    <clipPath id="clip-0"><rect x="56.01" y="42.25" width="691.24" height="367.25"/></clipPath>
+  </defs>
+  <rect x="56.01" y="42.25" width="691.24" height="367.25" fill="#FFFFFF"/>
+  <line x1="56.01" y1="42.25" x2="56.01" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <line x1="194.25" y1="42.25" x2="194.25" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <line x1="332.5" y1="42.25" x2="332.5" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <line x1="470.75" y1="42.25" x2="470.75" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <line x1="609" y1="42.25" x2="609" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <line x1="747.24" y1="42.25" x2="747.24" y2="409.5" fill="none" stroke="#000000" stroke-opacity="0.32" stroke-width="1"/>
+  <g clip-path="url(#clip-0)">
+  <rect x="56.01" y="55.1" width="276.49" height="33.05" fill="#4C78A8"/>
+  <rect x="56.01" y="146.92" width="380.18" height="33.05" fill="#4C78A8"/>
+  <rect x="56.01" y="238.73" width="414.74" height="33.05" fill="#4C78A8"/>
+  <rect x="56.01" y="330.54" width="552.99" height="33.05" fill="#4C78A8"/>
+  <rect x="56.01" y="88.16" width="241.93" height="33.05" fill="#F58518"/>
+  <rect x="56.01" y="179.97" width="414.74" height="33.05" fill="#F58518"/>
+  <rect x="56.01" y="271.78" width="359.44" height="33.05" fill="#F58518"/>
+  <rect x="56.01" y="363.59" width="587.55" height="33.05" fill="#F58518"/>
+  <polyline points="263.38,88.16 367.06,179.97 401.62,271.78 539.87,363.59" fill="none" stroke="#54A24B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="263.38" cy="88.16" r="3.5" fill="#54A24B"/>
+  <circle cx="367.06" cy="179.97" r="3.5" fill="#54A24B"/>
+  <circle cx="401.62" cy="271.78" r="3.5" fill="#54A24B"/>
+  <circle cx="539.87" cy="363.59" r="3.5" fill="#54A24B"/>
+  </g>
+  <line x1="56.01" y1="42.25" x2="56.01" y2="409.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <line x1="56.01" y1="409.5" x2="747.24" y2="409.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <line x1="56.01" y1="409.5" x2="56.01" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="56.01" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">0</text>
+  <line x1="194.25" y1="409.5" x2="194.25" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="194.25" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">20</text>
+  <line x1="332.5" y1="409.5" x2="332.5" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="332.5" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">40</text>
+  <line x1="470.75" y1="409.5" x2="470.75" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="470.75" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">60</text>
+  <line x1="609" y1="409.5" x2="609" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="609" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">80</text>
+  <line x1="747.24" y1="409.5" x2="747.24" y2="413.5" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="747.24" y="425.27" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="middle">100</text>
+  <line x1="52.01" y1="88.16" x2="56.01" y2="88.16" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="48.01" y="90.68" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="end">Q1</text>
+  <line x1="52.01" y1="179.97" x2="56.01" y2="179.97" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="48.01" y="182.49" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="end">Q2</text>
+  <line x1="52.01" y1="271.78" x2="56.01" y2="271.78" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="48.01" y="274.3" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="end">Q3</text>
+  <line x1="52.01" y1="363.59" x2="56.01" y2="363.59" fill="none" stroke="#33333A" stroke-width="1"/>
+  <text x="48.01" y="366.11" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#262626" text-anchor="end">Q4</text>
+  <text x="401.62" y="444.88" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle">Revenue (k)</text>
+  <text x="12" y="234.75" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#262626" text-anchor="middle" transform="rotate(-90 12 225.88)">Quarter</text>
+  <text x="401.62" y="23.1" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#262626" text-anchor="middle">Quarterly revenue</text>
+</svg>

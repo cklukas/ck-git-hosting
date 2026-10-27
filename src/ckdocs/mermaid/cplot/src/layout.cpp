@@ -24,6 +24,52 @@ namespace cplot::detail {
 
 namespace {
 
+/// Register the filled marks a series just drew (`panel.marks` from `first`
+/// on) as native hit targets with the series' identity, cut to the plot
+/// exactly as the marks themselves are.
+void add_series_hits(PanelLayers& panel, const Series& series, std::size_t first) {
+    const std::uint64_t id = series.hit_id_value();
+    if (id == 0) return;
+    for (std::size_t index = first; index < panel.marks.size(); ++index) {
+        RectF box{};
+        std::vector<Point> shape;
+        if (const auto* rect = std::get_if<RectItem>(&panel.marks[index])) {
+            box = rect->rect;
+        } else if (const auto* dot = std::get_if<CircleItem>(&panel.marks[index])) {
+            box = RectF{dot->center.x - dot->radius, dot->center.y - dot->radius,
+                        dot->radius * 2.0, dot->radius * 2.0};
+        } else if (const auto* sector = std::get_if<SectorItem>(&panel.marks[index])) {
+            shape = tessellate_sector(*sector);
+        } else if (const auto* polygon = std::get_if<PolygonItem>(&panel.marks[index])) {
+            if (!polygon->style.fill) continue;
+            shape = polygon->points;
+        } else {
+            continue;
+        }
+        if (!shape.empty()) {
+            double left = shape.front().x, right = left, top = shape.front().y, bottom = top;
+            for (const Point& p : shape) {
+                left = std::min(left, p.x);
+                right = std::max(right, p.x);
+                top = std::min(top, p.y);
+                bottom = std::max(bottom, p.y);
+            }
+            box = RectF{left, top, right - left, bottom - top};
+        }
+        if (panel.clip) {
+            const double left = std::max(box.x, panel.clip->x);
+            const double top = std::max(box.y, panel.clip->y);
+            const double right = std::min(box.x + box.w, panel.clip->x + panel.clip->w);
+            const double bottom = std::min(box.y + box.h, panel.clip->y + panel.clip->h);
+            if (!(right > left && bottom > top)) continue;
+            box = RectF{left, top, right - left, bottom - top};
+        }
+        // This copy's HitRegion is a rectangle only, so a wedge or polygon
+        // registers its bounding box.
+        panel.hit_regions.push_back({box, id});
+    }
+}
+
 struct Range {
     double lo = 0.0, hi = 1.0;
     bool valid = false;
@@ -1621,7 +1667,9 @@ Group build_panel(const Axes& axes, const RectF& cell, const Theme& theme,
             ctx.stack_top = &area_stack_keep.back();
         }
 
+        const std::size_t first_mark = panel.marks.size();
         s->build_geometry(ctx, panel.marks);
+        add_series_hits(panel, *s, first_mark);
         ++color_index;
     }
 
@@ -2168,7 +2216,9 @@ Group build_part_to_whole_panel(const Axes& axes, const RectF& cell, const Theme
         ctx.polar_center = pie_center;
         ctx.polar_radius = pie_r_outer;
         ctx.pie_callout_labels = labeled_active;
+        const std::size_t first_mark = panel.marks.size();
         s->build_geometry(ctx, panel.marks);
+        add_series_hits(panel, *s, first_mark);
         ++color_index;
     }
 
@@ -2347,7 +2397,9 @@ Group build_radar_panel(const Axes& axes, const RectF& cell, const Theme& theme,
                                 nullptr};
         ctx.polar_center = center;
         ctx.polar_radius = radius;
+        const std::size_t first_mark = panel.marks.size();
         s->build_geometry(ctx, panel.marks);
+        add_series_hits(panel, *s, first_mark);
         ++color_index;
     }
 
@@ -2553,7 +2605,9 @@ Group build_polar_panel(const Axes& axes, const RectF& cell, const Theme& theme,
                                 nullptr};
         ctx.polar_center = center;
         ctx.polar_radius = radius;
+        const std::size_t first_mark = panel.marks.size();
         s->build_geometry(ctx, panel.marks);
+        add_series_hits(panel, *s, first_mark);
         ++color_index;
     }
 

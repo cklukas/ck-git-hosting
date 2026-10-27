@@ -13,6 +13,10 @@ very long or numerous labels may still need a larger chart or horizontal bars.
 Labels are not truncated by the renderer. If a name is already shortened in the
 Mermaid source, change the source generator to restore the full name.
 
+Every `bar` and `line` statement is a series of its own, and
+`xychart-beta horizontal` turns the chart on its side.
+[XY charts in depth](../xy-charts.md) shows both.
+
 
 **Source**
 
