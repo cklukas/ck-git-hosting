@@ -55,6 +55,17 @@ When copying a later fix, use the origin hashes to review the relevant source
 diff, preserve the local adaptations, update provenance, and run both suites.
 Do not automatically replace the copied tree with a newer upstream tree.
 
+The XY-chart backports recorded in `ORIGIN.json` follow CWorks in order: the
+explicit source ordinals for chart regions, then several series and the
+horizontal form, then the `error` line. They port only what the XY chart
+renders: the CWorks editor model, scene map and C APIs of the same commits
+are not part of this copy, and the `error` line maps onto the custom error
+amounts this copy's cplot already has, so the later CWorks error-bar model is
+not needed. The goldens `xychart`, `xychart-horizontal` and `xychart-error`
+are byte-identical copies of the CWorks ones; a change to either side must
+keep them byte-identical. `error` is a CWorks extension that standard Mermaid
+renderers reject, and `docs/ckdocs/xy-charts.md` says so.
+
 The label-layout backport recorded in `ORIGIN.json` keeps the original import
 revision and hashes intact. Its `backports` entry records the source commit and
 both source and embedded hashes for the changed files. Quadrant point labels

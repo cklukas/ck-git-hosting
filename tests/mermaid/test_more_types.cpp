@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 #include <cworks/microtest.hpp>
 
+#include <cmath>
 #include <set>
 #include <string>
 #include <variant>
@@ -219,6 +220,123 @@ TEST_CASE("xychart regions name the series statement that drew each mark") {
     CHECK_APPROX(regions[0].bounds.x, bars[0]->rect.x);
     CHECK_APPROX(regions[0].bounds.h, bars[0]->rect.h);
     CHECK_APPROX(regions[6].bounds.x, bars[3]->rect.x);
+}
+
+namespace {
+
+/// The error whiskers of a chart: the stroked lines among its data marks.
+std::vector<const cplot::LineItem*> whiskers(const cplot::Scene& scene) {
+    return marks<cplot::LineItem>(scene);
+}
+
+} // namespace
+
+TEST_CASE("xychart error lines draw whiskers on the series above them") {
+    const std::string src =
+        "xychart-beta\n  x-axis [a, b, c]\n  y-axis 0 --> 10\n"
+        "  bar [3, 2.5, 4]\n  error [1.4, 0.3, 0.8]\n"
+        "  line [2, 2.2, 3]\n  error [0.5, 0.5, 0.2] [0.9, 0.4, 0.2]\n";
+    const cplot::Scene with = render(src);
+    const cplot::Scene without = render(
+        "xychart-beta\n  x-axis [a, b, c]\n  y-axis 0 --> 10\n"
+        "  bar [3, 2.5, 4]\n  line [2, 2.2, 3]\n");
+    CHECK(whiskers(without).empty());
+    // Six whiskers, each a stem and two caps.
+    CHECK_EQ(whiskers(with).size(), 18u);
+    // The marks themselves are where they were: errors add whiskers only.
+    const auto bars = marks<cplot::RectItem>(with);
+    const auto plain = marks<cplot::RectItem>(without);
+    REQUIRE(bars.size() == plain.size());
+    for (std::size_t i = 0; i < bars.size(); ++i) {
+        CHECK_APPROX(bars[i]->rect.x, plain[i]->rect.x);
+        CHECK_APPROX(bars[i]->rect.y, plain[i]->rect.y);
+        CHECK_APPROX(bars[i]->rect.h, plain[i]->rect.h);
+    }
+
+    // The first bar's stem runs from 3 - 1.4 to 3 + 1.4 through its centre
+    // (the line's first stem shares that x, 0.5 + 0.9 long), drawn in the
+    // axis colour so that its lower half shows against the bar.
+    const cplot::RectItem& first = *bars[0];
+    const double px_per_unit = first.rect.h / 3.0;
+    std::vector<double> lengths;
+    for (const cplot::LineItem* line : whiskers(with)) {
+        if (std::abs(line->a.x - line->b.x) > 1e-9) continue; // caps are horizontal
+        if (std::abs(line->a.x - (first.rect.x + first.rect.w / 2.0)) > 1e-6) continue;
+        lengths.push_back(std::abs(line->a.y - line->b.y) / px_per_unit);
+        if (lengths.size() == 1) CHECK(line->style.stroke != first.style.fill);
+    }
+    REQUIRE(lengths.size() == 2u);
+    CHECK_APPROX_EPS(lengths[0], 2.8, 1e-9);
+    CHECK_APPROX_EPS(lengths[1], 1.4, 1e-9);
+    check_deterministic(src);
+}
+
+TEST_CASE("xychart error amounts are distances and an empty entry draws nothing") {
+    // Asymmetric: the line's second point reaches 0.5 below and 1.5 above.
+    const cplot::Scene scene = render(
+        "xychart-beta\n  x-axis [a, b, c]\n  y-axis 0 --> 10\n"
+        "  line [2, 4, 3]\n  error [, 0.5, ] [, 1.5, ]\n");
+    const auto dots = marks<cplot::CircleItem>(scene);
+    REQUIRE(dots.size() == 3u);
+    std::vector<const cplot::LineItem*> stems;
+    for (const cplot::LineItem* line : whiskers(scene))
+        if (std::abs(line->a.x - line->b.x) <= 1e-9) stems.push_back(line);
+    REQUIRE(stems.size() == 1u);
+    CHECK_APPROX(stems[0]->a.x, dots[1]->center.x);
+    const double top = std::min(stems[0]->a.y, stems[0]->b.y);
+    const double bottom = std::max(stems[0]->a.y, stems[0]->b.y);
+    // Above is three times as far as below.
+    CHECK_APPROX_EPS(dots[1]->center.y - top, 3.0 * (bottom - dots[1]->center.y), 1e-6);
+}
+
+TEST_CASE("xychart error bars follow a horizontal chart onto the value axis") {
+    const cplot::Scene scene = render(
+        "xychart-beta horizontal\n  x-axis [a, b]\n  y-axis 0 --> 10\n"
+        "  bar [3, 6]\n  error [1, 1]\n  line [2, 4]\n  error [0.5, 0.5]\n");
+    std::size_t horizontal_stems = 0;
+    for (const cplot::LineItem* line : whiskers(scene))
+        if (std::abs(line->a.y - line->b.y) <= 1e-9 && std::abs(line->a.x - line->b.x) > 1.0)
+            ++horizontal_stems;
+    // Four whiskers lie along x; their caps stand upright.
+    CHECK_EQ(horizontal_stems, 4u);
+}
+
+TEST_CASE("xychart error lines are refused with a caret on what is wrong") {
+    struct Case {
+        const char* source;
+        const char* message;
+        const char* caret;
+    };
+    const Case cases[] = {
+        {"xychart-beta\n  x-axis [a, b]\n  error [1, 1]\n  bar [1, 2]\n",
+         "there is no series yet", "error"},
+        {"xychart-beta\n  bar [1, 2]\n  error [1, 1]\n  error [2, 2]\n",
+         "already has error amounts on line 3", "error"},
+        {"xychart-beta\n  bar [1, 2]\n  title T\n  error [1, 1]\n",
+         "move this line up to follow its series", "error"},
+        {"xychart-beta\n  x-axis [a, b, c]\n  line [1, 2, 3]\n  error [1, 1]\n",
+         "the error list has 2 amounts but the line series above has 3 values", "[1, 1]"},
+        {"xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  error [1, 1] [1]\n",
+         "the error list has 1 amounts but the bar series above has 2 values", "[1]"},
+        {"xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  error [1, -0.5]\n",
+         "'-0.5' is negative: an error amount is a distance from the value, so write '0.5'",
+         "-0.5"},
+        {"xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  error [1, wide]\n",
+         "'wide' is not a number", "wide"},
+        {"xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  error [1, inf]\n",
+         "'inf' is not a number", "inf"},
+        {"xychart-beta\n  x-axis [a, b]\n  bar [1, 2]\n  error [1, 1] [1, 1] [1, 1]\n",
+         "unexpected text after the error lists", "[1, 1]"},
+        {"xychart-beta\n  x-axis 0 --> 10\n  bar [1, 2]\n  error [1, 1]\n",
+         "error amounts on bars need categories", "error"},
+    };
+    for (const Case& c : cases) {
+        const std::string source = c.source;
+        const cworks::AppError error = refusal(source);
+        if (error.summary.find(c.message) == std::string::npos)
+            microtest::report_failure(__FILE__, __LINE__, c.message, error.summary.c_str());
+        CHECK_EQ(caret_text(source, error), std::string(c.caret));
+    }
 }
 
 TEST_CASE("kanban lays out columns and cards") {

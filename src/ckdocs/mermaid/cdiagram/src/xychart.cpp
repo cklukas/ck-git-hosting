@@ -11,6 +11,11 @@
 // horizontal` turns the whole chart on its side — the categories run down
 // the y axis and the values along x — while `x-axis` and `y-axis` keep
 // naming the category and the value axis, as they do in Mermaid.
+//
+// An `error` line directly below a series gives its error amounts — one list
+// for symmetric whiskers, two for the amount below and the amount above each
+// value. Standard Mermaid has no such statement; it is this suite's
+// extension, and a diagram that uses it renders only here.
 
 #include <algorithm>
 #include <cmath>
@@ -210,15 +215,79 @@ std::vector<double> positions(std::size_t count, const AxisSpec& axis) {
 
 enum class SeriesKind { Bar, Line };
 
+/// The `error` line of a series: distances below and above each value. A
+/// symmetric line fills both from its one list. NaN marks an empty entry,
+/// which is the engine's own "no whisker at this point".
+struct ErrorAmounts {
+    std::vector<double> lower;
+    std::vector<double> upper;
+    SourceLine line;
+};
+
 /// One `bar` or `line` statement, kept in source order.
 struct Series {
     SeriesKind kind = SeriesKind::Bar;
     std::vector<double> values;
     SourceLine line;
     BracketList list; ///< where the values were written, for diagnostics
+    std::optional<ErrorAmounts> error;
 };
 
 const char* kind_name(SeriesKind kind) { return kind == SeriesKind::Bar ? "bar" : "line"; }
+
+/// One list of an `error` line: a finite distance >= 0 per value, or an
+/// empty entry for no whisker there.
+std::vector<double> error_list(const LineStarts& starts, const SourceLine& line,
+                               const BracketList& list, const Series& owner) {
+    std::vector<double> amounts;
+    amounts.reserve(list.items.size());
+    for (const ListItem& item : list.items) {
+        if (item.text.empty()) {
+            amounts.push_back(std::nan(""));
+            continue;
+        }
+        double amount = 0.0;
+        if (!parse_number(item.text, amount) || !std::isfinite(amount))
+            refuse(starts, line, item.column, item.length,
+                   "'" + item.text + "' is not a number: write a distance >= 0, or leave the "
+                   "entry empty for no whisker");
+        if (amount < 0.0)
+            refuse(starts, line, item.column, item.length,
+                   "'" + item.text + "' is negative: an error amount is a distance from the "
+                   "value, so write '" + item.text.substr(1) + "'");
+        amounts.push_back(amount);
+    }
+    if (amounts.size() != owner.values.size())
+        refuse(starts, line, list.open, list.length(),
+               "the error list has " + std::to_string(amounts.size()) + " amounts but the " +
+                   kind_name(owner.kind) + " series above has " +
+                   std::to_string(owner.values.size()) + " values");
+    return amounts;
+}
+
+/// `error [e, ...]` or `error [lower, ...] [upper, ...]` for `owner`, the
+/// series directly above it.
+ErrorAmounts error_amounts(const LineStarts& starts, const SourceLine& line,
+                           const Series& owner) {
+    const std::string& text = line.text;
+    ErrorAmounts out;
+    out.line = line;
+    const BracketList first = required_list(starts, line, 5, "an [amount, ...] list");
+    out.lower = error_list(starts, line, first, owner);
+    std::size_t after = skip_blanks(text, first.close + 1);
+    if (after < text.size() && text[after] == '[') {
+        const BracketList second = required_list(starts, line, after, "an [amount, ...] list");
+        out.upper = error_list(starts, line, second, owner);
+        after = skip_blanks(text, second.close + 1);
+    } else {
+        out.upper = out.lower;
+    }
+    if (after < text.size())
+        refuse(starts, line, after, text.size() - after,
+               "unexpected text after the error lists: write one list for symmetric "
+               "amounts or two for the amounts below and above");
+    return out;
+}
 
 /// `xychart-beta [vertical|horizontal]`, then config.xyChart.chartOrientation.
 /// The keyword line is what the author reads, so it wins over front matter.
@@ -255,13 +324,37 @@ cplot::Scene build_xychart(std::string_view source,
     AxisSpec y_axis;
     std::vector<std::string> categories;
     std::vector<Series> series;
+    // The series an `error` line may still attach to: the statement right
+    // above it, and only while that series has no error line yet.
+    bool series_above = false;
     static const std::vector<std::string> known = {
-        "title", "x-axis", "y-axis", "bar", "line"};
+        "title", "x-axis", "y-axis", "bar", "line", "error"};
 
     for (std::size_t index = 1; index < lines.size(); ++index) {
         const SourceLine& source_line = lines[index];
         const std::string& line = source_line.text;
         const std::string keyword = line.substr(0, line.find_first_of(" \t["));
+        if (keyword == "error") {
+            if (series.empty())
+                refuse(starts, source_line, 0, keyword.size(),
+                       "error amounts belong to the bar or line series directly above "
+                       "them, and there is no series yet: move this line below its series");
+            if (!series_above)
+                refuse(starts, source_line, 0, keyword.size(),
+                       "error amounts belong to the bar or line series directly above "
+                       "them: move this line up to follow its series");
+            const Series& owner = series.back();
+            if (owner.error)
+                refuse(starts, source_line, 0, keyword.size(),
+                       "the " + std::string(kind_name(owner.kind)) + " series on line " +
+                           std::to_string(owner.line.number) +
+                           " already has error amounts on line " +
+                           std::to_string(owner.error->line.number) +
+                           ": give one error line both lists, [below] [above]");
+            series.back().error = error_amounts(starts, source_line, owner);
+            continue;
+        }
+        series_above = keyword == "bar" || keyword == "line";
         if (keyword == "title") {
             title = unquote(cworks::trim(line.substr(5)));
         } else if (keyword == "x-axis") {
@@ -323,6 +416,10 @@ cplot::Scene build_xychart(std::string_view source,
             refuse(starts, bars[1]->line, 0, bars[1]->line.text.size(),
                    "several bar series need categories to group in: write the x axis as "
                    "x-axis [a, b, ...]");
+        if (bars.front()->error)
+            refuse(starts, bars.front()->error->line, 0, 5,
+                   "error amounts on bars need categories: write the x axis as "
+                   "x-axis [a, b, ...]");
     }
     if (!bars.empty() && y_axis.explicit_range &&
         (y_axis.minimum > 0.0 || y_axis.maximum < 0.0)) {
@@ -356,26 +453,38 @@ cplot::Scene build_xychart(std::string_view source,
             for (std::size_t ordinal = 0; ordinal < series.size(); ++ordinal) {
                 const Series& entry = series[ordinal];
                 const std::uint64_t id = ordinal + 1;
-                if (!categories.empty()) {
-                    if (entry.kind == SeriesKind::Bar) {
-                        (horizontal ? panel.barh(categories, entry.values)
-                                    : panel.bar(categories, entry.values))
-                            .hit_id(id);
-                    } else {
-                        panel.line(categories, entry.values)
-                            .horizontal(horizontal)
-                            .marker(cplot::Marker::Circle, 3.5)
-                            .hit_id(id);
+                if (entry.kind == SeriesKind::Bar && !categories.empty()) {
+                    cplot::BarSeries& bar = horizontal ? panel.barh(categories, entry.values)
+                                                       : panel.bar(categories, entry.values);
+                    bar.hit_id(id);
+                    // A bar's whisker runs along the value axis whichever
+                    // way the bar faces. Its lower half crosses the bar, so it
+                    // takes the axis colour: in the bar's own colour it would
+                    // vanish where it matters.
+                    if (entry.error) {
+                        bar.value_error(entry.error->lower, entry.error->upper)
+                            .error_color(figure.current_theme().axis_color);
                     }
                     continue;
                 }
-                const std::vector<double> at = positions(entry.values.size(), x_axis);
-                if (entry.kind == SeriesKind::Bar)
-                    panel.xbar(at, entry.values).hit_id(id);
-                else
-                    (horizontal ? panel.line(entry.values, at) : panel.line(at, entry.values))
-                        .marker(cplot::Marker::Circle, 3.5)
-                        .hit_id(id);
+                if (entry.kind == SeriesKind::Bar) {
+                    panel.xbar(positions(entry.values.size(), x_axis), entry.values).hit_id(id);
+                    continue;
+                }
+                cplot::LineSeries& line =
+                    !categories.empty()
+                        ? panel.line(categories, entry.values).horizontal(horizontal)
+                    : horizontal
+                        ? panel.line(entry.values, positions(entry.values.size(), x_axis))
+                        : panel.line(positions(entry.values.size(), x_axis), entry.values);
+                line.marker(cplot::Marker::Circle, 3.5).hit_id(id);
+                // A line's values run along x once the chart is on its side.
+                if (entry.error) {
+                    if (horizontal)
+                        line.x_error(entry.error->lower, entry.error->upper);
+                    else
+                        line.y_error(entry.error->lower, entry.error->upper);
+                }
             }
         });
     if (options.regions != nullptr) {

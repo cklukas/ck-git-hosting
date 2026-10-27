@@ -27,6 +27,10 @@ rendering error leaves the escaped source visible. Reports name the page,
 diagram number, and parser line where available. A normal build exits `3`
 with warnings; `check` and `--strict` exit `1`.
 
+One construct goes beyond Mermaid: an XY chart series takes error bars from
+an `error` line below it. Standard Mermaid renderers reject a diagram that
+uses it; see [XY charts in depth](xy-charts.md).
+
 Each diagram is limited to 64 KiB of source, 1024 lines, and 4 MiB per SVG.
 A page can contain 128 diagrams; a site can contain 1024 distinct diagrams.
 SVG text uses the reader's installed fonts. Images are static: JavaScript

@@ -1,10 +1,12 @@
 ---
-description: "XY charts in ckdocs: several bar and line series and the horizontal form."
+description: "XY charts in ckdocs: several bar and line series, the horizontal form, and error bars with the error line, a CWorks extension that standard Mermaid does not render."
 ---
 # XY charts in depth
 
 The [XY chart example](diagrams/xy-chart.md) shows the basic form. This page
-covers several series and the horizontal form, both standard Mermaid.
+covers several series, the horizontal form and error bars. The first two are
+standard Mermaid; the `error` line is an extension of the CWorks renderer that
+ckdocs embeds.
 
 ## Several series
 
@@ -78,4 +80,63 @@ xychart-beta horizontal
     bar [40, 55, 60, 80]
     bar [35, 60, 52, 85]
     line [30, 45, 50, 70]
+```
+
+## Error bars (an extension of Mermaid)
+
+Repeated measurements are reported as a value and its spread, such as a mean
+and its standard deviation. An `error` line directly below a `bar` or `line`
+statement gives that series error amounts, drawn as whiskers with caps along
+the value axis.
+
+One list gives symmetric amounts. Two lists give the amount below each value,
+then the amount above it: `error [0.5] [0.9]` on a value of 2 reaches from 1.5
+to 2.9. An amount is a distance from the value, a finite number of zero or
+more. An empty entry, as in `error [1.4, , 0.8]`, draws no whisker at that
+point. Comments may stand between a series and its error line; no other
+statement may. A line's whiskers take its colour, a bar's take the axis colour
+so that the half crossing the bar stays visible.
+
+ckdocs reports the error line with its line number when it comes before any
+series or after another statement, when a series already has one, when a list
+has a different number of entries than the series has values, and when an
+amount is negative or not a number. Bars on a numeric x axis take no error
+amounts.
+
+> [!NOTE]
+> Standard Mermaid has no error-bar statement. `error` comes from the CWorks
+> renderer that ckdocs embeds; Mermaid's own renderers, including the ones
+> forges use to preview Markdown, reject a diagram that contains it. Removing
+> the `error` lines leaves a diagram every Mermaid renderer draws.
+
+**Source**
+
+````markdown
+```mermaid
+xychart-beta
+    title "Runs per configuration (mean, SD)"
+    x-axis [a, b, c, d]
+    y-axis "Score" 0 --> 6
+    bar [3, 2.5, 4, 3.2]
+    error [1.4, 0.3, 0.8, ]
+    bar [2.4, 3.1, 3.6, 2.2]
+    error [0.2, 0.6, 0.4, 0.5] [0.6, 0.9, 0.4, 1.1]
+    line [2, 2.2, 3, 2.6]
+    error [0.5, 0.5, 0.2, 0.3] [0.9, 0.4, 0.2, 0.3]
+```
+````
+
+**Diagram**
+
+```mermaid
+xychart-beta
+    title "Runs per configuration (mean, SD)"
+    x-axis [a, b, c, d]
+    y-axis "Score" 0 --> 6
+    bar [3, 2.5, 4, 3.2]
+    error [1.4, 0.3, 0.8, ]
+    bar [2.4, 3.1, 3.6, 2.2]
+    error [0.2, 0.6, 0.4, 0.5] [0.6, 0.9, 0.4, 1.1]
+    line [2, 2.2, 3, 2.6]
+    error [0.5, 0.5, 0.2, 0.3] [0.9, 0.4, 0.2, 0.3]
 ```

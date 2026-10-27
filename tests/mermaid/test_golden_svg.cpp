@@ -61,6 +61,19 @@ const std::vector<GoldenCase>& cases() {
          "  bar \"Actual\" [35, 60, 52, 85]\n"
          "  line [30, 45, 50, 70]\n"
          "  line [45, 62, 58, 90]\n"},
+        // The `error` extension: symmetric and asymmetric amounts on both
+        // series kinds, and an empty entry that draws no whisker.
+        {"xychart-error",
+         "xychart-beta\n"
+         "  title \"Runs per configuration (mean, SD)\"\n"
+         "  x-axis [a, b, c, d]\n"
+         "  y-axis \"Score\" 0 --> 6\n"
+         "  bar [3, 2.5, 4, 3.2]\n"
+         "  error [1.4, 0.3, 0.8, ]\n"
+         "  bar [2.4, 3.1, 3.6, 2.2]\n"
+         "  error [0.2, 0.6, 0.4, 0.5] [0.6, 0.9, 0.4, 1.1]\n"
+         "  line [2, 2.2, 3, 2.6]\n"
+         "  error [0.5, 0.5, 0.2, 0.3] [0.9, 0.4, 0.2, 0.3]\n"},
         // The same chart on its side: categories down y, first at the top.
         {"xychart-horizontal",
          "xychart-beta horizontal\n"

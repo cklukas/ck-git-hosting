@@ -567,8 +567,8 @@
     },
     "tests/mermaid/test_golden_svg.cpp": {
       "origin": "cdiagram/tests/test_golden_svg.cpp",
-      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
-      "sha256": "960b05ea02f63595039e31b92ada090efe9471da4d85c1d7269136c4f26fdb73",
+      "revision": "f6334767252cfafb7721b9422c97c4b329ce0ea7",
+      "sha256": "093bfc3fad8e6003bbf3aa74cb97e1b679c8a6d897b5cb23d924a56695981676",
       "adapted": true
     },
     "tests/mermaid/test_graph_types.cpp": {
@@ -581,8 +581,8 @@
     },
     "tests/mermaid/test_more_types.cpp": {
       "origin": "cdiagram/tests/test_more_types.cpp",
-      "revision": "c10f3129e00a862ba4522d56171d02344a466131",
-      "sha256": "a1b9341774d70be1f06b351e52f64dffb39de6041a774d702f72e3f54cdce619",
+      "revision": "f6334767252cfafb7721b9422c97c4b329ce0ea7",
+      "sha256": "e6901f838579af4adf6a3b7ca1d0c261a7592bf6c2138317ad1b25779a925f9c",
       "adapted": true
     },
     "tests/mermaid/test_pie.cpp": {
@@ -608,6 +608,11 @@
       "origin": "cdiagram/tests/golden/xychart-horizontal.expected.svg",
       "revision": "c10f3129e00a862ba4522d56171d02344a466131",
       "sha256": "54ebdf90ed2e45ff0348051a1e2220b101c75033a926cdc13bcb35ace5ad3429"
+    },
+    "tests/mermaid/golden/xychart-error.expected.svg": {
+      "origin": "cdiagram/tests/golden/xychart-error.expected.svg",
+      "revision": "f6334767252cfafb7721b9422c97c4b329ce0ea7",
+      "sha256": "2a2ca7b5bb5f078ea185dbc373338d773bd005c9e18e532b5589bc3f380d4d89"
     }
   },
   "backports": [
@@ -708,6 +713,16 @@
         "cplot/src/layout.cpp": {
           "upstream_sha256": "5d5f88d82751de2157836342ef52b4d1d3be1a073896e3b52ba872a680a1fc1e",
           "embedded_sha256": "2ba15e95dbbb92e0b941cfe8632910b092da7ed839235e892403b82961e1d8d8"
+        }
+      }
+    },
+    {
+      "revision": "f6334767252cfafb7721b9422c97c4b329ce0ea7",
+      "description": "xychart: an error line directly below a bar or line series gives symmetric or lower/upper error amounts (an extension of Mermaid), mapped onto the custom ErrorData of BarSeries::value_error and LineSeries::y_error/x_error; refusals with source spans. Needs no change to the cplot error model of this copy. The CWorks editor grammar of the same commit is not part of this copy.",
+      "files": {
+        "cdiagram/src/xychart.cpp": {
+          "upstream_sha256": "82545f39c9166111c12a7df35c98c7d202651697400a169536766a463ed88f9a",
+          "embedded_sha256": "fb5ee17d09c6ff9c32ab1a90be3ec46af3bfaad9dee056f4fdf55b63d7d119fb"
         }
       }
     }
