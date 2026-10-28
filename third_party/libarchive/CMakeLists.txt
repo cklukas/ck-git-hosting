@@ -1,0 +1,46 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+cmake_minimum_required(VERSION 3.24)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+project(ckgit_pinned_archive LANGUAGES C)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+  message(FATAL_ERROR "Choose an explicit out-of-tree build directory")
+endif()
+
+# This directory can also be built independently for the Make-based hosts.
+# The upstream source is bundled so sandboxed builds never need the network.
+include(FetchContent)
+set(bundle "${CMAKE_CURRENT_LIST_DIR}/libarchive-3.8.10.tar.xz")
+set(expected "56cad765459d5ee25a3b761f90c47d99379d28297fbfb72d908880d6b875fb96")
+file(SHA256 "${bundle}" actual)
+if(NOT actual STREQUAL expected)
+  message(FATAL_ERROR "Bundled libarchive source SHA-256 mismatch")
+endif()
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Pinned archive is static" FORCE)
+set(MSVC_USE_STATIC_CRT ON CACHE BOOL "No redistributable prerequisite" FORCE)
+# Never probe third-party regex libraries. Windows has no libc regex, and
+# the TAR reader/writer does not require archive_match's regex support.
+set(POSIX_REGEX_LIB "LIBC" CACHE STRING "Use only built-in regex when available" FORCE)
+foreach(feature MBEDTLS NETTLE OPENSSL MD LIBB2 LZ4 LZO LZMA ZSTD ZLIB BZip2
+    LIBXML2 BSDXML EXPAT WIN32_XMLLITE PCREPOSIX PCRE2POSIX LIBGCC CNG
+    TAR CPIO CAT UNZIP XATTR ACL ICONV TEST COVERAGE INSTALL CLANG_TIDY WERROR)
+  set(ENABLE_${feature} OFF CACHE BOOL "Not needed for uncompressed TAR" FORCE)
+endforeach()
+FetchContent_Declare(ckgit_libarchive
+  URL "${bundle}"
+  URL_HASH "SHA256=${expected}"
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(ckgit_libarchive)
+
+add_library(ckgit_pinned_archive INTERFACE)
+target_link_libraries(ckgit_pinned_archive INTERFACE archive_static)
+target_compile_definitions(ckgit_pinned_archive INTERFACE LIBARCHIVE_STATIC)
+target_include_directories(ckgit_pinned_archive INTERFACE "${ckgit_libarchive_SOURCE_DIR}/libarchive")
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  add_executable(ckgit-archive-smoke ../../tests/platform/archive_library_smoke.c)
+  target_link_libraries(ckgit-archive-smoke PRIVATE ckgit_pinned_archive)
+  enable_testing()
+  add_test(NAME archive-library COMMAND ckgit-archive-smoke)
+endif()
