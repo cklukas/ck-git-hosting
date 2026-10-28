@@ -192,11 +192,7 @@ struct WindowsSandbox::State {
   ResourceRecord record;
   PSID sid = nullptr;
   std::vector<std::vector<unsigned char>> capabilities;
-  HWINSTA station = nullptr;
-  HDESK desktop = nullptr;
   ~State() {
-    if (desktop) CloseDesktop(desktop);
-    if (station) CloseWindowStation(station);
     if (sid) FreeSid(sid);
     try {
       if (!profile.empty()) {
@@ -222,35 +218,6 @@ WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std
   state_->sid = sid;
   state_->app = sidText(sid);
   state_->capabilities.push_back(capability(L"registryRead"));
-  // Native toolchains import USER32 through COM even for console programs.
-  // Give them their own noninteractive window station and desktop, never
-  // access to the user's desktop. Serialize the temporary broker station
-  // switch with all process creation in the platform layer.
-  const auto sddl = L"D:P(A;;GA;;;" + state_->owner + L")(A;;GA;;;SY)(A;;GA;;;" + state_->app + L")S:(ML;;NW;;;LW)";
-  PSECURITY_DESCRIPTOR descriptor = nullptr;
-  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) fail("sandbox desktop descriptor");
-  SECURITY_ATTRIBUTES attributes{sizeof(attributes), descriptor, FALSE};
-  {
-    const std::lock_guard lock(windowsProcessCreationMutex());
-    // Never reopen an existing object: its descriptor would be ignored by
-    // CreateWindowStation, invalidating the per-job isolation contract.
-    state_->station = CreateWindowStationW(name.c_str(), CWF_CREATE_ONLY, WINSTA_ALL_ACCESS, &attributes);
-    if (!state_->station) {
-      const auto error = GetLastError();
-      LocalFree(descriptor);
-      fail(error == ERROR_ACCESS_DENIED
-          ? "create private sandbox window station (Windows requires an administrator token for named window stations)"
-          : "create private sandbox window station", error);
-    }
-    const auto previous = GetProcessWindowStation();
-    if (!SetProcessWindowStation(state_->station)) { const auto error = GetLastError(); LocalFree(descriptor); fail("select sandbox station", error); }
-    state_->desktop = CreateDesktopW(L"Default", nullptr, nullptr, 0, GENERIC_ALL, &attributes);
-    const auto error = GetLastError();
-    const auto restored = SetProcessWindowStation(previous);
-    LocalFree(descriptor);
-    if (!restored) fail("restore broker window station");
-    if (!state_->desktop) fail("create sandbox desktop", error);
-  }
   protect(state_->root, state_->owner, state_->app, false);
   std::filesystem::create_directory(work());
   protect(work(), state_->owner, state_->app, true);
@@ -269,13 +236,88 @@ std::vector<void*> WindowsSandbox::capabilitySids() const {
   for (auto& sid : state_->capabilities) result.push_back(sid.data());
   return result;
 }
-std::wstring WindowsSandbox::desktopName() const { return state_->profile + L"\\Default"; }
 void WindowsSandbox::sealTools(const std::function<bool()>& should_continue) {
   for (const auto& entry : std::filesystem::recursive_directory_iterator(tools())) {
     if (should_continue && !should_continue()) throw std::runtime_error("toolchain staging cancelled");
     protect(entry.path(), state_->owner, state_->app, false);
   }
 }
+struct WindowsSandboxDesktop::State {
+  HWINSTA station = nullptr;
+  HDESK desktop = nullptr;
+  std::wstring name;
+  ~State() {
+    if (desktop && !CloseDesktop(desktop))
+      std::cerr << "Cannot close sandbox desktop: " << GetLastError() << '\n';
+    if (station && !CloseWindowStation(station))
+      std::cerr << "Cannot close sandbox window station: " << GetLastError() << '\n';
+  }
+};
+WindowsSandboxDesktop::WindowsSandboxDesktop(const WindowsSandbox& sandbox)
+    : state_(std::make_unique<State>()) {
+  // Console toolchains can import USER32 through COM. Give each executing
+  // step its own noninteractive objects, with only this job's SID admitted.
+  const auto& identity = *sandbox.state_;
+  const auto sddl = L"D:P(A;;GA;;;" + identity.owner + L")(A;;GA;;;SY)(A;;GA;;;" + identity.app + L")S:(ML;;NW;;;LW)";
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr))
+    fail("sandbox desktop descriptor");
+  struct FreeDescriptor {
+    PSECURITY_DESCRIPTOR value;
+    ~FreeDescriptor() { LocalFree(value); }
+  } free_descriptor{descriptor};
+  SECURITY_ATTRIBUTES attributes{sizeof(attributes), descriptor, FALSE};
+  const std::lock_guard lock(windowsProcessCreationMutex());
+  const wchar_t* requested_name = identity.profile.c_str();
+  SetLastError(ERROR_SUCCESS);
+  state_->station = CreateWindowStationW(requested_name, CWF_CREATE_ONLY, WINSTA_ALL_ACCESS, &attributes);
+  auto error = GetLastError();
+  if (!state_->station && error == ERROR_ACCESS_DENIED) {
+    // Windows requires an administrator for a caller-supplied station name.
+    // A standard user may create a fresh OS-named station. CREATE_ONLY is
+    // essential: reopening the logon's existing station ignores our ACL.
+    requested_name = nullptr;
+    SetLastError(ERROR_SUCCESS);
+    state_->station = CreateWindowStationW(requested_name, CWF_CREATE_ONLY, WINSTA_ALL_ACCESS, &attributes);
+    error = GetLastError();
+  }
+  // Windows may retain desktop references briefly after the last process
+  // exits. Retry only creation, never opening or changing an existing
+  // station. A live conflicting owner still causes a bounded setup error.
+  const auto deadline = GetTickCount64() + 2000;
+  while (!state_->station && error == ERROR_ALREADY_EXISTS && GetTickCount64() < deadline) {
+    Sleep(10);
+    SetLastError(ERROR_SUCCESS);
+    state_->station = CreateWindowStationW(requested_name, CWF_CREATE_ONLY, WINSTA_ALL_ACCESS, &attributes);
+    error = GetLastError();
+  }
+  if (!state_->station || error == ERROR_ALREADY_EXISTS)
+    fail("create fresh sandbox window station (another step or the broker may already own this logon's station)", error);
+  wchar_t station_name[512]{};
+  DWORD bytes = 0;
+  USEROBJECTFLAGS flags{};
+  if (!GetUserObjectInformationW(state_->station, UOI_NAME, station_name, sizeof(station_name), &bytes) ||
+      !GetUserObjectInformationW(state_->station, UOI_FLAGS, &flags, sizeof(flags), &bytes))
+    fail("inspect sandbox window station");
+  if ((flags.dwFlags & WSF_VISIBLE) || _wcsicmp(station_name, L"WinSta0") == 0)
+    throw std::runtime_error("sandbox station must be noninteractive");
+  state_->name = std::wstring(station_name) + L"\\Default";
+  const auto previous = GetProcessWindowStation();
+  const auto previous_desktop = GetThreadDesktop(GetCurrentThreadId());
+  if (!previous_desktop) fail("read broker thread desktop");
+  if (!SetProcessWindowStation(state_->station)) fail("select sandbox station");
+  state_->desktop = CreateDesktopW(L"Default", nullptr, nullptr, 0, GENERIC_ALL, &attributes);
+  error = GetLastError();
+  const auto restored = SetProcessWindowStation(previous);
+  if (!restored) fail("restore broker window station");
+  // CreateDesktop can attach the calling thread. Restore both associations
+  // so the broker cannot keep a finished step's desktop/station alive.
+  if (!SetThreadDesktop(previous_desktop)) fail("restore broker thread desktop");
+  if (!state_->desktop) fail("create sandbox desktop", error);
+}
+WindowsSandboxDesktop::~WindowsSandboxDesktop() = default;
+const std::wstring& WindowsSandboxDesktop::name() const { return state_->name; }
+
 struct WindowsRunnerSession::State {
   ResourceRecord record;
   std::wstring owner;

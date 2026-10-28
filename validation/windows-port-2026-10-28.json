@@ -852,5 +852,102 @@
     },
     "candidate": "rpi4 extracted server package binaries report0.8.2+g2e701a020983; daemon and Pages existing-config checks pass. Not installed.",
     "deployment_guard": "CLI initially showedidle, but exclusive spool-lock check found fresh running job; upgrade script aborted before stopping any service or creating snapshot. Existing server8dcf98e unchanged."
+  },
+  "per_step_windows_desktop": {
+    "implementation": "Fresh Window Station+desktop RAII per executing step; administrator chooses private name, ordinary user uses OS name only after named creation ACCESS_DENIED. CREATE_ONLY every attempt; existing objects never reopened. Bounded2sec creation retry for delayed OS reference cleanup. Broker process station and thread desktop restored. Desktop lifetime encloses process Job Object; children stopped before normal return. Runner check allocates actual desktop before claiming work.",
+    "verified": {
+      "sources": {
+        "src/ci-runner-windows/main.cpp": "d4b51601c95768c22c0a4d202acaf28bd98629cb10231b748d995c534d2130bc",
+        "include/ckgit/windows_sandbox.hpp": "2c0996d97c27ed75c992273748108c7a40afdb368c4b225ccc604b2360e462b0",
+        "src/common/process_windows.cpp": "b8d20284c1ecc6deb2cb34c726c84964000c81269749249657b5717723bdb4a9",
+        "src/common/windows_sandbox.cpp": "5e31d8bcfbc979a97d994e7109f965153ed41f87ade3e98a8cd036ff1140b783",
+        "tests/platform/windows_sandbox_probe.cpp": "c9a883368243b18700109ddddbcef24972ff067e5ffd2b9c36f49fcda3544477"
+      },
+      "no_active_test_process": true,
+      "probe_sha256": "6538D29BDD7763E1A0C772DDBD553DE369DA1787AE4527F3E25AEAA6EE499106",
+      "runner_sha256": "D666CB481BB194CAF2C2CDE09F9B8C6D86F70372C4058C3527FB84A5AA3402A3",
+      "utc": "2026-10-28T16:45:20.8840127Z"
+    },
+    "builds": [
+      {
+        "start": "2026-10-28T16:22:45.7653062Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 21.4946917,
+        "exit": 0,
+        "source_archive_sha256": "6A616634D8CA5555EDA27B602908150FFDB4A252FA21300480167DC92C58FDA0",
+        "probe_sha256": "41DFE7EBEB29EA2B4823FB533A6EC7D6D357D12017854330DB3B87B0856A8FD2",
+        "target": "all Release",
+        "end": "2026-10-28T16:23:07.2564420Z",
+        "runner_sha256": "F66B68E0E7B3FAD7BF562879A4B9B040E0F09182405E8FBD2337C4583AF9268D"
+      },
+      {
+        "start": "2026-10-28T16:27:16.5520205Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 12.0204606,
+        "exit": 0,
+        "source_archive_sha256": "3FAAE35A18325885DF20015F9E22777BD79DFEC63899072757F704A717EF7693",
+        "probe_sha256": "CC0A071781DDF46660333365AA228B4D300FB92EFEC7B1518D9ABA111482589C",
+        "target": "all Release",
+        "end": "2026-10-28T16:27:28.5704752Z",
+        "runner_sha256": "0906EE460B4003575C63FD6B3F4150E63A471E0FBE838C8101C1598B3CCD059A"
+      },
+      {
+        "start": "2026-10-28T16:29:10.5110075Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 7.5508348,
+        "exit": 0,
+        "source_archive_sha256": "ABDAD16750C6D679FB27FFD9C6A638BE66DD8454426F10245BD593988604F044",
+        "probe_sha256": "C6E04B37311126C4DC63A8E628CD3020E4886BFEDB439C3E6EF4692016E23478",
+        "target": "all Release",
+        "end": "2026-10-28T16:29:18.0573249Z",
+        "runner_sha256": "F38AAABD9B5C611291322281875F6D2CBD4FF58143F632F242E523D5C0AAB77A"
+      },
+      {
+        "start": "2026-10-28T16:37:11.2236619Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 7.0523862,
+        "exit": 0,
+        "source_archive_sha256": "A95E93BD535EC2491B793A5B7B00F27593D60A81BF5211DB58DE1DC0525A224A",
+        "probe_sha256": "6538D29BDD7763E1A0C772DDBD553DE369DA1787AE4527F3E25AEAA6EE499106",
+        "target": "all Release",
+        "end": "2026-10-28T16:37:18.2720469Z",
+        "runner_sha256": "D666CB481BB194CAF2C2CDE09F9B8C6D86F70372C4058C3527FB84A5AA3402A3"
+      }
+    ],
+    "normal_full_compiler": {
+      "result": "passed",
+      "probe_sha256": "C6E04B37311126C4DC63A8E628CD3020E4886BFEDB439C3E6EF4692016E23478",
+      "scope": "Compiler, linker, generated program, CMake/NMake, LPAC file/network/readonly enforcement, cancellation/background cleanup, executor artifact/Pages/cache/report checks, plus crash/recovery passed under ordinary limited UAC token. Subsequent CTest launch failed solely because diagnostic script used a missing ctest path.",
+      "worker_record": {
+        "position": "At V:\\tmp\\ckgit-windows-20261026-01\\standard-token\\worker.ps1:27 char:4\r\n+  & 'V:\\ProgramData\\ckgit-runner\\toolchain\\cmake\\bin\\ctest.exe' --test ...\r\n+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+        "error": "The term 'V:\\ProgramData\\ckgit-runner\\toolchain\\cmake\\bin\\ctest.exe' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.",
+        "end": "2026-10-28T16:34:50.4100085Z",
+        "success": false,
+        "start": "2026-10-28T16:29:30.7991571Z"
+      },
+      "qualification_log_sha256": "54dae04765a8200581f499bd7dc9019394958f46e5ebb5fbe542d37cd60cc472"
+    },
+    "normal_final_regression": {
+      "start": "2026-10-28T16:37:53.4347202Z",
+      "probe_sha256": "6538D29BDD7763E1A0C772DDBD553DE369DA1787AE4527F3E25AEAA6EE499106",
+      "seconds": 24.1212374,
+      "administrator": false,
+      "success": true,
+      "scope": "Ordinary limited UAC token; path/collision, recovery, CTest, runner check; prior full compiler qualification3 passed",
+      "end": "2026-10-28T16:38:17.5527438Z",
+      "runner_sha256": "D666CB481BB194CAF2C2CDE09F9B8C6D86F70372C4058C3527FB84A5AA3402A3"
+    },
+    "administrator_final_full_compiler": {
+      "probe_exit": 0,
+      "seconds": 292.2128057,
+      "baseline": "Earlier full LPAC fixture304.485s and317.408s",
+      "binary": "6538D29BDD7763E1A0C772DDBD553DE369DA1787AE4527F3E25AEAA6EE499106",
+      "start": "2026-10-28T16:38:24.7675509Z",
+      "end": "2026-10-28T16:43:16.9803566Z",
+      "administrator": true
+    },
+    "qualification_scope": "Full ordinary-user compiler test uses build3. Final build4 extends the same bounded creation retry to administrator-named stations; normal path/collision/recovery/8CTest/runner qualification and full administrative compiler fixture pass with final binary. NMake, not Ninja, is qualified. Interactive/service logon-session configurations and final installed GitHub package acceptance remain open.",
+    "local_docs": "67pages passed; diffcheck passed",
+    "server": "2e701a0 GitHub all9green, candidateARM64 validated but not deployed. All-project status must use ci status --all --json: earlier plain status was only current project. Exclusive spool lock prevented any service changes. Bounded180sec idle wait expired with0upgrade attempts at16:42:40UTC."
   }
 }

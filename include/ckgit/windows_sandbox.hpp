@@ -22,7 +22,23 @@ class WindowsSandbox {
   void retainWorkspace();
   void* sid() const;
   std::vector<void*> capabilitySids() const;
-  std::wstring desktopName() const;
+ private:
+  friend class WindowsSandboxDesktop;
+  struct State;
+  std::unique_ptr<State> state_;
+};
+
+// Owns a fresh noninteractive station and desktop for one executing step.
+// Destroy only after that step's process tree has stopped. Standard users use
+// the OS-assigned station name, so overlapping steps in one logon session
+// fail closed rather than reopening a station with another job's descriptor.
+class WindowsSandboxDesktop {
+ public:
+  explicit WindowsSandboxDesktop(const WindowsSandbox& sandbox);
+  ~WindowsSandboxDesktop();
+  WindowsSandboxDesktop(const WindowsSandboxDesktop&) = delete;
+  WindowsSandboxDesktop& operator=(const WindowsSandboxDesktop&) = delete;
+  const std::wstring& name() const;
  private:
   struct State;
   std::unique_ptr<State> state_;

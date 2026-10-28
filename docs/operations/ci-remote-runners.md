@@ -44,8 +44,11 @@ server so existing version-1 connections can use distributed jobs.
 ## Windows runner
 
 Windows uses the native `ck-ci-runnerd.exe` broker and an LPAC/AppContainer
-for every job. The broker requires an elevated administrator token to create
-its private, invisible Window Station. Build tools remain restricted; no
+for every job. Each executing step owns a fresh, invisible Window Station
+and desktop, released after its process tree stops. An elevated broker can
+choose the station's name; an ordinary user can use a name assigned by Windows
+when that logon session does not already own the corresponding station.
+Build tools remain restricted; no
 interactive desktop or Explorer session is started. Network access is denied,
 even when the server would allow it, and there is no degraded execution mode.
 Here, “desktop” means a Windows system object, not a graphical build interface.
@@ -53,6 +56,15 @@ Console toolchains can load USER32 through their dependencies; Windows then
 connects the process to a Window Station and desktop during initialization.
 The private objects let those dependencies initialize without sharing the
 user's desktop. See Microsoft's [process connection documentation](https://learn.microsoft.com/en-us/windows/win32/winstation/process-connection-to-a-window-station).
+The broker restores both its process station and its thread desktop after
+creating these objects. It allows up to two seconds for Windows to release
+references left by an exited process, but every attempt requires a **new**
+station. It never reopens an existing station or changes its permissions.
+Run `ck-ci-runnerd check --config RUNNER.INI` under the intended account and
+logon session before starting the runner. Some SSH/service logon sessions
+already own the OS-assigned station; that conflict fails before a job is
+claimed. Multiple overlapping steps in one such standard-user logon session
+are not supported.
 Windows-managed AppContainer profiles use the operating system's profile
 location. Checkouts, staged tools, caches and logs use the configured paths.
 
@@ -75,8 +87,8 @@ Portal extraction has a two-minute deadline; Pages extraction has ten minutes.
 
 The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
 `runner.ini.example`. CurrentUser installs its files without administrator
-rights; running the broker still needs elevation. AllUsers installation needs
-administrator rights. Installing the package does not automatically start a
+rights; broker startup also depends on the logon-session check above.
+AllUsers installation needs administrator rights. Installing the package does not automatically start a
 runner or register its SSH key. Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
@@ -115,7 +127,9 @@ The example configuration matches this staged directory layout:
 - `ci_toolchain_env.NAME`: explicit uppercase environment assignments. The
   literal `${TOOLS}` expands to the current job's read-only tool copy.
 
-From an elevated shell, check the configuration before serving:
+From the account and logon session intended for the runner, check the
+configuration before serving. The configuration, SSH key, toolchain and build
+directory must be accessible to that account:
 
 ```powershell
 & 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' check --config 'V:\ProgramData\ckgit-runner\runner.ini'

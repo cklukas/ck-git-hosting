@@ -67,7 +67,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
   for (const auto& relative : toolchain.binary_directories) ordinaryDirectory(toolchain.root / relative);
   // Verify the required broker privileges before claiming a lease. Profiles
   // are disposable; there is no fallback to an unrestricted process.
-  { ckgit::WindowsSandbox probe(session.root()); }
+  { ckgit::WindowsSandbox probe(session.root()); ckgit::WindowsSandboxDesktop desktop(probe); }
   if (check_only) { std::cout << "Windows runner configuration and AppContainer broker available\n"; return 0; }
   config.build_root = session.root();
   ckgit::CiRemoteTransport transport(config, config_path);

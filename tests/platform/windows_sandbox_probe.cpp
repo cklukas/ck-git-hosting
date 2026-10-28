@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <system_error>
 
 namespace fs = std::filesystem;
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
@@ -289,6 +290,19 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (argc == 3 && std::wstring_view(argv[1]) == L"--path-diagnostics") {
       ckgit::WindowsSandbox sandbox{fs::path(argv[2])};
+      const auto broker_station = GetProcessWindowStation();
+      const auto broker_desktop = GetThreadDesktop(GetCurrentThreadId());
+      {
+        ckgit::WindowsSandboxDesktop first(sandbox);
+        require(GetProcessWindowStation() == broker_station &&
+                    GetThreadDesktop(GetCurrentThreadId()) == broker_desktop,
+                "desktop allocation must restore broker process and thread associations");
+        bool collision = false;
+        try { ckgit::WindowsSandboxDesktop duplicate(sandbox); }
+        catch (const std::system_error& error) { collision = error.code().value() == ERROR_ALREADY_EXISTS; }
+        require(collision, "desktop allocation must never reopen an existing station");
+      }
+      { ckgit::WindowsSandboxDesktop reused_after_close(sandbox); }
       const auto executable = sandbox.tools() / "path-probe.exe";
       fs::copy_file(fs::path(argv[0]), executable);
       fs::copy_file(fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe",

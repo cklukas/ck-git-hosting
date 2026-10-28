@@ -224,6 +224,11 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
     environment_block += L'\0';
     if (environment.empty()) environment_block += L'\0';
   }
+  // Declare before the job handle so exceptional unwinding kills the job
+  // before releasing its isolated desktop. The normal path waits for every
+  // descendant to exit before either object is destroyed.
+  std::unique_ptr<WindowsSandboxDesktop> sandbox_desktop;
+  if (sandbox) sandbox_desktop = std::make_unique<WindowsSandboxDesktop>(*sandbox);
   Handle job(CreateJobObjectW(nullptr, nullptr));
   if (!job.value) fail("create process job");
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -251,7 +256,7 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   startup.lpAttributeList = attributes.list;
   PROCESS_INFORMATION info{};
   const auto directory = sandbox ? sandbox->work().wstring() : std::wstring();
-  auto desktop = sandbox ? sandbox->desktopName() : std::wstring();
+  auto desktop = sandbox_desktop ? sandbox_desktop->name() : std::wstring();
   if (sandbox) startup.StartupInfo.lpDesktop = desktop.data();
   {
   const std::lock_guard lock(windowsProcessCreationMutex());
