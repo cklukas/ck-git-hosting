@@ -13,12 +13,14 @@ description: Which packages are built where, installing on Linux, macOS and Wind
 | `ck-git-runner_V_arm64.deb`, `ck-git-runner_V_amd64.deb` | same | a [remote CI runner](ci-remote-runners.md) for another machine (its own binary path, account and unit; no file overlap with the server package) |
 | `ck-git-hosting-V-linux-{arm64,amd64}.tar.gz` | `packaging/build-tarball.sh` | other systemd distributions with glibc 2.41 or newer; carries `bin/ckdocs` too |
 | `ckgit-V-macos-{arm64,x86_64}.tar.gz` | same, `--client-only` | macOS clients; carries `bin/ckdocs` too |
-| `ckgit-V-windows-x64.zip` | CMake/CPack in the Windows workflow | portable Windows 11 x64 client and ckdocs |
+| `ckgit-V-windows-x64.zip` | CMake/CPack in the Windows workflow | portable Windows 11 x64 client, ckdocs and remote CI runner |
 | `ckgit-V-windows-x64-setup.exe` | `packaging/windows/ckgit.iss` with Inno Setup 6 | Windows client plus ckdocs; current-user or all-users installation |
 | `ckdocs-V-windows-x64-setup.exe` | `packaging/windows/ckdocs.iss` with Inno Setup 6 | standalone Windows documentation tool |
+| `ck-git-runner-V-windows-x64-setup.exe` | `packaging/windows/ck-git-runner.iss` with Inno Setup 6 | Windows remote CI runner; current-user or all-users installation |
 | `ck-git-hosting-V-source.tar.gz` | `git archive` | Homebrew formula source |
 | `SHA256SUMS` | release job | verification |
 | `packages` (a `.tar` bundling the arm64/amd64 `.deb`s, a source tarball, and `build-version`) | this project's own self-hosted CI (`.ckgit/ci.yml`), stored as a release asset on the server | `ck-git-hosting-deploy` (the server package) and `ckgit release download` / `packaging/update-cli.sh` (the source tarball) |
+| `windows-installers` (a `.tar` containing the three installers, portable ZIP and build manifests) | the Windows job in this project's own self-hosted CI | downloadable workflow artifact; combined with Linux artifacts for successful tag releases |
 | this repository's documentation site (`ckdocs.yml`, README.md, `docs/`) | `ckdocs build` in both CI channels: `.ckgit/ci.yml`'s `docs` step (self-hosted) and `.github/workflows/pages.yml` (GitHub) | ck-git Pages on the server (the dashboard's **Docs** button) and <https://cklukas.github.io/ck-git-hosting/> |
 
 The version comes from the `VERSION` file. A release is created by pushing a
@@ -48,6 +50,13 @@ client prerequisites; see [client setup](../guides/client-setup.md).
   device key line and a project, removes the packages while verifying that
   `server.ini` and the repository survive, then purges and verifies that the
   repository still survives.
+
+Successful Debian package jobs upload `debian-amd64` and `debian-arm64`
+artifacts containing the exact tested `.deb` files, `SHA256SUMS` and
+`BUILD-INFO` with the source commit and architecture. The Windows job uploads
+`windows-x64`. These branch/PR artifacts let an operator qualify matching
+server and Windows packages before creating a release tag; uploading them
+does not deploy a server or publish a release.
 
 Every job passes `BUILD_ROOT=$RUNNER_TEMP`, overriding the Makefile's own
 portable default (`TMPDIR`, or `/tmp`; a checkout's own `local.mk` can pin a

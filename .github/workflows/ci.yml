@@ -155,3 +155,17 @@ jobs:
           apt-get purge -y ck-git-hosting
           test ! -e /etc/ck-git-hosting
           test -d /srv/ck-git-hosting/repos/smoke.git
+      - name: Record tested package identity
+        run: |
+          commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
+          cd "$RUNNER_TEMP/dist"
+          sha256sum -- *.deb > SHA256SUMS
+          printf 'commit=%s\narchitecture=%s\n' "$commit" '${{ matrix.arch }}' > BUILD-INFO
+      - uses: actions/upload-artifact@v7
+        with:
+          name: debian-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/dist/*.deb
+            ${{ runner.temp }}/dist/SHA256SUMS
+            ${{ runner.temp }}/dist/BUILD-INFO
+          if-no-files-found: error
