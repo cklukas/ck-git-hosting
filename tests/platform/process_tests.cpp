@@ -30,6 +30,24 @@ void require(bool condition, const char* message) {
 }
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
+#ifdef _WIN32
+    if (args[1] == "close-console" && args.size() == 3) {
+      const auto pid = static_cast<DWORD>(std::stoul(args[2]));
+      FreeConsole();
+      require(AttachConsole(pid) != FALSE, "attach only the fixture runner console");
+      DWORD clients[16]{};
+      const auto count = GetConsoleProcessList(clients, 16);
+      bool private_console = count > 0 && count <= 16;
+      for (DWORD i = 0; i < std::min<DWORD>(count, 16); ++i)
+        private_console = private_console && (clients[i] == pid || clients[i] == GetCurrentProcessId());
+      if (!private_console) { FreeConsole(); throw std::runtime_error("refusing to close a shared console"); }
+      const auto window = GetConsoleWindow();
+      require(window != nullptr, "fixture runner must have its own console window");
+      require(PostMessageW(window, WM_CLOSE, 0, 0) != FALSE, "close fixture console");
+      FreeConsole();
+      return 0;
+    }
+#endif
     if (args[1] == "bridge") {
       std::vector<std::string> command{args[0]};
       command.insert(command.end(), args.begin() + 2, args.end());
@@ -51,6 +69,26 @@ int run(const std::vector<std::string>& args) {
 #endif
       const auto command = ckgit::parseCiRunnerCommand(args.back());
       if (!command) return 2;
+      if (command->job_id == "waiting-transport") {
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+        return 0;
+      }
+      if (const auto waiting = std::getenv("CKGIT_TEST_RUNNER_WAIT")) {
+        const bool matched = (std::string_view(waiting) == "hello" && command->op == ckgit::CiRunnerOp::kHello) ||
+                             (std::string_view(waiting) == "claim" && command->op == ckgit::CiRunnerOp::kClaim);
+        if (matched) {
+          if (const auto marker = std::getenv("CKGIT_TEST_RUNNER_READY")) {
+            std::ofstream ready(ckgit::pathFromUtf8(marker));
+#ifdef _WIN32
+            ready << GetCurrentProcessId();
+#else
+            ready << "ready";
+#endif
+          }
+          std::this_thread::sleep_for(std::chrono::seconds(30));
+          return 1;
+        }
+      }
       if (command->job_id == "sink-job") {
         if (command->protocol_version != 2 || command->token != std::string(32, 'b')) return 2;
         if (command->op == ckgit::CiRunnerOp::kStream) {
@@ -301,6 +339,17 @@ int run(const std::vector<std::string>& args) {
       command.sha256 = ckgit::sha256Hex(input);
       const auto uploaded = transport.run(command, input, std::chrono::seconds(3));
       require(uploaded.exit_code == 0 && uploaded.output == input, "native SSH transport preserves binary payload");
+      auto waiting = command;
+      waiting.job_id = "waiting-transport";
+      const auto wait_started = std::chrono::steady_clock::now();
+      const auto stopped = transport.run(waiting, input, std::chrono::seconds(30), [&] {
+        return std::chrono::steady_clock::now() - wait_started < std::chrono::milliseconds(200);
+      });
+      require(stopped.cancelled && !stopped.timed_out && stopped.exit_code != 0 &&
+                  std::chrono::steady_clock::now() - wait_started < std::chrono::seconds(5),
+              "remote transport must interrupt a silent request and stop its process tree");
+      require(!transport.negotiate("31", [] { return false; }), "cancelled negotiation cannot continue through protocol fallback");
+      require(transport.negotiate("31"), "transport can negotiate again after cancellation");
       command.op = ckgit::CiRunnerOp::kStream;
       auto session = transport.open(command);
       require(session->write("heartbeat\n") == 10, "native SSH transport accepts stream frames");

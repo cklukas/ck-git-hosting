@@ -9,18 +9,24 @@
 #include "ckgit/text.hpp"
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <csignal>
 #include <iostream>
 #include <thread>
 
 namespace {
 namespace fs = std::filesystem;
-volatile std::sig_atomic_t stop_requested = 0;
+std::atomic_bool stop_requested = false;
+static_assert(std::atomic_bool::is_always_lock_free);
 void signalStop(int) { stop_requested = 1; }
 BOOL WINAPI consoleStop(DWORD event) {
   if (event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT || event == CTRL_CLOSE_EVENT ||
       event == CTRL_LOGOFF_EVENT || event == CTRL_SHUTDOWN_EVENT) {
-    stop_requested = 1;
+    stop_requested = true;
+    // A returning close handler lets Windows terminate the broker immediately.
+    // Keep its cleanup window available to the main thread. Ctrl+C/Break do
+    // not terminate the process when this handler returns.
+    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) Sleep(5000);
     return TRUE;
   }
   return FALSE;
@@ -75,7 +81,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
   unsigned failures = 0;
   while (!stop_requested) {
     if (!negotiated) {
-      negotiated = transport.negotiate(ckgit::hexEncode(ckgit::buildVersion()));
+      negotiated = transport.negotiate(ckgit::hexEncode(ckgit::buildVersion()), [] { return !stop_requested.load(); });
       if (negotiated && transport.protocolVersion() < 2)
         throw std::runtime_error("Windows runner requires runner protocol 2 and explicit platform routing; upgrade the server");
       if (negotiated) std::cout << "Connected to " << config.server << " as " << config.name
@@ -86,7 +92,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
     // Bound shutdown latency while idle, without requiring a second thread to
     // terminate a request while it owns the shared transport.
     claim.wait_seconds = once ? 0 : std::min(config.claim_wait_seconds, 5u);
-    const auto answer = negotiated ? transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 30))
+    const auto answer = negotiated ? transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 30), [] { return !stop_requested.load(); })
                                    : ckgit::CiRemoteTransport::Result{};
     std::optional<ckgit::CiRemoteJob> job;
     bool good = answer.exit_code == 0;
@@ -115,7 +121,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
     // when the host would permit network access.
     execution.allow_network = false;
     ckgit::RemoteCiSource source(transport, id, job->token);
-    ckgit::RemoteCiSink sink(transport, *job, session.root() / "relay", &stop_requested);
+    ckgit::RemoteCiSink sink(transport, *job, session.root() / "relay", [] { return stop_requested.load(); });
     try {
       const auto record = ckgit::executeWindowsCiJob(job->prepared, execution, toolchain, source, sink);
       std::cout << "Finished " << id << ' ' << (sink.abandoned() ? "handed back" : ckgit::ciRunStatusName(record.status)) << '\n';

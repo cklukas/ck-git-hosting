@@ -1098,5 +1098,114 @@
     "ordinary_user_limit": "Installed runner isolated fixture passes check/protocol negotiation/empty queue/single-instance/cleanup. Existing production config check fails: its file and parent ACL allow only Administrators and SYSTEM. ACL inspected; no permissions changed. Does not prove normal-user production runner.",
     "real_job": "This installed version has not yet executed a production job. Full original scope remains open.",
     "active_instances": "Exact installed executable path process inspection after tests found no active instance."
+  },
+  "runner_idle_upgrade": {
+    "scope": "Interruptible Windows runner negotiation/claim and thread-safe stop callback. Normal exit on console close and installer-driven close while idle.",
+    "evidence": {
+      "build.json": {
+        "start": "2026-10-28T17:09:47.1541544Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 18.8293569,
+        "exit": 0,
+        "source_archive_sha256": "2222F3694E027CE271FAC2CF82E73CBBDE2E8419F6021D2CA4DBE4B802D91950",
+        "probe_sha256": "21B771F37EB5078D4E3B522B721ABB55794EDA380663EB541084ABBB23BE952D",
+        "target": "all Release",
+        "end": "2026-10-28T17:10:05.9788336Z",
+        "runner_sha256": "66693468F20E1848440466CE9F6698C8A4315EC73CFE4353C8840D008CC58826"
+      },
+      "build2.json": {
+        "start": "2026-10-28T17:15:44.0875887Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 9.0683896,
+        "exit": 0,
+        "source_archive_sha256": "914D6ED0EF3BD5105D5038BB9B3346B5A2DACE4E33213A267BCDFF047E55AC18",
+        "probe_sha256": "21B771F37EB5078D4E3B522B721ABB55794EDA380663EB541084ABBB23BE952D",
+        "target": "all Release",
+        "end": "2026-10-28T17:15:53.1504599Z",
+        "runner_sha256": "66693468F20E1848440466CE9F6698C8A4315EC73CFE4353C8840D008CC58826"
+      },
+      "mac-build.json": {
+        "start": "2026-10-28T17:10:08.312950+00:00",
+        "end": "2026-10-28T17:10:12.977373+00:00",
+        "elapsed_seconds": 4.664235249860212,
+        "exit": 0,
+        "target": "macOS all Release incremental",
+        "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin",
+        "input_manifest_sha256": "78b56c53b694cf2b588ac8e32640d3046b00bc7a33730c289dfc78163a4a910c",
+        "baseline": "Prior broad header Mac rebuild28.036s; inspect actual changed TUs and dependents."
+      },
+      "mac-final-build.json": {
+        "start": "2026-10-28T17:15:47.161531+00:00",
+        "end": "2026-10-28T17:15:49.066376+00:00",
+        "elapsed_seconds": 1.9048454761505127,
+        "timing_source": "Build log creation and final write; process terminal exit0 observed separately",
+        "target": "ckgit-process-tests Release",
+        "source_sha256": "bfc1440f4d9810da50a977afa4152f1c1a356717600cac5c1cdbbfec18cafc19",
+        "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckgit-process-tests",
+        "binary_sha256": "f88e90f08f5f062aebcf6f92559d8cc8c004526673652e17eeb40e01bf48e948",
+        "baseline": "Earlier broader incremental4.664s; final change only Windows-conditional test helper guard"
+      },
+      "check-admin2.json": {
+        "runner_sha256": "66693468F20E1848440466CE9F6698C8A4315EC73CFE4353C8840D008CC58826",
+        "end": "2026-10-28T17:10:59.5490047Z",
+        "success": true,
+        "start": "2026-10-28T17:10:39.4611483Z"
+      },
+      "installer-build.json": {
+        "runner_sha256": "66693468F20E1848440466CE9F6698C8A4315EC73CFE4353C8840D008CC58826",
+        "seconds": 2.525295,
+        "fixture_source": "#define Product \"ck-git-runner\"\n#define ProductExecutable \"ck-ci-runnerd.exe\"\n#define ProductAppId \"{{E517BA26-A8DA-4DC1-AB2F-592FFB2CD214}\"\n#define InstallerStateKey \"Software\\ckgit\\runner-shutdown-fixture\\Installer\"\n#include \"ckdocs.iss\"",
+        "start": "2026-10-28T17:13:14.7318947Z",
+        "installer_sha256": "7B862414A2D4C6E1449382C1907E78D371D28C89225EF872083D1254200000DF",
+        "baseline": "Prior all-three production installers10.694s, fixture single runner package not directly comparable",
+        "common_source_sha256": "7AC2830FDDB1415FAD43A8E9A18F3251726087402932A0C5F60E5849E0DEB2BC",
+        "launcher_sha256": "0AC686B9503F3C38B162C7B5646E1E0D9E785D2A2C4711DA2FF743397D7D1661",
+        "end": "2026-10-28T17:13:17.2540830Z"
+      },
+      "installer-admin.json": {
+        "scope": "AllUsers administrator",
+        "end": "2026-10-28T17:13:27.9997899Z",
+        "success": true,
+        "start": "2026-10-28T17:13:22.3679495Z"
+      },
+      "installer-ordinary.json": {
+        "scope": "CurrentUser ordinary limited UAC token",
+        "end": "2026-10-28T17:13:58.4117550Z",
+        "success": true,
+        "start": "2026-10-28T17:13:53.6886834Z"
+      },
+      "final-ordinary.json": {
+        "runner_sha256": "66693468F20E1848440466CE9F6698C8A4315EC73CFE4353C8840D008CC58826",
+        "end": "2026-10-28T17:16:57.6241737Z",
+        "process_test_sha256": "664742295C991B7C7ED8B41DE2E334A6C8909E5BBEF2689CE17508AE8BB4CC6F",
+        "success": true,
+        "start": "2026-10-28T17:16:36.4619767Z"
+      },
+      "cleanup.json": {
+        "source_hashes_verified": true,
+        "fixture_package_removed": true,
+        "fixture_registration_absent": true,
+        "success": true,
+        "installed_runner_sha256": "8427AC90D4020498338ED2BF734AECA9E9AC69F80AD2BF28AF5A3A3F016DAC46",
+        "active_test_processes": 0,
+        "utc": "2026-10-28T17:17:55.7678936Z"
+      },
+      "final-sources.json": {
+        "include/ckgit/ci_remote.hpp": "30b50bc0a768a9134070dd30811941cb47ec779545da00a26ffaac0d3a41549a",
+        "src/common/ci_remote.cpp": "b4305c5240e43aee1d25bafce5f047daf4d5263660fe2b240556d925f1d8f559",
+        "src/common/ci_remote_transport.cpp": "d1ee4bad5d960ee23909b452982ced4cd167e8ac510861fcc13a46136139f106",
+        "src/ci-runner-windows/main.cpp": "4526cc372d636f5dac00a5474d0a4601ec31e11b82b5d9efd7c1d8d24818cdc4",
+        "src/ci-runner/main.cpp": "3d6600d34cb76fb0b62c48fb2eb14f63b090a156439c928d38432bd26653a9ba",
+        "tests/platform/process_tests.cpp": "bfc1440f4d9810da50a977afa4152f1c1a356717600cac5c1cdbbfec18cafc19",
+        "tests/integration/windows_runner_shutdown.ps1": "5264698de17728ede04d9d919136203c5e41cb3c0e384140e5d932e29e51acc6",
+        "tests/integration/windows_installer.ps1": "12e4a721a9e503783cb421574fbe5fb1aa521ec7295ea03d6851e0e04bcf3a5f"
+      }
+    },
+    "mac_tests": "Test project /Volumes/S8T/tmp/ckgit-windows-20261026-01/build\n    Start 1: unit\n1/2 Test #1: unit .............................   Passed   47.24 sec\n    Start 7: process\n2/2 Test #7: process ..........................   Passed    4.48 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =  51.73 sec\n",
+    "native_tests": "Internal ctest changing into directory: V:/tmp/ckgit-windows-20261026-01/build\nTest project V:/tmp/ckgit-windows-20261026-01/build\n    Start 1: git-repository\n1/8 Test #1: git-repository ...................   Passed    5.77 sec\n    Start 2: client-storage\n2/8 Test #2: client-storage ...................   Passed    0.16 sec\n    Start 3: sync-lock\n3/8 Test #3: sync-lock ........................   Passed    0.14 sec\n    Start 4: tree-file\n4/8 Test #4: tree-file ........................   Passed    0.03 sec\n    Start 5: archive\n5/8 Test #5: archive ..........................   Passed    0.14 sec\n    Start 6: process\n6/8 Test #6: process ..........................   Passed   11.46 sec\n    Start 7: mermaid\n7/8 Test #7: mermaid ..........................   Passed    0.12 sec\n    Start 8: docs-windows\n8/8 Test #8: docs-windows .....................   Passed    2.11 sec\n\n100% tests passed, 0 tests failed out of 8\n\nTotal Test time (real) =  19.98 sec\n",
+    "ordinary_shutdown": "Runner close during hello passed in 0.0801381s; SSH stopped and session removed\nRunner close during claim passed in 0.0517343s; SSH stopped and session removed\n",
+    "administrator_shutdown": "Runner close during hello passed in 0.0434764s; SSH stopped and session removed\nRunner close during claim passed in 0.0462566s; SSH stopped and session removed\n",
+    "test_package": "Dedicated AppId and installer-state key preserve production installation. Installer uses unchanged shared Inno implementation and verified native Release binaries. Tested upgrade while claim SSH waits, normal exit, no surviving SSH/session, install/reinstall/uninstall, binary identity, user data and PATH.",
+    "limitations": "No active build/upload shutdown qualification in this change. Installed GitHub production package remains81b992f; new source awaits GitHub package. Restricted service, Ninja and final production acceptance remain open."
   }
 }

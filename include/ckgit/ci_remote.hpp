@@ -32,7 +32,7 @@ class CiRemoteTransport {
   CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version = 1);
   // Negotiate before claiming work; keep that version for the whole lease,
   // including the separate Git SSH shim process. Failed greetings never claim.
-  bool negotiate(std::string_view version_hex);
+  bool negotiate(std::string_view version_hex, const std::function<bool()>& should_continue = {});
   unsigned protocolVersion() const { return protocol_version_; }
   bool supportsExecutionReport() const { return execution_report_; }
 
@@ -40,9 +40,11 @@ class CiRemoteTransport {
     int exit_code = -1;
     bool timed_out = false;
     std::string output;
+    bool cancelled = false;
   };
   // Runs `command`, writing `input` to its stdin, and collects its stdout.
-  Result run(const CiRunnerCommand& command, std::string_view input, std::chrono::seconds timeout) const;
+  Result run(const CiRunnerCommand& command, std::string_view input, std::chrono::seconds timeout,
+             const std::function<bool()>& should_continue = {}) const;
 
   // A long-lived operation (stream) with both pipes open.
   using Session = std::unique_ptr<ProcessStream>;
@@ -96,7 +98,7 @@ class RemoteCiSource : public CiSourceProvider {
 class RemoteCiSink : public CiResultSink {
  public:
   RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob& job, std::filesystem::path relay_dir,
-               const volatile int* stop_flag);
+               std::function<bool()> stop_requested);
   ~RemoteCiSink() override;
   void runStarted(const CiRunRecord& record) override;
   void stepStarted(const CiRunRecord& record, std::size_t index) override;
@@ -140,7 +142,8 @@ class RemoteCiSink : public CiResultSink {
   const CiRemoteTransport& transport_;
   const CiRemoteJob& job_;
   std::filesystem::path relay_dir_;
-  const volatile int* stop_flag_;
+  std::function<bool()> stop_requested_;
+  bool stopping() const { return stop_requested_ && stop_requested_(); }
   CiRemoteTransport::Session session_{};
   bool connected_ = false;
   std::chrono::steady_clock::time_point last_connect_attempt_{};

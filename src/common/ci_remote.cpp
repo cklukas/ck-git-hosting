@@ -55,8 +55,8 @@ void RemoteCiSource::checkout(const CiCheckoutRequest& request, const std::files
 // --- remote sink ---------------------------------------------------------------
 
 RemoteCiSink::RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob& job,
-                           std::filesystem::path relay_dir, const volatile int* stop_flag)
-    : transport_(transport), job_(job), relay_dir_(std::move(relay_dir)), stop_flag_(stop_flag) {
+                           std::filesystem::path relay_dir, std::function<bool()> stop_requested)
+    : transport_(transport), job_(job), relay_dir_(std::move(relay_dir)), stop_requested_(std::move(stop_requested)) {
   std::error_code error;
   std::filesystem::create_directories(relay_dir_, error);
   if (error) throw std::runtime_error("could not create runner relay directory");
@@ -314,7 +314,7 @@ void RemoteCiSink::progress(const CiRunRecord& record) {
   send("progress " + hexOrDash(detail_) + "\n");
 }
 
-bool RemoteCiSink::cancelRequested() { return cancel_ || (stop_flag_ != nullptr && *stop_flag_ != 0); }
+bool RemoteCiSink::cancelRequested() { return cancel_ || stopping(); }
 
 bool RemoteCiSink::leaseLost() { return lease_lost_; }
 
@@ -424,7 +424,7 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
     record.detail = "this runner lost its lease on the job; it was requeued";
     return record;
   }
-  if (stop_flag_ != nullptr && *stop_flag_ != 0 && !cancel_) {
+  if (stopping() && !cancel_) {
     // Shutting down mid-run: hand the job back for another runner instead of
     // reporting a cancel nobody asked for.
     disconnect();

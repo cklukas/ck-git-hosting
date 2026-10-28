@@ -224,6 +224,14 @@ binary identity, execution and uninstallation. For `ckgit`, it also rejects an
 empty selection and upgrades the initial selection to both components. Set
 `-InitialComponents ckgit` or `-InitialComponents ckdocs` to test a single-tool
 installation; the default tests the installer's default selection.
+`-ExerciseRunningUpgrade` also checks an active ckdocs preview or an idle
+Windows runner. For the runner, supply `-RunnerFakeSsh <ckgit-process-tests.exe>`.
+The fixture stalls a claim request, upgrades the installed runner, and requires
+normal exit, SSH process termination and removal of the runner session before
+continuing. This does not qualify upgrades during a build or artifact upload.
+The opt-in `windows_runner_shutdown.ps1` separately closes the runner's private
+console during stalled negotiation and claim requests, checking process cleanup
+and release of its single-instance lock. Both tests take an explicit `TestRoot`.
 Use `-RequireNonAdmin` from a
 non-elevated process to verify installation without administrator rights.
 Pass `-Product ckgit -DocsBinary <verified-ckdocs.exe>` for the client installer;
@@ -245,27 +253,21 @@ It is separate from CTest because it creates Windows-managed
 AppContainer profiles in the user's profile directory. Job data, tools and
 temporary output stay beneath the explicit test directory on `V:`.
 
-The current backend requires an administrator broker token to create a named,
-private Window Station. Job processes still run in LPAC, with their own
-invisible desktop, restricted file access and no network capability. There is
-no fallback to the user's interactive desktop or unsandboxed execution.
-This desktop supports initialization of Windows libraries used by console
-tools; it does not launch Explorer or display a graphical session.
+Each executing step gets a fresh noninteractive Window Station and desktop.
+An administrator broker can choose the station name; a standard-user broker
+uses the OS-assigned name when explicit naming is denied. The runner always
+requires a new station and never reopens one owned by another step. Check the
+intended logon session before serving: an existing OS-assigned station can
+prevent startup. These objects initialize Windows libraries used by console
+tools; they do not launch Explorer or show a graphical session.
 
-The qualification covers compiler/linker execution, a minimal native program,
-a CMake/NMake build, live output, cancellation and isolation checks. It does not establish compatibility
-with every SDK, build system or installer tool; the connected runner's full
-installer qualification is recorded separately above. Non-admin ckdocs installation is independent of this
-broker requirement.
-
-Two alternative desktop approaches were tested in the workstation's SSH
-session, including with a confirmed non-administrator token. A system-named
-window station with `CWF_CREATE_ONLY` failed with `ERROR_ALREADY_EXISTS` (183).
-A new private desktop on the existing station, without changing its ACL,
-failed to initialize the LPAC child (`0xc0000142`). Neither experiment is
-enabled in the runner. These results do not qualify a standard-user broker;
-that requirement remains open. In particular, reopening a pre-existing station
-does not establish that the runner owns its security descriptor.
+The native compiler/linker/test and CMake/NMake fixtures have passed with both
+an administrator token and an ordinary filtered UAC token. The latter was
+launched in the workstation's noninteractive test session; it does not qualify
+every interactive or service logon configuration. Earlier SAFER-token tests
+used an additionally restricted token, not an ordinary UAC token.
+Ninja compatibility and restricted-account service qualification remain open;
+see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 
 For a small path-compatibility diagnostic without staging the compiler, run:
 

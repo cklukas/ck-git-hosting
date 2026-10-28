@@ -89,7 +89,12 @@ The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
 `runner.ini.example`. CurrentUser installs its files without administrator
 rights; broker startup also depends on the logon-session check above.
 AllUsers installation needs administrator rights. Installing the package does not automatically start a
-runner or register its SSH key. Use a dedicated runner identity with the
+runner or register its SSH key. Closing an idle Windows runner interrupts its
+SSH negotiation or pending claim, stops that SSH process and removes the
+session workspace. Installer upgrades of this idle state are checked in both
+installation scopes. Upgrading during an active build or artifact upload is
+not yet qualified; wait for the job to finish before upgrading.
+Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
 qualification workstation, Windows' built-in OpenSSH returned protocol replies

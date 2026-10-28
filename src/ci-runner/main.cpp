@@ -434,7 +434,7 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
     if (config.identity.has_value()) execution.hidden_paths.push_back(config.identity->parent_path());
     if (config.known_hosts.has_value()) execution.hidden_paths.push_back(config.known_hosts->parent_path());
     ckgit::RemoteCiSource source(transport, run_id, job->token);
-    ckgit::RemoteCiSink sink(transport, *job, config.build_root / (run_id + ".relay"), &g_stop);
+    ckgit::RemoteCiSink sink(transport, *job, config.build_root / (run_id + ".relay"), [] { return g_stop != 0; });
     try {
       ckgit::CiSandboxReport sandbox;
       const ckgit::CiRunRecord record = ckgit::executeCiJob(job->prepared, execution, source, sink, &sandbox);

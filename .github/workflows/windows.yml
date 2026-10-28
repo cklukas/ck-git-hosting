@@ -63,7 +63,7 @@ jobs:
               $selections = if ($product -eq 'ckgit') { @('both','ckgit','ckdocs') } else { @('both') }
               foreach ($selection in $selections) {
                 $dependencyMode = if ($selection -eq 'ckgit') { 'Missing' } elseif ($selection -eq 'ckdocs') { 'Present' } else { 'Inherited' }
-                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection -DependencyPathMode $dependencyMode -ExerciseRunningUpgrade:($product -eq 'ckdocs' -and $mode -eq 'AllUsers')
+                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection -DependencyPathMode $dependencyMode -RunnerFakeSsh "$env:RUNNER_TEMP/build/bin/ckgit-process-tests.exe" -ExerciseRunningUpgrade:($product -in @('ckdocs','ck-git-runner') -and $mode -eq 'AllUsers')
               }
             }
           }

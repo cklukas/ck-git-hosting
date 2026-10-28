@@ -75,14 +75,15 @@ CiRemoteTransport::CiRemoteTransport(RunnerConfig config, std::filesystem::path 
   }
 }
 
-bool CiRemoteTransport::negotiate(std::string_view version_hex) {
+bool CiRemoteTransport::negotiate(std::string_view version_hex, const std::function<bool()>& should_continue) {
   execution_report_ = false;
   for (unsigned version = kCiRunnerProtocolVersion; version > 0; --version) {
     CiRemoteTransport candidate(config_, config_path_, version);
     CiRunnerCommand hello;
     hello.op = CiRunnerOp::kHello;
     hello.version_hex = std::string(version_hex);
-    const auto answer = candidate.run(hello, {}, std::chrono::seconds(60));
+    const auto answer = candidate.run(hello, {}, std::chrono::seconds(60), should_continue);
+    if (answer.cancelled) return false;
     const std::string expected = "ok\nprotocol=" + std::to_string(version) + "\n";
     if (answer.exit_code == 0 && !answer.timed_out && answer.output.rfind(expected, 0) == 0) {
       protocol_version_ = version;
@@ -120,7 +121,8 @@ std::vector<std::string> CiRemoteTransport::sshArguments() const {
 }
 
 CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command, std::string_view input,
-                                                 std::chrono::seconds timeout) const {
+                                                 std::chrono::seconds timeout,
+                                                 const std::function<bool()>& should_continue) const {
   std::vector<std::string> argv = sshArguments();
   auto negotiated = command;
   negotiated.protocol_version = protocol_version_;
@@ -133,6 +135,7 @@ CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command,
   } payload;
   ProcessOptions options;
   options.timeout = timeout;
+  options.should_continue = should_continue;
   options.output_limit = kMaximumCiClaimResponseBytes + 4096;
   options.inherit_stderr = true;
   if (!input.empty()) {
@@ -144,7 +147,7 @@ CiRemoteTransport::Result CiRemoteTransport::run(const CiRunnerCommand& command,
     if (!file) throw std::runtime_error("could not stage runner request payload");
   }
   const auto child = runProcess(argv, options);
-  return Result{child.output_truncated ? -1 : child.exit_code, child.timed_out, child.output};
+  return Result{child.output_truncated ? -1 : child.exit_code, child.timed_out, child.output, child.cancelled};
 }
 
 CiRemoteTransport::Session CiRemoteTransport::open(const CiRunnerCommand& command) const {
