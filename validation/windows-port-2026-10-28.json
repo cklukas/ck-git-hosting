@@ -1014,5 +1014,89 @@
       "ordinary.log": "54cd2c3c34ad3920a0507cee14b17e042b069efcdeb178b32d6640ecbf552c3f",
       "experiment.patch": "e3dffdd77d672c833a6268e485dc82600165b380cbc15c4ac7460a0216dc1e7e"
     }
+  },
+  "github_81b992f_installation": {
+    "manifest": {
+      "run": 40729250769,
+      "commit": "81b992fb8897063f80687ccf97dbdd8dd67fc56c",
+      "files": {
+        "ck-git-runner-0.8.2-windows-x64-setup.exe": "1cd05a607913a8cfa9f659d6dc9bf004afaf1299eea1aeed9d6a6b7515ca1810",
+        "ckdocs-0.8.2-windows-x64-setup.exe": "03abd7ffcf7c0bb46f00d35ab758d1fe4c953fd867d8e0186289f734e3569603",
+        "ckgit-0.8.2-windows-x64-setup.exe": "67ea3c43368bcad7ffe1d72695d6d9727749ba16bae4b4e8f468444a3dcc029e",
+        "ckgit-0.8.2-windows-x64.zip": "6230e2bf13c8630bf7752d47099e327be72590a2c116814cdec41fd6c7415321"
+      },
+      "portable_executables": {
+        "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe": "8427ac90d4020498338ed2bf734aeca9e9ac69f80ad2bf28af5a3a3f016dac46",
+        "ckgit-0.8.2-windows-x64/bin/ckdocs.exe": "9dd032dabf806fd593cb12762296022eb5899ff2060772f2d1293076c4a91c0a",
+        "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe": "48f4d53d1dfc870fd1564e3ee0b1e1a10e905e1b545bf23add000c97c869d229",
+        "ckgit-0.8.2-windows-x64/bin/ckgit.exe": "e50a0ce78ac68c8e981c353117ae6ad3dbd1f9fcc282d2001831388b0e048c66"
+      }
+    },
+    "clients": {
+      "run": 40729250769,
+      "commit": "81b992fb8897063f80687ccf97dbdd8dd67fc56c",
+      "success": true,
+      "end": "2026-10-28T17:00:30.5904131Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+g81b992fb8897",
+          "scope": "CURRENTUSER",
+          "sha256": "E50A0CE78AC68C8E981C353117AE6AD3DBD1F9FCC282D2001831388B0E048C66",
+          "product": "ckgit",
+          "installer_sha256": "67EA3C43368BCAD7FFE1D72695D6D9727749BA16BAE4B4E8F468444A3DCC029E",
+          "previous_sha256": "01EF1FA923912C827F9E3C3AA7A3249C2DCB064C84F95B339873E67A30A5AF8B",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+g81b992fb8897",
+          "scope": "CURRENTUSER",
+          "sha256": "9DD032DABF806FD593CB12762296022EB5899FF2060772F2D1293076C4A91C0A",
+          "product": "ckdocs",
+          "installer_sha256": "03ABD7FFCF7C0BB46F00D35AB758D1FE4C953FD867D8E0186289F734E3569603",
+          "previous_sha256": "695A97A2FE0A8DE4B439EF65831B2BAD4EF27531B37783C8E0A83FE373D6C3D6",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 40729250769,
+      "commit": "81b992fb8897063f80687ccf97dbdd8dd67fc56c",
+      "success": true,
+      "end": "2026-10-28T17:00:32.2822004Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+g81b992fb8897",
+          "scope": "ALLUSERS",
+          "sha256": "8427AC90D4020498338ED2BF734AECA9E9AC69F80AD2BF28AF5A3A3F016DAC46",
+          "product": "ck-git-runner",
+          "installer_sha256": "1CD05A607913A8CFA9F659D6DC9BF004AFAF1299EEA1AEED9D6A6B7515CA1810",
+          "previous_sha256": "77166FCD5DEA58D320161BFCA385E7134D5122A11B1951546B286D1BA5593E9D",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "administrator_check": {
+      "end": "2026-10-28T17:01:06.6924591Z",
+      "binary_sha256": "8427AC90D4020498338ED2BF734AECA9E9AC69F80AD2BF28AF5A3A3F016DAC46",
+      "success": true,
+      "start": "2026-10-28T17:01:06.0743811Z"
+    },
+    "ordinary_user_check": {
+      "production_check_exit": 1,
+      "fixture_success": true,
+      "binary_sha256": "8427AC90D4020498338ED2BF734AECA9E9AC69F80AD2BF28AF5A3A3F016DAC46",
+      "utc": "2026-10-28T17:02:10.8231819Z"
+    },
+    "config_preservation": {
+      "config_sha256": "0373D58CFB23F987EDD6ED34FD788C26304FA0512AB82704667CD29547902B90",
+      "utc": "2026-10-28T17:00:32.3169123Z",
+      "runner_config_unchanged": true
+    },
+    "client_token": "Same-user ordinary filtered UAC token verified by launcher (not SAFER); clients CurrentUser, runner AllUsers with administrator token.",
+    "ordinary_user_limit": "Installed runner isolated fixture passes check/protocol negotiation/empty queue/single-instance/cleanup. Existing production config check fails: its file and parent ACL allow only Administrators and SYSTEM. ACL inspected; no permissions changed. Does not prove normal-user production runner.",
+    "real_job": "This installed version has not yet executed a production job. Full original scope remains open.",
+    "active_instances": "Exact installed executable path process inspection after tests found no active instance."
   }
 }
