@@ -696,5 +696,44 @@
     "not_deployed": true,
     "ci_issue": "c07a0fd Debian artifact uploaded only four debs; manifests omitted because runner.temp host path differed from RUNNER_TEMP container path. Runtime version also lacked commit because checkout used an archive. Fix passes runtime/package identity explicitly from GITHUB_SHA and upload paths from shell step output. Native GitHub requalification pending.",
     "local_checks": "Workflow YAML parsed; diff check passed; documentation67pages passed."
+  },
+  "ordinary_user_ckdocs_upgrade": {
+    "launcher_build": {
+      "binary_sha256": "641B695C878484AA76DB70ACA52F1A43ACDF0034DEB0D104CFCD2AC2CB5E6345",
+      "baseline": "First isolated diagnostic build; no comparable baseline",
+      "start": "2026-10-28T15:54:16.6851198Z",
+      "end": "2026-10-28T15:54:16.8697623Z",
+      "source_sha256": "D573E2F8F0942D06BE3E519C85E90DC0B42266C911991F194336D82F869EC871",
+      "seconds": 0.1876415
+    },
+    "worker": {
+      "session_id": 0,
+      "temp": "V:\\tmp\\ckgit-windows-20261026-01\\standard-token",
+      "success": true,
+      "restart_manager": "start=0 register=0 list=0 needed=0 reasons=0",
+      "utc": "2026-10-28T15:54:17.4697470Z",
+      "administrator": false
+    },
+    "upgrade": {
+      "start": "2026-10-28T15:55:35.3392456Z",
+      "process_exit": 0,
+      "binary_sha256": "695A97A2FE0A8DE4B439EF65831B2BAD4EF27531B37783C8E0A83FE373D6C3D6",
+      "process_id": 65456,
+      "administrator": false,
+      "source_sha256": "ABA25644932230A74C002C01452CF23A708A60AB4DB910C51C0F6620218BD5E0",
+      "installer_sha256": "354F526BD03C27146D8BC5A1FC2118846A83468023429E7434246BF1CCEC6735",
+      "success": true,
+      "scope": "CurrentUser ordinary limited UAC token",
+      "end": "2026-10-28T15:55:38.1507775Z",
+      "image": "V:\\Programs\\ckdocs\\ckdocs.exe",
+      "user_data_preserved": true,
+      "preview_cleanup": true
+    },
+    "launcher_source_sha256": "d573e2f8f0942d06be3e519c85e90dc0b42266c911991f194336d82f869ec871",
+    "worker_source_sha256": "56675de490826806d7814497bbd29bd1cd419fc6cd342f3ead041556f17a5319",
+    "token_verification": "Same user as SSH and installed Explorer, elevation type3, not Administrator, no restricting SIDs. Verified again on suspended child before resume. Explicit caller noninteractive desktop and V environment. No new account/profile or user privilege changes.",
+    "harness_correction": "Initial token handle rights insufficient for process creation; duplicate with maximum already-allowed handle rights succeeded. Child token query needed DUPLICATE for WindowsPrincipal.IsInRole. These errors preceded test-worker execution and are not product failures.",
+    "cleanup": "No active ckdocs/worker found; superseded launcher1-5 DLLs and disposable docs removed. Final launcher6 retained for remaining normal-token qualification. Evidence aggregation hit PowerShell5 extended-string JSON serialization; exact command-hash-verified cleanup PID40188 stopped after cleanup, original result JSON retrieved intact.",
+    "limits": "Proves CurrentUser upgrade of current installed ckdocs under ordinary limited UAC token with active preview, not standard-user broker/Ninja or CLI/runner live upgrades."
   }
 }
