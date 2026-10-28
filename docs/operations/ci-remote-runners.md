@@ -59,7 +59,14 @@ an additional limit of 100,000 entries. Failed packing removes partial output.
 The broker performs this work after the job's processes have terminated.
 Pages packing also uses the library on both platforms, omitting links and
 special files, with the Pages upload cap and a ten-minute packing deadline.
-Portal and server-side Pages extraction still need migration.
+Portal Git-ref trees and server-side Pages uploads are also extracted with
+the pinned library, without a `tar` executable. Extraction uses a new private
+directory and removes partial output on failure. It rejects absolute paths,
+parent traversal, duplicate files and sparse entries, and never creates links
+or restores archive ownership or permissions. Portal trees omit links; Pages
+uploads reject them. Input and extracted content are capped at 8 GiB, individual
+files at 1 GiB, with at most 100,000 entries (plus the Pages TAR root).
+Portal extraction has a two-minute deadline; Pages extraction has ten minutes.
 
 The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
 `runner.ini.example`. CurrentUser installs its files without administrator

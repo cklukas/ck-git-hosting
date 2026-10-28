@@ -24,8 +24,10 @@ archive formats are uncompressed TAR. The caller must register only the
 required TAR reader/writer, not all libarchive formats or external filters.
 MSVC uses the static runtime so no administrator-installed redistributable
 is needed. The Windows executor uses this library for bounded artifact packing;
-local and remote Pages packing use it on both platforms. POSIX artifact packing
-and the extraction call sites still use tar and are not covered by that migration.
+local and remote Pages packing use it on both platforms. Portal ref and Pages
+extraction use a bounded TAR reader that creates only regular files and
+directories in a new private tree. POSIX artifact packing still uses tar and
+is not covered by that migration.
 `SOURCE-NOTICES.txt` reproduces copyright/license comment blocks from the
 release's `libarchive/*.c` and `libarchive/*.h` files, including optional code;
 Windows packages distribute it together with `COPYING`.

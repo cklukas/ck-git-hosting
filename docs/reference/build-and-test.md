@@ -86,7 +86,8 @@ when the sink closes; failed local writes or short upload reads stop reporting
 those bytes as successfully transferred. Pages packaging uses the pinned
 libarchive writer, with byte/entry caps and cancellation-aware heartbeats.
 It omits links and special files, matching Pages publication's regular-file
-policy. Server-side extraction still uses `tar` during the migration.
+policy. Portal ref and server-side Pages extraction also use the pinned library;
+the POSIX artifact packer is the remaining external `tar` call.
 The process API also supports synchronous live-output and continuation
 callbacks. Live output is delivered beyond the bounded in-memory capture;
 callers must cap any logs they retain. A false continuation result cancels the

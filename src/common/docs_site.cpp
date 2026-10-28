@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/docs_site.hpp"
+#include "ckgit/archive.hpp"
 
 #include <algorithm>
 #include <array>
@@ -3669,8 +3670,6 @@ fs::path extractRef(const fs::path& root, const DocsSiteEntry& entry, std::share
   }
   const fs::path tree = *scratch / ("tree-" + std::to_string(number));
   const fs::path archive = *scratch / ("tree-" + std::to_string(number) + ".tar");
-  fs::create_directories(tree, error);
-  if (error) siteError("cannot create a directory for ref '" + entry.ref + "': " + error.message());
   ProcessOptions extract;
   extract.timeout = std::chrono::seconds(120);
   extract.output_limit = 64 * 1024;
@@ -3681,9 +3680,16 @@ fs::path extractRef(const fs::path& root, const DocsSiteEntry& entry, std::share
   if (archived.exit_code != 0 || archived.timed_out) {
     siteError("site '" + entry.id + "': git archive of ref '" + entry.ref + "' failed: " + trimmedOutput(archived.output));
   }
-  const auto unpacked = runProcess({"tar", "-xf", archive.string(), "-C", tree.string()}, extract);
-  if (unpacked.exit_code != 0 || unpacked.timed_out) {
-    siteError("site '" + entry.id + "': unpacking ref '" + entry.ref + "' failed: " + trimmedOutput(unpacked.output));
+  TarExtractOptions limits;
+  limits.max_archive_bytes = kMaximumPagesSiteBytes;
+  limits.max_bytes = kMaximumPagesSiteBytes;
+  limits.max_file_bytes = kMaximumPagesFileBytes;
+  limits.max_entries = kMaximumPagesEntries;
+  // The site reader ignores links; do not materialize them from a Git tree.
+  limits.skip_non_regular = true;
+  try { extractRegularTreeTar(archive, tree, limits); }
+  catch (const std::exception& failure) {
+    siteError("site '" + entry.id + "': unpacking ref '" + entry.ref + "' failed: " + failure.what());
   }
   fs::remove(archive, error);
   return tree;

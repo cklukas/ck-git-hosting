@@ -5,6 +5,8 @@
 #include "test_directory_link.hpp"
 #include <archive.h>
 #include <archive_entry.h>
+#include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -115,7 +117,119 @@ int run(const fs::path& parent) {
   }
   require(status == ARCHIVE_EOF && entries == 4, "Pages must retain exactly root, out, and two regular files");
   require(archive_read_close(filtered.get()) == ARCHIVE_OK, "close filtered reader");
-  std::cout << "bounded TAR packing tests passed\n";
+
+  ckgit::TarExtractOptions extraction;
+  extraction.max_archive_bytes = options.max_bytes;
+  extraction.max_bytes = options.max_bytes;
+  extraction.max_file_bytes = options.max_bytes;
+  const auto extracted = base / "extracted";
+  ckgit::extractRegularTreeTar(bundle, extracted, extraction);
+  std::ifstream restored(extracted / "out" / fs::path(std::u8string(name.begin(), name.end())), std::ios::binary);
+  require(std::string(std::istreambuf_iterator<char>(restored), {}) == payload, "extracted Unicode file bytes");
+  restored.close();
+  require(fs::file_size(extracted / "out/empty.txt") == 0, "extracted empty file");
+  bool refused = false;
+  try { ckgit::extractRegularTreeTar(bundle, extracted, extraction); }
+  catch (const std::exception&) { refused = true; }
+  require(refused && fs::exists(extracted / "out/empty.txt"), "existing destination must remain untouched");
+  fs::remove_all(extracted);
+  unsigned rejection_case = 0;
+  const auto reject_extract = [&](const ckgit::TarExtractOptions& limits) {
+    ++rejection_case;
+    bool rejected = false;
+    std::string reason;
+    try { ckgit::extractRegularTreeTar(bundle, extracted, limits); }
+    catch (const std::exception& error) { rejected = true; reason = error.what(); }
+    if (!rejected) throw std::runtime_error("extraction rejection case " + std::to_string(rejection_case) + " was accepted");
+    if (fs::exists(extracted)) throw std::runtime_error("extraction rejection case " + std::to_string(rejection_case) +
+        " left partial tree after: " + reason);
+  };
+  auto bounded = extraction;
+  bounded.max_archive_bytes = 512;
+  reject_extract(bounded);
+  bounded = extraction; bounded.max_bytes = 100;
+  reject_extract(bounded);
+  bounded = extraction; bounded.max_file_bytes = 100;
+  reject_extract(bounded);
+  bounded = extraction; bounded.max_entries = 1;
+  reject_extract(bounded);
+  bounded = extraction;
+  unsigned extraction_checks = 0;
+  bounded.should_continue = [&] { return ++extraction_checks < 8; };
+  reject_extract(bounded);
+  require(extraction_checks >= 8, "extraction cancellation not exercised");
+
+  // Small, local parser fixtures: invalid paths must never produce output
+  // outside the fresh extraction directory, including when a link is skipped.
+  const auto fixture = [&](const std::string& path, bool link, bool hardlink = false, bool duplicate = false) {
+    const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(archive_write_new(), archive_write_free);
+    require(writer != nullptr, "fixture writer allocation");
+    require(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK, "fixture format");
+    require(archive_write_set_bytes_per_block(writer.get(), 512) == ARCHIVE_OK, "fixture blocks");
+#ifdef _WIN32
+    require(archive_write_open_filename_w(writer.get(), bundle.c_str()) == ARCHIVE_OK, "fixture open");
+#else
+    require(archive_write_open_filename(writer.get(), bundle.c_str()) == ARCHIVE_OK, "fixture open");
+#endif
+    const std::unique_ptr<archive_entry, decltype(&archive_entry_free)> member(archive_entry_new(), archive_entry_free);
+    require(member != nullptr, "fixture entry allocation");
+    archive_entry_set_pathname_utf8(member.get(), path.c_str());
+    archive_entry_set_filetype(member.get(), link ? AE_IFLNK : AE_IFREG);
+    archive_entry_set_size(member.get(), link || hardlink ? 0 : 1);
+    if (link) archive_entry_set_symlink(member.get(), "../source");
+    if (hardlink) archive_entry_set_hardlink(member.get(), "../source/out/empty.txt");
+    require(archive_write_header(writer.get(), member.get()) == ARCHIVE_OK, "fixture header");
+    if (!link && !hardlink) require(archive_write_data(writer.get(), "x", 1) == 1, "fixture data");
+    if (duplicate) {
+      require(archive_write_header(writer.get(), member.get()) == ARCHIVE_OK, "duplicate fixture header");
+      require(archive_write_data(writer.get(), "y", 1) == 1, "duplicate fixture data");
+    }
+    require(archive_write_close(writer.get()) == ARCHIVE_OK, "fixture close");
+    if (path.find('\\') != std::string::npos) {
+      // libarchive's Windows writer converts backslashes to slashes. Restore
+      // the exact test pathname in this small regular-file header so the
+      // rejection test exercises identical input bytes on both platforms.
+      require(path.size() < 100 && !link && !hardlink, "raw pathname fixture shape");
+      std::fstream bytes(bundle, std::ios::in | std::ios::out | std::ios::binary);
+      char header[512];
+      bytes.read(header, sizeof(header));
+      require(bytes.gcount() == sizeof(header) && header[156] == '0', "raw pathname fixture header");
+      std::fill_n(header, 100, '\0');
+      std::copy(path.begin(), path.end(), header);
+      std::fill_n(header + 148, 8, ' ');
+      unsigned checksum = 0;
+      for (unsigned char byte : header) checksum += byte;
+      require(std::snprintf(header + 148, 7, "%06o", checksum) == 6, "fixture checksum");
+      bytes.seekp(0);
+      bytes.write(header, sizeof(header));
+      require(static_cast<bool>(bytes), "raw pathname fixture write");
+    }
+  };
+  for (const auto* invalid : {"../escaped.txt", "/absolute.txt", "C:/drive.txt", "folder\\escape.txt"}) {
+    fixture(invalid, false);
+    reject_extract(extraction);
+  }
+  require(!fs::exists(base / "escaped.txt"), "extraction escaped destination");
+  fixture("redirect", true);
+  reject_extract(extraction);
+  fixture("redirect", false, true);
+  reject_extract(extraction);
+  bounded = extraction; bounded.skip_non_regular = true;
+  ckgit::extractRegularTreeTar(bundle, extracted, bounded);
+  require(fs::is_empty(extracted), "skipped link was materialized");
+  fs::remove_all(extracted);
+  fixture("duplicate.txt", false, false, true);
+  reject_extract(extraction);
+#ifdef _WIN32
+  for (const auto* alias : {"nul.txt", "COM1", "LPT\xc2\xb9", "name.", "name "}) {
+    fixture(alias, false);
+    reject_extract(extraction);
+  }
+#endif
+  fixture("ordinary.txt", false);
+  fs::resize_file(bundle, 513);  // one header and only part of its padded data
+  reject_extract(extraction);
+  std::cout << "bounded TAR packing and extraction tests passed\n";
   return 0;
 }
 #ifdef _WIN32

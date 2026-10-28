@@ -13,6 +13,7 @@ $output = Join-Path $fixture 'site with spaces'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $process = $null
 $oldTemp = $env:TEMP; $oldTmp = $env:TMP; $oldTmpdir = $env:TMPDIR
+$oldPath = $env:PATH
 try {
     New-Item -ItemType Directory -Path $source,(Join-Path $fixture 'tmp') | Out-Null
     $env:TEMP = Join-Path $fixture 'tmp'; $env:TMP = $env:TEMP; $env:TMPDIR = $env:TEMP
@@ -55,6 +56,30 @@ try {
     try { Invoke-WebRequest "http://127.0.0.1:$port/missing.html" -UseBasicParsing -TimeoutSec 10 | Out-Null }
     catch { if ($_.Exception.Response.StatusCode -eq 404) { $missing = $true } else { throw } }
     if (!$missing) { throw 'Missing file did not return 404' }
+    # A portal ref must work on Windows without relying on tar.exe. Prepend an
+    # executable that rejects tar arguments, so an accidental external call
+    # fails rather than silently finding a system or Git-for-Windows tar.
+    $portal = Join-Path $fixture ('portal ref Gr' + [char]0x00fc + [char]0x00df)
+    $tools = Join-Path $fixture 'no external tar'
+    New-Item -ItemType Directory -Path $portal,$tools | Out-Null
+    Copy-Item -LiteralPath $Ckdocs -Destination (Join-Path $tools 'tar.exe')
+    $env:PATH = $tools + ';' + $oldPath
+    & git -C $portal init --quiet --initial-branch=main
+    if ($LASTEXITCODE -ne 0) { throw 'Portal Git init failed' }
+    [IO.File]::WriteAllText((Join-Path $portal 'README.md'), "# Committed portal`n`nContent from the committed ref.`n", $utf8)
+    & git -C $portal add README.md
+    if ($LASTEXITCODE -ne 0) { throw 'Portal Git add failed' }
+    & git -C $portal -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit --quiet -m fixture
+    if ($LASTEXITCODE -ne 0) { throw 'Portal Git commit failed' }
+    [IO.File]::WriteAllText((Join-Path $portal 'README.md'), "# Uncommitted working tree`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $portal 'ckdocs.yml'), "version: 1`nsite:`n  title: Ref extraction`nsites:`n  - id: committed`n    title: Committed`n    ref: main`n", $utf8)
+    $portalOutput = Join-Path $fixture 'portal output'
+    & $Ckdocs build --root $portal --out $portalOutput --strict
+    if ($LASTEXITCODE -ne 0) { throw 'Portal ref build without external tar failed' }
+    $portalHtml = Get-Content (Join-Path $portalOutput 'committed/index.html') -Raw
+    if ($portalHtml -notmatch 'Content from the committed ref' -or $portalHtml -match 'Uncommitted working tree') {
+        throw 'Portal did not extract the committed tree'
+    }
     Write-Output 'Windows ckdocs build/check/serve/watch tests passed'
 } finally {
     if ($process) {
@@ -62,6 +87,6 @@ try {
         if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
         $process.Dispose()
     }
-    $env:TEMP = $oldTemp; $env:TMP = $oldTmp; $env:TMPDIR = $oldTmpdir
+    $env:TEMP = $oldTemp; $env:TMP = $oldTmp; $env:TMPDIR = $oldTmpdir; $env:PATH = $oldPath
     if (Test-Path $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }

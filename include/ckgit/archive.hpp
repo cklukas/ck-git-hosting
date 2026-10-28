@@ -24,4 +24,20 @@ struct TarPackOptions {
 void packRegularTreeTar(const std::filesystem::path& root,
                         const std::vector<std::string>& paths,
                         const std::filesystem::path& output, const TarPackOptions& options);
+
+struct TarExtractOptions {
+  std::uintmax_t max_archive_bytes = 0;
+  std::uintmax_t max_bytes = 0;
+  std::uintmax_t max_file_bytes = 0;
+  std::size_t max_entries = 100000;
+  std::chrono::seconds timeout{120};
+  std::function<bool()> should_continue;
+  bool skip_non_regular = false;
+};
+// Extract regular content from an uncompressed TAR into a new private directory.
+// The caller owns the input and destination parent. Existing destinations are
+// refused; failure removes the new tree. Never creates links or restores owners,
+// device nodes, permissions, extended attributes or other archive metadata.
+void extractRegularTreeTar(const std::filesystem::path& input,
+                           const std::filesystem::path& destination, const TarExtractOptions& options);
 }

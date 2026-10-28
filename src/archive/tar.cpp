@@ -5,6 +5,7 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <fstream>
 #include <limits>
@@ -127,6 +128,43 @@ void checked(int status, struct archive* writer, const Output& output) {
     throw std::runtime_error(error ? error : "archive operation failed");
   }
 }
+
+struct Input {
+  std::ifstream file;
+  const TarExtractOptions& options;
+  std::chrono::steady_clock::time_point deadline;
+  std::array<char, 65536> buffer{};
+  std::uintmax_t bytes = 0;
+  std::exception_ptr failure;
+  void check() const {
+    if (std::chrono::steady_clock::now() >= deadline) throw std::runtime_error("archive extraction timed out");
+    if (options.should_continue && !options.should_continue()) throw std::runtime_error("archive extraction cancelled");
+  }
+  static la_ssize_t read(struct archive* reader, void* opaque, const void** data) noexcept {
+    auto& in = *static_cast<Input*>(opaque);
+    try {
+      in.check();
+      in.file.read(in.buffer.data(), static_cast<std::streamsize>(in.buffer.size()));
+      if (in.file.bad() || (in.file.fail() && !in.file.eof())) throw std::runtime_error("cannot read archive");
+      const auto count = static_cast<std::uintmax_t>(in.file.gcount());
+      if (count > in.options.max_archive_bytes - in.bytes) throw std::runtime_error("archive exceeds input size cap");
+      in.bytes += count;
+      *data = in.buffer.data();
+      return static_cast<la_ssize_t>(count);
+    } catch (...) {
+      in.failure = std::current_exception();
+      archive_set_error(reader, 0, "archive input failed");
+      return -1;
+    }
+  }
+};
+void checkedRead(int status, struct archive* reader, const Input& input) {
+  if (input.failure) std::rethrow_exception(input.failure);
+  if (status != ARCHIVE_OK) {
+    const char* error = archive_error_string(reader);
+    throw std::runtime_error(error ? error : "archive read failed");
+  }
+}
 }
 
 void packRegularTreeTar(const fs::path& root, const std::vector<std::string>& paths,
@@ -216,6 +254,120 @@ void packRegularTreeTar(const fs::path& root, const std::vector<std::string>& pa
   } catch (...) {
     std::error_code ignored;
     fs::remove(destination, ignored);
+    throw;
+  }
+}
+
+void extractRegularTreeTar(const fs::path& source, const fs::path& destination, const TarExtractOptions& options) {
+  if (!options.max_archive_bytes || !options.max_bytes || !options.max_file_bytes || !options.max_entries ||
+      options.timeout.count() <= 0) throw std::invalid_argument("positive archive extraction limits required");
+  requireRegularTreeNode(source, fs::symlink_status(source));
+  if (!fs::is_regular_file(source) || fs::file_size(source) > options.max_archive_bytes)
+    throw std::runtime_error("archive exceeds input size cap or is not a file");
+  if (fs::file_size(source) % 512 != 0) throw std::runtime_error("archive has a partial TAR block");
+  const Utf8ThreadLocale locale;
+  // Only clean up a directory this invocation created, never caller data.
+  if (!fs::create_directory(destination)) throw std::runtime_error("archive destination already exists");
+  try {
+    Input input{std::ifstream(source, std::ios::binary), options,
+                std::chrono::steady_clock::now() + options.timeout, {}, 0, {}};
+    if (!input.file) throw std::runtime_error("cannot open archive");
+    const std::unique_ptr<struct archive, decltype(&archive_read_free)> reader(archive_read_new(), archive_read_free);
+    if (!reader) throw std::bad_alloc();
+    checkedRead(archive_read_support_filter_none(reader.get()), reader.get(), input);
+    checkedRead(archive_read_support_format_tar(reader.get()), reader.get(), input);
+    checkedRead(archive_read_open(reader.get(), &input, nullptr, Input::read, nullptr), reader.get(), input);
+    std::uintmax_t total = 0;
+    std::size_t count = 0;
+    for (;;) {
+      input.check();
+      archive_entry* entry = nullptr;
+      const auto status = archive_read_next_header(reader.get(), &entry);
+      if (status == ARCHIVE_EOF) break;
+      checkedRead(status, reader.get(), input);
+      if (++count > options.max_entries) throw std::runtime_error("archive entry count exceeds limit");
+      const char* raw = archive_entry_pathname_utf8(entry);
+      if (!raw || !*raw || std::char_traits<char>::length(raw) > 4096)
+        throw std::runtime_error("invalid archive pathname");
+      const std::string name(raw);
+      // Interpret member names identically on POSIX and Windows. Do not let
+      // std::filesystem treat a backslash as a platform-specific separator.
+      if (name.find('\\') != std::string::npos) throw std::runtime_error("unsafe archive path separator");
+      const auto parts = components(fs::path(std::u8string(name.begin(), name.end())));
+      if (parts.size() > 64) throw std::runtime_error("archive pathname is too deep");
+      const bool directory = archive_entry_filetype(entry) == AE_IFDIR;
+      const bool regular = archive_entry_filetype(entry) == AE_IFREG;
+      if ((!directory && !regular) || archive_entry_hardlink(entry) || archive_entry_symlink(entry)) {
+        if (options.skip_non_regular) {
+          checkedRead(archive_read_data_skip(reader.get()), reader.get(), input);
+          continue;
+        }
+        throw std::runtime_error("archive contains a link or special entry");
+      }
+      if ((!directory && parts.empty()) || archive_entry_sparse_count(entry) != 0)
+        throw std::runtime_error("unsupported archive entry");
+      auto path = destination;
+      for (std::size_t index = 0; index < parts.size(); ++index) {
+        input.check();
+        const auto& part = parts[index];
+#ifdef _WIN32
+        // Win32 path aliases must not turn a member into a device or collide
+        // with another member after trailing-dot/space normalization.
+        auto base = part.substr(0, part.find('.'));
+        std::transform(base.begin(), base.end(), base.begin(), [](unsigned char ch) {
+          return ch >= 'a' && ch <= 'z' ? static_cast<char>(ch - 'a' + 'A') : static_cast<char>(ch);
+        });
+        const auto suffix = base.size() > 3 ? base.substr(3) : std::string();
+        const bool numbered_device = (base.starts_with("COM") || base.starts_with("LPT")) &&
+            ((suffix.size() == 1 && suffix[0] >= '1' && suffix[0] <= '9') ||
+             suffix == "\xc2\xb9" || suffix == "\xc2\xb2" || suffix == "\xc2\xb3");
+        if (part.back() == '.' || part.back() == ' ' || base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+            base == "CONIN$" || base == "CONOUT$" || numbered_device)
+          throw std::runtime_error("archive pathname is a Windows alias");
+#endif
+        path /= fs::path(std::u8string(part.begin(), part.end()));
+        if (directory || index + 1 < parts.size()) {
+          if (!fs::create_directory(path)) {
+            const auto state = fs::symlink_status(path);
+            requireRegularTreeNode(path, state);
+            if (!fs::is_directory(state)) throw std::runtime_error("archive parent is not a directory");
+          }
+        }
+      }
+      if (directory) {
+        if (archive_entry_size(entry) != 0) throw std::runtime_error("archive directory contains data");
+        continue;
+      }
+      const auto declared = archive_entry_size(entry);
+      if (declared < 0 || static_cast<std::uintmax_t>(declared) > options.max_file_bytes ||
+          static_cast<std::uintmax_t>(declared) > options.max_bytes - total)
+        throw std::runtime_error("archive content exceeds size cap");
+      if (fs::exists(fs::symlink_status(path))) throw std::runtime_error("duplicate archive file");
+      std::ofstream output(path, std::ios::binary);
+      if (!output) throw std::runtime_error("cannot create extracted file");
+      std::array<char, 65536> buffer{};
+      std::uintmax_t written = 0;
+      for (;;) {
+        input.check();
+        const auto received = archive_read_data(reader.get(), buffer.data(), buffer.size());
+        if (input.failure) std::rethrow_exception(input.failure);
+        if (received < 0) throw std::runtime_error("archive file data is invalid");
+        if (!received) break;
+        const auto bytes = static_cast<std::uintmax_t>(received);
+        if (bytes > static_cast<std::uintmax_t>(declared) - written) throw std::runtime_error("archive file exceeds declared size");
+        output.write(buffer.data(), static_cast<std::streamsize>(received));
+        if (!output) throw std::runtime_error("cannot write extracted file");
+        written += bytes;
+      }
+      if (written != static_cast<std::uintmax_t>(declared)) throw std::runtime_error("archive file is truncated");
+      output.close();
+      if (!output) throw std::runtime_error("cannot finish extracted file");
+      total += written;
+    }
+    checkedRead(archive_read_close(reader.get()), reader.get(), input);
+  } catch (...) {
+    std::error_code ignored;
+    fs::remove_all(destination, ignored);
     throw;
   }
 }

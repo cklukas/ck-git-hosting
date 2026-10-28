@@ -108,7 +108,7 @@ if(NOT WIN32)
 endif()
 
 add_library(ckgit_docs STATIC src/common/docs_site.cpp)
-target_link_libraries(ckgit_docs PUBLIC ckgit_process)
+target_link_libraries(ckgit_docs PUBLIC ckgit_process ckgit_archive)
   file(GLOB MERMAID_SOURCES CONFIGURE_DEPENDS src/ckdocs/mermaid/cdiagram/src/*.cpp
     src/ckdocs/mermaid/cplot/src/*.cpp src/ckdocs/mermaid/libcworks/src/*.cpp)
   add_library(ckdocs_mermaid STATIC ${MERMAID_SOURCES} src/ckdocs/mermaid.cpp)

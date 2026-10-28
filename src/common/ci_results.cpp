@@ -424,12 +424,13 @@ CiRunRecord commitCiRun(const CiCommitPolicy& policy, const CiPreparedJob& prepa
         const std::filesystem::path tree = incoming / "site";
         std::error_code error;
         std::filesystem::remove_all(tree, error);
-        std::filesystem::create_directories(tree);
-        ProcessOptions options;
+        TarExtractOptions options;
+        options.max_archive_bytes = kMaximumPagesSiteBytes;
+        options.max_bytes = kMaximumPagesSiteBytes;
+        options.max_file_bytes = kMaximumPagesFileBytes;
+        options.max_entries = kMaximumPagesEntries + 1;  // TAR root entry
         options.timeout = std::chrono::seconds(600);
-        options.output_limit = 16 * 1024;
-        const ProcessResult unpacked = runProcess({"tar", "-xf", bundle.string(), "-C", tree.string()}, options);
-        if (unpacked.timed_out || unpacked.exit_code != 0) throw std::runtime_error("the site archive could not be unpacked");
+        extractRegularTreeTar(bundle, tree, options);
         site = tree;
       }
       if (site.has_value()) {
