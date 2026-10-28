@@ -222,9 +222,13 @@ void requireDirectIncomingRefs(const std::filesystem::path& path, const std::vec
   // A general ref listing omits dangling symbolic refs. Ask Git directly so
   // a symbolic destination pointing at a nonexistent local branch is caught.
   for (const auto& ref : refs) {
-    const auto result = incomingGit(path, {"symbolic-ref", "--quiet", "--no-recurse", ref.destination});
+    // Only the exit status matters: following a symbolic chain still reports
+    // a symbolic destination, while a cycle fails closed below. Omitting
+    // --no-recurse also supports existing Git for Windows 2.37 installations.
+    const auto result = incomingGit(path, {"symbolic-ref", "--quiet", ref.destination});
     if (result.timed_out || result.output_truncated || (result.exit_code != 0 && result.exit_code != 1)) {
-      throw std::runtime_error("could not inspect fetch destination " + ref.destination);
+      throw std::runtime_error("could not inspect fetch destination " + ref.destination + " (" +
+                              describeProcessFailure(result, kIncomingInspectionTimeout) + ")");
     }
     if (result.exit_code == 0) {
       throw std::runtime_error("fetch destination " + ref.destination +
