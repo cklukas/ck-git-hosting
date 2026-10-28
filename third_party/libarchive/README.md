@@ -12,6 +12,9 @@ extraction and compilation belong in the chosen out-of-tree build directory.
 The source downloaded from libarchive.org was checked against the release
 asset digest reported by GitHub on 2026-10-26. Configuration verifies that
 digest again before extraction. The build never downloads a dependency.
+It uses CMake's built-in archive extraction and short paths beneath the selected
+build directory; there is no FetchContent population sub-build. The extraction
+stamp is invalidated when the pinned source digest changes.
 `COPYING` is copied verbatim from the release; the archive preserves all
 individual source and build-file license notices.
 

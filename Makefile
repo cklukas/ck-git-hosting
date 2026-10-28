@@ -130,7 +130,7 @@ CMAKE ?= cmake
 ARCHIVE_BUILD_JOBS ?= 2
 ARCHIVE_BUILD_DIR := $(BUILD_DIR_ABS)/libarchive
 ARCHIVE_LIB := $(ARCHIVE_BUILD_DIR)/lib/libarchive.a
-ARCHIVE_CPPFLAGS := -DLIBARCHIVE_STATIC -I$(ARCHIVE_BUILD_DIR)/_deps/ckgit_libarchive-src/libarchive
+ARCHIVE_CPPFLAGS := -DLIBARCHIVE_STATIC -I$(ARCHIVE_BUILD_DIR)/_deps/la-src/libarchive
 COMMON_LINK_INPUTS := $(COMMON_OBJECTS) $(ARCHIVE_LIB)
 
 $(ARCHIVE_LIB): third_party/libarchive/CMakeLists.txt third_party/libarchive/libarchive-3.8.10.tar.xz

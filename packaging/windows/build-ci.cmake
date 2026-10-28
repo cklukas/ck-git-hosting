@@ -11,7 +11,9 @@ if("$ENV{TMPDIR}" STREQUAL "" OR NOT IS_ABSOLUTE "$ENV{TMPDIR}")
 endif()
 get_filename_component(source "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 file(TO_CMAKE_PATH "$ENV{TMPDIR}" scratch)
-set(build "${scratch}/ckgit-windows-build")
+# Keep generated compiler-check paths within native tool limits even beneath
+# the runner's unique session/profile directories. TMPDIR is private to this job.
+set(build "${scratch}/b")
 set(output "${source}/dist")
 find_program(iscc NAMES ISCC.exe REQUIRED)
 get_filename_component(cmake_bin "${CMAKE_COMMAND}" DIRECTORY)

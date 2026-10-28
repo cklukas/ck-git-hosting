@@ -9,7 +9,6 @@ endif()
 
 # This directory can also be built independently for the Make-based hosts.
 # The upstream source is bundled so sandboxed builds never need the network.
-include(FetchContent)
 set(bundle "${CMAKE_CURRENT_LIST_DIR}/libarchive-3.8.10.tar.xz")
 set(expected "56cad765459d5ee25a3b761f90c47d99379d28297fbfb72d908880d6b875fb96")
 file(SHA256 "${bundle}" actual)
@@ -27,11 +26,24 @@ foreach(feature MBEDTLS NETTLE OPENSSL MD LIBB2 LZ4 LZO LZMA ZSTD ZLIB BZip2
     TAR CPIO CAT UNZIP XATTR ACL ICONV TEST COVERAGE INSTALL CLANG_TIDY WERROR)
   set(ENABLE_${feature} OFF CACHE BOOL "Not needed for uncompressed TAR" FORCE)
 endforeach()
-FetchContent_Declare(ckgit_libarchive
-  URL "${bundle}"
-  URL_HASH "SHA256=${expected}"
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(ckgit_libarchive)
+# The bundle is already local and verified. FetchContent's population sub-build
+# adds long generated paths and another build-tool invocation inside LPAC.
+# Extract directly with CMake instead, retaining the CMake 3.24 minimum.
+set(ckgit_libarchive_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/la-src")
+set(extract_stage "${CMAKE_BINARY_DIR}/_deps/la-unpack")
+set(extract_stamp "${CMAKE_BINARY_DIR}/_deps/la-source.sha256")
+set(extracted "")
+if(EXISTS "${extract_stamp}")
+  file(READ "${extract_stamp}" extracted)
+endif()
+if(NOT extracted STREQUAL expected OR NOT EXISTS "${ckgit_libarchive_SOURCE_DIR}/libarchive/archive.h")
+  file(REMOVE_RECURSE "${extract_stage}" "${ckgit_libarchive_SOURCE_DIR}")
+  file(ARCHIVE_EXTRACT INPUT "${bundle}" DESTINATION "${extract_stage}" TOUCH)
+  file(RENAME "${extract_stage}/libarchive-3.8.10" "${ckgit_libarchive_SOURCE_DIR}")
+  file(REMOVE_RECURSE "${extract_stage}")
+  file(WRITE "${extract_stamp}" "${expected}")
+endif()
+add_subdirectory("${ckgit_libarchive_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/la-build")
 
 add_library(ckgit_pinned_archive INTERFACE)
 target_link_libraries(ckgit_pinned_archive INTERFACE archive_static)
