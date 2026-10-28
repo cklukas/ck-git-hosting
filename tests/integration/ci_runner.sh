@@ -681,6 +681,7 @@ beta_record=$(grep -l '^workflow_job=beta$' "$state"/ci/runs/demo/*/run.ini)
 [ -n "$beta_record" ] || fail 'missing beta record'
 awk '{
   if ($0 == "schema_version=4") print "schema_version=5";
+  else if ($0 ~ /^execution=/) next;
   else if ($0 ~ /^step_count=/) { print "execution=1,windows,x64,lpac,denied,4294967296,64,60"; print; }
   else print;
 }' "$beta_record" > "$beta_record.new"

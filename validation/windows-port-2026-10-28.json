@@ -225,12 +225,63 @@
   "remaining": [
     "Standard-user LPAC broker and CMake/Ninja qualification",
     "Optional restricted-account Windows service",
-    "Linux/macOS execution report population and live production report/UI verification",
+    "Linux execution-report runtime qualification and live production report/UI verification",
     "Owned-resource crash recovery",
     "Combined tag release failure/restart/idempotence acceptance",
     "Remaining Windows CLI mutations/cancellation/tunnel and release-download journeys",
     "Graceful upgrade with active owned processes",
     "Final GitHub installations and distributed acceptance after remaining implementation",
     "Intermittent macOS control socket read failure: diagnostics added; later pass does not prove fixed"
-  ]
+  ],
+  "posix_execution_report_change": {
+    "source_sha256": "9dcf85fa84c3eb141089586a874cfec96fc2d398092407940598309776dadc4b",
+    "mechanism": "Private pre-exec channel conveys actual namespace and loopback setup; no parsing of untrusted stdout; differing per-step properties clear the run report",
+    "mac_validation": {
+      "start": "2026-10-28T14:00:35.679826+00:00",
+      "target": "POSIX execution reports + full unit/process/CI integration",
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin",
+      "baseline": "Previous execution-report UI fullbuild+tests91.215s; this change touches POSIX runner and protocol header",
+      "inputs": {
+        "docs/operations/ci-remote-runners.md": "4c7b7680a583aa714cc8c40001f7b0966a5d6cce0edb412bfa83839979ee419d",
+        "include/ckgit/ci_runner_protocol.hpp": "7e5ea04609de917c5e8794fe630bfb49279228c60a7f5857652518ec951df273",
+        "src/common/ci_gateway.cpp": "6f8b5c366010c97d1e2270b66cb888644ba12095f981c06757b2e87b74c92ca7",
+        "src/common/ci_remote.cpp": "5fa13c5696fa5a0cc9a6f2fa4d1d53aed7618c3fcf9ea0dbbb5d1b67796b025e",
+        "src/common/ci_runner.cpp": "44d0e2ccd7825a39a61f9a898807ac70fd9c0e454e3f9e7c31fc599cc0fca4b8",
+        "tests/integration/ci_runner.sh": "a4a59a456b1483eb68d63b626e227284ab38674e7f4aa524164372102f2071b6",
+        "tests/unit/ci_distributed_tests.cpp": "49fd5dba5f9a65ce4421ceaaafc7083fa3a9b378a9ee7e257044101438132b34",
+        "tests/unit/ci_runner_tests.cpp": "fce16fbd4a7b78e65eedf75736e8d57b90d3ce8ae47de5a51a1612f4716be676"
+      },
+      "build_exit": 0,
+      "test_exit": 0,
+      "integration_exit": 0,
+      "end": "2026-10-28T14:02:02.657064+00:00",
+      "seconds": 86.97731191688217
+    },
+    "final_unit_validation": {
+      "start": "2026-10-28T14:04:09.992391+00:00",
+      "target": "unit tests with forged-stdout and skipped-run report cases",
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckgit-unit-tests",
+      "source_sha256": "c68fe468444487378b30690369899f833a83abcf81eb0fb618d5e2f59360ddf6",
+      "baseline": "Prior unit test51.10s plus incremental test translation unit rebuild",
+      "build_exit": 0,
+      "test_exit": 0,
+      "end": "2026-10-28T14:05:12.573832+00:00",
+      "seconds": 62.58152062492445
+    },
+    "windows_shared_transport_build": {
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+      "exit": 0,
+      "baseline": "Prior sharedheaderWindowsbuild141s; changedtypesheaderrebuildsmanytargets",
+      "start": "2026-10-28T14:01:40.2448633Z",
+      "end": "2026-10-28T14:02:05.4500008Z",
+      "seconds": 25.2102167
+    },
+    "windows_nonadmin_transport_test": {
+      "end": "2026-10-28T14:02:17.9438495Z",
+      "administrator": false,
+      "success": true,
+      "exit": 0
+    },
+    "linux_validation": "Pending GitHub Linux CI for this new source; do not infer from Mac tests"
+  }
 }

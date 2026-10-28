@@ -180,6 +180,11 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& ci_jo
   return env;
 }
 
+struct SandboxEntry {
+  bool namespaces = false;
+  bool loopback = false;
+};
+
 #if defined(__linux__)
 void writeProcFile(const char* path, const std::string& content) {
   const int fd = ::open(path, O_WRONLY | O_CLOEXEC);
@@ -213,14 +218,14 @@ bool bringUpLoopback() {
 
 // In the freshly forked child: enter unprivileged user, mount, and (unless
 // allowed) network namespaces, so the step has no network and cannot see the
-// host mount table. Returns false if the kernel denies unprivileged namespaces.
-bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
+// host mount table. Records the actual namespace and loopback setup results.
+SandboxEntry enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
                   const SandboxMounts& mounts) {
   const uid_t uid = ::getuid();
   const gid_t gid = ::getgid();
   int flags = CLONE_NEWUSER | CLONE_NEWNS;
   if (!allow_network) flags |= CLONE_NEWNET;
-  if (::unshare(flags) != 0) return false;
+  if (::unshare(flags) != 0) return {};
   writeProcFile("/proc/self/setgroups", "deny");
   writeProcFile("/proc/self/uid_map", "0 " + std::to_string(uid) + " 1\n");
   writeProcFile("/proc/self/gid_map", "0 " + std::to_string(gid) + " 1\n");
@@ -229,7 +234,7 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
   // 127.0.0.1/::1. Best-effort like the mounts below: a systemic failure here
   // is caught early by probeLoopback() into CiSandboxReport, not discovered
   // silently the first time a step's own loopback traffic fails.
-  if (!allow_network) bringUpLoopback();
+  const bool loopback = allow_network || bringUpLoopback();
   // Keep our mount changes from propagating back to the host namespace.
   ::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
   if (!bind_source.empty()) {
@@ -271,7 +276,7 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
     if (!std::filesystem::exists(path, error)) continue;
     ::mount("tmpfs", path.c_str(), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=65536");
   }
-  return true;
+  return {true, loopback};
 }
 
 bool probeUserNamespaces(bool allow_network) {
@@ -386,7 +391,7 @@ bool probeSandboxWorkspace(const std::filesystem::path& source) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #else
-bool enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return false; }
+SandboxEntry enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return {}; }
 bool probeUserNamespaces(bool) { return false; }
 bool probeLoopback() { return false; }
 bool probeFilesystemMask() { return false; }
@@ -410,6 +415,7 @@ struct StepOutcome {
   bool truncated = false;
   bool spawn_failed = false;
   bool cancelled = false;
+  std::optional<CiExecutionReport> execution;
 };
 
 // Progress callbacks a running step reports through, polled roughly once a
@@ -434,17 +440,32 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     outcome.spawn_failed = true;
     return outcome;
   }
+  int setup_fd[2];
+  if (::pipe(setup_fd) != 0) {
+    ::close(pipe_fd[0]); ::close(pipe_fd[1]);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
+  if (::fcntl(setup_fd[0], F_SETFD, FD_CLOEXEC) != 0 ||
+      ::fcntl(setup_fd[1], F_SETFD, FD_CLOEXEC) != 0) {
+    ::close(setup_fd[0]); ::close(setup_fd[1]);
+    ::close(pipe_fd[0]); ::close(pipe_fd[1]);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
   const pid_t pid = ::fork();
   if (pid < 0) {
+    ::close(setup_fd[0]); ::close(setup_fd[1]);
     ::close(pipe_fd[0]);
     ::close(pipe_fd[1]);
     outcome.spawn_failed = true;
     return outcome;
   }
   if (pid == 0) {
+    ::close(setup_fd[0]);
     ::close(pipe_fd[0]);
     ::setpgid(0, 0);
-    enterSandbox(options.allow_network, bind_source, mounts);
+    const auto applied = enterSandbox(options.allow_network, bind_source, mounts);
     applyRlimits();
     const int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (devnull >= 0) {
@@ -463,10 +484,23 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     for (const std::string& assignment : env) raw_env.push_back(const_cast<char*>(assignment.c_str()));
     raw_env.push_back(nullptr);
     environ = raw_env.data();
+    // Dedicated, close-on-exec channel owned only by the trusted fork stub.
+    // Report the actual namespace/loopback calls, not the earlier host probes.
+    // Close it before untrusted code can inherit or forge a report.
+    const char mode = !applied.namespaces ? 'H' : options.allow_network ? 'U' : applied.loopback ? 'L' : 'D';
+    ssize_t acknowledged;
+    do { acknowledged = ::write(setup_fd[1], &mode, 1); } while (acknowledged < 0 && errno == EINTR);
+    ::close(setup_fd[1]);
+    if (acknowledged != 1) _exit(126);
     ::execvp(raw_argv[0], raw_argv.data());
     _exit(127);
   }
 
+  ::close(setup_fd[1]);
+  struct SetupReadGuard {
+    int fd;
+    ~SetupReadGuard() { if (fd >= 0) ::close(fd); }
+  } setup_read{setup_fd[0]};
   ::setpgid(pid, pid);
   ::close(pipe_fd[1]);
   const auto deadline =
@@ -524,6 +558,33 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
   ::close(pipe_fd[0]);
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  char mode = 0;
+  ssize_t acknowledged;
+  do { acknowledged = ::read(setup_fd[0], &mode, 1); } while (acknowledged < 0 && errno == EINTR);
+  ::close(setup_fd[0]);
+  setup_read.fd = -1;
+  // Unknown architectures/platforms keep an absent report rather than guessing.
+#if defined(__linux__)
+  const std::string platform = "linux";
+#elif defined(__APPLE__)
+  const std::string platform = "macos";
+#else
+  const std::string platform;
+#endif
+#if defined(__aarch64__) || defined(__arm64__)
+  const std::string architecture = "arm64";
+#elif defined(__x86_64__)
+  const std::string architecture = "x64";
+#elif defined(__i386__)
+  const std::string architecture = "x86";
+#else
+  const std::string architecture;
+#endif
+  if (acknowledged == 1 && !platform.empty() && !architecture.empty() &&
+      (mode == 'H' || mode == 'U' || mode == 'L' || mode == 'D')) {
+    outcome.execution = CiExecutionReport{platform, architecture, mode == 'H' ? "none" : "linux-namespaces",
+        mode == 'L' ? "loopback-only" : mode == 'D' ? "denied" : "unrestricted", 0, 0, options.timeout_seconds};
   }
   if (outcome.timed_out || outcome.cancelled) {
     outcome.exit_code = -1;  // the step was killed, not exited: its code is meaningless
@@ -1066,6 +1127,7 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
   std::string detail;
   std::size_t step_index = 0;
   bool stop = false;
+  bool consistent_execution = true;
   for (const CiJob& ci_job : workflow.jobs) {
     if (stop) break;
     if (sink.cancelRequested()) {
@@ -1094,6 +1156,12 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       sink.stepStarted(record, step_index);
       const StepOutcome outcome =
           executeStep(argv, work_visible, env, options, sink, step_index, bind_source, sandbox_mounts, hooks);
+      if (outcome.execution && consistent_execution) {
+        if (record.execution && record.execution != outcome.execution) {
+          record.execution.reset();
+          consistent_execution = false;
+        } else record.execution = outcome.execution;
+      }
       CiStepResult result;
       result.name = step.name.empty() ? ci_job.name : step.name;
       result.exit_code = outcome.exit_code;

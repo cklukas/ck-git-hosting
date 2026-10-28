@@ -315,5 +315,16 @@ attestation. JSON exposes it as `execution`; missing reports are `null`.
 Old run records remain readable. New records containing a report use schema 5;
 rollback to a server predating that schema requires restoring compatible state,
 not merely replacing its executable. Parent workflows have no shared sandbox;
-inspect their individual jobs for execution properties. Linux and macOS reports
-are not populated by this Windows implementation yet.
+inspect their individual jobs for execution properties. Linux and macOS also report the child process's actual setup, through a private
+channel closed before executing job code. A successful namespace preflight does
+not substitute for the child's own result. Linux reports `linux-namespaces`
+only after namespace creation succeeded, with `loopback-only`, `denied` or
+`unrestricted` network access as applied. This does not independently attest
+every filesystem masking mount. Existing degraded execution is explicitly
+reported as `none` with `unrestricted` networking; macOS development execution
+uses that mode too. No new isolation fallback is introduced.
+
+Memory/process limits of zero mean no such cap was configured. POSIX's separate
+core-dump and single-file-size limits are not represented by those fields. If
+steps report different execution properties, the run-level report is cleared
+rather than claiming one policy covered them all.

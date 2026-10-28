@@ -109,7 +109,7 @@ CiFinishReport parseCiFinishReport(std::string_view payload);
 //   step-end <n> <exit> <timed-out 0|1> <truncated 0|1> <name-hex>
 //   heartbeat
 //   progress <detail-hex>
-//   execution <versioned-report>  (only after execution_report=1 negotiation)
+//   execution <versioned-report|->  (only after execution_report=1 negotiation; - clears)
 // Main host to runner:
 //   held <n> <bytes>      (at stream start, for every step log it holds)
 //   ready

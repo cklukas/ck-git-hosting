@@ -475,7 +475,8 @@ class StreamSession {
       write(true);
       refresh(config_, job_.project_name);
     } else if (kind == "execution" && tokens.size() == 2) {
-      record_.execution = parseCiExecutionReport(tokens[1]);
+      if (tokens[1] == "-") record_.execution.reset();
+      else record_.execution = parseCiExecutionReport(tokens[1]);
       write(true);
     } else if (kind == "step-start" && tokens.size() == 3) {
       const std::size_t index = static_cast<std::size_t>(parse(tokens[1]));

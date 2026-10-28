@@ -1252,6 +1252,9 @@ void testGatewayRun() {
   require(running.has_value() && running->status == ckgit::CiRunStatus::Running && running->steps.size() == 1,
           "the stream keeps the run record current");
   require(running->execution && running->execution->isolation == "lpac", "execution report persists before finish");
+  gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "execution -\n", fixture);
+  const auto cleared = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
+  require(cleared && !cleared->execution, "stream can clear a report when steps disagree");
   const std::string again = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "", fixture);
   require(again.rfind("held 0 10\nready\n", 0) == 0,
           "a reconnecting stream learns how much is held (got: " + again + ")");
