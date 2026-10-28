@@ -634,7 +634,8 @@ std::string readRequest(int descriptor) {
       if (errno == EINTR) {
         continue;
       }
-      throw std::runtime_error("could not read control request");
+      throw std::runtime_error("could not read control request after " + std::to_string(request.size()) +
+                               " bytes: " + std::strerror(errno));
     }
     if (request.size() + static_cast<std::size_t>(received) > ckgit::kMaximumControlRequestBytes) {
       throw std::runtime_error("control request exceeds limit");

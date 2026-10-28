@@ -24,7 +24,12 @@ test_root=$(mktemp -d "$test_root_parent/ckg.XXXXXX")
 server_pid=''
 
 cleanup() {
+  test_exit=$?
   stop_process "$server_pid" || true
+  if [ "$test_exit" -ne 0 ] && [ -f "$test_root/server.log" ]; then
+    echo "control_socket integration failed (exit $test_exit); daemon diagnostics:" >&2
+    tail -80 "$test_root/server.log" >&2
+  fi
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
