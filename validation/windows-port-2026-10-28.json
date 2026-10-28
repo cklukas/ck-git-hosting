@@ -283,5 +283,118 @@
       "exit": 0
     },
     "linux_validation": "Pending GitHub Linux CI for this new source; do not infer from Mac tests"
+  },
+  "github_latest_validated": {
+    "commit": "8301aba6fb87972641cb893af517efb3c5ce58e4",
+    "run": 40702631474,
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": 9,
+    "includes": "Windows installer build/tests, Linux x64/arm64 GCC/Clang, Debian x64/arm64, macOS x64/arm64"
+  },
+  "standard_user_station_qualification": {
+    "scope": "Experimental noninteractive SSH station only; no production implementation or interactive station ACL changes",
+    "read_only_access": {
+      "start": "2026-10-28T14:13:12.7085095Z",
+      "seconds": 0.4416888,
+      "action": "Read-only access checks; no object permissions modified",
+      "createdesktop_error": 0,
+      "administrator": false,
+      "source_sha256": "C7DCA8FFBA484374E15355B85AC1986DC8C53FCBF338593A64000444DE235AEF",
+      "assembly_sha256": "97A442F26795266A43A12AD61AB1CDE57A043F5399C05038A87C177C4D09EF74",
+      "station": "Service-0x3-b083e359$",
+      "success": true,
+      "end": "2026-10-28T14:13:13.1471662Z",
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\station-rights\\station-rights.dll",
+      "read_control_error": 0,
+      "write_dac_error": 0
+    },
+    "attempts": [
+      {
+        "station_rights": [
+          "WINSTA_READATTRIBUTES"
+        ],
+        "build": {
+          "start": "2026-10-28T14:25:41.5556103Z",
+          "baseline": "No comparable single-target baseline; inspect compile/link log",
+          "seconds": 4.814356399999999,
+          "binary_sha256": "82A943D91D284FFC60914E339796B625456E729BADF6BE9887C44AE6C6BE87C6",
+          "binary_timestamp": "2026-10-28T14:25:46.2631169Z",
+          "exit": 0,
+          "source_sha256": "3A3E7470E07B0C61F25F70E6078F4B96F5535F7BAC639A52D24D9E17C700EEE7",
+          "target": "ckgit-lpac-probe Release",
+          "end": "2026-10-28T14:25:46.3641250Z",
+          "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+        },
+        "run": {
+          "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe",
+          "start": "2026-10-28T14:26:07.0960796Z",
+          "binary_sha256": "82A943D91D284FFC60914E339796B625456E729BADF6BE9887C44AE6C6BE87C6",
+          "exit": 1,
+          "end": "2026-10-28T14:26:07.5450723Z",
+          "administrator": false
+        },
+        "cleanup": "Per-job SID ACE removed successfully"
+      },
+      {
+        "station_rights": [
+          "WINSTA_READATTRIBUTES",
+          "WINSTA_ACCESSGLOBALATOMS"
+        ],
+        "build": {
+          "start": "2026-10-28T14:26:46.0021145Z",
+          "baseline": "Previous single-target sandbox compile/link 4.81s; this adds probe recompilation",
+          "seconds": 9.7818383,
+          "binary_sha256": "A771BE09AC35B7D7CC4130C99BB14643E311C43772679A04AD3358184351B349",
+          "binary_timestamp": "2026-10-28T14:26:55.6912102Z",
+          "exit": 0,
+          "source_sha256": "A5ED3D05E46BC10EB1B41DAE72D80FB31783A4B96AE8F51B2AF8FB43D32429E6",
+          "target": "ckgit-lpac-probe Release",
+          "end": "2026-10-28T14:26:55.7789541Z",
+          "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+        },
+        "run": {
+          "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe",
+          "start": "2026-10-28T14:27:05.3218667Z",
+          "binary_sha256": "A771BE09AC35B7D7CC4130C99BB14643E311C43772679A04AD3358184351B349",
+          "exit": 1,
+          "end": "2026-10-28T14:27:05.6580489Z",
+          "administrator": false
+        },
+        "child_exit_hex": "0xc0000142",
+        "cleanup": "Per-job SID ACE removed successfully"
+      }
+    ],
+    "conclusion": "Opening/creating station objects with a standard token is insufficient. LPAC child initialization still fails; no supported standard-user broker yet. All Job UI restrictions remained enabled.",
+    "restoration": {
+      "initial_build_rejected": "Copy-Item preserved an old source timestamp, so MSBuild reused the experimental object. No test launched from that build. Source timestamp explicitly refreshed, source hash checked and windows_sandbox.cpp recompiled before relinking all targets.",
+      "build": {
+        "exit": 0,
+        "seconds": 7.649538499999999,
+        "start": "2026-10-28T14:30:09.0234869Z",
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+        "probe_source_sha256": "D72B218133D733C014815EFB2BFD912A53D196BD4C969221B32B3F51B5586667",
+        "baseline": "Previous single-target sandbox+probe build9.78s; now relink all dependent targets",
+        "configuration": "Release",
+        "source_sha256": "4590A5D66A9838674A1BD3CAD2232D7EF34D5909420E4E17D8D8EA403E2CD269",
+        "end": "2026-10-28T14:30:16.6690252Z"
+      },
+      "probe": {
+        "start": "2026-10-28T14:30:31.1932381Z",
+        "end": "2026-10-28T14:30:31.5973012Z",
+        "binary_sha256": "5B4A4F39A7D24486EF05107AC5D52AB5EBFC94254172074387F2636FF27C7E2B",
+        "administrator": true,
+        "exit": 0
+      },
+      "runtime_result": "Restored private-station admin broker runs LPAC path probe successfully. Ancestor paths remain inaccessible; GetLongPathName still returns access denied."
+    },
+    "evidence_sha256": {
+      "station-acl-experiment.cpp": "3a3e7470e07b0c61f25f70e6078f4b96f5535f7bac639a52d24d9e17c700eee7",
+      "station-acl34-experiment.cpp": "a5ed3d05e46bc10eb1b41dae72d80fb31783a4b96ae8f51b2af8fb43d32429e6",
+      "station-acl-nonadmin.log": "97984ac3e3cb560fcb4e755c05b70ce5b483f1ae33f58354548421c8142e1052",
+      "station-acl34-nonadmin.log": "858d60a2f077e9540e0ed385ebcc4a160bf848c70d04700f65287191590330f1",
+      "station-acl-restored-fresh-build.log": "bcbd14577e5ce13394d11d55f5c6018906cad3a6ebc8c22c421975c624f1b228",
+      "station-acl-restored-test.log": "cd4c0fdf86b7ba749b600e683ec338b5a0177611a4e06a53b6a4e5e4ff2a02cb"
+    }
   }
 }

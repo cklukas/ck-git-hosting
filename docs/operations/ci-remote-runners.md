@@ -48,6 +48,11 @@ for every job. The broker requires an elevated administrator token to create
 its private, invisible Window Station. Build tools remain restricted; no
 interactive desktop or Explorer session is started. Network access is denied,
 even when the server would allow it, and there is no degraded execution mode.
+Here, “desktop” means a Windows system object, not a graphical build interface.
+Console toolchains can load USER32 through their dependencies; Windows then
+connects the process to a Window Station and desktop during initialization.
+The private objects let those dependencies initialize without sharing the
+user's desktop. See Microsoft's [process connection documentation](https://learn.microsoft.com/en-us/windows/win32/winstation/process-connection-to-a-window-station).
 Windows-managed AppContainer profiles use the operating system's profile
 location. Checkouts, staged tools, caches and logs use the configured paths.
 

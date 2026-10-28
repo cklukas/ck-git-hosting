@@ -174,7 +174,8 @@ int wmain(int argc, wchar_t** argv) {
       const auto result = ckgit::runWindowsSandboxProcess(sandbox,
           {ckgit::wideToUtf8(executable.native()), "--path-child", ckgit::wideToUtf8(sandbox.work().native())},
           ckgit::ProcessOptions{}, {});
-      std::cout << result.output;
+      std::cout << result.output << "diagnostic child exit=" << result.exit_code
+                << " timeout=" << result.timed_out << "\n";
       require(result.exit_code == 0 && !result.timed_out, "LPAC path diagnostics failed");
       return 0;
     }
