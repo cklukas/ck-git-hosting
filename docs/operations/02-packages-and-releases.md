@@ -62,6 +62,11 @@ artifacts containing the exact tested `.deb` files, `SHA256SUMS` and
 server and Windows packages before creating a release tag; uploading them
 does not deploy a server or publish a release.
 
+Debian CI pins the binaries' runtime version and the package version to the
+tested GitHub commit, including when checkout uses a source archive without
+`.git`. Verify the downloaded checksums and `BUILD-INFO` before installing;
+a successful upload alone does not establish that every expected file arrived.
+
 Every job passes `BUILD_ROOT=$RUNNER_TEMP`, overriding the Makefile's own
 portable default (`TMPDIR`, or `/tmp`; a checkout's own `local.mk` can pin a
 different one — see `local.mk.example`), and the Makefile only accepts build

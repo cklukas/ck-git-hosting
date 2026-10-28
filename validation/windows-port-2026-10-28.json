@@ -593,5 +593,108 @@
     },
     "limits": "Verified graceful ckdocs AllUsers upgrade from running preview with current code. CurrentUser live upgrade using runas /trustlevel restricted token still fails RmGetList error5 for both file and explicit PID registration; this token may be more restricted than an ordinary standard-user token. CLI and runner live upgrades remain unqualified. Production products unchanged.",
     "ci_packaging_fix": "d0a10e1 Debian build/tests/package lifecycle passed but identity step failed because archive checkout lacks.git. e9da639 uses GITHUB_SHA, matching actions/checkout default push/PR merge checkout."
+  },
+  "github_c07a0fd_installation": {
+    "manifest": {
+      "run": 40716667159,
+      "commit": "c07a0fd497d5ea6da317bbf794213ff674a448ad",
+      "files": {
+        "ck-git-runner-0.8.2-windows-x64-setup.exe": "4ab782a30ff85f162b4736519031fa6e8588de50c5ab8d6af266b1cb8e2269fc",
+        "ckgit-0.8.2-windows-x64-setup.exe": "33aaf91f7027c6b4cde928447f1e697685aa2c1396382acc8608b59d9b43f532",
+        "ckdocs-0.8.2-windows-x64-setup.exe": "354f526bd03c27146d8bc5a1fc2118846a83468023429e7434246bf1ccec6735",
+        "ckgit-0.8.2-windows-x64.zip": "ff51df1feef1ff9bc5988cd760c3ca83c508bf1264481ef48891e810103311b4"
+      },
+      "portable_files": {
+        "LICENSE": "56c42ac8b0bf24b48bc6a6382492922afada5c5d96ab0e051956655898e53370",
+        "bin/ck-ci-runnerd.exe": "77166fcd5dea58d320161bfca385e7134d5122a11b1951546b286d1ba5593e9d",
+        "bin/ckdocs.exe": "695a97a2fe0a8de4b439ef65831b2bad4ef27531b37783c8e0a83fe373d6c3d6",
+        "bin/ckgit-job-launcher.exe": "dc278b70f4389eb5d25ed7beab3bbeea683770548a220a8faabf121c856092ca",
+        "bin/ckgit.exe": "01ef1fa923912c827f9e3c3aa7a3249c2dcb064c84f95b339873e67a30a5af8b",
+        "licenses/libarchive/COPYING": "30e556b3959e3985d66efefec5eaac51d4995053caa1d3cffe6eb916f146f229",
+        "licenses/libarchive/SOURCE-NOTICES.txt": "1d8db2875cdc079fa7ccd188b888235b9f2db133b6ac042fa06ea0d75504cc50"
+      }
+    },
+    "clients": {
+      "run": 40716667159,
+      "commit": "c07a0fd497d5ea6da317bbf794213ff674a448ad",
+      "success": true,
+      "end": "2026-10-28T15:41:50.5379077Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+gc07a0fd497d5",
+          "scope": "CURRENTUSER",
+          "sha256": "01EF1FA923912C827F9E3C3AA7A3249C2DCB064C84F95B339873E67A30A5AF8B",
+          "product": "ckgit",
+          "installer_sha256": "33AAF91F7027C6B4CDE928447F1E697685AA2C1396382ACC8608B59D9B43F532",
+          "previous_sha256": "63004858CABCE3D8C1B46DD9F0CA170BE42B6ED5485044F03DE00A5BA0C46048",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+gc07a0fd497d5",
+          "scope": "CURRENTUSER",
+          "sha256": "695A97A2FE0A8DE4B439EF65831B2BAD4EF27531B37783C8E0A83FE373D6C3D6",
+          "product": "ckdocs",
+          "installer_sha256": "354F526BD03C27146D8BC5A1FC2118846A83468023429E7434246BF1CCEC6735",
+          "previous_sha256": "254F96C0F10D8969AA54E7773960EF6D4626E6087687D785EEF86DBE32723A18",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 40716667159,
+      "commit": "c07a0fd497d5ea6da317bbf794213ff674a448ad",
+      "success": true,
+      "end": "2026-10-28T15:41:53.6105386Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+gc07a0fd497d5",
+          "scope": "ALLUSERS",
+          "sha256": "77166FCD5DEA58D320161BFCA385E7134D5122A11B1951546B286D1BA5593E9D",
+          "product": "ck-git-runner",
+          "installer_sha256": "4AB782A30FF85F162B4736519031FA6E8588DE50C5AB8D6AF266B1CB8E2269FC",
+          "previous_sha256": "967D7520FBC81A779D0465EA69EB28E8184FDDB332A659285FA8297E4340A73F",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "installed_runner_check": {
+      "end": "2026-10-28T15:42:18.1310033Z",
+      "binary_sha256": "77166FCD5DEA58D320161BFCA385E7134D5122A11B1951546B286D1BA5593E9D",
+      "success": true,
+      "start": "2026-10-28T15:42:17.4039898Z"
+    },
+    "scope": "CurrentUser clients verified under SAFER nonadmin token; AllUsers runner under admin token. Installed hashes and notices match portable ZIP. Runner uses real production configuration for check and isolated fake-SSH fixture for protocol/empty queue/lock/cleanup. No real job claimed by this version yet; no claim of normal standard-user broker support. GitHub Windows job122916118192 succeeded including active ckdocs AllUsers upgrade."
+  },
+  "debian_upgrade_preparation": {
+    "rollback": {
+      "package": "/home/klukas/tmp/ckgit-server-upgrade-20261028-c07a0fd/rollback/ck-git-hosting_0.8.2+windows.20261026.g8dcf98e_arm64.deb",
+      "sha256": "bc58572878b26e2b4e2b16de4f9372cf4a45f9f548627797ce5683cd8e9cd7a5",
+      "verified_installed_files": {
+        "etc/ck-git-hosting/deploy.d/ck-git-hosting.conf.example": "8531525ade4d15b1a2ffcf80f151f4e759c0773e2349ca22e83f1d2c18e16a3c",
+        "etc/ck-git-hosting/server.ini": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd",
+        "etc/ssh/sshd_config.d/ck-git-hosting.conf": "acff43d613742b13714f2c6de9cdce2d61fafc3db8ea1973184f0e3e73ec0fdc",
+        "usr/bin/ck-ci-runnerd": "68b404ded5f88fa796f1f4fc4a9b06038bc0859f0dac57f79d636c65e9326128",
+        "usr/bin/ck-git-hosting-deploy": "86825ab58e993679cafcdec41a49e0c5ae91c0a7f8d7363dd6c603248530972d",
+        "usr/bin/ck-git-hostingd": "cdffe10ce6cad6ace4f77488bf4c1369b331b8cf6d03fda0369cddae31fd3df7",
+        "usr/bin/ck-git-shell": "7716f727522fede4e0537a67721ef9e1f686fa15e1db5d53626065189f1b98ed",
+        "usr/bin/ck-pagesd": "7448d35bc2e525c9a14b8f30e76b40213642cab0dbee14cfe37a60b178dbc429",
+        "usr/bin/ckgit-admin": "d33b8671cd951087a5e2a4246e751e463299ff7c119cdb36520830cef7518554",
+        "usr/lib/ck-git-hosting/hooks/post-receive": "49dae2cf127fa2efd4622833d63afc77f830b8852100680205a6ef1038826b9f",
+        "usr/lib/systemd/system/ck-ci-runner.service": "bba506743716425f56a43c82e7d394bd6482f949675b3d4e6c704e95d6b5a7a3",
+        "usr/lib/systemd/system/ck-git-hosting-deploy.service": "333bdfebd137b52942600ee6b71ef2f8c7e9fea7420a996fff4706e75eb1dff4",
+        "usr/lib/systemd/system/ck-git-hosting-deploy.timer": "7b2f756cb7bbd8b6e8024d01d6358a2d59879c42ea84076d3fd5aaf08e94e8b6",
+        "usr/lib/systemd/system/ck-git-hosting.service": "e5161199a6753f1e08cda63193507819f5072d7d3c9a88f14435e9658796ee2f",
+        "usr/lib/systemd/system/ck-pages.service": "35b0fdeffc28456060b44278f82b58e5a57594efe2fa6dee9736d8d6abd31165",
+        "usr/share/doc/ck-git-hosting/copyright": "207775cdeadf2a4dc3f3a327c59d97b921a0938bdd43b7e3ea8c68a5efac7238"
+      },
+      "start": "2026-10-28T15:44:07Z",
+      "end": "2026-10-28T15:44:44Z",
+      "scope": "Package payload matches current installed files; consistent service-state snapshot still required before deployment."
+    },
+    "not_deployed": true,
+    "ci_issue": "c07a0fd Debian artifact uploaded only four debs; manifests omitted because runner.temp host path differed from RUNNER_TEMP container path. Runtime version also lacked commit because checkout used an archive. Fix passes runtime/package identity explicitly from GITHUB_SHA and upload paths from shell step output. Native GitHub requalification pending.",
+    "local_checks": "Workflow YAML parsed; diff check passed; documentation67pages passed."
   }
 }

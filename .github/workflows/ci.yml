@@ -84,10 +84,16 @@ jobs:
           useradd -m ci
           git config --system --add safe.directory "$GITHUB_WORKSPACE"
           chmod 1777 "$RUNNER_TEMP"
-          su ci -c "make BUILD_ROOT=\"$RUNNER_TEMP\" BUILD_DIR=\"$RUNNER_TEMP/build\" all check"
+          # Archive checkouts have no .git; pin runtime identity explicitly.
+          version=$(tr -d '[:space:]' < VERSION)
+          commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-12)
+          su ci -c "make BUILD_ROOT=\"$RUNNER_TEMP\" BUILD_DIR=\"$RUNNER_TEMP/build\" CKGIT_BUILD_VERSION=\"$version+g$commit\" all check"
       - name: Build packages
         run: |
-          sh packaging/build-deb.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist"
+          version=$(tr -d '[:space:]' < VERSION)
+          commit=$(printf '%s' "$GITHUB_SHA" | cut -c1-12)
+          snapshot="$version~$(date -u +%Y%m%d.%H%M).$commit"
+          sh packaging/build-deb.sh --build-dir "$RUNNER_TEMP/build" --output "$RUNNER_TEMP/dist" --version "$snapshot"
           ls -l "$RUNNER_TEMP/dist"
           lintian --no-tag-display-limit "$RUNNER_TEMP"/dist/*.deb || true
       - name: Install, exercise, and purge the packages
@@ -156,6 +162,7 @@ jobs:
           test ! -e /etc/ck-git-hosting
           test -d /srv/ck-git-hosting/repos/smoke.git
       - name: Record tested package identity
+        id: package_identity
         run: |
           # checkout can use an archive here: Git is installed only in the
           # following dependency step. Its default ref is GITHUB_SHA in both
@@ -164,11 +171,14 @@ jobs:
           cd "$RUNNER_TEMP/dist"
           sha256sum -- *.deb > SHA256SUMS
           printf 'commit=%s\narchitecture=%s\n' "$commit" '${{ matrix.arch }}' > BUILD-INFO
+          # runner.temp is a host path; downstream actions need the container
+          # path used by the shell, including for non-wildcard manifest paths.
+          printf 'directory=%s\n' "$RUNNER_TEMP/dist" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: debian-${{ matrix.arch }}
           path: |
-            ${{ runner.temp }}/dist/*.deb
-            ${{ runner.temp }}/dist/SHA256SUMS
-            ${{ runner.temp }}/dist/BUILD-INFO
+            ${{ steps.package_identity.outputs.directory }}/*.deb
+            ${{ steps.package_identity.outputs.directory }}/SHA256SUMS
+            ${{ steps.package_identity.outputs.directory }}/BUILD-INFO
           if-no-files-found: error
