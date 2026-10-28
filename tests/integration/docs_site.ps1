@@ -67,9 +67,9 @@ try {
     & git -C $portal init --quiet --initial-branch=main
     if ($LASTEXITCODE -ne 0) { throw 'Portal Git init failed' }
     [IO.File]::WriteAllText((Join-Path $portal 'README.md'), "# Committed portal`n`nContent from the committed ref.`n", $utf8)
-    & git -C $portal add README.md
+    & git -C $portal -c core.autocrlf=false add README.md
     if ($LASTEXITCODE -ne 0) { throw 'Portal Git add failed' }
-    & git -C $portal -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit --quiet -m fixture
+    & git -C $portal -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false -c "core.hooksPath=$tools" commit --quiet -m fixture
     if ($LASTEXITCODE -ne 0) { throw 'Portal Git commit failed' }
     [IO.File]::WriteAllText((Join-Path $portal 'README.md'), "# Uncommitted working tree`n", $utf8)
     [IO.File]::WriteAllText((Join-Path $portal 'ckdocs.yml'), "version: 1`nsite:`n  title: Ref extraction`nsites:`n  - id: committed`n    title: Committed`n    ref: main`n", $utf8)
