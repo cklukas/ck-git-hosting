@@ -221,7 +221,7 @@ int run(const fs::path& parent) {
   fixture("duplicate.txt", false, false, true);
   reject_extract(extraction);
 #ifdef _WIN32
-  for (const auto* alias : {"nul.txt", "COM1", "LPT\xc2\xb9", "name.", "name "}) {
+  for (const auto* alias : {"nul.txt", "CON .txt", "COM1", "LPT\xc2\xb9", "name.", "name ", "bad?.txt"}) {
     fixture(alias, false);
     reject_extract(extraction);
   }

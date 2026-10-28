@@ -18,6 +18,7 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include "ckgit/windows.hpp"
 #endif
 
 namespace ckgit {
@@ -313,16 +314,7 @@ void extractRegularTreeTar(const fs::path& source, const fs::path& destination, 
 #ifdef _WIN32
         // Win32 path aliases must not turn a member into a device or collide
         // with another member after trailing-dot/space normalization.
-        auto base = part.substr(0, part.find('.'));
-        std::transform(base.begin(), base.end(), base.begin(), [](unsigned char ch) {
-          return ch >= 'a' && ch <= 'z' ? static_cast<char>(ch - 'a' + 'A') : static_cast<char>(ch);
-        });
-        const auto suffix = base.size() > 3 ? base.substr(3) : std::string();
-        const bool numbered_device = (base.starts_with("COM") || base.starts_with("LPT")) &&
-            ((suffix.size() == 1 && suffix[0] >= '1' && suffix[0] <= '9') ||
-             suffix == "\xc2\xb9" || suffix == "\xc2\xb2" || suffix == "\xc2\xb3");
-        if (part.back() == '.' || part.back() == ' ' || base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
-            base == "CONIN$" || base == "CONOUT$" || numbered_device)
+        if (!isWindowsFileComponent(utf8ToWide(part)))
           throw std::runtime_error("archive pathname is a Windows alias");
 #endif
         path /= fs::path(std::u8string(part.begin(), part.end()));
