@@ -79,16 +79,20 @@ std::vector<std::string> components(const fs::path& path) {
   }
   return result;
 }
-void requireRegularTreeNode(const fs::path& path, const fs::file_status& status) {
+bool regularTreeNode(const fs::path& path, const fs::file_status& status) {
   if (!fs::is_directory(status) && !fs::is_regular_file(status))
-    throw std::runtime_error("archive input is not a regular file or directory");
+    return false;
 #ifdef _WIN32
   const auto attributes = GetFileAttributesW(path.c_str());
-  if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
-    throw std::runtime_error("archive input is a reparse point or unreadable");
+  if (attributes == INVALID_FILE_ATTRIBUTES) throw std::runtime_error("archive input is unreadable");
+  if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;
 #else
   (void)path;
 #endif
+  return true;
+}
+void requireRegularTreeNode(const fs::path& path, const fs::file_status& status) {
+  if (!regularTreeNode(path, status)) throw std::runtime_error("archive input is not a regular file or directory");
 }
 struct Output {
   std::ofstream file;
@@ -162,6 +166,7 @@ void packRegularTreeTar(const fs::path& root, const std::vector<std::string>& pa
         if (!fs::is_directory(parent_status)) throw std::runtime_error("archive parent is not a directory");
       }
       const auto status = fs::symlink_status(full);
+      if (options.skip_non_regular && fs::exists(status) && !regularTreeNode(full, status)) return;
       requireRegularTreeNode(full, status);
       const std::unique_ptr<archive_entry, decltype(&archive_entry_free)> entry(archive_entry_new(), archive_entry_free);
       if (!entry) throw std::bad_alloc();
@@ -197,9 +202,12 @@ void packRegularTreeTar(const fs::path& root, const std::vector<std::string>& pa
       const fs::path relative(std::u8string(requested.begin(), requested.end()));
       components(relative);
       add(relative);
-      if (fs::is_directory(fs::symlink_status(root / relative))) {
-        for (const auto& entry : fs::recursive_directory_iterator(root / relative))
-          add(entry.path().lexically_relative(root));
+      const auto requested_status = fs::symlink_status(root / relative);
+      if (fs::is_directory(requested_status) && regularTreeNode(root / relative, requested_status)) {
+        for (auto iterator = fs::recursive_directory_iterator(root / relative); iterator != fs::recursive_directory_iterator(); ++iterator) {
+          if (!regularTreeNode(iterator->path(), iterator->symlink_status())) iterator.disable_recursion_pending();
+          add(iterator->path().lexically_relative(root));
+        }
       }
     }
     checked(archive_write_close(writer.get()), writer.get(), output);

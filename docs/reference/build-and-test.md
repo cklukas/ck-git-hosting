@@ -83,8 +83,10 @@ The remote result sink now also builds natively. Its local SSH fixture checks
 acknowledged log frames, artifact and Pages upload checksums, and the terminal
 report. Relay files live in a private temporary subdirectory that is removed
 when the sink closes; failed local writes or short upload reads stop reporting
-those bytes as successfully transferred. Pages packaging currently requires
-`tar` on the runner's PATH.
+those bytes as successfully transferred. Pages packaging uses the pinned
+libarchive writer, with byte/entry caps and cancellation-aware heartbeats.
+It omits links and special files, matching Pages publication's regular-file
+policy. Server-side extraction still uses `tar` during the migration.
 The process API also supports synchronous live-output and continuation
 callbacks. Live output is delivered beyond the bounded in-memory capture;
 callers must cap any logs they retain. A false continuation result cancels the
@@ -283,6 +285,14 @@ failures observed in Ninja's `cmd.exe` commands; it is not a successful Ninja
 qualification. The probe removes its profile and workspace on normal exit.
 
 ## Compile and test
+
+The Make build requires a C++20 compiler, a C compiler, GNU Make and CMake
+3.24 or newer. It builds the bundled libarchive source offline beneath
+`BUILD_DIR/libarchive`; no system libarchive development package is needed.
+`CMAKE`, `CC` and `ARCHIVE_BUILD_JOBS` select that dependency's CMake command,
+C compiler and parallelism (two jobs by default). `make check` includes the
+archive tests. Debian packages and the Homebrew installation carry the
+upstream copyright/license notices alongside the project license.
 
 The source tree is never used for build products; every build directory must
 lie beneath a build root, and the test suite keeps every scratch file there

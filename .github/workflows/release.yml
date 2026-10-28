@@ -62,7 +62,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates openssh-client
+          apt-get install -y --no-install-recommends build-essential cmake git curl netcat-openbsd ca-certificates openssh-client
       - name: Build and test
         run: |
           # The suite exercises real permission failures; root ignores

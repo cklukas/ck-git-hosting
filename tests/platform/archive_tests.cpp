@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 #include "ckgit/archive.hpp"
 #include "ckgit/temp_directory.hpp"
+#include "test_directory_link.hpp"
 #include <archive.h>
 #include <archive_entry.h>
 #include <filesystem>
@@ -90,11 +91,30 @@ int run(const fs::path& parent) {
   must_fail({"../source/out"}, options);
   must_fail({""}, options);
   must_fail({"missing"}, options);
-#ifndef _WIN32
-  fs::create_directory_symlink(source / "out", source / "link");
+  createTestDirectoryLink(source / "out", source / "link");
   must_fail({"link"}, options);
   must_fail({"link/empty.txt"}, options);
+  auto pages = options;
+  pages.skip_non_regular = true;
+  ckgit::packRegularTreeTar(source, {"."}, bundle, pages);
+  const std::unique_ptr<struct archive, decltype(&archive_read_free)> filtered(archive_read_new(), archive_read_free);
+  require(filtered != nullptr, "filtered reader allocation");
+  require(archive_read_support_filter_none(filtered.get()) == ARCHIVE_OK, "filtered reader filter");
+  require(archive_read_support_format_tar(filtered.get()) == ARCHIVE_OK, "filtered reader format");
+#ifdef _WIN32
+  require(archive_read_open_filename_w(filtered.get(), bundle.c_str(), 65536) == ARCHIVE_OK, "open filtered TAR");
+#else
+  require(archive_read_open_filename(filtered.get(), bundle.c_str(), 65536) == ARCHIVE_OK, "open filtered TAR");
 #endif
+  unsigned entries = 0;
+  while ((status = archive_read_next_header(filtered.get(), &entry)) == ARCHIVE_OK) {
+    const char* path = archive_entry_pathname_utf8(entry);
+    require(path && std::string(path).find("link") == std::string::npos, "Pages included a linked path");
+    require(archive_entry_filetype(entry) == AE_IFREG || archive_entry_filetype(entry) == AE_IFDIR, "Pages included a special entry");
+    ++entries;
+  }
+  require(status == ARCHIVE_EOF && entries == 4, "Pages must retain exactly root, out, and two regular files");
+  require(archive_read_close(filtered.get()) == ARCHIVE_OK, "close filtered reader");
   std::cout << "bounded TAR packing tests passed\n";
   return 0;
 }

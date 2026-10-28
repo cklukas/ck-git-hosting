@@ -13,6 +13,9 @@ struct TarPackOptions {
   std::size_t max_entries = 100000;
   std::chrono::seconds timeout{300};
   std::function<bool()> should_continue;
+  // Pages publishes regular content only; omit links and special nodes.
+  // The source root and every traversed ancestor must still be real directories.
+  bool skip_non_regular = false;
 };
 // Uncompressed PAX TAR containing only directories and regular files.
 // The caller owns a quiescent source tree and an output outside that tree.

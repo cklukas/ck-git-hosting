@@ -300,7 +300,7 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
     }
     return finish(CiRunStatus::Success, "all steps passed");
   } catch (const std::exception& error) {
-    return finish(interrupted ? CiRunStatus::Cancelled : CiRunStatus::Error, error.what());
+    return finish(interrupted || sink.cancelRequested() ? CiRunStatus::Cancelled : CiRunStatus::Error, error.what());
   }
 }
 }

@@ -15,6 +15,8 @@ class Ckgit < Formula
   license "MIT"
   head "https://github.com/cklukas/ck-git-hosting.git", branch: "master"
 
+  depends_on "cmake" => :build
+
   def install
     # Build products never land in the source tree by default; the formula
     # picks its own build root beneath Homebrew's temporary build path.
@@ -23,6 +25,9 @@ class Ckgit < Formula
     system "make", "BUILD_ROOT=#{buildpath}", "BUILD_DIR=#{buildpath}/build", "client"
     bin.install "build/bin/ckgit"
     bin.install "build/bin/ckdocs"
+    if File.exist?("third_party/libarchive/COPYING")
+      (pkgshare/"licenses/libarchive").install "third_party/libarchive/COPYING", "third_party/libarchive/SOURCE-NOTICES.txt"
+    end
   end
 
   test do

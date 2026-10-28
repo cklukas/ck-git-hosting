@@ -60,6 +60,7 @@ endif
 CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKGIT_GIT_VERSION),+source)
 
 COMMON_SOURCES := \
+	src/archive/tar.cpp \
 	src/common/authorized_keys.cpp \
 	src/common/ci_control.cpp \
 	src/common/ci_remote.cpp \
@@ -124,6 +125,23 @@ COMMON_SOURCES := \
 COMMON_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR_ABS)/obj/%.o,$(COMMON_SOURCES))
 COMMON_HEADERS := $(wildcard include/ckgit/*.hpp)
 
+# Build the pinned C dependency offline, inside this build's own workspace.
+CMAKE ?= cmake
+ARCHIVE_BUILD_JOBS ?= 2
+ARCHIVE_BUILD_DIR := $(BUILD_DIR_ABS)/libarchive
+ARCHIVE_LIB := $(ARCHIVE_BUILD_DIR)/lib/libarchive.a
+ARCHIVE_CPPFLAGS := -DLIBARCHIVE_STATIC -I$(ARCHIVE_BUILD_DIR)/_deps/ckgit_libarchive-src/libarchive
+COMMON_LINK_INPUTS := $(COMMON_OBJECTS) $(ARCHIVE_LIB)
+
+$(ARCHIVE_LIB): third_party/libarchive/CMakeLists.txt third_party/libarchive/libarchive-3.8.10.tar.xz
+	mkdir -p $(BUILD_DIR_ABS)/test-tmp
+	TMPDIR=$(BUILD_DIR_ABS)/test-tmp $(CMAKE) -S third_party/libarchive -B $(ARCHIVE_BUILD_DIR) -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$(CC)" -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=$(ARCHIVE_BUILD_DIR)/lib -DCKGIT_ARCHIVE_SMOKE_TEST=OFF
+	+TMPDIR=$(BUILD_DIR_ABS)/test-tmp $(CMAKE) --build $(ARCHIVE_BUILD_DIR) --target archive_static --parallel $(ARCHIVE_BUILD_JOBS)
+
+$(BUILD_DIR_ABS)/obj/src/archive/tar.o: $(ARCHIVE_LIB)
+$(BUILD_DIR_ABS)/obj/src/archive/tar.o: CPPFLAGS += $(ARCHIVE_CPPFLAGS)
+
+
 CLIENT_SOURCES := src/client/main.cpp
 ADMIN_SOURCES := src/admin/main.cpp
 DISPATCHER_SOURCES := src/ssh-dispatcher/main.cpp
@@ -151,6 +169,7 @@ CK_PAGES := $(BUILD_DIR_ABS)/bin/ck-pagesd
 CKDOCS := $(BUILD_DIR_ABS)/bin/ckdocs
 TEST_BIN := $(BUILD_DIR_ABS)/bin/ckgit-unit-tests
 
+.DEFAULT_GOAL := all
 .PHONY: all client check test force-build-version
 
 all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOSTINGD) $(CK_CI_RUNNER) $(CK_PAGES) $(CKDOCS)
@@ -159,7 +178,7 @@ all: $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_POST_RECEIVE) $(CK_GIT_HOS
 # packages both from one `make client`.
 client: $(CKGIT) $(CKDOCS)
 
-check: test
+check: test test-archive
 
 # Refresh this small translation unit even in a reused build directory, so a
 # commit or dirty-state change cannot leave --version reporting an older build.
@@ -168,29 +187,29 @@ force-build-version:
 $(BUILD_DIR_ABS)/obj/src/common/cli_help.o: src/common/cli_help.cpp force-build-version
 $(BUILD_DIR_ABS)/obj/src/common/cli_help.o: CPPFLAGS += -DCKGIT_BUILD_VERSION='"$(CKGIT_BUILD_VERSION)"'
 
-$(CKGIT): $(COMMON_OBJECTS) $(CLIENT_SOURCES) $(wildcard src/client/*.inc) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CLIENT_SOURCES) $(LDFLAGS) -o $@
+$(CKGIT): $(COMMON_LINK_INPUTS) $(CLIENT_SOURCES) $(wildcard src/client/*.inc) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CLIENT_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CKGIT_ADMIN): $(COMMON_OBJECTS) $(ADMIN_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(ADMIN_SOURCES) $(LDFLAGS) -o $@
+$(CKGIT_ADMIN): $(COMMON_LINK_INPUTS) $(ADMIN_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(ADMIN_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CK_GIT_SHELL): $(COMMON_OBJECTS) $(DISPATCHER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(DISPATCHER_SOURCES) $(LDFLAGS) -o $@
+$(CK_GIT_SHELL): $(COMMON_LINK_INPUTS) $(DISPATCHER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(DISPATCHER_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CK_GIT_POST_RECEIVE): $(COMMON_OBJECTS) $(RECEIVE_HOOK_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/hooks
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(RECEIVE_HOOK_SOURCES) $(LDFLAGS) -o $@
+$(CK_GIT_POST_RECEIVE): $(COMMON_LINK_INPUTS) $(RECEIVE_HOOK_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/hooks
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(RECEIVE_HOOK_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CK_GIT_HOSTINGD): $(COMMON_OBJECTS) $(SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(SERVER_SOURCES) $(LDFLAGS) -o $@
+$(CK_GIT_HOSTINGD): $(COMMON_LINK_INPUTS) $(SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(SERVER_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CK_CI_RUNNER): $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(LDFLAGS) -o $@
+$(CK_CI_RUNNER): $(COMMON_LINK_INPUTS) $(CI_RUNNER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(CI_RUNNER_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CK_PAGES): $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(LDFLAGS) -o $@
+$(CK_PAGES): $(COMMON_LINK_INPUTS) $(PAGES_SERVER_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(PAGES_SERVER_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
-$(CKDOCS): $(COMMON_OBJECTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) src/ckdocs/mermaid.hpp $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(MERMAID_CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) $(LDFLAGS) -o $@
+$(CKDOCS): $(COMMON_LINK_INPUTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) src/ckdocs/mermaid.hpp $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(MERMAID_CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(MERMAID_OBJECTS) $(CKDOCS_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
 $(MERMAID_TEST_BIN): $(MERMAID_OBJECTS) $(MERMAID_TEST_SOURCES) src/ckdocs/mermaid.cpp src/ckdocs/mermaid.hpp tests/mermaid/cworks/microtest.hpp $(wildcard tests/mermaid/*.hpp) | $(BUILD_DIR_ABS)/bin
 	$(CXX) $(CPPFLAGS) $(MERMAID_CPPFLAGS) -Itests/mermaid -Isrc/ckdocs -I$(MERMAID_ROOT)/cdiagram/src $(CXXFLAGS) $(MERMAID_OBJECTS) src/ckdocs/mermaid.cpp $(MERMAID_TEST_SOURCES) $(LDFLAGS) -o $@
@@ -199,8 +218,8 @@ $(MERMAID_TEST_BIN): $(MERMAID_OBJECTS) $(MERMAID_TEST_SOURCES) src/ckdocs/merma
 test-mermaid: $(MERMAID_TEST_BIN)
 	$(MERMAID_TEST_BIN)
 
-$(TEST_BIN): $(COMMON_OBJECTS) $(TEST_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(TEST_SOURCES) $(LDFLAGS) -o $@
+$(TEST_BIN): $(COMMON_LINK_INPUTS) $(TEST_SOURCES) $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) $(TEST_SOURCES) $(ARCHIVE_LIB) $(LDFLAGS) -o $@
 
 $(BUILD_DIR_ABS)/obj/%.o: %.cpp
 	mkdir -p $(@D)
@@ -234,3 +253,11 @@ test: test-mermaid $(TEST_BIN) $(CKGIT) $(CKGIT_ADMIN) $(CK_GIT_SHELL) $(CK_GIT_
 	CKGIT_TEST_ROOT=$(BUILD_TEST_ROOT) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/deploy.sh
 	TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/docs.sh
 	CKGIT_TEST_ROOT=$(BUILD_TEST_ROOT) CKDOCS=$(CKDOCS) TMPDIR=$(BUILD_DIR_ABS)/test-tmp sh tests/integration/docs_site.sh
+
+.PHONY: test-archive
+test-archive: $(BUILD_DIR_ABS)/bin/ckgit-archive-tests
+	mkdir -p $(BUILD_DIR_ABS)/test-tmp
+	TMPDIR=$(BUILD_DIR_ABS)/test-tmp $(BUILD_DIR_ABS)/bin/ckgit-archive-tests $(BUILD_TEST_ROOT)
+
+$(BUILD_DIR_ABS)/bin/ckgit-archive-tests: $(COMMON_LINK_INPUTS) tests/platform/archive_tests.cpp tests/platform/test_directory_link.hpp $(COMMON_HEADERS) | $(BUILD_DIR_ABS)/bin
+	$(CXX) $(CPPFLAGS) $(ARCHIVE_CPPFLAGS) $(CXXFLAGS) $(COMMON_OBJECTS) tests/platform/archive_tests.cpp $(ARCHIVE_LIB) $(LDFLAGS) -o $@

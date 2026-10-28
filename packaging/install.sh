@@ -91,6 +91,10 @@ sshd_dropin="$sshd_dir/ck-git-hosting.conf"
 server_ini="$etc_dir/server.ini"
 authorized_keys="$etc_dir/authorized_keys"
 script_dir=$(cd "$(dirname "$0")" && pwd)
+archive_notices="$staging/usr/share/doc/ck-git-hosting/libarchive"
+for notice in COPYING SOURCE-NOTICES.txt; do
+  [ -f "$script_dir/../third_party/libarchive/$notice" ] || fail "missing libarchive notice: $notice"
+done
 unit_source="$script_dir/systemd/ck-git-hosting.service"
 [ -f "$unit_source" ] || fail "missing unit template: $unit_source"
 runner_unit_path="$unit_dir/ck-ci-runner.service"
@@ -239,6 +243,10 @@ steps() {
   [ -n "$staging" ] && act "create $bin_dir" install_dir 0755 root root "$bin_dir"
   for binary in ck-git-hostingd ck-git-shell ckgit-admin ck-ci-runnerd ck-pagesd; do
     act "install $bin_dir/$binary (root:root 0755)" install_file 0755 root root "$build_dir/bin/$binary" "$bin_dir/$binary"
+  done
+  act "create $archive_notices" install_dir 0755 root root "$archive_notices"
+  for notice in COPYING SOURCE-NOTICES.txt; do
+    act "install $archive_notices/$notice" install_file 0644 root root "$script_dir/../third_party/libarchive/$notice" "$archive_notices/$notice"
   done
   act "install $bin_dir/ck-git-hosting-deploy (root:root 0755)" install_file 0755 root root "$deploy_source" "$bin_dir/ck-git-hosting-deploy"
   act "install $hook_dir/post-receive (root:root 0755)" install_file 0755 root root "$build_dir/hooks/post-receive" "$hook_dir/post-receive"

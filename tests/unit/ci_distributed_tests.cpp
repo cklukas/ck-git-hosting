@@ -806,21 +806,30 @@ void testCombinedWorkflowRelease() {
 }
 
 void testCancelledSuccessDoesNotPublishPages() {
-  Fixture fixture;
-  ckgit::CiCommitPolicy policy;
-  policy.state_root = fixture.state;
-  policy.pages_root = fixture.root / "pages";
-  const auto job = preparedJob(ckgit::generateCiId(), "refs/heads/main", true,
-      "version: 1\npages: {path: public}\njobs:\n  - name: build\n    steps:\n      - run: true\n");
-  ckgit::prepareCiRunDirectory(fixture.state, "demo", job.job.job_id);
-  require(ckgit::requestCiCancel(fixture.state, "demo", job.job.job_id), "cancel marker written");
-  const auto site = fixture.root / "site";
-  std::filesystem::create_directories(site);
-  std::ofstream(site / "index.html") << "obsolete";
-  const auto result = ckgit::commitCiRun(policy, job,
-      finishedRecord(job, ckgit::CiRunStatus::Success), {}, site);
-  require(result.status == ckgit::CiRunStatus::Cancelled, "late success becomes cancelled");
-  require(!ckgit::currentPagesVersion(policy.pages_root, "demo"), "cancelled site is not published");
+  for (const bool child : {false, true}) {
+    Fixture fixture;
+    ckgit::CiCommitPolicy policy;
+    policy.state_root = fixture.state;
+    policy.pages_root = fixture.root / "pages";
+    auto job = preparedJob(ckgit::generateCiId(), "refs/heads/main", true, child
+        ? "version: 2\npages: {path: public, job: build}\njobs:\n  - name: build\n    runs_on: linux\n    steps:\n      - run: true\n"
+        : "version: 1\npages: {path: public}\njobs:\n  - name: build\n    steps:\n      - run: true\n");
+    if (child) {
+      job.job.parent_run_id = ckgit::generateCiId();
+      job.job.workflow_job = "build";
+      job.workflow = ckgit::selectCiWorkflowJob(job.workflow, "build");
+    }
+    ckgit::prepareCiRunDirectory(fixture.state, "demo", job.job.job_id);
+    require(ckgit::requestCiCancel(fixture.state, "demo", job.job.job_id), "cancel marker written");
+    const auto site = fixture.root / "site";
+    std::filesystem::create_directories(site);
+    std::ofstream(site / "index.html") << "obsolete";
+    const auto result = ckgit::commitCiRun(policy, job,
+        finishedRecord(job, ckgit::CiRunStatus::Success), {}, site);
+    require(result.status == ckgit::CiRunStatus::Cancelled, "late success becomes cancelled");
+    require(!ckgit::currentPagesVersion(policy.pages_root, "demo"), "cancelled site is not published");
+    require(ckgit::listCiStagedUploads(fixture.state, "demo", job.job.job_id).empty(), "cancelled child retains no Pages upload");
+  }
 }
 
 void testPagesOrderingGuard() {

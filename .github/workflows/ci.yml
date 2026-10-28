@@ -36,7 +36,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential clang git curl netcat-openbsd
+          sudo apt-get install -y --no-install-recommends build-essential cmake clang git curl netcat-openbsd
       - name: Build and test
         run: |
           make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" CXX="${{ matrix.compiler }}" all check
@@ -71,7 +71,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential git curl netcat-openbsd ca-certificates lintian openssh-client
+          apt-get install -y --no-install-recommends build-essential cmake git curl netcat-openbsd ca-certificates lintian openssh-client
       - name: Build and test
         run: |
           # The suite exercises real permission failures (e.g. an unwritable

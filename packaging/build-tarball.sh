@@ -89,6 +89,9 @@ if [ "$client_only" -eq 0 ]; then
   install -m 0644 "$script_dir/deploy.d/ck-git-hosting.conf.example" "$stage/packaging/deploy.d/ck-git-hosting.conf.example"
 fi
 install -m 0644 "$source_root/README.md" "$stage/README.md"
+install -m 0644 "$source_root/LICENSE" "$stage/LICENSE"
+install -d -m 0755 "$stage/third_party/libarchive"
+install -m 0644 "$source_root/third_party/libarchive/COPYING" "$source_root/third_party/libarchive/SOURCE-NOTICES.txt" "$stage/third_party/libarchive/"
 install -m 0644 "$source_root/VERSION" "$stage/VERSION"
 for document in "$source_root"/docs/operations/*.md; do
   install -m 0644 "$document" "$stage/docs/operations/$(basename "$document")"

@@ -57,8 +57,9 @@ files from validated handles and rejects links or reparse points. Packing keeps
 the configured byte cap, cancellation checks and five-minute time limit, with
 an additional limit of 100,000 entries. Failed packing removes partial output.
 The broker performs this work after the job's processes have terminated.
-Portal extraction and Pages archive handling are separate paths whose
-libarchive migration is still in progress.
+Pages packing also uses the library on both platforms, omitting links and
+special files, with the Pages upload cap and a ten-minute packing deadline.
+Portal and server-side Pages extraction still need migration.
 
 The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
 `runner.ini.example`. CurrentUser installs its files without administrator

@@ -5,3 +5,7 @@
 # which is exactly the case when an older runner builds the very change that
 # teaches it to export one.
 /.ckgit/build-commit export-subst
+# Keep the pinned dependency and its original notices byte-identical on Windows.
+/third_party/libarchive/*.tar.xz -text
+/third_party/libarchive/COPYING text eol=lf
+/third_party/libarchive/SOURCE-NOTICES.txt text eol=lf

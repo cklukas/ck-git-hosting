@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/ci_remote.hpp"
+#include "ckgit/archive.hpp"
+#include "ckgit/pages_store.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -386,12 +388,20 @@ CiArtifactRecord RemoteCiSink::putArtifact(const CiArtifact& artifact, const std
 
 void RemoteCiSink::putPagesSite(const std::filesystem::path& site) {
   const std::filesystem::path archive = relay_dir_ / "site.tar";
-  ProcessOptions options;
+  TarPackOptions options;
   options.timeout = std::chrono::seconds(600);
-  options.output_limit = 16 * 1024;
-  const ProcessResult packed = runProcess({"tar", "-cf", pathToUtf8(archive), "-C", pathToUtf8(site), "."}, options);
-  if (packed.timed_out || packed.exit_code != 0) throw std::runtime_error("the site could not be packed");
-  upload("pages", kCiPagesUploadName, archive);
+  options.max_bytes = kMaximumPagesSiteBytes;
+  options.max_entries = kMaximumPagesEntries + 1;  // include TAR's root directory
+  options.skip_non_regular = true;
+  options.should_continue = [this] { tick(); return !cancelRequested() && !leaseLost(); };
+  packRegularTreeTar(site, {"."}, archive, options);
+  try {
+    upload("pages", kCiPagesUploadName, archive);
+  } catch (...) {
+    std::error_code ignored;
+    std::filesystem::remove(archive, ignored);
+    throw;
+  }
   std::error_code error;
   std::filesystem::remove(archive, error);
 }

@@ -1158,8 +1158,9 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       try {
         sink.putPagesSite(site);
       } catch (const std::exception& publish_error) {
-        status = CiRunStatus::Error;
-        detail = std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
+        status = sink.cancelRequested() ? CiRunStatus::Cancelled : CiRunStatus::Error;
+        detail = status == CiRunStatus::Cancelled ? "cancelled during Pages publication"
+            : std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
       }
     }
   }

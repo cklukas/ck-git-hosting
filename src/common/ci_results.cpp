@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/ci_results.hpp"
+#include "ckgit/archive.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -296,13 +297,24 @@ CiRunRecord commitCiRun(const CiCommitPolicy& policy, const CiPreparedJob& prepa
       !prepared.is_release && prepared.is_default_branch) {
     prepareCiIncomingDirectory(policy.state_root, project, run_id);
     const auto archive = incoming / "site-local.tar";
-    ProcessOptions options;
+    TarPackOptions options;
     options.timeout = std::chrono::seconds(600);
-    options.output_limit = 16 * 1024;
-    const auto packed = runProcess({"tar", "-cf", archive.string(), "-C", site_dir->string(), "."}, options);
-    if (packed.timed_out || packed.exit_code != 0) fail("child Pages site could not be packed");
-    stageCiFile(policy.state_root, project, run_id, CiUploadKind::kPages, kCiPagesUploadName, archive);
-    std::filesystem::remove(archive);
+    options.max_bytes = kMaximumPagesSiteBytes;
+    options.max_entries = kMaximumPagesEntries + 1;  // include TAR's root directory
+    options.skip_non_regular = true;
+    options.should_continue = [&] { return !isCiCancelRequested(policy.state_root, project, run_id); };
+    try {
+      packRegularTreeTar(*site_dir, {"."}, archive, options);
+      if (!isCiCancelRequested(policy.state_root, project, run_id))
+        stageCiFile(policy.state_root, project, run_id, CiUploadKind::kPages, kCiPagesUploadName, archive);
+    } catch (...) {
+      std::error_code ignored;
+      std::filesystem::remove(archive, ignored);
+      if (!isCiCancelRequested(policy.state_root, project, run_id)) throw;
+      // Continue to the cancellation finalization below, without a site.
+    }
+    std::error_code ignored;
+    std::filesystem::remove(archive, ignored);
   }
   std::map<std::string, CiStagedUpload> staged;
   for (CiStagedUpload& upload : listCiStagedUploads(policy.state_root, project, run_id)) {

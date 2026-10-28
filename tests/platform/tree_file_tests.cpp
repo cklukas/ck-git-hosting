@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/tree_file.hpp"
+#include "test_directory_link.hpp"
 #include "ckgit/temp_directory.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/pages_store.hpp"
@@ -9,12 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#ifdef _WIN32
-#include "ckgit/windows.hpp"
-#include <windows.h>
-#include <winioctl.h>
-#include <cstring>
-#endif
+
 
 namespace fs = std::filesystem;
 using ckgit::platform::TreeFileStatus;
@@ -85,30 +81,9 @@ int run(const fs::path& parent) {
   }).status == TreeFileStatus::Ok && empty_headers == 1, "empty stream emits its header");
   fs::create_directory(base / "outside");
   std::ofstream(base / "outside" / "fixture.txt") << "outside";
+  createTestDirectoryLink(base / "outside", base / "site" / "link");
 #ifdef _WIN32
-  // Junction creation needs no symlink privilege. Use the native operation
-  // so this fixture does not depend on cmd.exe's non-CRT quoting grammar.
-  fs::create_directory(base / "site" / "link");
-  const auto target = L"\\??\\" + (base / "outside").wstring();
-  struct Junction {
-    DWORD tag; WORD bytes, reserved, substitute_offset, substitute_bytes, print_offset, print_bytes;
-  };
-  Junction header{IO_REPARSE_TAG_MOUNT_POINT, static_cast<WORD>(8 + (target.size() + 2) * 2), 0,
-      0, static_cast<WORD>(target.size() * 2), static_cast<WORD>((target.size() + 1) * 2), 0};
-  std::vector<unsigned char> data(sizeof(header) + (target.size() + 2) * 2, 0);
-  std::memcpy(data.data(), &header, sizeof(header));
-  std::memcpy(data.data() + sizeof(header), target.data(), target.size() * 2);
-  const auto directory = CreateFileW((base / "site" / "link").c_str(), GENERIC_WRITE, 0, nullptr,
-      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-  require(directory != INVALID_HANDLE_VALUE, "open junction fixture");
-  DWORD returned = 0;
-  const auto created = DeviceIoControl(directory, FSCTL_SET_REPARSE_POINT, data.data(),
-      static_cast<DWORD>(data.size()), nullptr, 0, &returned, nullptr);
-  CloseHandle(directory);
-  require(created != FALSE, "create junction fixture");
   require(read({unicode + ":stream"}).status != TreeFileStatus::Ok, "alternate stream refused");
-#else
-  fs::create_directory_symlink(base / "outside", base / "site" / "link");
 #endif
   require(read({"link", "fixture.txt"}).status != TreeFileStatus::Ok, "linked directory refused");
   require(ckgit::platform::streamTreeFile(base / "site", {"link", "fixture.txt"}, 1024, false, observe).status !=
