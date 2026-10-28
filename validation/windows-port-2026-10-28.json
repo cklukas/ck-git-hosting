@@ -735,5 +735,122 @@
     "harness_correction": "Initial token handle rights insufficient for process creation; duplicate with maximum already-allowed handle rights succeeded. Child token query needed DUPLICATE for WindowsPrincipal.IsInRole. These errors preceded test-worker execution and are not product failures.",
     "cleanup": "No active ckdocs/worker found; superseded launcher1-5 DLLs and disposable docs removed. Final launcher6 retained for remaining normal-token qualification. Evidence aggregation hit PowerShell5 extended-string JSON serialization; exact command-hash-verified cleanup PID40188 stopped after cleanup, original result JSON retrieved intact.",
     "limits": "Proves CurrentUser upgrade of current installed ckdocs under ordinary limited UAC token with active preview, not standard-user broker/Ninja or CLI/runner live upgrades."
+  },
+  "ordinary_user_station_qualification": {
+    "desktop": {
+      "build": {
+        "start": "2026-10-28T16:08:02.9492510Z",
+        "baseline": "No comparable single-target baseline; inspect compile/link log",
+        "seconds": 5.3246196999999995,
+        "binary_sha256": "8DEAE1A43F449B7F9F7F2546C270188DC0B7C879733D2B782E8728E992749632",
+        "binary_timestamp": "2026-10-28T16:08:08.1414600Z",
+        "exit": 0,
+        "source_sha256": "B584223509D680260B4E0127B4CB2E16A9020777D841076FE27769BCE9E105DC",
+        "target": "ckgit-lpac-probe Release",
+        "end": "2026-10-28T16:08:08.2492269Z",
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+      },
+      "result": {
+        "start": "2026-10-28T16:08:46.2147019Z",
+        "end": "2026-10-28T16:08:46.6075087Z",
+        "binary_sha256": "8DEAE1A43F449B7F9F7F2546C270188DC0B7C879733D2B782E8728E992749632",
+        "administrator": false,
+        "exit": 1
+      },
+      "log_sha256": "05cd76757b81512d8bc772db182dd28c54fc99a8abdfe2e09f5a2c9801815708"
+    },
+    "inherited": {
+      "build": {
+        "start": "2026-10-28T16:10:50.6724403Z",
+        "baseline": "No comparable single-target baseline; inspect compile/link log",
+        "seconds": 8.3202163,
+        "binary_sha256": "5F416E635D7B83A6E066A3CFFB12496A8CA21D8A00ED529E106069FF27861C00",
+        "binary_timestamp": "2026-10-28T16:10:58.8629734Z",
+        "exit": 0,
+        "source_sha256": "E25B5D2A4935E27934A2568726768142F4872E18D761A4DD9BDA367F7890BCEE",
+        "target": "ckgit-lpac-probe Release",
+        "end": "2026-10-28T16:10:58.9861422Z",
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+      },
+      "result": {
+        "start": "2026-10-28T16:11:17.4075344Z",
+        "end": "2026-10-28T16:11:17.8406384Z",
+        "binary_sha256": "5F416E635D7B83A6E066A3CFFB12496A8CA21D8A00ED529E106069FF27861C00",
+        "administrator": false,
+        "exit": 1
+      },
+      "log_sha256": "949e07cd94de8bf0bcc4c2071c15797d5125bffba7dbc35601c23479350eba82"
+    },
+    "unnamed": {
+      "build": {
+        "start": "2026-10-28T16:12:54.4375668Z",
+        "baseline": "No comparable single-target baseline; inspect compile/link log",
+        "seconds": 8.0391411,
+        "binary_sha256": "B2EFFDC9F00E365615A1A8296D0CB04E3AC399E395710C6D67BAA95D4AC5BCAB",
+        "binary_timestamp": "2026-10-28T16:13:02.3710492Z",
+        "exit": 0,
+        "source_sha256": "D2FCCC3BED4CCB4C75946EB4EE9989B36AC2CE0E3533864849E58D664289ECDF",
+        "target": "ckgit-lpac-probe Release",
+        "end": "2026-10-28T16:13:02.4736782Z",
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+      },
+      "result": {
+        "start": "2026-10-28T16:13:30.6568133Z",
+        "end": "2026-10-28T16:13:30.9954972Z",
+        "binary_sha256": "B2EFFDC9F00E365615A1A8296D0CB04E3AC399E395710C6D67BAA95D4AC5BCAB",
+        "administrator": false,
+        "exit": 0
+      },
+      "log_sha256": "3d91f12021ee69bc54e453913f497b66f0f2ab66d6d7ad257554d34a7e02c036"
+    },
+    "interpretation": "Ordinary limited same-user UAC token: existing station with unique AppSID mask34/privateDesktop and inherited desktop both fail child0xc0000142. CreateWindowStationW(NULL,CWF_CREATE_ONLY,...) creates new OS-named Service-0x1-979b2368$ station with fresh per-job security descriptor; LPAC path child exits0. Parent ancestor reads/chdir remain denied. Existing-station case fails closed; no global permissions broadened.",
+    "next": "Current probe holds two sandbox objects simultaneously and later nests executor sandboxes. Null-name station is unique per logon session, so first design a per-step desktop/station lifetime (and test collision/cleanup), then full ordinary-user compiler/linker/NMake/Ninja qualification. Single path probe does not prove full compiler qualification or interactive session/service compatibility.",
+    "restored_build": {
+      "start": "2026-10-28T16:16:25.8383989Z",
+      "baseline": "No comparable single-target baseline; inspect compile/link log",
+      "seconds": 12.8123524,
+      "binary_sha256": "012E794AE5F140EA94E85D899ACA31124A6B5D1261096B65AC62E140E60594E8",
+      "binary_timestamp": "2026-10-28T16:16:37.9466475Z",
+      "exit": 0,
+      "source_sha256": "F0FAA1DF01BDA905F65DE651B8763D75E9DFB1F2D4590096AAE97BC2F172F44A",
+      "target": "all Release",
+      "end": "2026-10-28T16:16:38.6449968Z",
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe"
+    },
+    "restoration": "Both native sandbox/process sources restored to repository bytes, timestamps refreshed, both TUs recompiled and all dependents relinked. Admin original private named station path diagnostic exit0. No experimental production change; current native probe restored. Baselines: changed sandbox-only5.325s, twoTUs8.320/8.039s, restoredall12.812s; logs show actual compiles/relinks."
+  },
+  "debian_2e701a0": {
+    "github_run": 40719507275,
+    "result": "All9jobs SUCCESS",
+    "amd64": {
+      "run": 40719507275,
+      "files": [
+        "BUILD-INFO",
+        "SHA256SUMS",
+        "ck-git-hosting_0.8.2~20261028.1558.2e701a020983_amd64.deb",
+        "ck-git-runner_0.8.2~20261028.1558.2e701a020983_amd64.deb",
+        "ckdocs_0.8.2~20261028.1558.2e701a020983_amd64.deb",
+        "ckgit_0.8.2~20261028.1558.2e701a020983_amd64.deb"
+      ],
+      "checksums_verified": {
+        "ck-git-hosting_0.8.2~20261028.1558.2e701a020983_amd64.deb": "23324b2eefc3371be9765dcd3373a87838972076c9aa7f29bfbf6c5fa840dd29",
+        "ck-git-runner_0.8.2~20261028.1558.2e701a020983_amd64.deb": "8b13a9f7bbe484f7e47a4d141622bfa8c637cecd5b0c98f8c1716e0b1728b9a7",
+        "ckdocs_0.8.2~20261028.1558.2e701a020983_amd64.deb": "30c22c12ac989575ab5e276fb3a2ff9e690dd43fb2237395cc662c87d912b304",
+        "ckgit_0.8.2~20261028.1558.2e701a020983_amd64.deb": "d7770e752a074621ed0400128273cae07b3ca93532d618fecf0a59c449445375"
+      },
+      "build_info": "commit=2e701a0209834b23c57ff605290b41c350d1816f\narchitecture=amd64\n"
+    },
+    "arm64": {
+      "run": 40719507275,
+      "checksums": {
+        "ck-git-hosting_0.8.2~20261028.1600.2e701a020983_arm64.deb": "a50196391d4d2bb7914fc355e3080b676e27a4fd9da9404d20236968e9e2f27f",
+        "ck-git-runner_0.8.2~20261028.1600.2e701a020983_arm64.deb": "e51ab82d4e2cc735e68a872e661321f7e3ba028a41dc1893645e7809fd438640",
+        "ckdocs_0.8.2~20261028.1600.2e701a020983_arm64.deb": "ee998b33a6f7849b22ea84d58790a5d4e7a170b43ad25589edf84fc0946e0678",
+        "ckgit_0.8.2~20261028.1600.2e701a020983_arm64.deb": "ad0510b4e40e02cf3ce14fae06168719af18bff7f15a0afaac7951655b95346c"
+      },
+      "build_info": "commit=2e701a0209834b23c57ff605290b41c350d1816f\narchitecture=arm64\n"
+    },
+    "candidate": "rpi4 extracted server package binaries report0.8.2+g2e701a020983; daemon and Pages existing-config checks pass. Not installed.",
+    "deployment_guard": "CLI initially showedidle, but exclusive spool-lock check found fresh running job; upgrade script aborted before stopping any service or creating snapshot. Existing server8dcf98e unchanged."
   }
 }
