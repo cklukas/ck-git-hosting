@@ -92,3 +92,10 @@ On the server, the records are also plain files under the state root:
 sudo ls /var/lib/ck-git-hosting/state/ci/runs/myproject
 sudo cat /var/lib/ck-git-hosting/state/ci/runs/myproject/<run-id>/run.ini
 ```
+
+For a workflow with multiple jobs, `ckgit ci watch RUN` reports each job's
+status, runner and attempt, and finishes when the overall workflow finishes.
+Use `--job NAME` to watch one job's steps. Summary listings show the overall
+run status; they do not infer a running step from the number of completed
+steps. With an older server that cannot report job membership, watch shows
+`running` without guessing a step number.

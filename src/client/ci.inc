@@ -275,7 +275,7 @@ std::string ciRunJson(const ckgit::CiRunRecord& run, std::size_t completed_steps
 
 // One run as a status or list line: icon and display status, ref, commit,
 // start, timing, and id, judged at the server's time `now`.
-std::string ciRunLine(const ckgit::CiRunRecord& run, std::size_t completed_steps, std::uint64_t now) {
+std::string ciRunLine(const ckgit::CiRunRecord& run, std::uint64_t now) {
   const auto display = ckgit::ciRunDisplayAt(run, now);
   const std::string timing = ckgit::ciRunTiming(display);
   const std::string started =
@@ -283,7 +283,8 @@ std::string ciRunLine(const ckgit::CiRunRecord& run, std::size_t completed_steps
   std::string line = std::string(display.icon) + " " + padded(std::string(display.name), 12) +
                      padded(terminalText(ciRefLabel(run.ref)), 18) + padded(run.commit_id.substr(0, 12), 14) +
                      padded(started, 17) + padded(timing.empty() ? "-" : timing, 12) + run.run_id;
-  if (display.name == "running") line += "  (step " + std::to_string(completed_steps) + " running)";
+  // Summary records do not distinguish workflow parents from executable jobs.
+  // A completed-step count therefore cannot identify a currently running step.
   return line;
 }
 
@@ -349,9 +350,9 @@ int ciStatusCommand(const ckgit::ClientConfig& config, const CiOptions& options)
       std::cout << "  no runs recorded\n";
       continue;
     }
-    std::cout << "  latest  " << ciRunLine(latest->run, latest->completed_steps, now) << "\n";
+    std::cout << "  latest  " << ciRunLine(latest->run, now) << "\n";
     if (active != nullptr && active != latest) {
-      std::cout << "  active  " << ciRunLine(active->run, active->completed_steps, now) << "\n";
+      std::cout << "  active  " << ciRunLine(active->run, now) << "\n";
     }
   }
   if (!quiet.empty()) {
@@ -403,7 +404,7 @@ int ciListCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   }
   std::cout << "   " << padded("STATUS", 12) << padded("REF", 18) << padded("COMMIT", 14) << padded("STARTED", 17)
             << padded("DURATION", 12) << "RUN\n";
-  for (const auto& summary : runs) std::cout << ciRunLine(summary.run, summary.completed_steps, now) << "\n";
+  for (const auto& summary : runs) std::cout << ciRunLine(summary.run, now) << "\n";
   return 0;
 }
 
@@ -456,7 +457,7 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
   const std::uint64_t now = report.server_epoch_seconds;
   const auto display = ckgit::ciRunDisplayAt(run, now);
   const bool workflow = jobs && !jobs->jobs.empty();
-  const bool running_step = display.name == "running" && !workflow;
+  const bool running_step = display.name == "running" && jobs && !workflow;
   if (options.json) {
     std::cout << "{\"schema_version\":1,\"project\":\"" << *project << "\",\"server_epoch\":" << now
               << ",\"run\":" << ciRunJson(run, run.steps.size(), now) << ",\"detail\":\"" << jsonText(run.detail)
@@ -702,7 +703,9 @@ int ciWatchCommand(const ckgit::ClientConfig& config, const CiOptions& options) 
     auto report = fetchCiRun(config, *project, run_id);
     std::cout << "Watching run " << run_id << " of " << *project << " (" << terminalText(ciRefLabel(report.run.ref))
               << " " << report.run.commit_id.substr(0, 12) << ")\n" << std::flush;
+    auto jobs = fetchCiJobs(config, *project, run_id);
     std::size_t printed_steps = 0;
+    std::string last_jobs;
     std::string last_state;
     int failed_polls = 0;
     while (true) {
@@ -713,6 +716,19 @@ int ciWatchCommand(const ckgit::ClientConfig& config, const CiOptions& options) 
         std::cout << "  " << ciStepIcon(step) << " step " << printed_steps << " " << ciStepLabel(step, printed_steps)
                   << ": " << ciStepOutcome(step) << "\n";
       }
+      const bool workflow = jobs && !jobs->jobs.empty();
+      if (workflow) {
+        std::string current_jobs;
+        for (const auto& job : jobs->jobs) {
+          current_jobs += "  job " + job.name + ": " + std::string(ckgit::ciRunStatusName(job.status));
+          if (!job.placement.runner.empty()) current_jobs += " on " + job.placement.runner;
+          current_jobs += " (attempt " + std::to_string(job.placement.attempt) + ")\n";
+        }
+        if (current_jobs != last_jobs) {
+          std::cout << current_jobs;
+          last_jobs = std::move(current_jobs);
+        }
+      }
       if (!display.active) {
         const std::string timing = ckgit::ciRunTiming(display);
         std::cout << display.icon << " Run " << run_id << " " << display.name
@@ -720,8 +736,9 @@ int ciWatchCommand(const ckgit::ClientConfig& config, const CiOptions& options) 
                   << (run.detail.empty() ? "" : ": " + terminalText(run.detail)) << "\n";
         return run.status == ckgit::CiRunStatus::Success && display.name == "success" ? 0 : kRunUnsuccessful;
       }
-      const std::string state = display.name == "pending" ? "queued, waiting for a runner"
-                                                          : "running step " + std::to_string(run.steps.size());
+      const std::string state = workflow ? "waiting for workflow jobs"
+          : display.name == "pending" ? "queued, waiting for a runner"
+          : jobs ? "running step " + std::to_string(run.steps.size()) : "running";
       if (state != last_state) {
         std::cout << "  " << display.icon << " " << state << "\n";
         last_state = state;
@@ -730,6 +747,7 @@ int ciWatchCommand(const ckgit::ClientConfig& config, const CiOptions& options) 
       std::this_thread::sleep_for(options.interval);
       try {
         report = fetchCiRun(config, *project, run_id);
+        if (workflow) jobs = fetchCiJobs(config, *project, run_id);
         failed_polls = 0;
       } catch (const ControlReplyError&) {
         throw;

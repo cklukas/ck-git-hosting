@@ -17,8 +17,9 @@ esac
 test_root=$(mktemp -d "$test_root_parent/ckci.XXXXXX")
 server_pid=''
 runner_pid=''
+watch_pid=''
 cleanup() {
-  for pid in "$runner_pid" "$server_pid"; do
+  for pid in "$watch_pid" "$runner_pid" "$server_pid"; do
     stop_process "$pid" || true
   done
   rm -rf "$test_root"
@@ -511,7 +512,7 @@ until grep -q integ-cancel-start "$test_root/follow.out" 2>/dev/null; do
 done
 live_status=$(ci status --project slow) || fail "ckgit ci status of a running run failed"
 case "$live_status" in
-  *latest*running*"$slow_run"*'(step 0 running)'*) ;;
+  *latest*running*"$slow_run"*) ;;
   *) echo "$live_status" >&2; fail "ci status did not show the live run" ;;
 esac
 
@@ -532,6 +533,7 @@ done
 wait "$follow_pid" || fail "ci log --follow of a cancelled run failed"
 set +e
 wait "$watch_pid"; slow_watch_status=$?
+watch_pid=''
 set -e
 [ "$slow_watch_status" = 5 ] || { cat "$test_root/watch.out" >&2; fail "ci watch of a cancelled run should exit 5"; }
 grep -q 'running step 0' "$test_root/watch.out" || fail "ci watch did not report the running step"
@@ -607,7 +609,7 @@ jobs:
   - name: alpha
     runs_on: [primary]
     steps:
-      - run: sh -ec 'echo alpha-job; mkdir out; echo alpha > out/value'
+      - run: sh -ec 'echo alpha-job; sleep 3; mkdir out; echo alpha > out/value'
     artifacts:
       name: alpha
       paths: [out]
@@ -638,7 +640,28 @@ grep -q "$parent" "$test_root/jobs-status.json" || fail 'status did not select t
 ci show "$parent" --project demo > "$test_root/jobs-pending.txt"
 grep -q 'alpha  pending' "$test_root/jobs-pending.txt" || fail 'pending workflow child missing'
 if grep -q '^Steps:' "$test_root/jobs-pending.txt"; then fail 'workflow parent displayed a fake running step'; fi
-"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/jobs-runner.log" 2>&1
+ci watch "$parent" --project demo --interval 1 > "$test_root/jobs-watch.txt" 2>&1 &
+watch_pid=$!
+attempt=0
+until grep -q 'job alpha: pending' "$test_root/jobs-watch.txt"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail 'workflow watch did not report pending jobs'
+  sleep .1
+done
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/jobs-runner.log" 2>&1 &
+runner_pid=$!
+attempt=0
+until grep -q 'job alpha: running on primary' "$test_root/jobs-watch.txt"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail 'workflow watch did not report a running job'
+  sleep .1
+done
+ci status --project demo > "$test_root/jobs-running-status.txt"
+if grep -q '(step .* running)' "$test_root/jobs-running-status.txt"; then fail 'workflow status invented a parent step'; fi
+wait "$runner_pid" || fail 'distributed runner failed'
+runner_pid=''
+wait "$watch_pid" || fail 'workflow watch did not exit successfully'
+watch_pid=''
+grep -q 'job beta: success on primary' "$test_root/jobs-watch.txt" || fail 'workflow watch did not report final job placement'
+if grep -q 'running step' "$test_root/jobs-watch.txt"; then fail 'workflow watch invented a parent step'; fi
 ci show "$parent" --project demo --json > "$test_root/jobs.json"
 grep -q '"jobs":\[{"name":"alpha"' "$test_root/jobs.json" || fail 'JSON workflow jobs missing'
 grep -q '"name":"beta".*"status":"success".*"runs_on":\["primary"\]' "$test_root/jobs.json" || fail 'JSON job status/placement missing'
