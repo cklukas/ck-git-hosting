@@ -510,7 +510,7 @@
       "start": "2026-10-28T15:19:59.1917705Z",
       "preserved_identity_sha256": "C3779F7E54046B5708523860B015E801AA83DBA452F8FF0F0C3AA60DE99B0B23",
       "process_exit": 0,
-      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade3-AllUsers\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade3-AllUsers\\application Grüß with spaces\\ckdocs.exe",
       "success": true,
       "installer_sha256": "0DD0C14259538D8F177CB4E49F83AAD5634CD80B40706834B75E16BD12005CE1",
       "binary_sha256": "B1FF542B60D2FEB9BB191C89D02F33D35E7C3AF93BFEFFD6EC2AD0F93D040586",
@@ -575,13 +575,13 @@
       "utc": "2026-10-28T15:09:36.8995882Z",
       "administrator": false,
       "graceful_exit": false,
-      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Grüß with spaces\\ckdocs.exe",
       "pid_shutdown": "list=5"
     },
     "admin_rm_diagnostic": {
       "pid": 63092,
       "installed_os_binary": "start=0 register=0 list=0 needed=0 reasons=0",
-      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Grüß with spaces\\ckdocs.exe",
       "restart_manager": "start=0 register=0 list=234 needed=1 reasons=0",
       "utc": "2026-10-28T15:07:21.7460405Z",
       "administrator": true
@@ -949,5 +949,70 @@
     "qualification_scope": "Full ordinary-user compiler test uses build3. Final build4 extends the same bounded creation retry to administrator-named stations; normal path/collision/recovery/8CTest/runner qualification and full administrative compiler fixture pass with final binary. NMake, not Ninja, is qualified. Interactive/service logon-session configurations and final installed GitHub package acceptance remain open.",
     "local_docs": "67pages passed; diffcheck passed",
     "server": "2e701a0 GitHub all9green, candidateARM64 validated but not deployed. All-project status must use ci status --all --json: earlier plain status was only current project. Exclusive spool lock prevented any service changes. Bounded180sec idle wait expired with0upgrade attempts at16:42:40UTC."
+  },
+  "device_path_qualification": {
+    "scope": "Opt-in temporary non-drive DOS device alias pointing to existing V: workspace; no ancestor ACL or production runner change",
+    "base_commit": "81b992fb8897063f80687ccf97dbdd8dd67fc56c",
+    "creation": "DefineDosDeviceW RAW_TARGET_PATH|NO_BROADCAST_SYSTEM, random sandbox name, prior QueryDosDevice absence check",
+    "removal": "REMOVE_DEFINITION|EXACT_MATCH_ON_REMOVE|RAW_TARGET_PATH|NO_BROADCAST_SYSTEM",
+    "result": "Both ordinary limited UAC token and administrator: GetLongPathNameW returned48/error0; cmd.exe rejected alias as UNC current directory and exited1. Not a Ninja solution.",
+    "source_restored": true,
+    "evidence": {
+      "build.json": {
+        "start": "2026-10-28T16:54:58.1821549Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 9.047862499999999,
+        "exit": 0,
+        "source_archive_sha256": "87EC7DE5B299A0E38F503BA755117570F80C0ABD2157510A2EC77615D20D8187",
+        "probe_sha256": "A9955AFA6ED2B36F238E07C9C383BCE9DEB2589CB94B6D55339E68152BC5AD2C",
+        "target": "all Release",
+        "end": "2026-10-28T16:55:07.2250218Z",
+        "runner_sha256": "D666CB481BB194CAF2C2CDE09F9B8C6D86F70372C4058C3527FB84A5AA3402A3"
+      },
+      "admin.json": {
+        "utc": "2026-10-28T16:55:35.7517119Z",
+        "probe_sha256": "A9955AFA6ED2B36F238E07C9C383BCE9DEB2589CB94B6D55339E68152BC5AD2C",
+        "exit": 1
+      },
+      "ordinary.json": {
+        "utc": "2026-10-28T16:56:25.2515307Z",
+        "probe_sha256": "A9955AFA6ED2B36F238E07C9C383BCE9DEB2589CB94B6D55339E68152BC5AD2C",
+        "exit": 1
+      },
+      "restore-build.json": {
+        "start": "2026-10-28T16:57:33.6641888Z",
+        "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+        "seconds": 9.3497366,
+        "exit": 0,
+        "source_archive_sha256": "1FA8CA2D493832E484DED4B61F168AD030D7189B717ACAA8B0331480CEBF3B64",
+        "probe_sha256": "06A8AE8D482C63B6FC94C72DB1F50E0A962BE2C915C13A162FADC54F6F96D965",
+        "target": "all Release",
+        "end": "2026-10-28T16:57:43.0099256Z",
+        "runner_sha256": "D666CB481BB194CAF2C2CDE09F9B8C6D86F70372C4058C3527FB84A5AA3402A3"
+      },
+      "restored-admin.json": {
+        "workspaces_absent": true,
+        "scope": "admin",
+        "source_sha256": "C9A883368243B18700109DDDDBCEF24972FF067E5FFD2B9C36F49FCDA3544477",
+        "probe_sha256": "06A8AE8D482C63B6FC94C72DB1F50E0A962BE2C915C13A162FADC54F6F96D965",
+        "utc": "2026-10-28T16:58:11.1876213Z",
+        "exit": 0,
+        "aliases_absent": true
+      },
+      "restored-ordinary.json": {
+        "workspaces_absent": true,
+        "scope": "ordinary",
+        "source_sha256": "C9A883368243B18700109DDDDBCEF24972FF067E5FFD2B9C36F49FCDA3544477",
+        "probe_sha256": "06A8AE8D482C63B6FC94C72DB1F50E0A962BE2C915C13A162FADC54F6F96D965",
+        "utc": "2026-10-28T16:58:23.3335584Z",
+        "exit": 0,
+        "aliases_absent": true
+      }
+    },
+    "log_sha256": {
+      "admin.log": "0e832828e95b4aa5beea588fbaaa0b7d734fadeb8034f90e578bd0a304b0ed2c",
+      "ordinary.log": "54cd2c3c34ad3920a0507cee14b17e042b069efcdeb178b32d6640ecbf552c3f",
+      "experiment.patch": "e3dffdd77d672c833a6268e485dc82600165b380cbc15c4ac7460a0216dc1e7e"
+    }
   }
 }

@@ -118,6 +118,12 @@ namespace passed that point, but CMake-generated command-interpreter steps
 still failed with access denied, including the full project's compiler link
 test. Ninja inside LPAC is therefore not currently supported; do not switch the
 runner to it or broaden filesystem permissions to make it run.
+An additional ordinary-user and administrator diagnostic mapped the existing
+workspace to a temporary, randomly named DOS device without changing drive
+letters or filesystem ACLs. `GetLongPathNameW` succeeded through that alias,
+but `cmd.exe` rejected the device path as a UNC current directory. This does
+not solve Ninja compatibility. Both aliases and workspaces were removed; the
+experiment is not part of the runner.
 
 The example configuration matches this staged directory layout:
 
