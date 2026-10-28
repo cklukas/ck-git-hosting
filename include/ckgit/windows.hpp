@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,8 @@ namespace ckgit {
 std::wstring windowsCommandLine(const std::vector<std::wstring>& arguments);
 bool isWindowsFileComponent(std::wstring_view component);
 #ifdef _WIN32
+inline constexpr unsigned kWindowsSandboxProcessLimit = 64;
+inline constexpr std::uint64_t kWindowsSandboxMemoryBytes = std::uint64_t{4} << 30;
 std::wstring utf8ToWide(std::string_view value);
 std::string wideToUtf8(std::wstring_view value);
 std::mutex& windowsProcessCreationMutex();

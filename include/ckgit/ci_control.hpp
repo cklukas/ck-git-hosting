@@ -48,6 +48,11 @@ struct CiRunReport {
   CiRunRecord run;
 };
 
+// Optional, runner-reported execution properties. Separate operation preserves
+// the existing ci-run wire format for older clients.
+std::string formatCiExecutionControlResponse(const CiRunRecord& run);
+std::optional<CiExecutionReport> parseCiExecutionControlResponse(std::string_view response);
+
 // `ci-placement`: the runner that executes (or executed) a run -- "primary"
 // for the server's own, a remote runner's name otherwise, empty while the run
 // is queued -- and which attempt the run is on.

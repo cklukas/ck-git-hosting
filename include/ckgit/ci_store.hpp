@@ -100,6 +100,22 @@ struct CiArtifactRecord {
   std::string note;                         // empty on success
 };
 
+// Runner-reported execution properties, not a host attestation. Absent for
+// old records and jobs which never launched a sandboxed process. Zero resource
+// limits mean not configured, not a zero allowance. Timeout is per step.
+struct CiExecutionReport {
+  std::string platform;
+  std::string architecture;
+  std::string isolation;
+  std::string network;
+  std::uint64_t memory_bytes = 0;
+  unsigned process_limit = 0;
+  unsigned timeout_seconds = 0;
+  bool operator==(const CiExecutionReport&) const = default;
+};
+std::string formatCiExecutionReport(const CiExecutionReport& report);
+CiExecutionReport parseCiExecutionReport(std::string_view text);
+
 struct CiRunRecord {
   std::string run_id;
   std::string project_name;
@@ -122,6 +138,7 @@ struct CiRunRecord {
   std::vector<CiArtifactRecord> artifacts;  // populated by loadCiRuns from sidecars
   std::string parent_run_id;
   std::string workflow_job;
+  std::optional<CiExecutionReport> execution;
 };
 
 // A released version: a tag with durable assets, produced by a tag build.

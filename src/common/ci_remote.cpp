@@ -292,6 +292,8 @@ void RemoteCiSink::appendLog(std::size_t index, std::string_view bytes) {
 }
 
 void RemoteCiSink::stepFinished(const CiRunRecord& record, std::size_t index) {
+  if (record.execution && transport_.supportsExecutionReport())
+    send("execution " + formatCiExecutionReport(*record.execution) + "\n");
   if (index >= steps_.size() || record.steps.empty()) return;
   StepLog& step = steps_[index];
   step.ended = true;
@@ -449,6 +451,7 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
   report.detail = record.detail;
   report.steps = record.steps;
   report.outputs = outputs_;
+  if (transport_.supportsExecutionReport()) report.execution = record.execution;
   CiRunnerCommand command;
   command.op = CiRunnerOp::kFinish;
   command.job_id = job_.prepared.job.job_id;

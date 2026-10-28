@@ -150,7 +150,7 @@ int hello(const ServerConfig& config, const std::string& runner, const CiRunnerC
   if (std::optional<std::string> decoded = hexDecode(command.version_hex, 128)) version = *decoded;
   noteCiRunnerSeen(stateRoot(config), runner, version);
   writeAll(out, "ok\nprotocol=" + std::to_string(command.protocol_version) + "\nrunner=" + runner +
-                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\n");
+                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\nexecution_report=1\n");
   return 0;
 }
 
@@ -299,6 +299,7 @@ int finish(const ServerConfig& config, const std::string& runner, const CiRunner
     if (report.started_epoch_seconds != 0) record.started_epoch_seconds = report.started_epoch_seconds;
     record.detail = report.detail.substr(0, kMaximumCiDetailBytes);
     record.steps = report.steps;
+    record.execution = report.execution;
     record.finished_epoch_seconds = nowEpoch();
     record.heartbeat_epoch_seconds = record.finished_epoch_seconds;
     const CiPreparedJob prepared = preparedOrMinimal(config, job);
@@ -473,6 +474,9 @@ class StreamSession {
       record_.finished_epoch_seconds = 0;
       write(true);
       refresh(config_, job_.project_name);
+    } else if (kind == "execution" && tokens.size() == 2) {
+      record_.execution = parseCiExecutionReport(tokens[1]);
+      write(true);
     } else if (kind == "step-start" && tokens.size() == 3) {
       const std::size_t index = static_cast<std::size_t>(parse(tokens[1]));
       if (index == record_.steps.size()) {

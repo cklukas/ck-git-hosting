@@ -299,3 +299,21 @@ runner cannot take jobs meant for another kind of machine by claiming a label.
   server; the runner's SSH key directory is masked from them. Without
   unprivileged user namespaces a remote runner refuses to run jobs at all
   unless `ci_allow_degraded=true`.
+
+## Reported execution properties
+
+New runners negotiate `execution_report=1` with the server before sending
+structured execution properties. Older servers receive the existing finish
+payload unchanged. The Windows runner records LPAC, the actual architecture,
+denied network access, a 4 GiB memory limit and 64-process limit per step, and
+the configured step timeout after a process has run with those protections.
+Setup failures before process launch leave these properties unknown.
+
+The server stores the report with the job attempt. `ckgit ci show RUN --job NAME`
+and the job's dashboard page display it as **runner-reported**, not independent
+attestation. JSON exposes it as `execution`; missing reports are `null`.
+Old run records remain readable. New records containing a report use schema 5;
+rollback to a server predating that schema requires restoring compatible state,
+not merely replacing its executable. Parent workflows have no shared sandbox;
+inspect their individual jobs for execution properties. Linux and macOS reports
+are not populated by this Windows implementation yet.

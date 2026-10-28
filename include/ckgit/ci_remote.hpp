@@ -34,6 +34,7 @@ class CiRemoteTransport {
   // including the separate Git SSH shim process. Failed greetings never claim.
   bool negotiate(std::string_view version_hex);
   unsigned protocolVersion() const { return protocol_version_; }
+  bool supportsExecutionReport() const { return execution_report_; }
 
   struct Result {
     int exit_code = -1;
@@ -63,6 +64,7 @@ class CiRemoteTransport {
   RunnerConfig config_;
   std::filesystem::path config_path_;
   unsigned protocol_version_ = 1;
+  bool execution_report_ = false;
 };
 
 // `ck-ci-runnerd ssh-shim`: what GIT_SSH_COMMAND runs. Git calls it as

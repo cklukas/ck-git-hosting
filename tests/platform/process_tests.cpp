@@ -56,11 +56,15 @@ int run(const std::vector<std::string>& args) {
         if (command->op == ckgit::CiRunnerOp::kStream) {
           std::cout << "ready\n" << std::flush;
           std::uint64_t held = 0;
+          bool execution_seen = false;
           for (std::string line; std::getline(std::cin, line);) {
             std::istringstream fields(line);
             std::string operation;
             fields >> operation;
-            if (operation == "log") {
+            if (operation == "execution") {
+              std::string encoded; fields >> encoded;
+              execution_seen = ckgit::parseCiExecutionReport(encoded).isolation == "lpac";
+            } else if (operation == "log") {
               std::size_t index = 0, length = 0;
               std::uint64_t offset = 0;
               fields >> index >> offset >> length;
@@ -72,7 +76,7 @@ int run(const std::vector<std::string>& args) {
               std::cout << "ack 0 " << held << '\n' << std::flush;
             }
           }
-          return held == 200000 ? 0 : 2;
+          return held == 200000 && execution_seen ? 0 : 2;
         }
         const std::string body(std::istreambuf_iterator<char>(std::cin), {});
         if (command->op == ckgit::CiRunnerOp::kPut) {
@@ -84,7 +88,7 @@ int run(const std::vector<std::string>& args) {
           const auto report = ckgit::parseCiFinishReport(body);
           if (report.status != ckgit::CiRunStatus::Success || report.steps.size() != 1 ||
               report.steps[0].name != "compile" || report.outputs.size() != 1 || report.outputs[0].name != "build" ||
-              !report.outputs[0].note.empty()) return 2;
+              !report.outputs[0].note.empty() || !report.execution || report.execution->memory_bytes != 4294967296ULL) return 2;
           std::cout << "ok success\n";
           return 0;
         }
@@ -93,6 +97,7 @@ int run(const std::vector<std::string>& args) {
       if (command->op == ckgit::CiRunnerOp::kHello) {
         if (std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER") && command->protocol_version > 1) return 1;
         std::cout << "ok\nprotocol=" << command->protocol_version << "\n";
+        if (!std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER")) std::cout << "execution_report=1\n";
       } else if (command->op == ckgit::CiRunnerOp::kClaim) {
         std::cout << "none\n";
       } else if (command->op == ckgit::CiRunnerOp::kStream || command->op == ckgit::CiRunnerOp::kPut) {
@@ -279,7 +284,7 @@ int run(const std::vector<std::string>& args) {
       config.ssh_program = ckgit::pathFromUtf8(args[0]);
       config.known_hosts = root / ckgit::pathFromUtf8("known hosts \xc3\xbc");
       ckgit::CiRemoteTransport transport(config, root / "runner's config.ini");
-      require(transport.negotiate("31") && transport.protocolVersion() == 2, "native SSH transport negotiates v2");
+      require(transport.negotiate("31") && transport.protocolVersion() == 2 && transport.supportsExecutionReport(), "native SSH transport negotiates v2 and execution reports");
       const auto shim = transport.gitSshCommand("job-test", std::string(32, 'a'));
       require(shim.find("runner'\\''s config.ini") != std::string::npos, "Git shim quotes paths for the Git shell");
       ckgit::CiRunnerCommand command;
@@ -326,6 +331,7 @@ int run(const std::vector<std::string>& args) {
         ckgit::CiStepResult step;
         step.name = "compile";
         step.exit_code = 0;
+        record.execution = ckgit::CiExecutionReport{"windows", "x64", "lpac", "denied", 4294967296ULL, 64, 60};
         record.steps.push_back(step);
         sink.stepFinished(record, 0);
         ckgit::CiArtifact artifact;

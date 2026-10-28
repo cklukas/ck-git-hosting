@@ -674,4 +674,24 @@ ci download "$parent" beta --project demo --job beta --dashboard-url "$base" --i
 if ci log "$parent" --project demo --job absent > "$test_root/missing-job.txt" 2>&1; then fail 'unknown workflow job accepted'; fi
 grep -q 'workflow has no job named absent' "$test_root/missing-job.txt" || fail 'missing job error unclear'
 
+# A recorded Windows report is displayed through the real control socket and
+# HTTP handler, independent of this test host's platform. The Linux fixture
+# itself does not claim LPAC execution.
+beta_record=$(grep -l '^workflow_job=beta$' "$state"/ci/runs/demo/*/run.ini)
+[ -n "$beta_record" ] || fail 'missing beta record'
+awk '{
+  if ($0 == "schema_version=4") print "schema_version=5";
+  else if ($0 ~ /^step_count=/) { print "execution=1,windows,x64,lpac,denied,4294967296,64,60"; print; }
+  else print;
+}' "$beta_record" > "$beta_record.new"
+chmod 600 "$beta_record.new"
+mv "$beta_record.new" "$beta_record"
+ci show "$parent" --project demo --job beta --json > "$test_root/execution.json"
+grep -q '"execution":{"source":"runner","platform":"windows","architecture":"x64","isolation":"lpac","network":"denied","memory_bytes":4294967296,"process_limit":64,"step_timeout_seconds":60}' "$test_root/execution.json" || fail 'CLI JSON execution report missing'
+ci show "$parent" --project demo --job beta > "$test_root/execution.txt"
+grep -q 'windows/x64, lpac, network denied (runner-reported)' "$test_root/execution.txt" || fail 'CLI text execution report missing'
+beta_id=$(basename "$(dirname "$beta_record")")
+curl --fail --silent "$base/project/demo/ci/$beta_id" > "$test_root/execution.html"
+grep -q 'Execution (runner-reported)' "$test_root/execution.html" || fail 'dashboard execution report missing'
+
 echo "ci_runner integration OK"

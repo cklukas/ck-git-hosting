@@ -331,6 +331,17 @@ std::string strippedCiPlacementDetail(const std::string& detail, const CiRunPlac
   return detail;  // truncated by the detail cap, or from a server that adds no note
 }
 
+std::string formatCiExecutionControlResponse(const CiRunRecord& run) {
+  return "ok " + (run.execution ? formatCiExecutionReport(*run.execution) : "-") + "\n";
+}
+
+std::optional<CiExecutionReport> parseCiExecutionControlResponse(std::string_view response) {
+  if (response == "ok -\n") return std::nullopt;
+  if (!response.starts_with("ok ") || !response.ends_with('\n'))
+    throw std::invalid_argument("malformed execution response");
+  return parseCiExecutionReport(response.substr(3, response.size() - 4));
+}
+
 std::string formatCiPlacementControlResponse(const CiRunRecord& run) {
   if ((!run.runner.empty() && !isValidClientId(run.runner)) || run.attempt == 0) {
     throw std::invalid_argument("a CI run's placement cannot be represented in a control response");

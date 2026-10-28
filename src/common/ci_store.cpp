@@ -313,12 +313,13 @@ CiJobRequest parseJob(std::string_view content) {
 std::string serializeRun(const CiRunRecord& run) {
   // schema_version 2 added heartbeat_epoch after finished_epoch, and 3 adds
   // runner and attempt after it; version 4 adds distributed membership.
+  // Version 5 adds an optional execution report; report-free records stay v4.
   // parseRun still reads every earlier layout
   // written by earlier builds so an upgrade never discards a project's run
   // history.
   std::string out =
-      "schema_version=4\n"
-      "run_id=" + run.run_id + "\n"
+      (run.execution ? "schema_version=5\n" : "schema_version=4\n") +
+      std::string("run_id=") + run.run_id + "\n"
       "project=" + run.project_name + "\n"
       "ref_hex=" + hexEncode(run.ref) + "\n"
       "commit=" + run.commit_id + "\n"
@@ -330,7 +331,8 @@ std::string serializeRun(const CiRunRecord& run) {
       "attempt=" + std::to_string(run.attempt) + "\n"
       "parent_run_id=" + run.parent_run_id + "\n"
       "workflow_job=" + run.workflow_job + "\n"
-      "detail_hex=" + hexEncode(run.detail) + "\n"
+      "detail_hex=" + hexEncode(run.detail) + "\n" +
+      (run.execution ? "execution=" + formatCiExecutionReport(*run.execution) + "\n" : "") +
       "step_count=" + std::to_string(run.steps.size()) + "\n";
   for (const CiStepResult& step : run.steps) {
     out += "step=" + std::to_string(step.exit_code) + "," + (step.timed_out ? "1" : "0") + "," +
@@ -344,11 +346,12 @@ CiRunRecord parseRun(std::string_view content) {
   if (lines.empty()) fail("a CI run record has the wrong shape");
   // Version 1 has no heartbeat line and version 2 no runner and attempt lines,
   // so their headers are shorter and the later fields sit earlier.
-  const bool v4 = lines[0] == "schema_version=4";
+  const bool v5 = lines[0] == "schema_version=5";
+  const bool v4 = v5 || lines[0] == "schema_version=4";
   const bool v3 = v4 || lines[0] == "schema_version=3";
   const bool v2 = v3 || lines[0] == "schema_version=2";
   if (!v2 && lines[0] != "schema_version=1") fail("a CI run record has the wrong shape");
-  const std::size_t header = v4 ? 15 : v3 ? 13 : v2 ? 11 : 10;
+  const std::size_t header = v5 ? 16 : v4 ? 15 : v3 ? 13 : v2 ? 11 : 10;
   if (lines.size() < header) fail("a CI run record has the wrong shape");
   CiRunRecord run;
   run.run_id = std::string(expectField(lines[1], "run_id="));
@@ -378,6 +381,7 @@ CiRunRecord parseRun(std::string_view content) {
   }
   if (!validJobMembership(run.run_id, run.parent_run_id, run.workflow_job)) fail("invalid run membership");
   run.detail = fromHex(expectField(lines[next++], "detail_hex="), kMaximumCiDetailBytes);
+  if (v5) run.execution = parseCiExecutionReport(expectField(lines[next++], "execution="));
   const std::string_view count_text = expectField(lines[next], "step_count=");
   std::size_t count = 0;
   const auto [end, error] = std::from_chars(count_text.data(), count_text.data() + count_text.size(), count);

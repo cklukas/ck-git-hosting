@@ -231,8 +231,8 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   if (sandbox) {
     limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS | JOB_OBJECT_LIMIT_JOB_MEMORY |
         JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
-    limits.BasicLimitInformation.ActiveProcessLimit = 64;
-    limits.JobMemoryLimit = static_cast<SIZE_T>(4) * 1024 * 1024 * 1024;
+    limits.BasicLimitInformation.ActiveProcessLimit = kWindowsSandboxProcessLimit;
+    limits.JobMemoryLimit = static_cast<SIZE_T>(kWindowsSandboxMemoryBytes);
   }
   if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) fail("configure process job");
   if (sandbox) {

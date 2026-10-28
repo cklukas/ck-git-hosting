@@ -1024,7 +1024,17 @@ void testProtocolRoundTrips() {
   report.steps.push_back(ckgit::CiStepResult{"", 3, false, true});
   report.outputs.push_back(ckgit::CiDeclaredOutput{"pkg", true, 5, ""});
   report.outputs.push_back(ckgit::CiDeclaredOutput{"big", false, 0, "artifact exceeds the size cap"});
+  const auto legacy = ckgit::formatCiFinishReport(report);
+  require(!ckgit::parseCiFinishReport(legacy).execution, "legacy finish does not invent isolation");
+  report.execution = ckgit::CiExecutionReport{"windows", "x64", "lpac", "denied", 4294967296ULL, 64, 1800};
   const ckgit::CiFinishReport parsed = ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report));
+  require(parsed.execution == report.execution, "execution properties survive the finish protocol");
+  require(throws([&]() { ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report) +
+      "execution=1,windows,x64,lpac,denied,4294967296,64,1800\n"); }), "duplicate execution report rejected");
+  for (const std::string bad : {"2,windows,x64,lpac,denied,0,0,0", "1,linux,x64,lpac,denied,0,0,0",
+      "1,windows,x64,lpac,domains-only,0,0,0", "1,windows,x64,lpac,denied,-1,0,0",
+      "1,windows,x64,lpac,denied,0,4294967296,0", "1,windows,x64,lpac,denied,0,0,0,extra"})
+    require(throws([&]() { ckgit::parseCiExecutionReport(bad); }), "malformed execution report rejected");
   require(parsed.status == report.status && parsed.detail == report.detail && parsed.started_epoch_seconds == 1234,
           "the final status round-trips");
   require(parsed.steps.size() == 2 && parsed.steps[0].exit_code == -1 && parsed.steps[0].timed_out &&
@@ -1232,7 +1242,7 @@ void testGatewayRun() {
 
   const std::string frames = "started 1700000000\nstep-start 0 " + ckgit::hexEncode("build") +
                              "\nlog 0 0 6\nhello\nlog 0 3 7\nlo\nbye\nstep-end 0 0 0 0 " +
-                             ckgit::hexEncode("build") + "\nheartbeat\n";
+                             ckgit::hexEncode("build") + "\nexecution 1,windows,x64,lpac,denied,4294967296,64,60\nheartbeat\n";
   const std::string relayed = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, frames, fixture);
   require(relayed.find("ready\n") != std::string::npos && relayed.find("ack 0 10\n") != std::string::npos,
           "the stream acknowledges what it holds (got: " + relayed + ")");
@@ -1241,6 +1251,7 @@ void testGatewayRun() {
   const auto running = ckgit::loadCiRun(fixture.state, "demo", job.job_id);
   require(running.has_value() && running->status == ckgit::CiRunStatus::Running && running->steps.size() == 1,
           "the stream keeps the run record current");
+  require(running->execution && running->execution->isolation == "lpac", "execution report persists before finish");
   const std::string again = gateway(config, "uconsole", "ckgit-runner 1 stream " + tail, "", fixture);
   require(again.rfind("held 0 10\nready\n", 0) == 0,
           "a reconnecting stream learns how much is held (got: " + again + ")");
@@ -1262,6 +1273,7 @@ void testGatewayRun() {
   report.status = ckgit::CiRunStatus::Success;
   report.started_epoch_seconds = 1700000000;
   report.detail = "all steps passed";
+  report.execution = ckgit::CiExecutionReport{"windows", "x64", "lpac", "denied", 4294967296ULL, 64, 60};
   report.steps.push_back(ckgit::CiStepResult{"build", 0, false, false});
   report.outputs.push_back(ckgit::CiDeclaredOutput{"bundle", false, 0, ""});
   const std::string finished =
@@ -1271,6 +1283,7 @@ void testGatewayRun() {
   require(done.has_value() && done->status == ckgit::CiRunStatus::Success && done->artifacts.size() == 1 &&
               done->artifacts[0].bytes == bundle.size(),
           "the finished run and its uploaded artifact are on the main host");
+  require(done->execution == report.execution, "gateway persists runner execution report");
   require(!ckgit::loadCiClaim(fixture.state, job.job_id).has_value(), "the job is released");
   require(gateway(config, "uconsole", "ckgit-runner 1 heartbeat " + tail, "", fixture) == "lease-lost\n",
           "a finished job's lease is gone");
@@ -1331,6 +1344,9 @@ void testRunnerNegotiation() {
   gateway("'ckgit-runner 2 hello '* ) printf 'ok\\nprotocol=2\\n';;\n");
   ckgit::CiRemoteTransport transport(config, fixture.root / "runner.ini");
   require(transport.negotiate("31") && transport.protocolVersion() == 2, "new gateway negotiates v2");
+  require(!transport.supportsExecutionReport(), "v2 alone does not imply execution report support");
+  gateway("'ckgit-runner 2 hello '* ) printf 'ok\\nprotocol=2\\nexecution_report=1\\n';;\n");
+  require(transport.negotiate("31") && transport.supportsExecutionReport(), "execution report capability negotiated");
   ckgit::CiRunnerCommand command;
   command.op = ckgit::CiRunnerOp::kClaim;
   require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 2 claim 0\n",
@@ -1344,7 +1360,7 @@ void testRunnerNegotiation() {
   require(transport.gitSshCommand(ckgit::generateCiId(), "token").find("--protocol 2") != std::string::npos,
           "Git's separate SSH shim inherits v2");
   gateway("'ckgit-runner 2 hello '* ) exit 2;;\n'ckgit-runner 1 hello '* ) printf 'ok\\nprotocol=1\\n';;\n");
-  require(transport.negotiate("31") && transport.protocolVersion() == 1, "old gateway falls back to v1");
+  require(transport.negotiate("31") && transport.protocolVersion() == 1 && !transport.supportsExecutionReport(), "old gateway falls back to v1 without execution reports");
   require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 1 claim 0\n",
           "fallback applies to subsequent operations");
   gateway("*hello*) printf 'ok\\nprotocol=99\\n';;\n");
@@ -1474,10 +1490,15 @@ void testRunnerShownOnRuns() {
   run.status = ckgit::CiRunStatus::Running;
   run.runner = "uconsole";
   run.attempt = 2;
+  run.execution = ckgit::CiExecutionReport{"windows", "x64", "lpac", "denied", 4294967296ULL, 64, 1800};
   ckgit::writeCiRunRecord(fixture.state, run);
   const auto loaded = ckgit::loadCiRun(fixture.state, "demo", run.run_id);
   require(loaded.has_value() && loaded->runner == "uconsole" && loaded->attempt == 2,
           "runner and attempt survive the run record");
+  require(loaded->execution == run.execution, "execution survives schema5 persistence");
+  require(ckgit::parseCiExecutionControlResponse(ckgit::formatCiExecutionControlResponse(*loaded)) == run.execution,
+      "execution properties survive the independent client control operation");
+  require(!ckgit::parseCiExecutionControlResponse("ok -\n"), "unknown execution stays unknown");
 
   // A record written by the previous schema still loads, as attempt 1 of no runner.
   const std::string old_id = ckgit::generateCiId();
@@ -1493,7 +1514,7 @@ void testRunnerShownOnRuns() {
   std::filesystem::permissions(old_dir / "run.ini", std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
                                std::filesystem::perm_options::replace);
   const auto old = ckgit::loadCiRun(fixture.state, "demo", old_id);
-  require(old.has_value() && old->runner.empty() && old->attempt == 1, "a schema-2 record still loads");
+  require(old.has_value() && !old->execution && old->runner.empty() && old->attempt == 1, "a schema-2 record still loads");
 
   ckgit::CiRunReport report;
   report.run = *loaded;
@@ -1514,6 +1535,8 @@ void testRunnerShownOnRuns() {
   require(page.find("<dt>Runner</dt>") != std::string::npos && page.find("uconsole") != std::string::npos &&
               page.find("<dt>Attempt</dt><dd>2") != std::string::npos,
           "the run page shows the runner and the attempt");
+  require(page.find("Execution (runner-reported)") != std::string::npos && page.find("windows/x64; isolation lpac; network denied") != std::string::npos &&
+      page.find("processes: 64; timeout: 1800s") != std::string::npos, "dashboard renders reported execution and limits");
   require(ckgit::renderCiRuns(project).find("on uconsole") != std::string::npos, "the run list shows the runner");
 
   ckgit::CiRunnerRecord registered;

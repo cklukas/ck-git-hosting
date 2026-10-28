@@ -3,7 +3,52 @@
 #include "ckgit/ci_store.hpp"
 #include "ckgit/ci_results.hpp"
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <limits>
+#include <stdexcept>
 namespace ckgit {
+CiExecutionReport parseCiExecutionReport(std::string_view text) {
+  if (text.size() > 256) throw std::invalid_argument("execution report too large");
+  std::array<std::string_view, 8> fields{};
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    const auto comma = text.find(',');
+    if ((i + 1 < fields.size()) != (comma != std::string_view::npos))
+      throw std::invalid_argument("malformed execution report");
+    fields[i] = text.substr(0, comma);
+    if (comma != std::string_view::npos) text.remove_prefix(comma + 1);
+  }
+  if (fields[0] != "1" ||
+      (fields[1] != "windows" && fields[1] != "linux" && fields[1] != "macos") ||
+      (fields[2] != "x64" && fields[2] != "arm64" && fields[2] != "x86") ||
+      (fields[3] != "lpac" && fields[3] != "linux-namespaces" && fields[3] != "seatbelt" && fields[3] != "none") ||
+      (fields[4] != "denied" && fields[4] != "loopback-only" && fields[4] != "unrestricted"))
+    throw std::invalid_argument("unknown execution report value");
+  if ((fields[3] == "lpac" && fields[1] != "windows") ||
+      (fields[3] == "linux-namespaces" && fields[1] != "linux") ||
+      (fields[3] == "seatbelt" && fields[1] != "macos"))
+    throw std::invalid_argument("execution isolation does not match platform");
+  const auto number = [](std::string_view value, std::uint64_t maximum) {
+    std::uint64_t result = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
+    if (value.empty() || error != std::errc{} || end != value.data() + value.size() || result > maximum)
+      throw std::invalid_argument("invalid execution resource limit");
+    return result;
+  };
+  return {std::string(fields[1]), std::string(fields[2]), std::string(fields[3]), std::string(fields[4]),
+      number(fields[5], std::numeric_limits<std::uint64_t>::max()),
+      static_cast<unsigned>(number(fields[6], std::numeric_limits<unsigned>::max())),
+      static_cast<unsigned>(number(fields[7], std::numeric_limits<unsigned>::max()))};
+}
+
+std::string formatCiExecutionReport(const CiExecutionReport& report) {
+  const auto result = "1," + report.platform + "," + report.architecture + "," + report.isolation + "," +
+      report.network + "," + std::to_string(report.memory_bytes) + "," + std::to_string(report.process_limit) +
+      "," + std::to_string(report.timeout_seconds);
+  static_cast<void>(parseCiExecutionReport(result));
+  return result;
+}
+
 std::string_view ciUploadKindName(CiUploadKind kind) {
   switch (kind) {
     case CiUploadKind::kArtifact: return "artifact";

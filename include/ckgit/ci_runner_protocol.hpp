@@ -94,6 +94,7 @@ struct CiFinishReport {
   std::string detail;
   std::vector<CiStepResult> steps;
   std::vector<CiDeclaredOutput> outputs;
+  std::optional<CiExecutionReport> execution;
 };
 std::string formatCiFinishReport(const CiFinishReport& report);
 CiFinishReport parseCiFinishReport(std::string_view payload);
@@ -108,6 +109,7 @@ CiFinishReport parseCiFinishReport(std::string_view payload);
 //   step-end <n> <exit> <timed-out 0|1> <truncated 0|1> <name-hex>
 //   heartbeat
 //   progress <detail-hex>
+//   execution <versioned-report>  (only after execution_report=1 negotiation)
 // Main host to runner:
 //   held <n> <bytes>      (at stream start, for every step log it holds)
 //   ready

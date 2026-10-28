@@ -138,6 +138,16 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
     out += "<dt>Attempt</dt><dd>" + std::to_string(run.attempt) +
            " <span class=\"muted\">(an earlier runner was lost; its logs are kept on the server)</span></dd>";
   }
+  if (run.execution) {
+    const auto& execution = *run.execution;
+    out += "<dt>Execution (runner-reported)</dt><dd>" + htmlEscape(execution.platform) + "/" +
+        htmlEscape(execution.architecture) + "; isolation " + htmlEscape(execution.isolation) +
+        "; network " + htmlEscape(execution.network) + "</dd>";
+    out += "<dt>Limits per step</dt><dd>Memory: " +
+        (execution.memory_bytes ? htmlEscape(formatBytes(execution.memory_bytes)) : "not configured") +
+        "; processes: " + (execution.process_limit ? std::to_string(execution.process_limit) : "not configured") +
+        "; timeout: " + (execution.timeout_seconds ? std::to_string(execution.timeout_seconds) + "s" : "not configured") + "</dd>";
+  }
   if (!run.detail.empty()) out += "<dt>Detail</dt><dd>" + htmlEscape(run.detail) + "</dd>";
   out += "</dl>";
 

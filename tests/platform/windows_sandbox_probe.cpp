@@ -338,6 +338,10 @@ int wmain(int argc, wchar_t** argv) {
     const auto record = ckgit::executeWindowsCiJob(prepared, execution, toolchain, source, sink);
     if (record.status != ckgit::CiRunStatus::Success)
       throw std::runtime_error("native executor failed: " + record.detail + "\n" + sink.logs);
+    require(record.execution && record.execution->isolation == "lpac" && record.execution->network == "denied" &&
+        record.execution->memory_bytes == ckgit::kWindowsSandboxMemoryBytes &&
+        record.execution->process_limit == ckgit::kWindowsSandboxProcessLimit && record.execution->timeout_seconds == 60,
+        "executor reports actually applied LPAC limits");
     require(source.checkouts == 2 && sink.started && sink.steps == 4 && sink.artifact && sink.pages,
         "native executor checkout, logs, artifacts and Pages lifecycle");
     require(record.parent_run_id == "parent-fixture" && record.workflow_job == "windows" && !sink.logs.empty(),
@@ -355,6 +359,7 @@ int wmain(int argc, wchar_t** argv) {
     ExecutorSink missing_shell_sink;
     const auto missing_shell = ckgit::executeWindowsCiJob(
         prepared, execution, toolchain, missing_shell_source, missing_shell_sink);
+    require(!missing_shell.execution, "setup failure must not claim applied process isolation");
     require(missing_shell.status == ckgit::CiRunStatus::Error &&
             missing_shell.detail == "tool is not staged: pwsh",
             "Windows default shell must be staged PowerShell 7");

@@ -498,6 +498,8 @@ void answerCiRunRequest(int client, const ckgit::ControlRequest& request, const 
     sendAll(client, ckgit::formatCiRunControlResponse({currentEpochSeconds(), *run}));
   } else if (request.operation == "ci-placement") {
     sendAll(client, ckgit::formatCiPlacementControlResponse(*run));
+  } else if (request.operation == "ci-execution") {
+    sendAll(client, ckgit::formatCiExecutionControlResponse(*run));
   } else if (request.operation == "ci-jobs") {
     sendAll(client, ckgit::formatCiJobsControlResponse(ckgit::loadCiJobsReport(state_root, project, run->run_id)));
   } else if (!ckgit::ciRunStatusIsActive(run->status)) {
@@ -603,7 +605,7 @@ void answerControlRequest(int client, const ckgit::ControlRequest& request,
     sendAll(client, releasesResponse(requireState(), arguments[0]));
   } else if (operation == "ci-overview") {
     sendAll(client, ciOverviewResponse(repository_root, requireState()));
-  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-placement" || operation == "ci-jobs" || operation == "ci-log" ||
+  } else if (operation == "ci-status" || operation == "ci-run" || operation == "ci-placement" || operation == "ci-jobs" || operation == "ci-execution" || operation == "ci-log" ||
              operation == "ci-cancel") {
     const auto& state = requireState();
     const std::string& project = arguments[0];

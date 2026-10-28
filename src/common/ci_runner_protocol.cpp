@@ -299,6 +299,7 @@ std::string formatCiFinishReport(const CiFinishReport& report) {
   std::string out = "status=" + std::string(ciRunStatusName(report.status)) + "\n";
   out += "started_epoch=" + std::to_string(report.started_epoch_seconds) + "\n";
   out += "detail_hex=" + hexEncode(report.detail) + "\n";
+  if (report.execution) out += "execution=" + formatCiExecutionReport(*report.execution) + "\n";
   for (const CiStepResult& step : report.steps) {
     out += "step=" + std::to_string(step.exit_code) + "," + (step.timed_out ? "1" : "0") + "," +
            (step.output_truncated ? "1" : "0") + "," + hexOrDash(step.name) + "\n";
@@ -322,7 +323,10 @@ CiFinishReport parseCiFinishReport(std::string_view payload) {
   report.detail = decodeHex(field(lines[2], "detail_hex="), kMaximumCiDetailBytes, "detail");
   for (std::size_t index = 3; index < lines.size(); ++index) {
     const std::string_view line = lines[index];
-    if (line.rfind("step=", 0) == 0) {
+    if (line.rfind("execution=", 0) == 0) {
+      if (report.execution) throw std::invalid_argument("duplicate execution report");
+      report.execution = parseCiExecutionReport(line.substr(10));
+    } else if (line.rfind("step=", 0) == 0) {
       const auto parts = splitFields(line.substr(5), ',');
       if (parts.size() != 4 || report.steps.size() >= kMaximumCiSteps) throw std::invalid_argument("malformed step");
       CiStepResult step;

@@ -262,6 +262,18 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
         };
         process.should_continue = continuing;
         const auto result = runWindowsSandboxProcess(*sandbox, command, process, wide_environment, "src");
+        // This call returns only after process creation with LPAC attributes
+        // and Job Object limits succeeded. Setup failures throw and must not
+        // be represented as a successfully applied isolation policy.
+#if defined(_M_ARM64) || defined(__aarch64__)
+        const std::string architecture = "arm64";
+#elif defined(_M_X64) || defined(__x86_64__)
+        const std::string architecture = "x64";
+#else
+        const std::string architecture = "x86";
+#endif
+        record.execution = CiExecutionReport{"windows", architecture, "lpac", "denied",
+            kWindowsSandboxMemoryBytes, kWindowsSandboxProcessLimit, options.timeout_seconds};
         CiStepResult step_result;
         step_result.name = step.name.empty() ? ci_job.name : step.name;
         step_result.exit_code = result.exit_code;

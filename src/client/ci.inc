@@ -449,6 +449,9 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
     report = fetchCiRun(config, *project, run_id);
     placement = fetchCiPlacement(config, *project, run_id);
     jobs = fetchCiJobs(config, *project, run_id);
+    try {
+      report.run.execution = ckgit::parseCiExecutionControlResponse(ciControlReply(config, "ci-execution", {*project, run_id}));
+    } catch (const UnsupportedOperationError&) { /* older server: unknown */ }
   } catch (const ControlReplyError& error) {
     return reportControlReplyError(error, *project, run_id);
   }
@@ -475,7 +478,15 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
       std::cout << (run.steps.empty() ? "" : ",") << "\n    {\"index\":" << run.steps.size()
                 << ",\"name\":null,\"exit_code\":null,\"timed_out\":false,\"output_truncated\":false,\"running\":true}";
     }
-    std::cout << "\n  ],\"artifacts\":" << ciArtifactsJson(run.artifacts) << ",\"jobs\":[";
+    std::cout << "\n  ],\"execution\":";
+    if (run.execution) {
+      const auto& execution = *run.execution;
+      std::cout << "{\"source\":\"runner\",\"platform\":\"" << execution.platform
+                << "\",\"architecture\":\"" << execution.architecture << "\",\"isolation\":\"" << execution.isolation
+                << "\",\"network\":\"" << execution.network << "\",\"memory_bytes\":" << execution.memory_bytes
+                << ",\"process_limit\":" << execution.process_limit << ",\"step_timeout_seconds\":" << execution.timeout_seconds << "}";
+    } else std::cout << "null";
+    std::cout << ",\"artifacts\":" << ciArtifactsJson(run.artifacts) << ",\"jobs\":[";
     if (jobs) for (std::size_t i = 0; i < jobs->jobs.size(); ++i) {
       const auto& job = jobs->jobs[i];
       std::cout << (i ? "," : "") << "{\"name\":\"" << job.name << "\",\"run_id\":\"" << job.run_id
@@ -508,6 +519,14 @@ int ciShowCommand(const ckgit::ClientConfig& config, const CiOptions& options) {
                   : placement->runner == ckgit::kCiPrimaryRunnerName ? std::string("primary (the server's own runner)")
                                                                      : placement->runner)
               << (placement->attempt > 1 ? ", attempt " + std::to_string(placement->attempt) : std::string()) << "\n";
+  }
+  if (run.execution) {
+    const auto& execution = *run.execution;
+    std::cout << "  execution: " << execution.platform << "/" << execution.architecture << ", " << execution.isolation
+              << ", network " << execution.network << " (runner-reported)\n"
+              << "  limits:    memory " << (execution.memory_bytes ? ckgit::formatBytes(execution.memory_bytes) : "not configured")
+              << ", processes " << (execution.process_limit ? std::to_string(execution.process_limit) : "not configured")
+              << ", step timeout " << (execution.timeout_seconds ? std::to_string(execution.timeout_seconds) + "s" : "not configured") << "\n";
   }
   if (!run.detail.empty()) std::cout << "  detail:    " << terminalText(run.detail) << "\n";
   if (display.name == "interrupted") {
