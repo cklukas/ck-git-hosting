@@ -1,6 +1,8 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/tree_file.hpp"
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <utility>
 #ifdef _WIN32
@@ -41,8 +43,8 @@ class Descriptor {
 
 #endif
 }
-TreeFile readTreeFile(const std::filesystem::path& root, const std::vector<std::string>& parts,
-                      std::uintmax_t limit, bool read, bool follow_root) {
+static TreeFile readTreeFileImpl(const std::filesystem::path& root, const std::vector<std::string>& parts,
+                                std::uintmax_t limit, bool read, bool follow_root, const TreeFileSink* sink) {
   TreeFile result;
   if (parts.empty()) return result;
   for (const auto& part : parts) {
@@ -114,19 +116,22 @@ TreeFile readTreeFile(const std::filesystem::path& root, const std::vector<std::
     result.status = TreeFileStatus::Unreadable; return result;
   }
   result.size = static_cast<std::uintmax_t>(size.QuadPart);
-  if (result.size > limit || result.size > std::numeric_limits<std::size_t>::max()) {
+  if (result.size > limit || (read && result.size > std::numeric_limits<std::size_t>::max())) {
     result.status = TreeFileStatus::TooLarge; return result;
   }
-  if (read) {
-    result.content.resize(static_cast<std::size_t>(result.size));
-    std::size_t offset = 0;
-    while (offset < result.content.size()) {
+  if (read || sink) {
+    if (read) result.content.resize(static_cast<std::size_t>(result.size));
+    if (sink && sink->begin) sink->begin(result.size);
+    std::array<char, 65536> buffer;
+    std::uintmax_t offset = 0;
+    while (offset < result.size) {
       DWORD count = 0;
-      const auto left = result.content.size() - offset;
-      const auto chunk = static_cast<DWORD>(left > 65536 ? 65536 : left);
-      if (!ReadFile(directory.value, result.content.data() + offset, chunk, &count, nullptr) || !count) {
+      const auto chunk = static_cast<DWORD>(std::min<std::uintmax_t>(result.size - offset, buffer.size()));
+      char* target = read ? result.content.data() + static_cast<std::size_t>(offset) : buffer.data();
+      if (!ReadFile(directory.value, target, chunk, &count, nullptr) || !count) {
         result.content.clear(); result.status = TreeFileStatus::Unreadable; return result;
       }
+      if (sink && sink->chunk) sink->chunk(std::string_view(target, count));
       offset += count;
     }
   }
@@ -157,26 +162,40 @@ TreeFile readTreeFile(const std::filesystem::path& root, const std::vector<std::
     return result;
   }
   result.size = static_cast<std::uintmax_t>(status.st_size);
-  if (result.size > limit) {
+  if (result.size > limit || (read && result.size > std::numeric_limits<std::size_t>::max())) {
     result.status = TreeFileStatus::TooLarge;
     return result;
   }
-  if (read) {
-    result.content.resize(static_cast<std::size_t>(result.size));
-    std::size_t done = 0;
-    while (done < result.content.size()) {
-      const auto count = ::read(file.get(), result.content.data() + done, result.content.size() - done);
+  if (read || sink) {
+    if (read) result.content.resize(static_cast<std::size_t>(result.size));
+    if (sink && sink->begin) sink->begin(result.size);
+    std::array<char, 65536> buffer;
+    std::uintmax_t done = 0;
+    while (done < result.size) {
+      const auto chunk = static_cast<std::size_t>(std::min<std::uintmax_t>(result.size - done, buffer.size()));
+      char* target = read ? result.content.data() + static_cast<std::size_t>(done) : buffer.data();
+      const auto count = ::read(file.get(), target, chunk);
       if (count < 0 && errno == EINTR) continue;
       if (count <= 0) {  // an error, or the file shrank while it was read
         result.content.clear();
         result.status = TreeFileStatus::Unreadable;
         return result;
       }
+      if (sink && sink->chunk) sink->chunk(std::string_view(target, static_cast<std::size_t>(count)));
       done += static_cast<std::size_t>(count);
     }
   }
   result.status = TreeFileStatus::Ok;
   return result;
 #endif
+}
+
+TreeFile readTreeFile(const std::filesystem::path& root, const std::vector<std::string>& parts,
+                      std::uintmax_t limit, bool read, bool follow_root) {
+  return readTreeFileImpl(root, parts, limit, read, follow_root, nullptr);
+}
+TreeFile streamTreeFile(const std::filesystem::path& root, const std::vector<std::string>& parts,
+                        std::uintmax_t limit, bool follow_root, const TreeFileSink& sink) {
+  return readTreeFileImpl(root, parts, limit, false, follow_root, &sink);
 }
 }

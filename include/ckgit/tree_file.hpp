@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ckgit::platform {
@@ -18,4 +20,17 @@ struct TreeFile {
 TreeFile readTreeFile(const std::filesystem::path& root,
                      const std::vector<std::string>& components,
                      std::uintmax_t limit, bool read, bool follow_root);
+
+struct TreeFileSink {
+  // Called after opening and validating the file, before the first chunk.
+  // Both callbacks refer to the same open handle, even if the path changes.
+  std::function<void(std::uintmax_t)> begin;
+  std::function<void(std::string_view)> chunk;
+};
+// Like readTreeFile, but bounded-memory streaming for artifact archives.
+// content is empty; callbacks may throw to cancel, and handles are released.
+// A read failure may follow delivered chunks: callers must discard that output.
+TreeFile streamTreeFile(const std::filesystem::path& root,
+                        const std::vector<std::string>& components,
+                        std::uintmax_t limit, bool follow_root, const TreeFileSink& sink);
 }
