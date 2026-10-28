@@ -948,7 +948,7 @@ int ciCommand(const std::vector<std::string>& arguments) {
   if (subcommand == "lint") {
     // Lint stays usable without a server configuration, but an explicit or
     // existing default configuration still selects the local Git executable.
-    const auto path = resolveConfigPath(options.config_path);
+    const auto path = options.config_path ? *options.config_path : defaultClientConfigPath();
     std::error_code error;
     if (options.config_path || std::filesystem::is_regular_file(path, error))
       (void)loadConfiguredClient(path);

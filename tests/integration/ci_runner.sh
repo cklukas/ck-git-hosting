@@ -353,7 +353,7 @@ reply=$(rpc "ckgit-rpc 1 ci-log demo $run_id 0 0") || fail "the daemon did not s
 case "$reply" in 'ok end 0 '[1-9]*) ;; *) fail "a finished step's whole log should end in one chunk: $reply" ;; esac
 
 # lint is offline: the committed workflow, the working tree, and a broken file.
-lint_output=$(cd "$work" && "$CKGIT" ci lint --rev HEAD) || fail "ckgit ci lint --rev HEAD failed"
+lint_output=$(cd "$work" && XDG_CONFIG_HOME="$test_root/no-client-config" "$CKGIT" ci lint --rev HEAD) || fail "ckgit ci lint --rev HEAD failed"
 case "$lint_output" in
   *'valid (version 1)'*'jobs: 1'*'build: 1 step; artifact build (out)'*'Not checked locally:'*) ;;
   *) echo "$lint_output" >&2; fail "ci lint did not summarize the committed workflow" ;;
