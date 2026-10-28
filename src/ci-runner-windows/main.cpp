@@ -5,7 +5,6 @@
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows.hpp"
 #include "ckgit/path_utf8.hpp"
-#include "ckgit/temp_directory.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/text.hpp"
 #include <windows.h>
@@ -47,10 +46,6 @@ struct RunLock {
   }
   ~RunLock() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
-struct Session {
-  fs::path root;
-  ~Session() { std::error_code error; fs::remove_all(root, error); }
-};
 int serve(const fs::path& config_path, bool once, bool check_only) {
   auto config = ckgit::loadRunnerConfig(config_path);
   if (!config.toolchain_root) throw std::runtime_error("Windows runner requires ci_toolchain_root");
@@ -58,8 +53,8 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
   fs::create_directories(config.build_root);
   ordinaryDirectory(config.build_root);
   RunLock lock(config.build_root / "runner.lock");
-  Session session{ckgit::createTempDirectory(config.build_root, "runner-session-")};
-  const auto temporary = session.root / "tmp";
+  ckgit::WindowsRunnerSession session(config.build_root);
+  const auto temporary = session.root() / "tmp";
   fs::create_directory(temporary);
   for (const auto* key : {L"TEMP", L"TMP", L"TMPDIR"})
     if (_wputenv_s(key, temporary.c_str())) throw std::runtime_error("cannot set runner temporary directory");
@@ -72,9 +67,9 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
   for (const auto& relative : toolchain.binary_directories) ordinaryDirectory(toolchain.root / relative);
   // Verify the required broker privileges before claiming a lease. Profiles
   // are disposable; there is no fallback to an unrestricted process.
-  { ckgit::WindowsSandbox probe(session.root); }
+  { ckgit::WindowsSandbox probe(session.root()); }
   if (check_only) { std::cout << "Windows runner configuration and AppContainer broker available\n"; return 0; }
-  config.build_root = session.root;
+  config.build_root = session.root();
   ckgit::CiRemoteTransport transport(config, config_path);
   bool negotiated = false;
   unsigned failures = 0;
@@ -111,7 +106,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
     std::cout << "Claimed " << job->prepared.job.project_name << ' ' << id << '\n';
     ckgit::CiExecutionOptions execution;
     execution.runner = config.name;
-    execution.build_root = session.root / "jobs";
+    execution.build_root = session.root() / "jobs";
     execution.timeout_seconds = std::min(job->policy.timeout_seconds, config.timeout_seconds.value_or(86400));
     execution.max_log_bytes = static_cast<std::size_t>(job->policy.max_log_bytes);
     execution.artifact_max_bytes = static_cast<std::size_t>(job->policy.artifact_max_bytes);
@@ -120,7 +115,7 @@ int serve(const fs::path& config_path, bool once, bool check_only) {
     // when the host would permit network access.
     execution.allow_network = false;
     ckgit::RemoteCiSource source(transport, id, job->token);
-    ckgit::RemoteCiSink sink(transport, *job, session.root / "relay", &stop_requested);
+    ckgit::RemoteCiSink sink(transport, *job, session.root() / "relay", &stop_requested);
     try {
       const auto record = ckgit::executeWindowsCiJob(job->prepared, execution, toolchain, source, sink);
       std::cout << "Finished " << id << ' ' << (sink.abandoned() ? "handed back" : ckgit::ciRunStatusName(record.status)) << '\n';

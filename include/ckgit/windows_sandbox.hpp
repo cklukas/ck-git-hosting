@@ -8,8 +8,6 @@
 #include <memory>
 
 namespace ckgit {
-// Host-side LPAC qualification backend. It is deliberately not advertised as
-// a remote CI runner until scheduler, lease and artifact integration is ready.
 // Owns one fresh profile and directory tree. Never edits ACLs on installed
 // tools: the broker stages tools under tools() and then seals that copy.
 class WindowsSandbox {
@@ -25,6 +23,20 @@ class WindowsSandbox {
   void* sid() const;
   std::vector<void*> capabilitySids() const;
   std::wstring desktopName() const;
+ private:
+  struct State;
+  std::unique_ptr<State> state_;
+};
+
+// Call while holding the runner's build-root lock. Recovery considers only
+// recorded directories of this user; live records remain exclusively locked.
+class WindowsRunnerSession {
+ public:
+  explicit WindowsRunnerSession(const std::filesystem::path& build_root);
+  ~WindowsRunnerSession();
+  WindowsRunnerSession(const WindowsRunnerSession&) = delete;
+  WindowsRunnerSession& operator=(const WindowsRunnerSession&) = delete;
+  const std::filesystem::path& root() const;
  private:
   struct State;
   std::unique_ptr<State> state_;

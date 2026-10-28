@@ -156,6 +156,18 @@ stop`, shutdown) hands its job back at once instead of waiting for the lease.
 A runner that wakes up after its job was requeued learns that its lease is gone
 and discards its work; its results can never overwrite the newer attempt.
 
+On Windows, closing the broker's Job Object handles also terminates its build
+processes after an abrupt broker exit. Before claiming another job, the runner
+recovers abandoned sessions under its configured build root. Each session and
+AppContainer workspace has a flushed, owner-only resource record, held open
+exclusively while in use. Recovery checks the record's Windows owner, resource
+name and format before deleting that user's recorded profile and workspace.
+Live, unrecorded, malformed and explicitly retained workspaces are preserved.
+Directory reparse points are removed without following their targets. Failed
+cleanup keeps its record for another attempt; a recovery error prevents new
+job claims. Older runner directories without these records are not reclaimed
+automatically.
+
 ## What a runner sends back
 
 | Result | Sent when | Stored on the server as |
@@ -171,9 +183,10 @@ continues where the server's bytes end, and nothing is published until the run
 finishes and every upload is verified. A dropped log stream is resumed the same
 way, without duplicate lines.
 
-**The runner keeps nothing.** Its build root is emptied when it starts and after
-every job — success, failure, cancel, a lost lease: the clone with its `.git`,
-every sister, everything the steps built, and the packed bundles. Declared
+**Job workspaces are temporary.** Normal cleanup removes the clone with its
+`.git`, every sister, build outputs and packed bundles after success, failure,
+cancel or a lost lease. Windows startup recovery is limited to its recorded
+resources as described above; it does not empty unrelated directories. Declared
 `cache:` directories are per run on a remote runner unless its configuration
 sets `ci_cache_root`.
 

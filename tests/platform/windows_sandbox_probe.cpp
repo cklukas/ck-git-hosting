@@ -4,9 +4,11 @@
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows_ci_executor.hpp"
 #include "ckgit/hash.hpp"
+#include "ckgit/temp_directory.hpp"
 #include "ckgit/windows.hpp"
 #include "ckgit/socket.hpp"
 #include <windows.h>
+#include <userenv.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -94,6 +96,127 @@ int child(int argc, wchar_t** argv) {
 }
 int wmain(int argc, wchar_t** argv) {
   try {
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--recovery-wait") {
+      std::cout << GetCurrentProcessId() << '\n' << std::flush;
+      Sleep(60000);
+      return 0;
+    }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--recovery-fixture") {
+      const fs::path parent(argv[2]);
+      ckgit::WindowsRunnerSession session(parent);
+      fs::create_directory(session.root() / "jobs");
+      ckgit::WindowsSandbox sandbox(session.root() / "jobs");
+      const auto executable = sandbox.tools() / "probe.exe";
+      fs::copy_file(fs::path(argv[0]), executable);
+      fs::copy_file(fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe", sandbox.tools() / "ckgit-job-launcher.exe");
+      sandbox.sealTools();
+      require(CreateSymbolicLinkW((sandbox.work() / "outside-link").c_str(), (parent / "outside").c_str(),
+          SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != FALSE,
+          "create recovery reparse-point fixture");
+      ckgit::ProcessOptions options;
+      options.timeout = std::chrono::seconds(60);
+      std::string output;
+      options.on_output = [&](std::string_view part) {
+        output += part;
+        if (output.find('\n') == std::string::npos || fs::exists(parent / "ready")) return;
+        std::ofstream manifest(parent / "ready.new");
+        manifest << ckgit::wideToUtf8(session.root().filename().native()) << '\n'
+                 << ckgit::wideToUtf8(sandbox.work().parent_path().filename().native()) << '\n' << output;
+        manifest.close();
+        fs::rename(parent / "ready.new", parent / "ready");
+      };
+      const auto result = ckgit::runWindowsSandboxProcess(sandbox,
+          {ckgit::wideToUtf8(executable.native()), "--recovery-wait"}, options, {});
+      throw std::runtime_error("recovery fixture must be killed; child exit=" + std::to_string(result.exit_code));
+    }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--recovery-test") {
+      const auto parent = ckgit::createTempDirectory(fs::path(argv[2]), "recovery-test-");
+      struct Cleanup {
+        fs::path path;
+        ~Cleanup() {
+          try {
+            { ckgit::WindowsRunnerSession recovery(path); }
+            fs::remove_all(path);
+          } catch (const std::exception& error) {
+            std::cerr << "Preserving recovery fixture " << path << ": " << error.what() << '\n';
+          }
+        }
+      } cleanup{parent};
+      const auto unknown = parent / (L"runner-session-" + std::wstring(32, L'a'));
+      fs::create_directory(unknown);
+      std::ofstream(unknown / "unowned") << "preserve";
+      const auto malformed = parent / (L"runner-session-" + std::wstring(32, L'b'));
+      fs::create_directory(malformed);
+      std::ofstream(malformed / ".ckgit-resource") << "not a resource record\n";
+      fs::create_directory(parent / "outside");
+      std::ofstream(parent / "outside" / "sentinel") << "must survive cleanup";
+      ckgit::WindowsRunnerSession live(parent);
+      auto command = ckgit::windowsCommandLine({argv[0], L"--recovery-fixture", parent.native()});
+      STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+      PROCESS_INFORMATION process{};
+      require(CreateProcessW(argv[0], command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+          nullptr, parent.c_str(), &startup, &process) != FALSE, "start recovery broker fixture");
+      CloseHandle(process.hThread);
+      struct Broker {
+        HANDLE handle;
+        ~Broker() { TerminateProcess(handle, 99); WaitForSingleObject(handle, 5000); CloseHandle(handle); }
+      } broker{process.hProcess};
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+      while (!fs::exists(parent / "ready") && std::chrono::steady_clock::now() < deadline &&
+          WaitForSingleObject(broker.handle, 50) == WAIT_TIMEOUT) {}
+      require(fs::exists(parent / "ready"), "LPAC child readiness before crash");
+      std::ifstream manifest(parent / "ready");
+      std::string session_name, profile_name, pid;
+      std::getline(manifest, session_name); std::getline(manifest, profile_name); std::getline(manifest, pid);
+      manifest.close();
+      const auto abandoned = parent / ckgit::utf8ToWide(session_name);
+      const auto child = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(std::stoul(pid)));
+      require(child != nullptr && WaitForSingleObject(child, 0) == WAIT_TIMEOUT, "LPAC child is live before broker crash");
+      require(TerminateProcess(broker.handle, 99) != FALSE && WaitForSingleObject(broker.handle, 5000) == WAIT_OBJECT_0,
+          "terminate fixture broker without destructors");
+      const auto killed = WaitForSingleObject(child, 5000); CloseHandle(child);
+      require(killed == WAIT_OBJECT_0, "broker crash kills LPAC child");
+      require(fs::exists(abandoned / "jobs" / ckgit::utf8ToWide(profile_name) / ".ckgit-resource"), "crash leaves durable profile record");
+      const auto locked_file = abandoned / "jobs" / ckgit::utf8ToWide(profile_name) / "work" / "held-open";
+      const auto held = CreateFileW(locked_file.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+          CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+      require(held != INVALID_HANDLE_VALUE, "hold abandoned output open during cleanup");
+      bool cleanup_failed = false;
+      try { ckgit::WindowsRunnerSession blocked(parent); }
+      catch (const std::exception&) { cleanup_failed = true; }
+      CloseHandle(held);
+      require(cleanup_failed && fs::exists(abandoned / ".ckgit-resource") &&
+          fs::exists(abandoned / "jobs" / ckgit::utf8ToWide(profile_name) / ".ckgit-resource"),
+          "partial cleanup keeps session and sandbox records for retry");
+      {
+        ckgit::WindowsRunnerSession restart(parent);
+        require(!fs::exists(abandoned), "restart removes recorded abandoned session and sandbox");
+        require(fs::is_regular_file(parent / "outside" / "sentinel"), "recovery must not traverse a directory reparse point");
+        require(fs::exists(live.root() / ".ckgit-resource"), "restart preserves exclusively locked live session");
+        require(fs::exists(unknown / "unowned") && fs::exists(malformed / ".ckgit-resource"), "restart preserves unknown and invalid records");
+        PSID sid = nullptr;
+        const auto recreated = CreateAppContainerProfile(ckgit::utf8ToWide(profile_name).c_str(), L"Recovery verification", L"Recovery verification", nullptr, 0, &sid);
+        require(SUCCEEDED(recreated), "recovery removed OS profile, allowing the name to be recreated");
+        FreeSid(sid);
+        require(SUCCEEDED(DeleteAppContainerProfile(ckgit::utf8ToWide(profile_name).c_str())), "remove verification profile");
+      }
+      { ckgit::WindowsRunnerSession repeated(parent); }
+      fs::path retained_root;
+      {
+        ckgit::WindowsRunnerSession retained_session(parent);
+        fs::create_directory(retained_session.root() / "jobs");
+        ckgit::WindowsSandbox retained(retained_session.root() / "jobs");
+        retained.retainWorkspace();
+        retained_root = retained.work().parent_path();
+        std::ofstream(retained.work() / "evidence") << "keep scratch";
+      }
+      {
+        ckgit::WindowsRunnerSession restart(parent);
+        require(fs::is_regular_file(retained_root / "work" / "evidence"), "restart honors retained workspace records");
+      }
+      std::cout << "Broker crash, LPAC child termination, recorded profile/workspace recovery, live/unknown/retained preservation, reparse boundaries and repeat startup passed\n";
+      return 0;
+    }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--linger") { Sleep(30000); return 0; }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--background") {
       auto command = ckgit::windowsCommandLine({argv[0], L"--linger"});

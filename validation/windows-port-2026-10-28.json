@@ -226,7 +226,7 @@
     "Standard-user LPAC broker and CMake/Ninja qualification",
     "Optional restricted-account Windows service",
     "Linux execution-report runtime qualification and live production report/UI verification",
-    "Owned-resource crash recovery",
+    "Deploy and qualify recorded crash recovery with the final installed runner",
     "Combined tag release failure/restart/idempotence acceptance",
     "Remaining Windows CLI mutations/cancellation/tunnel and release-download journeys",
     "Graceful upgrade with active owned processes",
@@ -285,8 +285,8 @@
     "linux_validation": "Pending GitHub Linux CI for this new source; do not infer from Mac tests"
   },
   "github_latest_validated": {
-    "commit": "8301aba6fb87972641cb893af517efb3c5ce58e4",
-    "run": 40702631474,
+    "commit": "d0e6f6255a9a85133feb9b27710057ebefb998e8",
+    "run": 40706893938,
     "status": "completed",
     "conclusion": "success",
     "jobs": 9,
@@ -396,5 +396,99 @@
       "station-acl-restored-fresh-build.log": "bcbd14577e5ce13394d11d55f5c6018906cad3a6ebc8c22c421975c624f1b228",
       "station-acl-restored-test.log": "cd4c0fdf86b7ba749b600e683ec338b5a0177611a4e06a53b6a4e5e4ff2a02cb"
     }
+  },
+  "recorded_windows_recovery": {
+    "base_commit": "d0e6f6255a9a85133feb9b27710057ebefb998e8",
+    "source_hashes": {
+      "include/ckgit/windows_sandbox.hpp": "cc130e404f51099a1192da3d9051ec0a356dee6156b69e15ff2d596fc26f6448",
+      "src/common/windows_sandbox.cpp": "f0faa1df01bda905f65de651b8763d75e9dfb1f2d4590096aae97bc2f172f44a",
+      "src/ci-runner-windows/main.cpp": "da93d80bb259484b61cd83538db2fd40df7105d59e0dfe6eac100e41a2b9bf2d",
+      "tests/platform/windows_sandbox_probe.cpp": "87e51c71c2be80653b915cbe99abf94f19ebf094edf2120b7080abc828e2fe4f"
+    },
+    "native_builds": {
+      "initial": {
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+        "exit": 0,
+        "baseline": "Prior sharedheader Windows build81.96s; changed sandbox header and source rebuild dependent targets",
+        "start": "2026-10-28T14:40:35.8028224Z",
+        "end": "2026-10-28T14:40:57.2371997Z",
+        "seconds": 21.4383718
+      },
+      "owner_check": {
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+        "exit": 0,
+        "baseline": "Prior sharedheader Windows build81.96s; changed sandbox header and source rebuild dependent targets",
+        "start": "2026-10-28T14:42:17.8117547Z",
+        "end": "2026-10-28T14:42:30.4178918Z",
+        "seconds": 12.610136299999999
+      },
+      "name_binding": {
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+        "exit": 0,
+        "baseline": "Prior sharedheader Windows build81.96s; changed sandbox header and source rebuild dependent targets",
+        "start": "2026-10-28T14:45:12.3580806Z",
+        "end": "2026-10-28T14:45:20.2623294Z",
+        "seconds": 7.9082463999999995
+      },
+      "final_probe_and_runner": {
+        "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+        "exit": 0,
+        "baseline": "Prior sharedheader Windows build81.96s; changed sandbox header and source rebuild dependent targets",
+        "start": "2026-10-28T14:48:17.5325044Z",
+        "end": "2026-10-28T14:48:26.0050943Z",
+        "seconds": 8.477592999999999
+      }
+    },
+    "crash_and_retry_test": {
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release\\ckgit-lpac-probe.exe",
+      "start": "2026-10-28T14:49:16.1701748Z",
+      "binary_sha256": "2954B6898A6BF4C3A0CBE5E270B53E1F78A5F0A0679BB115E1BE1B6A21468FF6",
+      "exit": 0,
+      "end": "2026-10-28T14:49:16.7929274Z",
+      "administrator": true
+    },
+    "cases": [
+      "Force-terminate broker with an actual live LPAC child; child exits within5s",
+      "Restart removes recorded abandoned workspace and OS-managed AppContainer profile",
+      "Exclusive record preserves concurrent live session",
+      "Unrecorded and malformed session directories preserved",
+      "Directory reparse target sentinel preserved",
+      "Locked output forces cleanup failure; session and sandbox records survive and subsequent startup completes cleanup",
+      "Explicitly retained workspace survives restart",
+      "Repeated startup is idempotent"
+    ],
+    "full_lpac_qualification": {
+      "binary": "2954B6898A6BF4C3A0CBE5E270B53E1F78A5F0A0679BB115E1BE1B6A21468FF6",
+      "end": "2026-10-28T14:54:54.3084842Z",
+      "probe_exit": 0,
+      "seconds": 304.4848632,
+      "start": "2026-10-28T14:49:49.8236210Z"
+    },
+    "full_lpac_baseline": "304.485s vs prior317.408s; compiler/linker/test program, CMake/NMake, filesystem/network denial, live output, cancellation, background cleanup and native executor lifecycle pass.",
+    "nonadmin_ctest": {
+      "end": "2026-10-28T14:50:10.4597595Z",
+      "administrator": false,
+      "success": true,
+      "exit": 0
+    },
+    "nonadmin_ctest_details": "8/8 passed in20.63s with actual nonadministrator token",
+    "runner_integration": {
+      "end": "2026-10-28T14:51:41.1370767Z",
+      "binary_sha256": "A546EB9B03E806343E02A01236A93D4A8C2D424F829575B7A3085FFDAD5D631A",
+      "success": true,
+      "start": "2026-10-28T14:51:40.1693664Z"
+    },
+    "cleanup": {
+      "no_active_probe_or_children": true,
+      "no_new_workspaces": true,
+      "utc": "2026-10-28T14:55:43.0643603Z"
+    },
+    "logs_sha256": {
+      "recovery-lpac.log": "0ce1655734f0c73186f3bea7a734091ec26a73e2b9e2798f523b4cff4f5e80db",
+      "recovery-complete-test.log": "eb7d0b3a8f10edf0c30c937ebb64dc33c25f100b03ded9a69eddf9a04b67f8ac",
+      "recovery-nonadmin.log": "ed82a78f94e92f1fec49ab898858b66183d993367ef6372e214c5723d07d4e54",
+      "recovery-runner-check.log": "f15bf698b17df449521a86cf207e877392014ac559cedf5309fea59b9999a934"
+    },
+    "limits": "Qualification uses elevated broker. Not yet installed from GitHub package or used by production runner. Pre-journal directories intentionally not reclaimed."
   }
 }

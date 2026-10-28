@@ -9,6 +9,7 @@
 #include <userenv.h>
 #include <stdexcept>
 #include <system_error>
+#include <iostream>
 
 namespace ckgit {
 namespace {
@@ -65,11 +66,130 @@ std::vector<unsigned char> capability(const wchar_t* name) {
   if (result.empty()) throw std::runtime_error("sandbox capability unavailable");
   return result;
 }
+constexpr const wchar_t* recordName = L".ckgit-resource";
+bool resourceName(const std::filesystem::path& path, std::wstring_view prefix) {
+  const auto name = path.filename().wstring();
+  return name.starts_with(prefix) && name.size() == prefix.size() + 32 &&
+      name.find_first_not_of(L"0123456789abcdef", prefix.size()) == std::wstring::npos;
+}
+// Records are created before profile allocation, reserving that random name.
+// They contain no paths to follow and are never writable by a job identity.
+struct ResourceRecord {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  std::filesystem::path root;
+  std::string kind, owner;
+  bool retained = false;
+  ~ResourceRecord() { close(); }
+  void close() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); handle = INVALID_HANDLE_VALUE; }
+  std::string prefix() const {
+    return "ckgit-resource-v1\n" + kind + "\n" + wideToUtf8(root.filename().native()) + "\n" + owner + "\n";
+  }
+  void write() {
+    const auto text = prefix() + (retained ? "retain\n" : "remove\n");
+    LARGE_INTEGER zero{};
+    DWORD written = 0;
+    if (!SetFilePointerEx(handle, zero, nullptr, FILE_BEGIN) ||
+        !WriteFile(handle, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) ||
+        written != text.size() || !SetEndOfFile(handle) || !FlushFileBuffers(handle)) fail("persist runner resource record");
+  }
+  void create(const std::filesystem::path& directory, std::string type, const std::wstring& user) {
+    root = directory; kind = std::move(type); owner = wideToUtf8(user);
+    const auto sddl = L"O:" + user + L"D:P(A;;FA;;;" + user + L")(A;;FA;;;SY)";
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) fail("resource record descriptor");
+    SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
+    handle = CreateFileW((root / recordName).c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+        &security, CREATE_NEW, FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    const auto error = GetLastError();
+    LocalFree(descriptor);
+    if (handle == INVALID_HANDLE_VALUE) fail("create resource record", error);
+    write();
+  }
+  bool open(const std::filesystem::path& directory, std::string type, const std::wstring& user) {
+    const auto attrs = GetFileAttributesW(directory.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    root = directory; kind = std::move(type); owner = wideToUtf8(user);
+    handle = CreateFileW((root / recordName).c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false; // Missing, busy or inaccessible: preserve.
+    PSID file_owner = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const auto owner_status = GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+        &file_owner, nullptr, nullptr, nullptr, &descriptor);
+    const bool owned = owner_status == ERROR_SUCCESS && file_owner && sidText(file_owner) == user;
+    if (descriptor) LocalFree(descriptor);
+    if (!owned) return false;
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(handle, &info) || info.nNumberOfLinks != 1 ||
+        (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+        info.nFileSizeHigh || info.nFileSizeLow > 512) return false;
+    std::string bytes(info.nFileSizeLow, '\0');
+    DWORD count = 0;
+    if (!ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr) || count != bytes.size()) return false;
+    const auto expected = prefix();
+    if (bytes != expected + "remove\n" && bytes != expected + "retain\n") return false;
+    retained = bytes == expected + "retain\n";
+    return true;
+  }
+};
+// Called only after owning the exclusive record. Never recurse through a
+// reparse point, even when it has directory attributes (e.g. a junction).
+void removeResourceTree(const std::filesystem::path& path) {
+  const auto attrs = GetFileAttributesW(path.c_str());
+  if (attrs == INVALID_FILE_ATTRIBUTES) {
+    if (GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND) return;
+    fail("inspect abandoned resource");
+  }
+  const bool directory = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  if (directory && !(attrs & FILE_ATTRIBUTE_REPARSE_POINT))
+    for (const auto& entry : std::filesystem::directory_iterator(path)) removeResourceTree(entry.path());
+  if ((attrs & FILE_ATTRIBUTE_READONLY) && !(attrs & FILE_ATTRIBUTE_REPARSE_POINT) &&
+      !SetFileAttributesW(path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY)) fail("clear owned resource read-only flag");
+  if (!(directory ? RemoveDirectoryW(path.c_str()) : DeleteFileW(path.c_str()))) fail("remove abandoned resource");
+}
+void finishResource(ResourceRecord& record) {
+  if (record.retained) { record.close(); return; }
+  // Keep the durable record until all other entries have been removed, so a
+  // partial cleanup can be retried on the next startup.
+  for (const auto& entry : std::filesystem::directory_iterator(record.root))
+    if (entry.path().filename() != recordName) removeResourceTree(entry.path());
+  record.close();
+  if (!DeleteFileW((record.root / recordName).c_str())) fail("remove resource record");
+  if (!RemoveDirectoryW(record.root.c_str())) fail("remove resource directory");
+}
+void recoverSandboxes(const std::filesystem::path& parent, const std::wstring& owner) {
+  const auto attributes = GetFileAttributesW(parent.c_str());
+  if (attributes == INVALID_FILE_ATTRIBUTES) return;
+  if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+    throw std::runtime_error("recovery parent is not an ordinary directory");
+  for (const auto& entry : std::filesystem::directory_iterator(parent)) {
+    if (!resourceName(entry.path(), L"ckgit-lpac-")) continue;
+    ResourceRecord record;
+    if (!record.open(entry.path(), "sandbox", owner)) continue;
+    const auto status = DeleteAppContainerProfile(entry.path().filename().c_str());
+    if (FAILED(status)) fail("recover AppContainer profile", static_cast<DWORD>(status));
+    finishResource(record);
+  }
+}
+bool hasSandboxDirectories(const std::filesystem::path& parent) {
+  if (!std::filesystem::exists(parent)) return false;
+  for (const auto& entry : std::filesystem::directory_iterator(parent))
+    if (resourceName(entry.path(), L"ckgit-lpac-")) return true;
+  return false;
+}
+void cleanSession(ResourceRecord& record, const std::wstring& owner) {
+  recoverSandboxes(record.root, owner);
+  recoverSandboxes(record.root / "jobs", owner);
+  // Preserve active, retained, unrecorded or invalid sandbox directories.
+  if (hasSandboxDirectories(record.root) || hasSandboxDirectories(record.root / "jobs")) return;
+  finishResource(record);
+}
+
 }
 struct WindowsSandbox::State {
   std::filesystem::path root;
   std::wstring profile, owner, app;
-  bool retain = false;
+  ResourceRecord record;
   PSID sid = nullptr;
   std::vector<std::vector<unsigned char>> capabilities;
   HWINSTA station = nullptr;
@@ -78,14 +198,23 @@ struct WindowsSandbox::State {
     if (desktop) CloseDesktop(desktop);
     if (station) CloseWindowStation(station);
     if (sid) FreeSid(sid);
-    if (!profile.empty()) DeleteAppContainerProfile(profile.c_str());
-    if (!retain && !root.empty()) { std::error_code error; std::filesystem::remove_all(root, error); }
+    try {
+      if (!profile.empty()) {
+        const auto result = DeleteAppContainerProfile(profile.c_str());
+        if (FAILED(result)) fail("delete AppContainer profile", static_cast<DWORD>(result));
+      }
+      if (record.handle != INVALID_HANDLE_VALUE) finishResource(record);
+      else if (!root.empty()) removeResourceTree(root);
+    } catch (const std::exception& error) {
+      std::cerr << "Preserving sandbox for recovery: " << error.what() << '\n';
+    }
   }
 };
 WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std::make_unique<State>()) {
   state_->root = createTempDirectory(parent, "ckgit-lpac-");
   state_->owner = currentUser();
   const auto name = state_->root.filename().wstring();
+  state_->record.create(state_->root, "sandbox", state_->owner);
   PSID sid = nullptr;
   const auto status = CreateAppContainerProfile(name.c_str(), L"ckgit isolated job", L"Temporary ck-git-hosting LPAC job", nullptr, 0, &sid);
   if (FAILED(status)) fail("create AppContainer profile", static_cast<DWORD>(status));
@@ -131,7 +260,7 @@ WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std
   protect(tools(), state_->owner, state_->app, false);
 }
 WindowsSandbox::~WindowsSandbox() = default;
-void WindowsSandbox::retainWorkspace() { state_->retain = true; }
+void WindowsSandbox::retainWorkspace() { state_->record.retained = true; state_->record.write(); }
 std::filesystem::path WindowsSandbox::work() const { return state_->root / "work"; }
 std::filesystem::path WindowsSandbox::tools() const { return state_->root / "tools"; }
 void* WindowsSandbox::sid() const { return state_->sid; }
@@ -147,4 +276,30 @@ void WindowsSandbox::sealTools(const std::function<bool()>& should_continue) {
     protect(entry.path(), state_->owner, state_->app, false);
   }
 }
+struct WindowsRunnerSession::State {
+  ResourceRecord record;
+  std::wstring owner;
+  ~State() {
+    if (record.handle == INVALID_HANDLE_VALUE) return;
+    try { cleanSession(record, owner); }
+    catch (const std::exception& error) {
+      std::cerr << "Preserving runner session for recovery: " << error.what() << '\n';
+    }
+  }
+};
+WindowsRunnerSession::WindowsRunnerSession(const std::filesystem::path& build_root)
+    : state_(std::make_unique<State>()) {
+  state_->owner = currentUser();
+  for (const auto& entry : std::filesystem::directory_iterator(build_root)) {
+    if (!resourceName(entry.path(), L"runner-session-")) continue;
+    ResourceRecord record;
+    if (!record.open(entry.path(), "session", state_->owner)) continue;
+    cleanSession(record, state_->owner);
+  }
+  const auto root = createTempDirectory(build_root, "runner-session-");
+  state_->record.create(root, "session", state_->owner);
+}
+WindowsRunnerSession::~WindowsRunnerSession() = default;
+const std::filesystem::path& WindowsRunnerSession::root() const { return state_->record.root; }
+
 }
