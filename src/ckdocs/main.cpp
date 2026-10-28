@@ -37,6 +37,8 @@
 #ifdef _WIN32
 #include "ckgit/windows.hpp"
 #include <process.h>
+#include <windows.h>
+#include <atomic>
 #endif
 
 #include "ckgit/cli_help.hpp"
@@ -298,7 +300,21 @@ struct ScopedTempDirectory {
 // (ckgit::readSiteFile / ckgit::decodeRequestPath), both already used by
 // ck-pagesd (src/pages-server/main.cpp).
 
+#ifdef _WIN32
+std::atomic_bool g_serve_stop = false;
+BOOL WINAPI onServeConsoleStop(DWORD event) {
+  if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT && event != CTRL_CLOSE_EVENT &&
+      event != CTRL_LOGOFF_EVENT && event != CTRL_SHUTDOWN_EVENT) return FALSE;
+  g_serve_stop = true;
+  // Returning from a close/shutdown handler lets Windows terminate the
+  // process immediately. Give the main thread its allotted cleanup window:
+  // it closes the listener, removes the preview directory and exits normally.
+  if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) Sleep(5000);
+  return TRUE;
+}
+#else
 volatile std::sig_atomic_t g_serve_stop = 0;
+#endif
 void onServeStop(int) { g_serve_stop = 1; }
 
 constexpr std::size_t kMaximumServeRequestBytes = 16 * 1024;
@@ -610,6 +626,10 @@ int runServe(const fs::path& site, unsigned short port, const std::function<std:
 #ifdef _WIN32
   std::signal(SIGTERM, onServeStop);
   std::signal(SIGINT, onServeStop);
+  if (!SetConsoleCtrlHandler(onServeConsoleStop, TRUE)) {
+    net::close(listener);
+    throw std::runtime_error("could not install preview shutdown handler");
+  }
 #else
   struct sigaction action {};
   action.sa_handler = onServeStop;

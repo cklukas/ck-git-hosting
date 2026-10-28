@@ -11,6 +11,7 @@ param(
     [ValidateSet('both','ckgit','ckdocs')][string]$InitialComponents = 'both',
     [ValidatePattern('^\{[0-9A-Fa-f-]{36}\}$')][string]$TestAppId,
     [ValidateSet('Inherited','Present','Missing')][string]$DependencyPathMode = 'Inherited',
+    [switch]$ExerciseRunningUpgrade,
     [switch]$RequireNonAdmin
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +25,7 @@ $hive = if ($Mode -eq 'AllUsers') { 'HKLM:' } else { 'HKCU:' }
 $productId = if ($Product -eq 'ckgit') { '{CDB31BA9-7F4D-4F73-9A15-5812D2493B99}' } elseif ($Product -eq 'ck-git-runner') { '{4527D4DC-5653-4650-969F-19D76EF349B8}' } else { '{9BA75E20-ED1F-4FBE-8F01-0F052E0F9700}' }
 if ($TestAppId) { $productId = $TestAppId } # Dedicated fixture package; never a production installation.
 if ($Product -ne 'ckgit' -and $InitialComponents -ne 'both') { throw 'Component selection is only available in the combined client installer' }
+if ($ExerciseRunningUpgrade -and $Product -ne 'ckdocs') { throw 'Running upgrade fixture currently requires the standalone ckdocs installer' }
 $executable = if ($Product -eq 'ck-git-runner') { 'ck-ci-runnerd.exe' } else { "$Product.exe" }
 if ($Product -eq 'ck-git-runner') {
     if (!$LauncherBinary) { throw 'LauncherBinary is required for the runner installer' }
@@ -42,6 +44,7 @@ $directory = Join-Path $fixture 'application with spaces'
 New-Item -ItemType Directory $fixture | Out-Null
 $oldTemp=$env:TEMP; $oldTmp=$env:TMP; $oldTmpdir=$env:TMPDIR
 $passed = $false
+$preview = $null
 try {
     $env:TEMP=$fixture; $env:TMP=$fixture; $env:TMPDIR=$fixture
     if ($Product -eq 'ckgit') {
@@ -54,6 +57,25 @@ try {
         }
     }
     for ($attempt=0; $attempt -lt 2; $attempt++) {
+        if ($attempt -eq 1 -and $ExerciseRunningUpgrade) {
+            $source = Join-Path $fixture 'preview source'
+            New-Item -ItemType Directory $source | Out-Null
+            [IO.File]::WriteAllText((Join-Path $source 'README.md'), "# Upgrade preview`n`nKeep this preview available until setup closes it.`n", (New-Object Text.UTF8Encoding($false)))
+            $previewExe = Join-Path $directory 'ckdocs.exe'
+            $previewLog = Join-Path $fixture 'preview.log'
+            $preview = Start-Process -FilePath $previewExe -ArgumentList ('serve --root "' + $source + '" --port 0') -PassThru -WindowStyle Hidden -RedirectStandardOutput $previewLog -RedirectStandardError (Join-Path $fixture 'preview-error.log')
+            $previewHandle = $preview.Handle # Retain the handle so ExitCode remains observable.
+            $port = $null
+            for ($i=0; $i -lt 100; $i++) {
+                $preview.Refresh()
+                if ($preview.HasExited) { throw 'Installed preview exited before upgrade' }
+                if ((Get-Content $previewLog -Raw -ErrorAction SilentlyContinue) -match 'serve ready on (\d+)') { $port=$Matches[1]; break }
+                Start-Sleep -Milliseconds 100
+            }
+            if (!$port -or $preview.MainModule.FileName -ne $previewExe) { throw 'Expected installed preview did not start' }
+            $page = Invoke-WebRequest "http://127.0.0.1:$port/index.html" -UseBasicParsing -TimeoutSec 5
+            if ($page.Content -notmatch 'Keep this preview available') { throw 'Installed preview content mismatch' }
+        }
         $args = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /' + $Mode.ToUpperInvariant() +
             ' /TASKS=addtopath /DIR="' + $directory + '" /LOG="' + (Join-Path $fixture "install-$attempt.log") + '"'
         $components = if ($attempt -eq 0 -and $InitialComponents -ne 'both') { $InitialComponents } else { 'ckgit,ckdocs' }
@@ -82,6 +104,11 @@ try {
             if (!$installLog.Contains("$tool on installer PATH: $expectedTool")) { throw "Installer dependency check missing or incorrect: $tool" }
         }
         if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+        if ($preview) {
+            if (!$preview.WaitForExit(10000) -or $preview.ExitCode -ne 0) { throw 'Installer did not close the preview cleanly' }
+            if (@(Get-ChildItem $fixture -Directory -Filter 'ckdocs-serve-*').Count) { throw 'Preview shutdown left its temporary site behind' }
+            $preview.Dispose(); $preview = $null
+        }
         $expected = @{}; $expected[$executable] = $Binary
         if ($Product -eq 'ckgit') {
             $expected = @{}
@@ -112,6 +139,11 @@ try {
     $passed = $true
     Write-Output "Installer $Product $Mode install/reinstall/uninstall passed; initial components=$InitialComponents; dependency PATH=$DependencyPathMode; administrator token=$admin"
 } finally {
+    if ($preview) {
+        $preview.Refresh()
+        if (!$preview.HasExited) { $preview.Kill(); $preview.WaitForExit() }
+        $preview.Dispose()
+    }
     $env:TEMP=$oldTemp; $env:TMP=$oldTmp; $env:TMPDIR=$oldTmpdir
     # Preserve a failed installation and its logs for diagnosis. Never delete
     # files behind an installed uninstaller or reset a concurrently edited PATH.

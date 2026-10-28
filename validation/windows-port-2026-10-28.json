@@ -490,5 +490,108 @@
       "recovery-runner-check.log": "f15bf698b17df449521a86cf207e877392014ac559cedf5309fea59b9999a934"
     },
     "limits": "Qualification uses elevated broker. Not yet installed from GitHub package or used by production runner. Pre-journal directories intentionally not reclaimed."
+  },
+  "preview_upgrade_shutdown": {
+    "base_commit": "e9da639221aa076a458897c41d8b774111c2b5fb",
+    "source_sha256": "4d6d9fc95bbe5514d928cea45de085c7dee3980dee6dd246de8cb83f635259ab",
+    "test_sha256": "fcdb13f1d6b6ea16e3dc1586e1ab0e2f8626f5352865ff4eb061394d25414160",
+    "original_admin_failure": {
+      "end": "2026-10-28T15:16:47.9476737Z",
+      "process_id": 58464,
+      "administrator": true,
+      "success": false,
+      "error": "Preview did not shut down cleanly: -1073741510",
+      "mode": "AllUsers",
+      "process_exited": true,
+      "position": "At V:\\tmp\\ckgit-windows-20261026-01\\upgrade2-worker.ps1:49 char:26\r\n+ ... Code -ne 0){throw \"Preview did not shut down cleanly: $($app.ExitCode ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    "fixed_admin_upgrade": {
+      "mode": "AllUsers",
+      "start": "2026-10-28T15:19:59.1917705Z",
+      "preserved_identity_sha256": "C3779F7E54046B5708523860B015E801AA83DBA452F8FF0F0C3AA60DE99B0B23",
+      "process_exit": 0,
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade3-AllUsers\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "success": true,
+      "installer_sha256": "0DD0C14259538D8F177CB4E49F83AAD5634CD80B40706834B75E16BD12005CE1",
+      "binary_sha256": "B1FF542B60D2FEB9BB191C89D02F33D35E7C3AF93BFEFFD6EC2AD0F93D040586",
+      "pid": 15232,
+      "administrator": true,
+      "end": "2026-10-28T15:20:04.4069223Z"
+    },
+    "permanent_regression_test": {
+      "test_sha256": "FCDB13F1D6B6EA16E3DC1586E1AB0E2F8626F5352865FF4EB061394D25414160",
+      "end": "2026-10-28T15:21:53.2121986Z",
+      "binary_sha256": "B1FF542B60D2FEB9BB191C89D02F33D35E7C3AF93BFEFFD6EC2AD0F93D040586",
+      "success": true,
+      "start": "2026-10-28T15:21:47.7473112Z"
+    },
+    "nonadmin_docs_tests": {
+      "end": "2026-10-28T15:22:27.8660285Z",
+      "administrator": false,
+      "success": true,
+      "exit": 0
+    },
+    "native_build": {
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\build\\bin\\Release",
+      "exit": 0,
+      "baseline": "Prior sharedheader Windows build81.96s; changed sandbox header and source rebuild dependent targets",
+      "start": "2026-10-28T15:18:38.0772567Z",
+      "end": "2026-10-28T15:18:45.4384590Z",
+      "seconds": 7.365206
+    },
+    "mac_build": {
+      "start": "2026-10-28T15:22:28.388840+00:00",
+      "end": "2026-10-28T15:22:31.320297+00:00",
+      "seconds": 2.9312197498511523,
+      "exit": 0,
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckdocs",
+      "source_sha256": "4d6d9fc95bbe5514d928cea45de085c7dee3980dee6dd246de8cb83f635259ab",
+      "baseline": "No recent isolated ckdocs-main compile baseline; inspect changed TU compilation and link"
+    },
+    "package_build": {
+      "start": "2026-10-28T15:19:18.5681673Z",
+      "baseline": "Previous all3installers+fixture compile10.694s; this builds one ckdocs-only fixture",
+      "seconds": 3.9457179,
+      "binary_sha256": "B1FF542B60D2FEB9BB191C89D02F33D35E7C3AF93BFEFFD6EC2AD0F93D040586",
+      "setup_sha256": "0DD0C14259538D8F177CB4E49F83AAD5634CD80B40706834B75E16BD12005CE1",
+      "source_sha256": "7AC2830FDDB1415FAD43A8E9A18F3251726087402932A0C5F60E5849E0DEB2BC",
+      "end": "2026-10-28T15:19:22.5108848Z",
+      "output": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-shutdown-packages\\ckdocs-0.8.2-windows-x64-setup.exe"
+    },
+    "restricted_token_upgrade_failure": {
+      "end": "2026-10-28T15:02:34.4169245Z",
+      "process_id": 56300,
+      "administrator": false,
+      "success": false,
+      "error": "Upgrade failed 5",
+      "mode": "CurrentUser",
+      "process_exited": false,
+      "position": "At V:\\tmp\\ckgit-windows-20261026-01\\upgrade-worker.ps1:45 char:30\r\n+ ... $upgrade.ExitCode -ne 0){throw \"Upgrade failed $($upgrade.ExitCode)\"}\r\n+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    },
+    "restricted_token_rm_diagnostic": {
+      "pid": 15056,
+      "installed_os_binary": "start=0 register=0 list=5 needed=0 reasons=0",
+      "restart_manager": "start=0 register=0 list=5 needed=0 reasons=0",
+      "utc": "2026-10-28T15:09:36.8995882Z",
+      "administrator": false,
+      "graceful_exit": false,
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "pid_shutdown": "list=5"
+    },
+    "admin_rm_diagnostic": {
+      "pid": 63092,
+      "installed_os_binary": "start=0 register=0 list=0 needed=0 reasons=0",
+      "image": "V:\\tmp\\ckgit-windows-20261026-01\\upgrade-CurrentUser\\application Gr\u00fc\u00df with spaces\\ckdocs.exe",
+      "restart_manager": "start=0 register=0 list=234 needed=1 reasons=0",
+      "utc": "2026-10-28T15:07:21.7460405Z",
+      "administrator": true
+    },
+    "cleanup": {
+      "no_active_fixture_process": true,
+      "no_fixture_installation": true,
+      "receipt_sha256": "48cac9184f323c8ff10285c0cd48528ff3d1490709e4e4f5a641ff5a8710ebd2"
+    },
+    "limits": "Verified graceful ckdocs AllUsers upgrade from running preview with current code. CurrentUser live upgrade using runas /trustlevel restricted token still fails RmGetList error5 for both file and explicit PID registration; this token may be more restricted than an ordinary standard-user token. CLI and runner live upgrades remain unqualified. Production products unchanged.",
+    "ci_packaging_fix": "d0a10e1 Debian build/tests/package lifecycle passed but identity step failed because archive checkout lacks.git. e9da639 uses GITHUB_SHA, matching actions/checkout default push/PR merge checkout."
   }
 }
