@@ -157,7 +157,10 @@ jobs:
           test -d /srv/ck-git-hosting/repos/smoke.git
       - name: Record tested package identity
         run: |
-          commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
+          # checkout can use an archive here: Git is installed only in the
+          # following dependency step. Its default ref is GITHUB_SHA in both
+          # push and pull-request jobs, including a PR's tested merge commit.
+          commit=$GITHUB_SHA
           cd "$RUNNER_TEMP/dist"
           sha256sum -- *.deb > SHA256SUMS
           printf 'commit=%s\narchitecture=%s\n' "$commit" '${{ matrix.arch }}' > BUILD-INFO
