@@ -73,6 +73,8 @@ Source: "runner.ini.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\third_party\libarchive\COPYING"; DestDir: "{app}\licenses\libarchive"; Flags: ignoreversion
+Source: "..\..\third_party\libarchive\SOURCE-NOTICES.txt"; DestDir: "{app}\licenses\libarchive"; Flags: ignoreversion
 
 [Tasks]
 Name: addtopath; Description: "Add {#Product} to PATH for this installation scope"

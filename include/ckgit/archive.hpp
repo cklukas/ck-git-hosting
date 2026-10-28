@@ -1,0 +1,24 @@
+// Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
+#pragma once
+#include <chrono>
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace ckgit {
+struct TarPackOptions {
+  std::uintmax_t max_bytes = 0;
+  std::size_t max_entries = 100000;
+  std::chrono::seconds timeout{300};
+  std::function<bool()> should_continue;
+};
+// Uncompressed PAX TAR containing only directories and regular files.
+// The caller owns a quiescent source tree and an output outside that tree.
+// No links, reparse points, external filters or subprocesses are used.
+// Files are streamed from validated handles; failure removes partial output.
+void packRegularTreeTar(const std::filesystem::path& root,
+                        const std::vector<std::string>& paths,
+                        const std::filesystem::path& output, const TarPackOptions& options);
+}

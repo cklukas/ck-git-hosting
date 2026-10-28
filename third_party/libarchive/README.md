@@ -20,8 +20,11 @@ XML, ACL and extended-attribute dependencies disabled. ck-git-hosting's
 archive formats are uncompressed TAR. The caller must register only the
 required TAR reader/writer, not all libarchive formats or external filters.
 MSVC uses the static runtime so no administrator-installed redistributable
-is needed. This build target alone does not replace the application's existing
-tar calls; integration and bounded archive handling are still required.
+is needed. The Windows executor uses this library for bounded artifact packing.
+Other archive call sites still use tar and are not covered by that migration.
+`SOURCE-NOTICES.txt` reproduces copyright/license comment blocks from the
+release's `libarchive/*.c` and `libarchive/*.h` files, including optional code;
+Windows packages distribute it together with `COPYING`.
 
 For an independent qualification, configure this directory with an explicit
 scratch build path and build `archive_static`. Follow the project's `TMPDIR`

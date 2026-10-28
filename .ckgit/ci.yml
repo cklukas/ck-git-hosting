@@ -114,7 +114,7 @@ jobs:
           # Linux binary) can build ckgit from the same release. LICENSE and
           # README.md ride along so a from-source build is self-explanatory,
           # not just buildable.
-          tar -czf "$PWD/dist/ck-git-hosting-src.tar.gz" LICENSE README.md Makefile CMakeLists.txt CMakePresets.json VERSION src include packaging
+          tar -czf "$PWD/dist/ck-git-hosting-src.tar.gz" LICENSE README.md Makefile CMakeLists.txt CMakePresets.json VERSION src include packaging third_party
           # The exact baked version, so a client built from the source tarball
           # (which carries no .git) reports the same version as this release.
           cp "$TMPDIR/build-version" "$PWD/dist/build-version"

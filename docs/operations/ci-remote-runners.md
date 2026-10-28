@@ -51,6 +51,15 @@ even when the server would allow it, and there is no degraded execution mode.
 Windows-managed AppContainer profiles use the operating system's profile
 location. Checkouts, staged tools, caches and logs use the configured paths.
 
+Windows artifact packing uses the bundled, statically linked libarchive 3.8.10;
+it does not invoke `tar.exe`. It writes uncompressed TAR files, streams regular
+files from validated handles and rejects links or reparse points. Packing keeps
+the configured byte cap, cancellation checks and five-minute time limit, with
+an additional limit of 100,000 entries. Failed packing removes partial output.
+The broker performs this work after the job's processes have terminated.
+Portal extraction and Pages archive handling are separate paths whose
+libarchive migration is still in progress.
+
 The `ck-git-runner` installer includes the broker, `ckgit-job-launcher.exe` and
 `runner.ini.example`. CurrentUser installs its files without administrator
 rights; running the broker still needs elevation. AllUsers installation needs

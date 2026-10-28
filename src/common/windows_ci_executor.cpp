@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/windows_ci_executor.hpp"
+#include "ckgit/archive.hpp"
 #ifdef _WIN32
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows.hpp"
@@ -276,23 +277,11 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
         const auto bundle = sandbox->tools().parent_path() / (ci_job.artifact->name + ".tar");
         std::string note;
         try {
-          std::vector<std::string> command{"tar", "-cf", "-", "-C", pathToUtf8(work), "--"};
-          for (const auto& name : ci_job.artifact->paths) { inspectTree(below(work, pathFromUtf8(name))); command.push_back(name); }
-          std::ofstream output(bundle, std::ios::binary);
-          if (!output) throw std::runtime_error("cannot create artifact bundle");
-          ProcessOptions pack;
-          pack.timeout = std::chrono::seconds(300); pack.output_limit = 0; pack.inherit_stderr = true;
-          std::size_t bytes = 0;
-          pack.on_output = [&](std::string_view data) {
-            if (data.size() > options.artifact_max_bytes - bytes) throw std::runtime_error("artifact exceeds the size cap");
-            output.write(data.data(), static_cast<std::streamsize>(data.size()));
-            if (!output) throw std::runtime_error("cannot write artifact bundle");
-            bytes += data.size();
-          };
+          for (const auto& name : ci_job.artifact->paths) inspectTree(below(work, pathFromUtf8(name)));
+          TarPackOptions pack;
+          pack.max_bytes = options.artifact_max_bytes;
           pack.should_continue = continuing;
-          const auto result = runProcess(command, pack);
-          output.close();
-          if (!output || result.exit_code || result.timed_out || result.cancelled) throw std::runtime_error("artifact packing failed");
+          packRegularTreeTar(work, ci_job.artifact->paths, bundle, pack);
         } catch (const std::exception& error) { note = error.what(); }
         record.artifacts.push_back(sink.putArtifact(*ci_job.artifact, bundle, note, prepared.is_release));
         std::error_code ignored; fs::remove(bundle, ignored);

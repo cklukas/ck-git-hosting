@@ -181,6 +181,15 @@ Check each command's exit code before continuing. Supply
 `-DCKGIT_BUILD_VERSION=<exact-version>` when configuring a release; the default
 is the version in `VERSION` with a `+source` suffix.
 
+CMake verifies and builds the bundled libarchive 3.8.10 source without a
+network download. The Windows runner links it statically, including the C
+runtime; the installer and portable ZIP carry its notices under
+`licenses/libarchive`. The `archive` CTest covers UTF-8 TAR roundtrips, empty
+files, bounded streaming, cancellation and rejection of unsafe inputs. The
+`tree-file` test also replaces a pathname while streaming to verify that the
+reader retains the originally validated handle. Other archive call sites are
+still being migrated; these tests do not establish that migration is complete.
+
 Native tests cover private client configuration and checkout selection files,
 process locks, Git repository discovery (including Unicode paths and linked
 worktrees), process execution, file serving, diagrams, and the docs preview.
