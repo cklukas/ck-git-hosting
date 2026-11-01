@@ -81,6 +81,122 @@ Source: "..\..\third_party\libarchive\SOURCE-NOTICES.txt"; DestDir: "{app}\licen
 Name: addtopath; Description: "Add {#Product} to PATH for this installation scope"
 
 [Code]
+#if Product == "ck-git-runner"
+var
+  StoppedRunnerServices: TArrayOfString;
+  RunnerRestartFailed: Boolean;
+
+function SafeServiceName(const Name: String): Boolean;
+var I: Integer;
+begin
+  Result := Length(Name) > 0;
+  for I := 1 to Length(Name) do
+    if not (((Name[I] >= 'a') and (Name[I] <= 'z')) or
+            ((Name[I] >= 'A') and (Name[I] <= 'Z')) or
+            ((Name[I] >= '0') and (Name[I] <= '9')) or
+            (Name[I] = '-') or (Name[I] = '_')) then Result := False;
+end;
+
+function StopInstalledRunnerServices: String;
+var
+  Names: TArrayOfString;
+  I, J, N, Code: Integer;
+  Key, Image, Account, Prefix, State: String;
+  Locator, Wmi, Service: Variant;
+begin
+  Result := '';
+  if not IsAdminInstallMode then Exit;
+  Key := 'SYSTEM\CurrentControlSet\Services';
+  if not RegGetSubkeyNames(HKLM, Key, Names) then begin
+    Result := 'Unable to inspect Windows services before upgrading the runner.'; Exit;
+  end;
+  Prefix := '"' + ExpandConstant('{app}\ck-ci-runnerd.exe') + '" service ';
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Wmi := Locator.ConnectServer('.', 'root\cimv2');
+    for I := 0 to GetArrayLength(Names)-1 do begin
+      if SafeServiceName(Names[I]) and
+         RegQueryStringValue(HKLM, Key + '\' + Names[I], 'ImagePath', Image) and
+         RegQueryStringValue(HKLM, Key + '\' + Names[I], 'ObjectName', Account) and
+         (CompareText(Account, 'NT SERVICE\' + Names[I]) = 0) and
+         (CompareText(Copy(Image, 1, Length(Prefix)), Prefix) = 0) then begin
+        Service := Wmi.Get('Win32_Service.Name="' + Names[I] + '"');
+        State := Service.State;
+        if CompareText(State, 'Stopped') <> 0 then begin
+          if CompareText(State, 'Running') <> 0 then begin
+            Result := 'Runner service ' + Names[I] + ' is changing state; retry when it is stable.'; Exit;
+          end;
+          Code := Service.StopService();
+          if Code <> 0 then begin
+            Result := 'Could not stop runner service ' + Names[I] + ' (code ' + IntToStr(Code) + ').'; Exit;
+          end;
+          N := GetArrayLength(StoppedRunnerServices);
+          SetArrayLength(StoppedRunnerServices, N + 1);
+          StoppedRunnerServices[N] := Names[I];
+          for J := 1 to 120 do begin
+            Service := Wmi.Get('Win32_Service.Name="' + Names[I] + '"');
+            if CompareText(Service.State, 'Stopped') = 0 then Break;
+            Sleep(250);
+          end;
+          if CompareText(Service.State, 'Stopped') <> 0 then begin
+            Result := 'Timed out stopping runner service ' + Names[I] + '.'; Exit;
+          end;
+        end;
+      end;
+    end;
+  except
+    Result := 'Unable to manage runner services: ' + GetExceptionMessage;
+  end;
+end;
+
+procedure RestartRunnerServices;
+var I, J, Code: Integer; Locator, Wmi, Service: Variant;
+begin
+  if GetArrayLength(StoppedRunnerServices) = 0 then Exit;
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Wmi := Locator.ConnectServer('.', 'root\cimv2');
+    for I := 0 to GetArrayLength(StoppedRunnerServices)-1 do begin
+      try
+      Service := Wmi.Get('Win32_Service.Name="' + StoppedRunnerServices[I] + '"');
+      Code := Service.StartService();
+      if Code <> 0 then begin
+        RunnerRestartFailed := True;
+        Log('Could not restart runner service ' + StoppedRunnerServices[I] + ': ' + IntToStr(Code));
+      end else begin
+        for J := 1 to 120 do begin
+          Service := Wmi.Get('Win32_Service.Name="' + StoppedRunnerServices[I] + '"');
+          if CompareText(Service.State, 'Running') = 0 then Break;
+          Sleep(250);
+        end;
+        if CompareText(Service.State, 'Running') <> 0 then begin
+          RunnerRestartFailed := True;
+          Log('Runner service did not reach Running: ' + StoppedRunnerServices[I]);
+        end;
+      end;
+      except
+        RunnerRestartFailed := True;
+        Log('Could not restart runner service ' + StoppedRunnerServices[I] + ': ' + GetExceptionMessage);
+      end;
+    end;
+  except
+    RunnerRestartFailed := True;
+    Log('Could not restart runner services: ' + GetExceptionMessage);
+  end;
+  SetArrayLength(StoppedRunnerServices, 0);
+end;
+
+procedure DeinitializeSetup;
+begin
+  RestartRunnerServices;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if RunnerRestartFailed then Result := 20 else Result := 0;
+end;
+#endif
+
 function DependencyOnPath(Name: String): String;
 var
   Paths, Directory, Candidate: String;
@@ -193,6 +309,9 @@ begin
         RaiseException('Could not update PATH');
       RegWriteStringValue(ScopeRoot, '{#InstallerStateKey}', 'OwnedPath', ExpandConstant('{app}'));
     end;
+#if Product == "ck-git-runner"
+    RestartRunnerServices;
+#endif
   end;
 end;
 
@@ -217,6 +336,9 @@ begin
   Log(DependencySummary(#13#10));
   if Pos(';', ExpandConstant('{app}')) <> 0 then
     Result := 'Choose an installation path without a semicolon.';
+#if Product == "ck-git-runner"
+  if Result = '' then Result := StopInstalledRunnerServices;
+#endif
 #if Product == "ckgit"
   if (Result = '') and not WizardIsComponentSelected('ckgit') and
      not WizardIsComponentSelected('ckdocs') then

@@ -156,8 +156,13 @@ The same registration and crash-recovery fixture passed with the installed
 GitHub runner from commit `8cc509f`. A separate service test connected to the
 real host and built this repository's Windows installers under LPAC with the
 short build root; its four packages and source fingerprints were verified.
-ACL provisioning remains manual. Active-job shutdown and installer upgrades
-under a service still need qualification.
+ACL provisioning remains manual. For AllUsers upgrades, the installer stops
+running virtual-account services whose configured executable is exactly the
+runner in the installation directory, then restarts them. Setup exit code 20
+means the package was installed but at least one service did not restart;
+inspect the setup log and service logs. Tests cover idle services, an unrelated
+service and a disabled service that cannot restart. Active-job upgrades still
+need qualification; wait for the job to finish before upgrading.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.

@@ -67,6 +67,31 @@ jobs:
               }
             }
           }
+      - name: Windows service upgrade isolation
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $source = 'packaging/windows/ci-service-fixture.iss'
+          $out = "$env:RUNNER_TEMP/service-fixture"
+          New-Item -ItemType Directory $out | Out-Null
+          @'
+          #define Product "ck-git-runner"
+          #define ProductExecutable "ck-ci-runnerd.exe"
+          #define ProductAppId "{{63DAF121-397D-485D-A9E6-51A70258C23A}"
+          #define InstallerStateKey "Software\ckgit\service-upgrade-fixture\Installer"
+          #include "ckdocs.iss"
+          '@ | Set-Content -Encoding Ascii $source
+          try {
+            $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin" "/DOutputDir=$out" "/DReleaseVersion=$version" $source
+            if ($LASTEXITCODE) { throw 'Service fixture installer build failed' }
+            $installer = "$out/ck-git-runner-$version-windows-x64-setup.exe"
+            $hash = (Get-FileHash $installer).Hash
+            $test = 'tests/integration/windows_service_upgrade.ps1'
+            $common = @{Installer=$installer; InstallerSha256=$hash; FakeSsh="$env:RUNNER_TEMP/build/bin/ckgit-process-tests.exe"; TestRoot=$env:TEMP; TestAppId='{63DAF121-397D-485D-A9E6-51A70258C23A}'}
+            & $test @common
+            & $test @common -ExerciseRestartFailure
+            & $test @common -ExerciseRestartFailure -ExerciseMultipleServices
+          } finally { Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v7
         with:
           name: windows-x64
