@@ -11,6 +11,11 @@ roles of the main host and runners, including Linux installation.
 
 ## Before you start
 
+The runner does not require a particular compiler or build system. Stage only
+the tools needed by the projects assigned to it. The MSVC, CMake, Inno Setup
+and Ninja examples below describe **building ck-git-hosting's own Windows
+installers**; they are not a requirement for every Windows CI job.
+
 - A running, protocol-2-capable main host, SSH access to it, and permission to
   register a runner and enable CI for a hosted project.
 - Windows x64, Git for Windows, and the `ck-git-runner-*-windows-x64-setup.exe`
@@ -26,8 +31,9 @@ roles of the main host and runners, including Linux installation.
 The examples use `C:\ci-example\Programs\ck-git-runner`, `C:\ci-example\ProgramData\ckgit-runner`
 and `C:\ci-example\tmp\ckrun`. Replace these with suitable absolute paths on your own
 machine, ensure the chosen locations are writable by the runner account, and
-keep the build path short. Set `TEMP`, `TMP` and `TMPDIR` to a suitable task
-directory before staging tools. Replace `main-host`, `windows-builder`
+keep the build path short. For a non-administrator installation, a directory
+under `%LOCALAPPDATA%` is one possible choice. Set `TEMP`, `TMP` and `TMPDIR`
+to a suitable task directory before staging tools. Replace `main-host`, `windows-builder`
 and `myproject` consistently throughout this guide.
 
 ## 1. Install and prepare the runner on Windows

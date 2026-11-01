@@ -208,6 +208,19 @@ source SHA-256; installed tool permissions are unchanged. The optional
 uploaders cannot exhaust the job's process limit. Put `ninja` before
 `cmake/bin` in `ci_toolchain_paths`, as in the example configuration.
 
+For every Windows job, the runner sets `VSCMD_SKIP_SENDTELEMETRY=1`,
+`DOTNET_CLI_TELEMETRY_OPTOUT=1` and `VCPKG_DISABLE_METRICS=1` in the clean
+process environment after applying workflow and runner settings. It also
+omits `vctip.exe` from the per-job tool copy, even if a supplied toolchain
+contains it. It never removes or changes the installed tool. These opt-outs
+are not inherited from the service account and apply to the job process and
+its descendants. Windows jobs have no network capability. Microsoft documents
+[the .NET CLI opt-out](https://learn.microsoft.com/en-us/dotnet/core/tools/telemetry),
+[the vcpkg opt-out](https://learn.microsoft.com/en-us/vcpkg/users/config-environment)
+and the [Visual Studio optional telemetry policy](https://learn.microsoft.com/en-us/visualstudio/ide/visual-studio-experience-improvement-program#registry-settings).
+The runner does not change machine-wide registry policy; the operator controls
+that separately for other processes on the machine.
+
 The repository's installer job uses the `windows-release` CMake preset
 (Ninja), also used by development and GitHub CI. The older
 `windows-lpac-release` NMake preset remains available for explicit diagnostics;

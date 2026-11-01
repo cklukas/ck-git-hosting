@@ -238,6 +238,16 @@ int wmain(int argc, wchar_t** argv) {
       const auto sister = _wgetenv(L"CKGIT_SISTER_SISTER");
       const auto cache = _wgetenv(L"COMPILER_CACHE");
       const auto command_processor = _wgetenv(L"COMSPEC");
+      for (const auto* name : {L"VSCMD_SKIP_SENDTELEMETRY", L"DOTNET_CLI_TELEMETRY_OPTOUT", L"VCPKG_DISABLE_METRICS"}) {
+        const auto value = _wgetenv(name);
+        require(value && std::wstring_view(value) == L"1", "executor enforces telemetry opt-outs");
+      }
+      wchar_t executable[32768]{};
+      const auto executable_length = GetModuleFileNameW(nullptr, executable, 32768);
+      require(executable_length > 0 && executable_length < 32768, "locate executor probe");
+      const auto tool_root = fs::path(executable).parent_path();
+      require(!fs::exists(tool_root / "VCTIP.EXE") && !fs::exists(tool_root / "msvc" / "vctip.exe"),
+              "compiler telemetry uploader omitted");
       require(command_processor && fs::path(command_processor).is_absolute(), "executor system command processor");
       require(sister && fs::is_regular_file(fs::path(sister) / "probe.c"), "executor sister environment");
       require(cache && fs::is_regular_file(fs::path(cache) / "seed"), "executor restores persistent cache");
@@ -426,6 +436,7 @@ int wmain(int argc, wchar_t** argv) {
     copyTools(fs::path(argv[2]), sandbox.tools() / "msvc");
     copyTools(fs::path(argv[3]), sandbox.tools() / "cmake");
     fs::copy_file(fs::path(argv[4]), sandbox.tools() / "kernel32.lib");
+    std::ofstream(sandbox.tools() / "VCTIP.EXE") << "telemetry uploader fixture";
     sandbox.sealTools();
     ckgit::net::Runtime network;
     const auto listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -511,6 +522,8 @@ int wmain(int argc, wchar_t** argv) {
     prepared.workflow.caches.push_back({"compiler", {"COMPILER_CACHE"}});
     ckgit::CiJob ci_job;
     ci_job.name = "windows";
+    prepared.workflow.env.emplace_back("DOTNET_CLI_TELEMETRY_OPTOUT", "0");
+    ci_job.env.emplace_back("VCPKG_DISABLE_METRICS", "0");
     ci_job.steps.push_back({"environment", {"probe.exe", "--executor-child"}, {}, {}});
     ci_job.steps.push_back({"compile", {"cl.exe", "/nologo", "/GS-", "/Zl", "probe.c", "/Fe:result.exe", "/link",
         "/nodefaultlib", "/entry:mainCRTStartup", "/subsystem:console", "kernel32.lib"}, {}, {}});
@@ -526,10 +539,12 @@ int wmain(int argc, wchar_t** argv) {
     toolchain.launcher = fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe";
     toolchain.binary_directories = {"msvc", "cmake/bin", "."};
     toolchain.environment["LIB"] = "${TOOLS}";
+    toolchain.environment["VSCMD_SKIP_SENDTELEMETRY"] = "0";
     ckgit::CiExecutionOptions execution;
     execution.build_root = sandbox.work() / "executor-build";
     execution.cache_root = sandbox.work() / "executor-cache";
     execution.runner = "windows-fixture";
+    execution.extra_env.push_back("VSCMD_SKIP_SENDTELEMETRY=0");
     execution.timeout_seconds = 60;
     const auto toolchain_identity = ckgit::windowsCiToolchainFingerprint(toolchain);
     const auto stored_cache = ckgit::windowsCiCacheDirectory(execution.cache_root,

@@ -30,12 +30,17 @@ void inspectTree(const fs::path& path) {
   ordinary(path);
   if (fs::is_directory(path)) for (const auto& item : fs::recursive_directory_iterator(path)) ordinary(item.path());
 }
-void copyTree(const fs::path& source, const fs::path& destination, const std::function<bool()>& monitor) {
+bool isCompilerTelemetryUploader(const fs::path& path) {
+  return _wcsicmp(path.filename().c_str(), L"vctip.exe") == 0;
+}
+void copyTree(const fs::path& source, const fs::path& destination, const std::function<bool()>& monitor,
+              bool omit_compiler_telemetry = false) {
   ordinary(source);
   fs::create_directories(destination);
   for (const auto& item : fs::recursive_directory_iterator(source)) {
     if (!monitor()) throw std::runtime_error("copy cancelled");
     ordinary(item.path());
+    if (omit_compiler_telemetry && item.is_regular_file() && isCompilerTelemetryUploader(item.path())) continue;
     const auto target = destination / item.path().lexically_relative(source);
     if (item.is_directory()) fs::create_directory(target);
     else if (item.is_regular_file()) fs::copy_file(item.path(), target);
@@ -79,6 +84,7 @@ std::string windowsCiToolchainFingerprint(const WindowsCiToolchain& staged,
   for (const auto& entry : fs::recursive_directory_iterator(staged.root)) {
     if (monitor && !monitor()) throw std::runtime_error("toolchain fingerprint cancelled");
     ordinary(entry.path());
+    if (entry.is_regular_file() && isCompilerTelemetryUploader(entry.path())) continue;
     entries.push_back(entry.path().lexically_relative(staged.root));
   }
   std::sort(entries.begin(), entries.end());
@@ -153,7 +159,7 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
       report->network_isolated = true;
       report->filesystem_masked = true;
     }
-    copyTree(toolchain.root, sandbox->tools(), continuing);
+    copyTree(toolchain.root, sandbox->tools(), continuing, true);
     fs::copy_file(toolchain.launcher, sandbox->tools() / "ckgit-job-launcher.exe", fs::copy_options::overwrite_existing);
     sandbox->sealTools(continuing);
     const auto work = sandbox->work() / "src";
@@ -231,6 +237,10 @@ CiRunRecord executeWindowsCiJob(const CiPreparedJob& prepared, const CiExecution
         if (equal != std::string::npos) environment[upper(assignment.substr(0, equal))] = assignment.substr(equal + 1);
       }
       for (const auto& [key, value] : job_environment) environment[key] = value;
+      // Job and runner configuration cannot silently re-enable tool telemetry.
+      environment["VSCMD_SKIP_SENDTELEMETRY"] = "1";
+      environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+      environment["VCPKG_DISABLE_METRICS"] = "1";
       environment["CI"] = "true"; environment["CKGIT_CI"] = "1";
       environment["CKGIT_COMMIT"] = job.commit_id; environment["CKGIT_REF"] = job.ref;
       environment["HOME"] = pathToUtf8(sandbox->work() / "home");

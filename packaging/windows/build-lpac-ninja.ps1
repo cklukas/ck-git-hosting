@@ -19,11 +19,13 @@ $CmakeProgram = (Resolve-Path -LiteralPath $CmakeProgram).Path
 $archiveHash = '974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17'
 if ((Get-FileHash -LiteralPath $SourceArchive).Hash.ToLowerInvariant() -ne $archiveHash) { throw 'Ninja v1.13.2 source archive hash mismatch' }
 $oldTemp=$env:TEMP; $oldTmp=$env:TMP; $oldTmpdir=$env:TMPDIR
+$oldVsTelemetry=$env:VSCMD_SKIP_SENDTELEMETRY; $oldDotnetTelemetry=$env:DOTNET_CLI_TELEMETRY_OPTOUT; $oldVcpkgTelemetry=$env:VCPKG_DISABLE_METRICS
 $scratch=Join-Path $TemporaryRoot ('lpac-ninja-' + [guid]::NewGuid().ToString('N'))
 $start=[DateTime]::UtcNow
 try {
     New-Item -ItemType Directory -Path $scratch | Out-Null
     $env:TEMP=$scratch; $env:TMP=$scratch; $env:TMPDIR=$scratch
+    $env:VSCMD_SKIP_SENDTELEMETRY="1"; $env:DOTNET_CLI_TELEMETRY_OPTOUT="1"; $env:VCPKG_DISABLE_METRICS="1"
     & "$env:SystemRoot\System32\tar.exe" -xf $SourceArchive -C $scratch
     if ($LASTEXITCODE) { throw 'Ninja source extraction failed' }
     $source=Join-Path $scratch 'ninja-1.13.2'
@@ -66,5 +68,6 @@ try {
     Write-Output "LPAC Ninja ready: $Destination"
 } finally {
     $env:TEMP=$oldTemp; $env:TMP=$oldTmp; $env:TMPDIR=$oldTmpdir
+    $env:VSCMD_SKIP_SENDTELEMETRY=$oldVsTelemetry; $env:DOTNET_CLI_TELEMETRY_OPTOUT=$oldDotnetTelemetry; $env:VCPKG_DISABLE_METRICS=$oldVcpkgTelemetry
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
