@@ -188,7 +188,16 @@ capture client fetch --repo "$alpha" --branch main --no-tags
 refused
 contains "$command_output" 'is a symbolic reference'
 [ "$(ref "$alpha" refs/heads/feature/local)" = "$initial" ] || fail 'fetch followed a symbolic tracking ref'
+# Recursive symbolic-ref inspection must still reject a chain. This also
+# covers older Git versions which do not implement --no-recurse.
+git -C "$alpha" symbolic-ref refs/heads/indirect refs/heads/feature/local
+git -C "$alpha" symbolic-ref refs/remotes/ckgit/main refs/heads/indirect
+capture client fetch --repo "$alpha" --branch main --no-tags
+refused
+contains "$command_output" 'is a symbolic reference'
+[ "$(ref "$alpha" refs/heads/feature/local)" = "$initial" ] || fail 'fetch followed a symbolic chain'
 git -C "$alpha" symbolic-ref --delete refs/remotes/ckgit/main
+git -C "$alpha" symbolic-ref --delete refs/heads/indirect
 git -C "$alpha" symbolic-ref refs/remotes/ckgit/main refs/heads/not-created
 capture client fetch --repo "$alpha" --branch main --no-tags
 refused

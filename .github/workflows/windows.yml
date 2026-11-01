@@ -1,0 +1,101 @@
+# Copyright (c) 2026 C. Klukas. All rights reserved.
+# SPDX-License-Identifier: MIT
+name: Windows clients
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select temporary workspace
+        run: |
+          $scratch = Join-Path $env:RUNNER_TEMP 'ckgit-windows'
+          New-Item -ItemType Directory -Path $scratch | Out-Null
+          foreach ($key in @('TEMP','TMP','TMPDIR')) { "$key=$scratch" >> $env:GITHUB_ENV }
+      - name: Build
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          if (!$version) { $version = (Get-Content VERSION -Raw).Trim() + '+g' + (git rev-parse --short=12 HEAD) }
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'An x64 MSVC toolchain is required' }
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          if (!(Get-Command ninja.exe -ErrorAction SilentlyContinue)) {
+            $env:PATH = "$vs/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja;" + $env:PATH
+          }
+          cmake --preset windows-release -B "$env:RUNNER_TEMP/build" "-DCKGIT_BUILD_VERSION=$version"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build "$env:RUNNER_TEMP/build" --config Release --parallel 4
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native process, file safety, diagrams and preview tests
+        run: |
+          ctest --test-dir "$env:RUNNER_TEMP/build" -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package portable ZIP and installer
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          cpack --config "$env:RUNNER_TEMP/build/CPackConfig.cmake" -C Release -B "$env:RUNNER_TEMP/dist"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (!(Test-Path $iscc)) { throw 'Inno Setup 6 is required on this build image' }
+          foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
+            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin" "/DOutputDir=$env:RUNNER_TEMP/dist" "/DReleaseVersion=$version" "packaging/windows/$product.iss"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Installer lifecycle in both installation scopes
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          foreach ($product in @('ckdocs','ckgit','ck-git-runner')) {
+            $executable = if ($product -eq 'ck-git-runner') { 'ck-ci-runnerd' } else { $product }
+            foreach ($mode in @('CurrentUser','AllUsers')) {
+              $selections = if ($product -eq 'ckgit') { @('both','ckgit','ckdocs') } else { @('both') }
+              foreach ($selection in $selections) {
+                $dependencyMode = if ($selection -eq 'ckgit') { 'Missing' } elseif ($selection -eq 'ckdocs') { 'Present' } else { 'Inherited' }
+                & tests/integration/windows_installer.ps1 -Product $product -Installer "$env:RUNNER_TEMP/dist/$product-$version-windows-x64-setup.exe" -Binary "$env:RUNNER_TEMP/build/bin/$executable.exe" -LauncherBinary "$env:RUNNER_TEMP/build/bin/ckgit-job-launcher.exe" -DocsBinary "$env:RUNNER_TEMP/build/bin/ckdocs.exe" -TestRoot $env:TEMP -Mode $mode -InitialComponents $selection -DependencyPathMode $dependencyMode -RunnerFakeSsh "$env:RUNNER_TEMP/build/bin/ckgit-process-tests.exe" -ExerciseRunningUpgrade:($product -in @('ckdocs','ck-git-runner') -and $mode -eq 'AllUsers')
+              }
+            }
+          }
+      - name: Windows service upgrade isolation
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $source = 'packaging/windows/ci-service-fixture.iss'
+          $out = "$env:RUNNER_TEMP/service-fixture"
+          New-Item -ItemType Directory $out | Out-Null
+          @'
+          #define Product "ck-git-runner"
+          #define ProductExecutable "ck-ci-runnerd.exe"
+          #define ProductAppId "{{63DAF121-397D-485D-A9E6-51A70258C23A}"
+          #define InstallerStateKey "Software\ckgit\service-upgrade-fixture\Installer"
+          #include "ckdocs.iss"
+          '@ | Set-Content -Encoding Ascii $source
+          try {
+            $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+            & $iscc "/DBinaryDir=$env:RUNNER_TEMP/build/bin" "/DOutputDir=$out" "/DReleaseVersion=$version" $source
+            if ($LASTEXITCODE) { throw 'Service fixture installer build failed' }
+            $installer = "$out/ck-git-runner-$version-windows-x64-setup.exe"
+            $hash = (Get-FileHash $installer).Hash
+            $test = 'tests/integration/windows_service_upgrade.ps1'
+            $common = @{Installer=$installer; InstallerSha256=$hash; FakeSsh="$env:RUNNER_TEMP/build/bin/ckgit-process-tests.exe"; TestRoot=$env:TEMP; TestAppId='{63DAF121-397D-485D-A9E6-51A70258C23A}'}
+            & $test @common
+            & $test @common -ExerciseRestartFailure
+            & $test @common -ExerciseRestartFailure -ExerciseMultipleServices
+          } finally { Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64
+          path: |
+            ${{ runner.temp }}/dist/*.zip
+            ${{ runner.temp }}/dist/*-setup.exe
+          if-no-files-found: error

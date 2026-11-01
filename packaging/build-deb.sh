@@ -134,6 +134,8 @@ License: MIT
  THE SOFTWARE.
 COPYRIGHT
   chmod 0644 "$1/usr/share/doc/$2/copyright"
+  install -d -m 0755 "$1/usr/share/doc/$2/libarchive"
+  install -m 0644 "$script_dir/../third_party/libarchive/COPYING" "$script_dir/../third_party/libarchive/SOURCE-NOTICES.txt" "$1/usr/share/doc/$2/libarchive/"
 }
 
 # ---- server package -------------------------------------------------------

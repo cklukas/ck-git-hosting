@@ -3,7 +3,335 @@ description: Compile ck-git-hosting from source, run the test suite, and choose 
 ---
 # Build from source
 
+## Windows builds (port in progress)
+
+The CMake build produces native x64 `ckgit`, `ckdocs`, their tests, and the
+AppContainer qualification tools. The connected Windows CI runner is still
+under development; the hosting server remains Linux-only.
+The version-2 workflow parser supports per-job `runs_on`, dependency lists
+(`needs`), and job/step script shells (`sh`, `powershell`, `pwsh`). The push hook now
+queues distributed graphs, and the primary runner and protocol-2 gateway
+prepare only the assigned child. Protocol 1 cannot claim these children.
+The installed Windows runner has completed the native installer job against
+the Linux hosting server on rpi4. Full portability qualification remains in
+progress; automatic runner startup and broader client journeys are separate checks.
+
+The queue implementation stores parent/child membership and dependency IDs.
+A durable graph journal repairs an interrupted enqueue before claims resume;
+independent children can run concurrently, failed dependencies skip downstream
+jobs, and a parent cancellation reaches queued and running children. Retention
+counts a workflow and its children as one run and preserves active graphs.
+These storage and scheduling paths have unit tests. The live Windows child
+qualification is recorded below; it does not establish every graph recovery case.
+
+Version 2 requires unique artifact names across jobs and an explicit
+`pages: {path: public, job: <producer>}` for Pages output. Child results retain
+verified bundles without publishing a release or site independently. The
+parent result collector waits for every child, verifies the collected bytes,
+and combines the outputs; missing or damaged release bundles prevent a
+successful release. Local and gateway completion invoke this collector.
+Before claiming new work, the primary and gateway retry interrupted parent
+publication without repeating already completed child steps. A pending
+publication preserves its place in branch order and its retained outputs;
+a newer auto-cancelling push also supersedes an unpublished older parent.
+Gateway integration tests cover split assignment, upload, combined release,
+and recovery. A live combined tag release still needs separate qualification.
+
+Use Visual Studio 2022 Build Tools with the C++ workload, a Windows SDK, and
+CMake 3.24 or later and Ninja. Use an x64 Visual Studio Developer PowerShell
+so MSVC and the Windows SDK environment are initialized. Install Git for Windows and make `git.exe` available on
+PATH for repository inspection and its integration tests. The executables
+link the C++ runtime statically.
+
+Runner configuration parsing is shared across platforms and accepts UTF-8
+paths and LF or CRLF line endings. Windows build, cache and credential paths
+must be absolute; drive-relative paths such as `V:build` are rejected. Windows
+also rejects `ci_allow_degraded=true`: there is no unsandboxed fallback. Native
+configuration tests cover Unicode paths, spaces and these refusal cases. This
+configuration support is also used by the connected Windows runner.
+The native Windows test binary also links the shared runner wire protocol:
+tests decode a version-2 child assignment, select only that job, encode an
+artifact upload and a finish report, and reject a version-1 child envelope.
+One-shot runner SSH requests use the shared process implementation, staging
+request input in a private directory under the configured build root. The
+directory is removed after the request. Native process tests cover binary
+input larger than pipe buffers, concurrent output draining, output limits and
+timeouts. The persistent log stream now uses the shared `ProcessStream`
+interface. Its Windows backend uses a private local named pipe with bounded
+asynchronous writes and a Job Object for process cleanup; native tests exercise
+bidirectional binary traffic, backpressure, cancellation of pending writes and
+handle inheritance. The Unix remote-runner integration test covers checkout,
+live logs and output uploads through the same interface. The connected Windows
+runner's live checkout/execution qualification is recorded below.
+The SSH transport itself is now a separately linked native library. Windows
+tests exercise protocol negotiation, claims, binary request input and the log
+stream through a local SSH stand-in. Paths are passed as UTF-8, and Git's
+`GIT_SSH_COMMAND` quotes executable/configuration paths for its shell. Windows
+does not use the Unix ControlMaster socket. These transport tests do not yet
+replace the installed runner's separate live connection qualification below.
+CI checkout now uses per-child environment overrides instead of the Unix
+`env` command. Native Git tests cover fetching a selected commit with depth 1,
+a detached checkout, Unicode paths, unchanged committed line endings and
+archive mode without `.git`. User/system Git configuration and templates are
+disabled. The lease-scoped SSH shim is also native: its integration test runs
+real Git pack traffic through a local SSH stand-in that checks the exact job
+ID, token and protocol version. Configuration paths include spaces, Unicode
+and an apostrophe. The Windows shim inherits only standard I/O and keeps its
+SSH child in a kill-on-close Job Object. The connected AppContainer executor
+has built this repository's Windows installers from a live rpi4 assignment.
+The remote result sink now also builds natively. Its local SSH fixture checks
+acknowledged log frames, artifact and Pages upload checksums, and the terminal
+report. Relay files live in a private temporary subdirectory that is removed
+when the sink closes; failed local writes or short upload reads stop reporting
+those bytes as successfully transferred. Pages packaging uses the pinned
+libarchive writer, with byte/entry caps and cancellation-aware heartbeats.
+It omits links and special files, matching Pages publication's regular-file
+policy. Portal ref and server-side Pages extraction also use the pinned library;
+the POSIX artifact packer is the remaining external `tar` call.
+The process API also supports synchronous live-output and continuation
+callbacks. Live output is delivered beyond the bounded in-memory capture;
+callers must cap any logs they retain. A false continuation result cancels the
+process tree, including a silent child. Callback exceptions stop the tree
+before propagating. Native tests cover cancellation, complete streamed output
+and Windows descendant cleanup after cancellation or a log callback failure.
+The native Windows executor uses these hooks to stream bounded step logs,
+call the result sink's heartbeat and stop on cancellation or lease loss.
+Its standalone LPAC fixture exercises pinned source and sister checkouts,
+compiler execution in the checkout directory, child-result identity, artifact
+packing, Pages handoff and a persistent cache copied into the job. Cache storage
+is separated by platform, project, job, toolchain content/configuration and
+cache name under `windows-x64-v2/<scope-sha256>/<cache-sha256>`, and locked during use;
+only the per-job copy is exposed to LPAC. Tools are copied from an
+operator-selected tree and sealed read-only. The native daemon now provides
+`serve --remote`, `check` and the Git SSH shim. Its startup qualification covers
+protocol negotiation against a local SSH fixture, empty-queue exit, workspace
+cleanup and the single-instance lock. The runner installer passes install,
+reinstall and uninstall in both scopes, including CurrentUser with a non-admin
+token. Automatic startup remains to be implemented and qualified.
+
+The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
+`windows-installers` job selected by the `windows` and `x64` labels. The Windows
+job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
+with MSVC/Ninja, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
+and places installer files plus input/output hashes in the `windows-installers`
+artifact. The Linux job remains the Pages producer. This workflow is the
+live rpi4-to-Windows acceptance case. On 2026-10-26, Windows child
+`00001793018912592353-4e89d914` succeeded for commit
+`8dcf98e5cc33af8074b419b6f02cdf2086b8e363` inside the connected LPAC runner.
+Compilation and packaging took 576 seconds. The uploaded `windows-installers`
+bundle was downloaded through `ckgit ci download`; its 19,148,800 bytes matched
+SHA-256 `2b1859ceb5500146c6e4976774d86367ed5a9ec868fcb329b896fa13ddcc9d14`.
+All four package hashes and 291 source-file hashes were verified against the
+manifest and exact Git commit. Parent workflow
+`00001793018912498671-aea47bb2` completed successfully at 13:36 UTC with both
+children successful (48 minutes 17 seconds total). This first live qualification
+used the NMake entry point. Its combined artifact list
+contains `packages` and `windows-installers`. The Linux bundle was also
+downloaded through the parent: 7,454,720 bytes, SHA-256
+`5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
+This was a branch build; live tag-release publication is a separate check.
+
+On 2026-11-01, the installed GitHub runner built commit `9b63dafbc8f2`
+using MSVC/Ninja in LPAC as Windows child `00001793536102977419-66a5a6ef`
+of workflow `00001793536102902606-6753aea2`. Compilation and packaging
+took 531 seconds. All 302 source fingerprints, four package hashes and four
+x64 executable timestamps were verified. The 12,091,904-byte artifact has
+SHA-256 `ea87bd79b3a2464c4a63d4536a3e7f47c3587040ca39cb666ab803376d76d7a3`.
+The installed Windows client downloaded it successfully without administrator
+rights, including to a destination containing spaces:
+
+```powershell
+New-Item -ItemType Directory 'V:\tmp\YOUR-TASK\downloads'
+ckgit ci download 00001793536102902606-6753aea2 windows-installers --job windows-installers --project ck-git-hosting --into 'V:\tmp\YOUR-TASK\downloads'
+```
+
+The Linux sibling was still running when this Windows result was recorded.
+This proves the Windows child and artifact delivery, not completion of the
+combined workflow or a tagged release. All nine jobs in
+[GitHub run 41305898555](https://github.com/cklukas/ck-git-hosting/actions/runs/41305898555)
+also passed. Its exact client installers were installed in CurrentUser scope
+with an ordinary token and its runner installer in AllUsers scope; installed
+binary hashes matched the portable ZIP.
+
+`tests/integration/windows_cli_tunnel.ps1` is an opt-in real-SSH test. Supply
+`-Client`, `-ConsoleHelper` (the built `ckgit-process-tests.exe`), `-Config`
+and an existing `-TestRoot` on the development drive. It checks dashboard HTTP,
+Ctrl+C shutdown and port release in a private console. The fixture resets the
+automation parent's inherited ignore-Ctrl+C flag before launching the client.
+The installed client passed this test without administrator rights; no SSH
+children remained afterward.
+
+The installed GitHub runner subsequently built commit `d9b77de324f1` as child
+`00001793030294304599-54199f45`: compilation and packaging took 343 seconds,
+with 113 compilation actions in a fresh job workspace. Its artifact contains exactly
+three setup executables (ckgit, ckdocs and the runner), the portable ZIP, and
+three build/input/package manifests; CPack intermediate files are excluded.
+The downloaded bundle is 11,376,640 bytes with SHA-256
+`cf7e2c5ba69feded532bd0d6a82e44188974a5679d83cff7470ed2a66c03c2d3`.
+All four package hashes and 292 source-file hashes matched the exact commit.
+The child artifact can be downloaded before the Linux sibling finishes,
+including with servers that do not yet support named job selection:
+
+```sh
+mkdir -p downloads
+ckgit ci download 00001793030294304599-54199f45 windows-installers --project ck-git-hosting --into downloads
+```
+
+This child test artifact expires on 2026-11-02 at 16:04 UTC; it is not a durable
+tagged release. Later runs have their own run IDs and retention deadlines.
+
+The Windows job in [GitHub run 40345259988](https://github.com/cklukas/ck-git-hosting/actions/runs/40345259988)
+built all three installers and the portable ZIP from commit `93f70771e500`,
+passed native tests, and tested both installer scopes. Those exact client
+installers were installed on the workstation on 2026-10-26 with a non-admin
+token in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
+The runner was installed with an administrator token in AllUsers mode under
+`V:\Programs\ck-git-runner`. Installed executable hashes matched the CI ZIP,
+and the executables reported `0.8.2+g93f70771e500`. That installed runner then
+negotiated protocol 2 with rpi4 and completed the `d9b77de324f1` job above.
+Its executable SHA-256 was
+`e5ffda77c668f0006848bfddd5c4e88356a57b61b0a2fe586a25c4961ecacea3`.
+
+On the development workstation, keep sources in a permanent directory on
+`V:` and select a unique temporary directory before running development tools:
+
+```powershell
+if (!(Test-Path V:\)) { throw 'Development drive V: is unavailable' }
+$scratch = Join-Path V:\tmp ('ckgit-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $scratch | Out-Null
+$env:TEMP = $scratch; $env:TMP = $scratch; $env:TMPDIR = $scratch
+cmake --preset windows-release
+cmake --build --preset windows-release
+ctest --preset windows-release
+cpack --config "$scratch\ckgit-ninja-release\CPackConfig.cmake" -C Release -B "$scratch\dist"
+```
+
+The native AppContainer runner also uses `windows-release`, with an
+operator-built LPAC-compatible Ninja. The older `windows-lpac-release` NMake
+preset remains available for explicit diagnostics. Provisioning and remaining
+LPAC limitations are described under [Windows runner](../operations/ci-remote-runners.md#windows-runner).
+
+Check each command's exit code before continuing. Supply
+`-DCKGIT_BUILD_VERSION=<exact-version>` when configuring a release; the default
+is the version in `VERSION` with a `+source` suffix.
+
+CMake verifies and builds the bundled libarchive 3.8.10 source without a
+network download. The Windows runner links it statically, including the C
+runtime; the installer and portable ZIP carry its notices under
+`licenses/libarchive`. The `archive` CTest covers UTF-8 TAR roundtrips, empty
+files, bounded streaming, cancellation and rejection of unsafe inputs. The
+`tree-file` test also replaces a pathname while streaming to verify that the
+reader retains the originally validated handle. Other archive call sites are
+still being migrated; these tests do not establish that migration is complete.
+
+Native tests cover private client configuration and checkout selection files,
+process locks, Git repository discovery (including Unicode paths and linked
+worktrees), process execution, file serving, diagrams, and the docs preview.
+These tests also run without an administrator token and exercise the native
+CLI's setup, configuration and scan commands. Broader remote Windows command
+journeys require additional end-to-end qualification.
+
+Inno Setup 6 builds `packaging/windows/ckdocs.iss` and
+`packaging/windows/ckgit.iss` with explicit
+`/DBinaryDir`, `/DOutputDir`, and `/DReleaseVersion` definitions. The installer
+supports `/CURRENTUSER` without elevation and `/ALLUSERS` with administrator
+rights. It tracks its own PATH entry and preserves user files on uninstall.
+The Ready to Install page and setup log report `git.exe` and `ssh.exe` files
+found in absolute directories on the installer's PATH, including quoted paths
+and portable Git directories. This preflight checks presence, not executable
+version or trust, and does not run discovered programs with installer rights.
+Missing tools do not block local documentation use or offline installation;
+remote operations require Git and SSH, and ref portals require Git. Existing
+client/runner configuration remains unchanged. Run `ckgit doctor` after client
+setup to check Git availability and the configured server connection.
+
+The combined `ckgit` installer offers `ckgit`, `ckdocs`, or both (the default).
+For unattended selection, pass `/COMPONENTS="ckgit"`, `/COMPONENTS="ckdocs"`,
+or `/COMPONENTS="ckgit,ckdocs"`. An empty selection is rejected. Reinstalling
+can add a component; deselecting a previously installed component does not
+remove its existing files. Use the uninstaller to remove the installation.
+`tests/integration/windows_installer.ps1` checks installation, reinstallation,
+binary identity, execution and uninstallation. For `ckgit`, it also rejects an
+empty selection and upgrades the initial selection to both components. Set
+`-InitialComponents ckgit` or `-InitialComponents ckdocs` to test a single-tool
+installation; the default tests the installer's default selection.
+`-ExerciseRunningUpgrade` also checks an active ckdocs preview or an idle
+Windows runner. For the runner, supply `-RunnerFakeSsh <ckgit-process-tests.exe>`.
+The fixture stalls a claim request, upgrades the installed runner, and requires
+normal exit, SSH process termination and removal of the runner session before
+continuing. This does not qualify upgrades during a build or artifact upload.
+The opt-in `windows_runner_shutdown.ps1` separately closes the runner's private
+console during stalled negotiation and claim requests, checking process cleanup
+and release of its single-instance lock. Both tests take an explicit `TestRoot`.
+Use `-RequireNonAdmin` from a
+non-elevated process to verify installation without administrator rights.
+Pass `-Product ckgit -DocsBinary <verified-ckdocs.exe>` for the client installer;
+it bundles both executables. The portable ZIP also contains both tools.
+
+The reusable GitHub Windows workflow builds the ZIP and all three installers,
+runs native tests and checks both installer scopes, including every client
+component selection. Its callers include push CI and the
+release workflow. Hosted runners use their supplied `RUNNER_TEMP`; the `V:`
+policy above applies to the development workstation. Installers are currently
+unsigned.
+
+### AppContainer qualification
+
+`ckgit-lpac-probe` explicitly exercises the sandbox with staged compiler,
+CMake and NMake binaries. Pass the temporary parent, MSVC Hostx64/x64 directory,
+CMake directory and `kernel32.lib` path, in that order.
+It is separate from CTest because it creates Windows-managed
+AppContainer profiles in the user's profile directory. Job data, tools and
+temporary output stay beneath the explicit test directory on `V:`.
+
+Each executing step gets a fresh noninteractive Window Station and desktop.
+An administrator broker can choose the station name; a standard-user broker
+uses the OS-assigned name when explicit naming is denied. The runner always
+requires a new station and never reopens one owned by another step. Check the
+intended logon session before serving: an existing OS-assigned station can
+prevent startup. These objects initialize Windows libraries used by console
+tools; they do not launch Explorer or show a graphical session.
+
+The native compiler/linker/test and CMake/NMake fixtures have passed with both
+an administrator token and an ordinary filtered UAC token. The latter was
+launched in the workstation's noninteractive test session; it does not qualify
+every interactive or service logon configuration. Earlier SAFER-token tests
+used an additionally restricted token, not an ordinary UAC token.
+A full Ninja self-build also passed with the LOCAL-pipe patch and quoted tool
+paths. The integrated private tool-directory change also passed a full
+ordinary-user build in 361 seconds with a build root containing no spaces;
+the staged Ninja toolchain also passed the live Windows CI job above.
+Restricted-account service qualification remains open;
+see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
+
+For a small path-compatibility diagnostic without staging the compiler, run:
+
+```powershell
+ckgit-lpac-probe.exe --path-diagnostics V:\tmp\YOUR-TASK
+```
+
+Keep `ckgit-job-launcher.exe` beside the probe. This mode creates one disposable
+LPAC profile and workspace, stages only these two executables, and reports the
+results and Win32 error codes for file attributes, full/long path conversion,
+and directory changes. It does not grant access to workspace ancestors.
+On the workstation, querying attributes and changing into the job's own work
+directory succeeded, while `GetLongPathNameW` failed with error 5 (access denied).
+The ancestors outside the sandbox were inaccessible. Microsoft documents that
+[GetLongPathNameW may require access to parent directories](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlongpathnamew),
+even when the target is accessible. This is consistent with the absolute-path
+failures observed in Ninja's `cmd.exe` commands. This path diagnostic alone
+does not qualify Ninja; the subsequent full self-build used the patched Ninja
+and a workspace path containing a space to obtain quoted tool paths. The probe removes its profile and workspace on normal exit.
+
 ## Compile and test
+
+The Make build requires a C++20 compiler, a C compiler, GNU Make and CMake
+3.24 or newer. It builds the bundled libarchive source offline beneath
+`BUILD_DIR/libarchive`; no system libarchive development package is needed.
+`CMAKE`, `CC` and `ARCHIVE_BUILD_JOBS` select that dependency's CMake command,
+C compiler and parallelism (two jobs by default). `make check` includes the
+archive tests. Debian packages and the Homebrew installation carry the
+upstream copyright/license notices alongside the project license.
 
 The source tree is never used for build products; every build directory must
 lie beneath a build root, and the test suite keeps every scratch file there

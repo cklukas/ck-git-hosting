@@ -21,6 +21,12 @@
 #define CKGIT_BUILD_VERSION "development"
 #endif
 
+#ifdef _WIN32
+#define CKGIT_CONFIG_DISPLAY "%LOCALAPPDATA%\\ck-git-hosting\\client.ini"
+#else
+#define CKGIT_CONFIG_DISPLAY "~/.config/ck-git-hosting/client.ini"
+#endif
+
 namespace ckgit {
 namespace {
 
@@ -72,7 +78,7 @@ struct Command {
 };
 
 const Option kConfig{"--config", "PATH",
-                     "Client configuration (default: ~/.config/ck-git-hosting/client.ini).",
+                     "Client configuration (default: " CKGIT_CONFIG_DISPLAY ").",
                      ValueKind::kPath};
 const Option kRepo{"--repo", "PATH", "Select one checkout explicitly; use --repo . for this repository.",
                    ValueKind::kPath};
@@ -83,6 +89,7 @@ const Option kVerbose{"--verbose", "", "Expand the plan to show every affected, 
 const Option kCiProject{"--project", "NAME",
                         "Hosted project (default: the project paired with the current repository).",
                         ValueKind::kProject};
+const Option kCiJob{"--job", "NAME", "Select a named job of the workflow run.", ValueKind::kArtifact};
 const Option kJson{"--json", "", "Print a versioned JSON report instead of text."};
 const Argument kRun{"RUN", "CI run id, as ckgit ci list prints it.", ValueKind::kRunId, true};
 
@@ -99,6 +106,8 @@ const std::vector<Command>& commands() {
         {"--public-path-mode", "MODE", "Reported checkout paths: basename (default) or full.", ValueKind::kText},
         {"--web-host", "HOST", "Ordinary SSH login for dashboard forwarding.", ValueKind::kHost},
         {"--remote-port", "PORT", "Dashboard port on the server (default: 8420).", ValueKind::kPort},
+        {"--git-program", "PATH", "Select a Git executable (including portable Git).", ValueKind::kPath},
+        {"--ssh-program", "PATH", "Select OpenSSH for direct connections and Git transport.", ValueKind::kPath},
         {"--yes", "", "Save the displayed configuration without prompting."},
         {"--overwrite", "", "Allow replacing an existing configuration; retains settings not overridden."}, kDryRun}, {},
        {"ckgit setup", "ckgit setup --server ckgit@rpi4 --client-id laptop --web-host rpi4 --yes", "ckgit setup --overwrite --dry-run"}},
@@ -222,18 +231,18 @@ const std::vector<Command>& commands() {
         {"--enabled", "", "With --all, report only the projects that have CI enabled."}, kJson}, {},
        {"ckgit ci status", "ckgit ci status --project my-project", "ckgit ci status --all --enabled", "ckgit ci status --all --json"}},
       {{"ci", "list"}, "List a project's CI runs, newest first.",
-       "The project's newest runs, at most 64.",
+       "The project's newest workflow runs, at most 64. Distributed children are listed by ci show.",
        "Read-only. Shows each run's status, ref, short commit, start time, duration, and run id.",
        {kCiProject, {"--limit", "N", "Show at most N runs, 1-64 (default: 20).", ValueKind::kNumber, false, false, {1, kMaximumControlCiRuns}}, kJson}, {},
        {"ckgit ci list", "ckgit ci list --limit 5", "ckgit ci list --project my-project --json"}},
       {{"ci", "show"}, "Show one CI run with its steps and artifacts.",
        "RUN of the selected project.",
        "Read-only. Shows the status, ref, commit, timestamps, detail, every completed step (exit code, timeout, truncated log), the running step, and the run's artifacts.",
-       {kCiProject, kJson}, {kRun}, {"ckgit ci show RUN", "ckgit ci show RUN --json"}},
+       {kCiProject, kCiJob, kJson}, {kRun}, {"ckgit ci show RUN", "ckgit ci show RUN --json"}},
       {{"ci", "log"}, "Print a CI step's log.",
        "STEP of RUN, counted from 0 (default: the running step, otherwise the last one).",
        "Read-only. Writes the step's raw log to standard output. --follow keeps reading while the step runs and, without STEP, continues with each following step until the run finishes; step headings go to standard error.",
-       {kCiProject, {"--follow", "", "Keep reading until the step, and without STEP the run, finishes."}},
+       {kCiProject, kCiJob, {"--follow", "", "Keep reading until the step, and without STEP the run, finishes."}},
        {kRun, {"STEP", "Step index, as ckgit ci show lists it.", ValueKind::kNumber, false, false, {0, kMaximumCiSteps}}},
        {"ckgit ci log RUN", "ckgit ci log RUN 2", "ckgit ci log RUN --follow"}},
       {{"ci", "watch"}, "Wait for a CI run to finish and report its steps.",
@@ -245,11 +254,11 @@ const std::vector<Command>& commands() {
       {{"ci", "artifacts"}, "List a CI run's artifacts.",
        "RUN of the selected project.",
        "Read-only. Shows each artifact's name, size, sha256, and expiry, or the note that says why it was not stored.",
-       {kCiProject, kJson}, {kRun}, {"ckgit ci artifacts RUN", "ckgit ci artifacts RUN --json"}},
+       {kCiProject, kCiJob, kJson}, {kRun}, {"ckgit ci artifacts RUN", "ckgit ci artifacts RUN --json"}},
       {{"ci", "download"}, "Download one CI artifact.",
        "Artifact NAME of RUN, listed over SSH like artifacts.",
        "Opens a short-lived loopback tunnel like release download (the ordinary SSH login; the restricted ckgit account cannot forward ports), downloads the bundle into --into (default: the current directory) as NAME.tar, verifies its size and sha256 against the listing, then closes the tunnel. Requires http_port configured and the dashboard reachable on the server.",
-       {kCiProject, {"--into", "DIR", "Directory to write NAME.tar into (default: the current directory).", ValueKind::kPath},
+       {kCiProject, kCiJob, {"--into", "DIR", "Directory to write NAME.tar into (default: the current directory).", ValueKind::kPath},
         {"--dashboard-url", "URL", "Test seam: fetch from this base URL instead of opening an SSH tunnel.",
          ValueKind::kText, false, true}},
        {kRun, {"NAME", "Artifact name, as ckgit ci artifacts lists it.", ValueKind::kArtifact, true}},
@@ -259,7 +268,7 @@ const std::vector<Command>& commands() {
        "Offline and read-only: parses the workflow exactly as the runner does and summarizes its triggers and jobs, or reports the first error with its line. It cannot resolve the server's default branch for workflows without on:, check that sister projects exist, or apply the server's limits (step timeout, log and artifact sizes, retention caps, network policy).",
        {{"--rev", "REV", "Check the workflow committed at this revision.", ValueKind::kRevision}},
        {{"PATH", "Workflow file or repository (default: the current repository).", ValueKind::kPath}},
-       {"ckgit ci lint", "ckgit ci lint --rev HEAD", "ckgit ci lint path/to/ci.yml"}, false},
+       {"ckgit ci lint", "ckgit ci lint --rev HEAD", "ckgit ci lint path/to/ci.yml"}},
       {{"ci", "cancel"}, "Cancel a pending or running CI run.",
        "RUN of the selected project.",
        "Previews the run, then asks for confirmation on a terminal; --yes confirms without prompting and --dry-run only previews. The server writes a cancel marker that the runner honours at its next check, killing the current step. A finished run is left unchanged. Any device paired with the server may cancel any project's run.",
@@ -309,11 +318,11 @@ const std::vector<Command>& commands() {
        {"ckgit default-branch", "ckgit default-branch --project my-project", "ckgit default-branch develop --dry-run",
         "ckgit default-branch develop --yes"}},
       {{"config"}, "Inspect the client configuration.",
-       "Use --config PATH or ~/.config/ck-git-hosting/client.ini.",
+       "Use --config PATH or " CKGIT_CONFIG_DISPLAY ".",
        "Use show to inspect effective values. This command does not change configuration.",
        {}, {}, {"ckgit config show", "ckgit config show --config /path/to/client.ini"}},
       {{"config", "show"}, "Show effective client configuration values.",
-       "Read --config PATH, or ~/.config/ck-git-hosting/client.ini when --config is omitted.",
+       "Read --config PATH, or " CKGIT_CONFIG_DISPLAY " when --config is omitted.",
        "Read-only and local: displays the device identity, target server, remote name, scan roots, exclusions, and path privacy. Does not contact the server.",
        {}, {}, {"ckgit config show", "ckgit --config /path/to/client.ini config show"}},
       {{"completion"}, "Print shell completion definitions.",
@@ -572,7 +581,7 @@ std::string clientHelp(const std::vector<std::string>& command_path) {
               "  ckgit web                   Open the dashboard.\n"
               "  ckgit open README.md        Open this checkout's file in the dashboard.\n\n"
               "Defaults and scope:\n"
-              "  Configuration: ~/.config/ck-git-hosting/client.ini; override with --config PATH.\n"
+              "  Configuration: " CKGIT_CONFIG_DISPLAY "; override with --config PATH.\n"
               "  The configuration selects the target server, device identity, and remote name.\n"
               "  status, sync, and checkout list share a private managed-checkout inventory.\n"
               "  Use --repo . for the current repository; scan discovers additional folders.\n"

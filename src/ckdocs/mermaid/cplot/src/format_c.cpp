@@ -20,14 +20,34 @@ namespace {
 // is thread-safe and the returned handle is immutable, so it is shared across
 // threads without a lock. Deliberately never freed — it lives for the whole
 // process (a single static handle, not a per-call allocation).
+#ifdef _WIN32
+::_locale_t c_locale() {
+    static ::_locale_t loc = ::_create_locale(LC_ALL, "C");
+    return loc;
+}
+#else
 ::locale_t c_locale() {
     static ::locale_t loc = ::newlocale(LC_ALL_MASK, "C", static_cast<::locale_t>(0));
     return loc;
 }
+#endif
 
 } // namespace
 
 std::string format_c(const char* fmt, ...) {
+#ifdef _WIN32
+    const auto c = c_locale();
+    std::va_list ap;
+    va_start(ap, fmt);
+    const int n = ::_vscprintf_l(fmt, c, ap);
+    va_end(ap);
+    if (n < 0) return {};
+    std::string out(static_cast<std::size_t>(n), '\0');
+    va_start(ap, fmt);
+    ::_vsnprintf_l(out.data(), out.size() + 1, fmt, c, ap);
+    va_end(ap);
+    return out;
+#else
     const ::locale_t c = c_locale();
     // Swap THIS thread's locale to "C" for the duration of the format, so
     // vsnprintf renders '.' as the decimal separator. uselocale is per-thread,
@@ -56,12 +76,19 @@ std::string format_c(const char* fmt, ...) {
 
     if (prev) ::uselocale(prev);
     return out;
+#endif
 }
 
 double strtod_c(const char* str, char** end) {
+#ifdef _WIN32
+    const auto c = c_locale();
+    if (!c) return std::strtod(str, end);
+    return ::_strtod_l(str, end, c);
+#else
     const ::locale_t c = c_locale();
     if (!c) return std::strtod(str, end); // newlocale failed: ambient fallback
     return ::strtod_l(str, end, c);
+#endif
 }
 
 } // namespace cplot::detail

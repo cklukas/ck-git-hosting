@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stdexcept>
 #include <vector>
 
 #include "ckgit/ci_store.hpp"
@@ -32,6 +33,8 @@ struct CiRunnerOptions {
   // Pending (see enqueueCiJob), rather than a second, disconnected record.
   // Empty generates a fresh id instead (the one-shot `run` command, and tests).
   std::string run_id;
+  std::string parent_run_id;
+  std::string workflow_job;
   unsigned attempt = 1;                  // the queued job's attempt, for the record
 
   unsigned timeout_seconds = 1800;       // per-step wall-clock budget
@@ -155,7 +158,8 @@ struct CiPreparation {
 
 // Prepares `job` from the bare repository `repository`; sisters are looked up
 // as siblings of it (<repository's parent>/<name>.git).
-CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job);
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job,
+                            bool allow_workflow_parent = false);
 
 // --- executing a job (on any runner) ----------------------------------------
 
@@ -190,6 +194,13 @@ class CiSourceProvider {
   // Materialises the request into the empty directory `destination`. Throws
   // std::runtime_error with a short reason when it cannot.
   virtual void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) = 0;
+  // Remote sources override this to maintain the lease during long Git calls.
+  virtual void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                        const std::function<bool()>& should_continue) {
+    if (should_continue && !should_continue()) throw std::runtime_error("checkout cancelled");
+    checkout(request, destination);
+    if (should_continue && !should_continue()) throw std::runtime_error("checkout cancelled");
+  }
 };
 
 // Makes the shallow clone a CiSourceProvider promises: `git init`, a fetch of
@@ -202,7 +213,8 @@ class CiSourceProvider {
 // reachable commit by hash). With spec.archive the .git directory is removed
 // afterwards.
 void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
-                     const std::vector<std::string>& environment = {}, const std::string& upload_pack = {});
+                     const std::vector<std::string>& environment = {}, const std::string& upload_pack = {},
+                     const std::function<bool()>& should_continue = {});
 
 // Where a run's progress and results go. The primary writes the server's state
 // root directly; a remote runner relays everything to the server. The executor
@@ -320,6 +332,10 @@ struct CiQueuePolicy {
   bool auto_cancel = true;
 };
 CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit);
+// Queue the pushed workflow as one legacy job or a durable distributed graph.
+void enqueueCiWorkflow(const std::filesystem::path& state_root, const std::filesystem::path& repository,
+                       CiJobRequest parent);
+
 
 // Runs the workflow found at .ckgit/ci.yml in `commit` and records the result
 // under the state root (a run.ini plus steps/<n>.log): prepareCiJob, then

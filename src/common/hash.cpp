@@ -5,12 +5,16 @@
 
 #include <bit>
 #include <cerrno>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace ckgit {
 
@@ -79,27 +83,55 @@ std::string sha256Hex(std::string_view data) {
   return hash.finish();
 }
 
-std::string sha256HexOfFile(const std::filesystem::path& path) {
+std::string sha256HexOfFile(const std::filesystem::path& path,
+                          const std::function<bool()>& should_continue) {
+  const auto check = [&] {
+    if (should_continue && !should_continue()) throw std::runtime_error("checksum interrupted");
+  };
+  check();
+#ifdef _WIN32
+  const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                  OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("could not open checksum file");
+  struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{file};
+  FILE_ATTRIBUTE_TAG_INFO info{};
+  if (GetFileType(file) != FILE_TYPE_DISK ||
+      !GetFileInformationByHandleEx(file, FileAttributeTagInfo, &info, sizeof(info)) ||
+      (info.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)))
+    throw std::runtime_error("could not checksum regular file");
+  Sha256 hash;
+  std::array<unsigned char, 65536> buffer{};
+  for (;;) {
+    check();
+    DWORD count = 0;
+    if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr))
+      throw std::runtime_error("could not read checksum file");
+    if (!count) break;
+    hash.add(buffer.data(), count);
+  }
+  return hash.finish();
+#else
   const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
   struct stat status {};
   if (fd < 0 || ::fstat(fd, &status) != 0 || !S_ISREG(status.st_mode)) {
     if (fd >= 0) ::close(fd);
     throw std::runtime_error("could not checksum regular file: " + path.string());
   }
+  struct Close { int fd; ~Close() { ::close(fd); } } close{fd};
   Sha256 hash;
   std::array<unsigned char, 65536> buffer{};
   while (true) {
+    check();
     const auto count = ::read(fd, buffer.data(), buffer.size());
     if (count < 0 && errno == EINTR) continue;
     if (count < 0) {
-      ::close(fd);
       throw std::runtime_error("could not checksum " + path.string());
     }
     if (count == 0) break;
     hash.add(buffer.data(), static_cast<std::size_t>(count));
   }
-  ::close(fd);
   return hash.finish();
+#endif
 }
 
 }  // namespace ckgit

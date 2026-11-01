@@ -288,7 +288,33 @@ void testPlacementRoundTrip() {
           "nothing is stripped when the server folded no note");
 }
 
+void testWorkflowJobsRoundTrip() {
+  ckgit::CiJobsReport report{"00000000001727000000-abcd1234", {
+      {"linux", "00000000001727000001-abcd1234", ckgit::CiRunStatus::Success, {"primary", 1}, {"linux", "arm64"}},
+      {"windows", "00000000001727000002-abcd1234", ckgit::CiRunStatus::Pending, {"", 2}, {"windows", "x64"}}}};
+  const auto wire = ckgit::formatCiJobsControlResponse(report);
+  const auto parsed = ckgit::parseCiJobsControlResponse(wire);
+  require(parsed.parent_run_id == report.parent_run_id && parsed.jobs.size() == 2, "workflow identity and jobs");
+  require(parsed.jobs[1].name == "windows" && parsed.jobs[1].placement.runner.empty() &&
+      parsed.jobs[1].placement.attempt == 2 && parsed.jobs[1].runs_on == report.jobs[1].runs_on,
+      "pending Windows job keeps labels and attempt");
+  require(ckgit::parseCiJobsControlResponse(ckgit::formatCiJobsControlResponse({report.parent_run_id, {}})).jobs.empty(),
+      "legacy runs have no distributed jobs");
+  require(rejects([&] { ckgit::parseCiJobsControlResponse(wire + "extra\n"); }), "reject trailing records");
+  require(rejects([&] { ckgit::parseCiJobsControlResponse("ok " + report.parent_run_id + " 65\n"); }), "bound jobs");
+  for (const auto mutation : {0, 1, 2, 3, 4}) {
+    auto invalid = report;
+    if (mutation == 0) invalid.jobs[1].name = invalid.jobs[0].name;
+    if (mutation == 1) invalid.jobs[1].run_id = invalid.jobs[0].run_id;
+    if (mutation == 2) invalid.jobs[1].run_id = report.parent_run_id;
+    if (mutation == 3) invalid.jobs[1].placement.attempt = 0;
+    if (mutation == 4) invalid.jobs[1].runs_on = {"../windows"};
+    require(rejects([&] { ckgit::formatCiJobsControlResponse(invalid); }), "reject ambiguous or invalid workflow metadata");
+  }
+}
+
 void testCiControl() {
+  testWorkflowJobsRoundTrip();
   testRunRoundTrip();
   testPlacementRoundTrip();
   testStatusRoundTrip();

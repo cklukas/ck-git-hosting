@@ -374,7 +374,10 @@ printf '# API\n' >"$portal_repo/cpp-docs/api.md"
 portal_commit cpp
 
 portal_site="$test_root/portal-site"
-"$CKDOCS" build --root "$portal_repo" --out "$portal_site" --strict >"$test_root/portal.log" 2>&1 || {
+mkdir "$test_root/no-external-tar"
+printf '#!/bin/sh\nexit 99\n' >"$test_root/no-external-tar/tar"
+chmod +x "$test_root/no-external-tar/tar"
+PATH="$test_root/no-external-tar:$PATH" "$CKDOCS" build --root "$portal_repo" --out "$portal_site" --strict >"$test_root/portal.log" 2>&1 || {
   echo "ckdocs build of a portal failed:" >&2
   cat "$test_root/portal.log" >&2
   exit 1

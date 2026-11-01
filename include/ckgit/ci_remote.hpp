@@ -9,10 +9,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <sys/types.h>
+#include "ckgit/process.hpp"
 #include <vector>
 
 #include "ckgit/ci_runner.hpp"
+#include "ckgit/runner_config.hpp"
 #include "ckgit/ci_runner_protocol.hpp"
 
 namespace ckgit {
@@ -23,58 +24,30 @@ namespace ckgit {
 // source through the same SSH account, relays its progress live, uploads its
 // outputs, and keeps nothing once a job has ended.
 
-// /etc/ck-git-hosting/runner.ini, strict key=value like server.ini:
-//
-//   schema_version=1
-//   server=ckgit@rpi4                # SSH destination of the main host
-//   name=uconsole                    # this runner's client id (its key's)
-//   ci_build_root=/var/lib/ck-git-runner/ci-build
-//   identity=/var/lib/ck-git-runner/.ssh/id_ed25519   # optional
-//   known_hosts=/var/lib/ck-git-runner/.ssh/known_hosts  # optional
-//   ssh_program=/usr/bin/ssh         # optional
-//   claim_wait_seconds=60            # optional long-poll length (1..120)
-//   ci_cache_root=...                # optional; unset keeps the runner clean
-//   ci_allow_network=false           # optional; may only tighten the server
-//   ci_timeout_seconds=...           # optional; may only tighten the server
-//   ci_allow_degraded=false          # optional; run without a sandbox?
-struct RunnerConfig {
-  std::string server;
-  std::string name;
-  std::filesystem::path build_root;
-  std::optional<std::filesystem::path> identity;
-  std::optional<std::filesystem::path> known_hosts;
-  std::filesystem::path ssh_program{"/usr/bin/ssh"};
-  unsigned claim_wait_seconds = 60;
-  std::optional<std::filesystem::path> cache_root;
-  bool allow_network = true;  // true = whatever the server allows
-  std::optional<unsigned> timeout_seconds;
-  bool allow_degraded = false;
-};
-
-RunnerConfig loadRunnerConfig(const std::filesystem::path& path);
-std::string renderRunnerConfig(const RunnerConfig& config);
-
 // Runs runner protocol operations over SSH. Every operation is one `ssh` exec
 // of the runner key's forced command; a ControlMaster connection under the
 // build root is shared between them so they cost no new handshake.
 class CiRemoteTransport {
  public:
-  CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path);
+  CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version = 1);
+  // Negotiate before claiming work; keep that version for the whole lease,
+  // including the separate Git SSH shim process. Failed greetings never claim.
+  bool negotiate(std::string_view version_hex, const std::function<bool()>& should_continue = {});
+  unsigned protocolVersion() const { return protocol_version_; }
+  bool supportsExecutionReport() const { return execution_report_; }
 
   struct Result {
     int exit_code = -1;
     bool timed_out = false;
     std::string output;
+    bool cancelled = false;
   };
   // Runs `command`, writing `input` to its stdin, and collects its stdout.
-  Result run(const CiRunnerCommand& command, std::string_view input, std::chrono::seconds timeout) const;
+  Result run(const CiRunnerCommand& command, std::string_view input, std::chrono::seconds timeout,
+             const std::function<bool()>& should_continue = {}) const;
 
   // A long-lived operation (stream) with both pipes open.
-  struct Session {
-    pid_t pid = -1;
-    int to_server = -1;    // the child's stdin
-    int from_server = -1;  // the child's stdout
-  };
+  using Session = std::unique_ptr<ProcessStream>;
   Session open(const CiRunnerCommand& command) const;
   static void close(Session& session);
 
@@ -92,20 +65,24 @@ class CiRemoteTransport {
  private:
   RunnerConfig config_;
   std::filesystem::path config_path_;
+  unsigned protocol_version_ = 1;
+  bool execution_report_ = false;
 };
 
 // `ck-ci-runnerd ssh-shim`: what GIT_SSH_COMMAND runs. Git calls it as
 // `<shim> [ssh options] <host> "git-upload-pack '<project>.git'"`; the shim
 // turns that into the gateway's lease-scoped `upload-pack` and executes ssh.
-// Returns only on failure.
+// Replaces the caller on POSIX; on Windows returns the SSH exit status.
 int runCiSshShim(const std::filesystem::path& config_path, const std::string& job_id, const std::string& token,
-                 const std::vector<std::string>& git_arguments);
+                 const std::vector<std::string>& git_arguments, unsigned protocol_version = 1);
 
 // Fetches source through the gateway (see gitSshCommand).
 class RemoteCiSource : public CiSourceProvider {
  public:
   RemoteCiSource(const CiRemoteTransport& transport, std::string job_id, std::string token);
   void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination) override;
+  void checkout(const CiCheckoutRequest& request, const std::filesystem::path& destination,
+                const std::function<bool()>& should_continue) override;
 
  private:
   const CiRemoteTransport& transport_;
@@ -121,7 +98,7 @@ class RemoteCiSource : public CiSourceProvider {
 class RemoteCiSink : public CiResultSink {
  public:
   RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob& job, std::filesystem::path relay_dir,
-               const volatile int* stop_flag);
+               std::function<bool()> stop_requested);
   ~RemoteCiSink() override;
   void runStarted(const CiRunRecord& record) override;
   void stepStarted(const CiRunRecord& record, std::size_t index) override;
@@ -165,7 +142,8 @@ class RemoteCiSink : public CiResultSink {
   const CiRemoteTransport& transport_;
   const CiRemoteJob& job_;
   std::filesystem::path relay_dir_;
-  const volatile int* stop_flag_;
+  std::function<bool()> stop_requested_;
+  bool stopping() const { return stop_requested_ && stop_requested_(); }
   CiRemoteTransport::Session session_{};
   bool connected_ = false;
   std::chrono::steady_clock::time_point last_connect_attempt_{};

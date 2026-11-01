@@ -36,6 +36,63 @@ void testAutoCancelPolicy() {
   require(rejected(base + "auto_cancel: true\nauto_cancel: false\n"), "duplicate policy rejected");
 }
 
+void testDistributedWorkflow() {
+  const std::string text =
+      "version: 2\njobs:\n"
+      "  - name: publish\n    runs_on: linux\n    needs: [linux, windows]\n    steps:\n      - run: [publish]\n"
+      "  - name: linux\n    runs_on: linux\n    steps:\n      - run: make\n        shell: sh\n"
+      "  - name: windows\n    runs_on: [windows, x64, windows]\n"
+      "    steps:\n      - run: cmake --build build\n        shell: powershell\n";
+  const auto workflow = ckgit::parseCiWorkflow(text);
+  require(workflow.version == 2, "distributed version");
+  require(workflow.jobs[0].needs == std::vector<std::string>{"linux", "windows"}, "forward dependencies");
+  require(workflow.jobs[1].runs_on == std::vector<std::string>{"linux"}, "explicit Linux runner labels");
+  require(workflow.jobs[2].runs_on == std::vector<std::string>{"windows", "x64"}, "explicit Windows labels are deduplicated");
+  require(workflow.jobs[2].steps[0].shell == "powershell", "explicit Windows shell");
+  const auto single = [](const std::string& extra, const std::string& step) {
+    return std::string("version: 2\njobs:\n  - name: build\n") +
+        (extra.find("runs_on:") == std::string::npos ? "    runs_on: linux\n" : "") +
+        extra + "    steps:\n      - " + step + "\n";
+  };
+  const auto label_error = [](const std::string& yaml, const std::string& message) {
+    try { (void)ckgit::parseCiWorkflow(yaml); }
+    catch (const std::exception& error) { return std::string(error.what()).find(message) != std::string::npos; }
+    return false;
+  };
+  require(label_error("version: 2\njobs:\n  - name: build\n    steps:\n      - run: [make]\n",
+                      "requires non-empty runs_on"), "v2 rejects missing job labels with a useful error");
+  require(label_error(single("    runs_on: []\n", "run: [make]"), "requires non-empty runs_on"),
+          "an explicit empty label list cannot request an arbitrary runner");
+  require(label_error("runs_on: linux\n" + single("", "run: [make]"), "not at workflow level"),
+          "v2 rejects ambiguous workflow-level routing");
+  require(rejected(single("    needs: [missing]\n", "run: make")), "unknown dependency");
+  require(rejected(single("    needs: [build]\n", "run: make")), "self dependency");
+  require(rejected(single("    needs: [other, other]\n", "run: make")), "duplicate dependency");
+  require(rejected(single("    needs: build\n", "run: make")), "needs must be a list");
+  require(rejected(single("    runs_on: Windows\n", "run: make")), "invalid job runner label");
+  require(rejected(single("", "run: [make]\n        shell: sh")), "argv cannot select shell");
+  require(rejected(single("", "run: make\n        shell: cmd")), "unsupported shell rejected");
+  const auto shells = ckgit::parseCiWorkflow(single("    shell: pwsh\n",
+      "run: build\n      - script: test\n      - run: [compiler, input.cpp]\n"
+      "      - run: legacy\n        shell: powershell"));
+  require(shells.jobs[0].steps[0].shell == "pwsh" && shells.jobs[0].steps[1].shell == "pwsh",
+          "job shell applies to both scalar run and script steps");
+  require(shells.jobs[0].steps[2].shell.empty() && !shells.jobs[0].steps[2].usesShell(),
+          "job shell does not change exact argv execution");
+  require(shells.jobs[0].steps[3].shell == "powershell", "explicit step shell overrides job shell");
+  require(rejected(single("    shell: cmd\n", "run: build")), "unsupported job shell rejected");
+  require(rejected(single("    shell: [pwsh]\n", "run: build")), "job shell must be scalar");
+  require(rejected("version: 2\njobs:\n"
+                   "  - name: a\n    runs_on: linux\n    needs: [b]\n    steps:\n      - run: a\n"
+                   "  - name: b\n    runs_on: linux\n    needs: [c]\n    steps:\n      - run: b\n"
+                   "  - name: c\n    runs_on: linux\n    needs: [a]\n    steps:\n      - run: c\n"), "dependency cycle");
+  for (const auto& extra : {"runs_on: windows", "needs: []", "shell: pwsh"})
+    require(rejected("version: 1\njobs:\n  - name: build\n    " + std::string(extra) +
+                     "\n    steps:\n      - run: make\n"), "v1 rejects job scheduling keys");
+  require(rejected("version: 1\njobs:\n  - name: build\n    steps:\n      - run: make\n        shell: sh\n"),
+          "v1 rejects explicit shell");
+}
+
 void testValidWorkflow() {
   const std::string text =
       "version: 1\n"
@@ -117,7 +174,7 @@ void testQuoting() {
 void testRejections() {
   require(rejected(""), "empty file");
   require(rejected("jobs:\n  - name: a\n    steps:\n      - run: [x]\n"), "missing version");
-  require(rejected("version: 2\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"), "wrong version");
+  require(rejected("version: 3\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"), "wrong version");
   require(rejected("version: 1\n"), "missing jobs");
   require(rejected("version: 1\njobs: []\n"), "empty jobs");
   require(rejected("version: 1\njobs:\n  - steps:\n      - run: [x]\n"), "job without a name");
@@ -139,7 +196,8 @@ void testRejections() {
   require(rejected("version: 1\non: { branches: ['bad branch'] }\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"),
           "invalid branch name");
   require(rejected("version: 1\njobs:\n\t- name: a\n    steps:\n      - run: [x]\n"), "tab indentation");
-  require(rejected("version: 1\r\njobs:\r\n  - name: a\r\n"), "carriage returns");
+  require(ckgit::parseCiWorkflow("version: 1\r\njobs:\r\n  - name: a\r\n    steps:\r\n      - run: [x]\r\n").jobs.size() == 1,
+          "Windows CRLF workflow is accepted");
   require(rejected(std::string("version: 1\nenv: { X: \"") + std::string(3, static_cast<char>(0xff)) + "\" }\n"),
           "invalid utf-8");
 }
@@ -252,6 +310,23 @@ void testPagesWorkflow() {
   require(rejected("version: 1\npages: { path: /abs }\n" + base.substr(11)), "absolute pages path rejected");
   require(rejected("version: 1\npages: { path: public, extra: 1 }\n" + base.substr(11)), "unknown pages key rejected");
   require(rejected("version: 1\npages: {}\n" + base.substr(11)), "pages without a path rejected");
+}
+
+void testDistributedOutputs() {
+  const std::string jobs =
+      "jobs:\n  - name: linux\n    runs_on: linux\n    steps:\n      - run: [make]\n"
+      "    artifacts: {name: linux-package, paths: [out]}\n"
+      "  - name: windows\n    runs_on: windows\n    steps:\n      - run: [cmake, --build, build]\n"
+      "    artifacts: {name: windows-package, paths: [out]}\n";
+  const auto workflow = ckgit::parseCiWorkflow("version: 2\npages: {path: public, job: linux}\n" + jobs);
+  require(ckgit::selectCiWorkflowJob(workflow, "linux").pages_path == "public", "Pages producer retains site output");
+  require(!ckgit::selectCiWorkflowJob(workflow, "windows").pages_path, "other jobs cannot publish the Pages site");
+  require(rejected("version: 2\npages: {path: public}\n" + jobs), "distributed Pages requires an owner");
+  require(rejected("version: 2\npages: {path: public, job: absent}\n" + jobs), "unknown Pages owner rejected");
+  require(rejected("version: 1\npages: {path: public, job: linux}\n" + jobs), "v1 schema remains unchanged");
+  auto collision = jobs;
+  collision.replace(collision.find("windows-package"), std::string("windows-package").size(), "linux-package");
+  require(rejected("version: 2\n" + collision), "two platforms cannot overwrite the same artifact name");
 }
 
 void testSisters() {
@@ -402,12 +477,14 @@ void testReferenceDocMatchesConstants() {
 
 void testCiWorkflow() {
   testAutoCancelPolicy();
+  testDistributedWorkflow();
   testValidWorkflow();
   testBlockStyleAndComments();
   testQuoting();
   testArtifacts();
   testTagTriggers();
   testPagesWorkflow();
+  testDistributedOutputs();
   testSisters();
   testCaches();
   testCheckoutOptions();

@@ -147,6 +147,8 @@ capture doctor
 [ "$result" -eq 0 ] || fail "$output"
 contains "$output" 'OK   Configuration:'
 contains "$output" 'OK   Git:'
+contains "$output" "$test_root/bin/git"
+contains "$output" "OK   SSH executable: $test_root/bin/ssh"
 contains "$output" 'OK   Git server: restricted SSH control answered on ckgit@fixture (server 0.1.0+fixture)'
 contains "$output" 'OK   Dashboard: HTTP answered through admin@fixture on server port 8422'
 contains "$output" 'All checks passed'
@@ -181,4 +183,29 @@ contains "$output" 'OK   Git:'
 contains "$output" 'OK   Dashboard:'
 cmp "$test_root/config/client.ini" "$test_root/saved.ini" || fail 'doctor changed configuration'
 [ ! -e "$test_root/config/sync.lock" ] || fail 'read-only diagnostics created an inventory lock'
+
+# Explicit portable-tool paths work independently of the PATH installations.
+mkdir "$test_root/portable tools ü"
+cp "$test_root/bin/git" "$test_root/portable tools ü/git"
+cp "$test_root/bin/ssh" "$test_root/portable tools ü/ssh"
+capture setup --overwrite --yes --git-program "$test_root/portable tools ü/git" --ssh-program "$test_root/portable tools ü/ssh"
+[ "$result" -eq 0 ] || fail "$output"
+contains "$output" "git_program=$test_root/portable tools ü/git"
+contains "$output" "ssh_program=$test_root/portable tools ü/ssh"
+printf '#!/bin/sh\nexit 99\n' > "$test_root/bin/git"
+printf '#!/bin/sh\nexit 99\n' > "$test_root/bin/ssh"
+capture doctor
+[ "$result" -eq 0 ] || fail "$output"
+contains "$output" "OK   Git: $test_root/portable tools ü/git"
+contains "$output" "OK   SSH executable: $test_root/portable tools ü/ssh"
+contains "$output" 'All checks passed'
+"$REAL_GIT" init -q "$test_root/portable-repo"
+mkdir "$test_root/portable-repo/.ckgit"
+printf 'version: 1\njobs:\n  - name: build\n    steps:\n      - run: [git, --version]\n' > "$test_root/portable-repo/.ckgit/ci.yml"
+capture "$CKGIT" ci lint --config "$test_root/config/client.ini" "$test_root/portable-repo"
+[ "$result" -eq 0 ] || fail "$output"
+contains "$output" 'valid (version 1)'
+capture "$CKGIT" scan --config "$test_root/config/client.ini" "$test_root/portable-repo"
+[ "$result" -eq 0 ] || fail "$output"
+contains "$output" 'portable-repo'
 echo 'setup and doctor integration tests passed'

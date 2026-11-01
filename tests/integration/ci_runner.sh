@@ -17,8 +17,9 @@ esac
 test_root=$(mktemp -d "$test_root_parent/ckci.XXXXXX")
 server_pid=''
 runner_pid=''
+watch_pid=''
 cleanup() {
-  for pid in "$runner_pid" "$server_pid"; do
+  for pid in "$watch_pid" "$runner_pid" "$server_pid"; do
     stop_process "$pid" || true
   done
   rm -rf "$test_root"
@@ -353,7 +354,7 @@ reply=$(rpc "ckgit-rpc 1 ci-log demo $run_id 0 0") || fail "the daemon did not s
 case "$reply" in 'ok end 0 '[1-9]*) ;; *) fail "a finished step's whole log should end in one chunk: $reply" ;; esac
 
 # lint is offline: the committed workflow, the working tree, and a broken file.
-lint_output=$(cd "$work" && "$CKGIT" ci lint --rev HEAD) || fail "ckgit ci lint --rev HEAD failed"
+lint_output=$(cd "$work" && XDG_CONFIG_HOME="$test_root/no-client-config" "$CKGIT" ci lint --rev HEAD) || fail "ckgit ci lint --rev HEAD failed"
 case "$lint_output" in
   *'valid (version 1)'*'jobs: 1'*'build: 1 step; artifact build (out)'*'Not checked locally:'*) ;;
   *) echo "$lint_output" >&2; fail "ci lint did not summarize the committed workflow" ;;
@@ -511,7 +512,7 @@ until grep -q integ-cancel-start "$test_root/follow.out" 2>/dev/null; do
 done
 live_status=$(ci status --project slow) || fail "ckgit ci status of a running run failed"
 case "$live_status" in
-  *latest*running*"$slow_run"*'(step 0 running)'*) ;;
+  *latest*running*"$slow_run"*) ;;
   *) echo "$live_status" >&2; fail "ci status did not show the live run" ;;
 esac
 
@@ -532,6 +533,7 @@ done
 wait "$follow_pid" || fail "ci log --follow of a cancelled run failed"
 set +e
 wait "$watch_pid"; slow_watch_status=$?
+watch_pid=''
 set -e
 [ "$slow_watch_status" = 5 ] || { cat "$test_root/watch.out" >&2; fail "ci watch of a cancelled run should exit 5"; }
 grep -q 'running step 0' "$test_root/watch.out" || fail "ci watch did not report the running step"
@@ -598,5 +600,99 @@ if grep -rq auto-end "$(dirname "$policy_active")/steps"; then fail "superseded 
 "$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/policy-latest.log" 2>&1
 [ "$(policy_pending)" = 0 ] || fail "replacement job remained blocked"
 grep -l '^status=success$' "$state"/ci/runs/policy/*/run.ini >/dev/null || fail "replacement did not succeed"
+
+# Job selection resolves through the immutable workflow graph, including before
+# all child artifacts have been merged into the parent.
+cat > "$work/.ckgit/ci.yml" <<'YML'
+version: 2
+jobs:
+  - name: alpha
+    runs_on: [primary]
+    steps:
+      - run: sh -ec 'echo alpha-job; sleep 3; mkdir out; echo alpha > out/value'
+    artifacts:
+      name: alpha
+      paths: [out]
+  - name: beta
+    runs_on: [primary]
+    steps:
+      - run: sh -ec 'echo beta-job; mkdir out; echo beta > out/value'
+    artifacts:
+      name: beta
+      paths: [out]
+YML
+git -C "$work" add .ckgit/ci.yml
+git -C "$work" -c user.email=t@example.invalid -c user.name=Test commit -q -m distributed
+git -C "$work" push -q "$repos/demo.git" main
+next=$(git -C "$work" rev-parse HEAD)
+printf '%s %s refs/heads/main\n' "$commit" "$next" | \
+  env CKGIT_STATE_ROOT="$state" CKGIT_CLIENT_ID=mac-studio CKGIT_PROJECT_NAME=demo \
+      CKGIT_REPOSITORY_ROOT="$repos" "$CKGIT_POST_RECEIVE"
+parent=$(basename "$(dirname "$(ls "$state"/ci/runs/demo/*/workflow.ini)")")
+curl --fail --silent "$base/project/demo/ci/$parent" > "$test_root/jobs-dashboard.html"
+grep -q '<h2>Jobs</h2>' "$test_root/jobs-dashboard.html" || fail 'dashboard job table missing'
+grep -q '>beta</a>' "$test_root/jobs-dashboard.html" || fail 'dashboard child link missing'
+if grep -q '<h2>Steps</h2>' "$test_root/jobs-dashboard.html"; then fail 'dashboard parent displayed fake steps'; fi
+ci list --project demo --limit 1 --json > "$test_root/jobs-list.json"
+grep -q "$parent" "$test_root/jobs-list.json" || fail 'list limit hid parent behind child runs'
+ci status --project demo --json > "$test_root/jobs-status.json"
+grep -q "$parent" "$test_root/jobs-status.json" || fail 'status did not select the parent workflow'
+ci show "$parent" --project demo > "$test_root/jobs-pending.txt"
+grep -q 'alpha  pending' "$test_root/jobs-pending.txt" || fail 'pending workflow child missing'
+if grep -q '^Steps:' "$test_root/jobs-pending.txt"; then fail 'workflow parent displayed a fake running step'; fi
+ci watch "$parent" --project demo --interval 1 > "$test_root/jobs-watch.txt" 2>&1 &
+watch_pid=$!
+attempt=0
+until grep -q 'job alpha: pending' "$test_root/jobs-watch.txt"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail 'workflow watch did not report pending jobs'
+  sleep .1
+done
+"$CK_CI_RUNNER" serve --config "$test_root/server.ini" --once > "$test_root/jobs-runner.log" 2>&1 &
+runner_pid=$!
+attempt=0
+until grep -q 'job alpha: running on primary' "$test_root/jobs-watch.txt"; do
+  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || fail 'workflow watch did not report a running job'
+  sleep .1
+done
+ci status --project demo > "$test_root/jobs-running-status.txt"
+if grep -q '(step .* running)' "$test_root/jobs-running-status.txt"; then fail 'workflow status invented a parent step'; fi
+wait "$runner_pid" || fail 'distributed runner failed'
+runner_pid=''
+wait "$watch_pid" || fail 'workflow watch did not exit successfully'
+watch_pid=''
+grep -q 'job beta: success on primary' "$test_root/jobs-watch.txt" || fail 'workflow watch did not report final job placement'
+if grep -q 'running step' "$test_root/jobs-watch.txt"; then fail 'workflow watch invented a parent step'; fi
+ci show "$parent" --project demo --json > "$test_root/jobs.json"
+grep -q '"jobs":\[{"name":"alpha"' "$test_root/jobs.json" || fail 'JSON workflow jobs missing'
+grep -q '"name":"beta".*"status":"success".*"runs_on":\["primary"\]' "$test_root/jobs.json" || fail 'JSON job status/placement missing'
+ci show "$parent" --project demo --job beta | grep -q 'beta' || fail 'named child show failed'
+[ "$(ci log "$parent" --project demo --job beta)" = 'beta-job' ] || fail 'named child log differs'
+ci artifacts "$parent" --project demo --job beta | grep -q 'beta.*sha256' || fail 'named child artifact missing'
+mkdir "$test_root/job-download"
+ci download "$parent" beta --project demo --job beta --dashboard-url "$base" --into "$test_root/job-download" >/dev/null
+[ "$(tar -xOf "$test_root/job-download/beta.tar" out/value)" = beta ] || fail 'download selected the wrong child'
+if ci log "$parent" --project demo --job absent > "$test_root/missing-job.txt" 2>&1; then fail 'unknown workflow job accepted'; fi
+grep -q 'workflow has no job named absent' "$test_root/missing-job.txt" || fail 'missing job error unclear'
+
+# A recorded Windows report is displayed through the real control socket and
+# HTTP handler, independent of this test host's platform. The Linux fixture
+# itself does not claim LPAC execution.
+beta_record=$(grep -l '^workflow_job=beta$' "$state"/ci/runs/demo/*/run.ini)
+[ -n "$beta_record" ] || fail 'missing beta record'
+awk '{
+  if ($0 == "schema_version=4") print "schema_version=5";
+  else if ($0 ~ /^execution=/) next;
+  else if ($0 ~ /^step_count=/) { print "execution=1,windows,x64,lpac,denied,4294967296,64,60"; print; }
+  else print;
+}' "$beta_record" > "$beta_record.new"
+chmod 600 "$beta_record.new"
+mv "$beta_record.new" "$beta_record"
+ci show "$parent" --project demo --job beta --json > "$test_root/execution.json"
+grep -q '"execution":{"source":"runner","platform":"windows","architecture":"x64","isolation":"lpac","network":"denied","memory_bytes":4294967296,"process_limit":64,"step_timeout_seconds":60}' "$test_root/execution.json" || fail 'CLI JSON execution report missing'
+ci show "$parent" --project demo --job beta > "$test_root/execution.txt"
+grep -q 'windows/x64, lpac, network denied (runner-reported)' "$test_root/execution.txt" || fail 'CLI text execution report missing'
+beta_id=$(basename "$(dirname "$beta_record")")
+curl --fail --silent "$base/project/demo/ci/$beta_id" > "$test_root/execution.html"
+grep -q 'Execution (runner-reported)' "$test_root/execution.html" || fail 'dashboard execution report missing'
 
 echo "ci_runner integration OK"

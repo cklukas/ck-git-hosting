@@ -116,7 +116,11 @@ void testRejections() {
   require(contains(rejection("  a: 1\n"), "the top level must not be indented"), "an indented top level");
   require(contains(rejection("a: 1\n\tb: 2\n"), "tabs may not be used for indentation (line 2)"),
           "tabs for indentation, with the line the reference document quotes");
-  require(contains(rejection("a: 1\r\n"), "carriage returns are not allowed"), "CRLF line endings");
+  const auto windows = parse("a: 1\r\nblock: |\r\n  first\r\n  second\r\n");
+  require(entry(windows, "a").scalar == "1" && entry(windows, "block").scalar == "first\nsecond\n",
+          "CRLF configuration and block scalar normalize to LF");
+  require(contains(rejection("a: 1\r"), "bare carriage returns"), "bare trailing CR is rejected");
+  require(contains(rejection("a: x\ry\n"), "bare carriage returns"), "embedded raw CR is rejected");
   require(contains(rejection("a: 1\na: 2\n"), "duplicate key 'a' (line 2)"), "a duplicate key");
   require(contains(rejection("a b: 1\n"), "a key has an unsupported character"), "a key with a space");
   require(contains(rejection("a: [1, 2\n"), "unterminated flow sequence"), "an unterminated flow sequence");

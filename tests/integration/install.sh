@@ -212,6 +212,12 @@ fi
 # Package staging mirrors the script installation with the two documented
 # differences, and the release archive is a valid --build-dir.
 sh "$packaging/build-deb.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/deb" --arch arm64 --stage-only >/dev/null
+for product in ck-git-hosting ckgit ckdocs ck-git-runner; do
+  for notice in COPYING SOURCE-NOTICES.txt; do
+    cmp "$packaging/../third_party/libarchive/$notice" "$test_root/deb/$product/usr/share/doc/$product/libarchive/$notice" ||
+      fail "$product package lacks the original libarchive notice $notice"
+  done
+done
 [ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-git-hostingd" ] || fail "staged server package lacks the daemon"
 [ -x "$test_root/deb/ck-git-hosting/usr/bin/ck-ci-runnerd" ] || fail "staged server package lacks the CI runner"
 [ -f "$test_root/deb/ck-git-hosting/usr/lib/systemd/system/ck-git-hosting.service" ] || fail "packaged unit is not under /usr/lib/systemd/system"
@@ -283,6 +289,12 @@ grep -q '^Recommends: ckgit, ckdocs$' "$test_root/deb/ck-git-hosting/DEBIAN/cont
 sh "$packaging/build-tarball.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/tar" --platform test-server >/dev/null
 sh "$packaging/build-tarball.sh" --build-dir "$CKGIT_BUILD_DIR" --output "$test_root/tar" --platform test-client --client-only >/dev/null
 version=$(tr -d '[:space:]' <"$packaging/../VERSION")
+for archive_name in "ck-git-hosting-$version-test-server" "ckgit-$version-test-client"; do
+  for notice in COPYING SOURCE-NOTICES.txt; do
+    tar -xOf "$test_root/tar/$archive_name.tar.gz" "$archive_name/third_party/libarchive/$notice" >"$test_root/notice"
+    cmp "$packaging/../third_party/libarchive/$notice" "$test_root/notice" || fail "binary tarball lacks original libarchive notices"
+  done
+done
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/packaging/install.sh$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/hooks/post-receive$"
 tar -tzf "$test_root/tar/ck-git-hosting-$version-test-server.tar.gz" | grep -q "^ck-git-hosting-$version-test-server/bin/ck-ci-runnerd$"
@@ -313,6 +325,9 @@ sh "$test_root/unpacked/ck-git-hosting-$version-test-server/packaging/install.sh
 
 # Removal keeps repositories, configuration, and state unless asked otherwise.
 sh "$packaging/uninstall.sh" --staging "$staging" --yes >"$test_root/uninstall.out"
+for notice in COPYING SOURCE-NOTICES.txt; do
+  [ ! -e "$staging/usr/share/doc/ck-git-hosting/libarchive/$notice" ] || fail "libarchive notice was not removed"
+done
 grep -q 'Removal complete' "$test_root/uninstall.out"
 [ ! -e "$staging/usr/bin/ck-git-hostingd" ] || fail "daemon binary was not removed"
 [ ! -e "$staging/usr/bin/ck-ci-runnerd" ] || fail "CI runner binary was not removed"

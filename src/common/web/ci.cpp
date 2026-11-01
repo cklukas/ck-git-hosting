@@ -8,6 +8,7 @@
 
 #include "ckgit/ci_store.hpp"
 #include "ckgit/text.hpp"
+#include "ckgit/validation.hpp"
 #include "ckgit/web_renderer.hpp"
 
 namespace ckgit {
@@ -38,52 +39,6 @@ std::string_view stepIcon(const CiStepResult& step) {
 }
 
 }  // namespace
-
-CiRunDisplay ciRunDisplay(const CiRunRecord& run) {
-  return ciRunDisplayAt(run, static_cast<std::uint64_t>(std::time(nullptr)));
-}
-
-CiRunDisplay ciRunDisplayAt(const CiRunRecord& run, std::uint64_t now) {
-  CiRunDisplay display;
-  display.icon = ciRunStatusIcon(run.status);
-  display.name = ciRunStatusName(run.status);
-  display.seconds = 0;
-  display.active = false;
-  if (run.status == CiRunStatus::Running) {
-    const std::uint64_t beat =
-        run.heartbeat_epoch_seconds ? run.heartbeat_epoch_seconds : run.started_epoch_seconds;
-    if (beat != 0 && now > beat + kCiRunStaleSeconds) {
-      // The runner stopped reporting: show it as interrupted, not a live clock.
-      display.icon = "\xf0\x9f\x92\xa4";  // 💤
-      display.name = "interrupted";
-      display.seconds = beat > run.started_epoch_seconds ? beat - run.started_epoch_seconds : 0;
-    } else {
-      display.name = "running";
-      display.seconds =
-          run.started_epoch_seconds && now >= run.started_epoch_seconds ? now - run.started_epoch_seconds : 0;
-      display.active = true;
-    }
-    return display;
-  }
-  if (run.status == CiRunStatus::Pending) {
-    display.active = true;  // queued: keep the view live until it starts
-    return display;
-  }
-  if (run.finished_epoch_seconds >= run.started_epoch_seconds && run.started_epoch_seconds != 0) {
-    display.seconds = run.finished_epoch_seconds - run.started_epoch_seconds;
-  }
-  return display;
-}
-
-bool ciAnyActiveRun(const std::vector<CiRunRecord>& runs) {
-  return std::any_of(runs.begin(), runs.end(), [](const CiRunRecord& run) { return ciRunDisplay(run).active; });
-}
-
-std::string ciRunTiming(const CiRunDisplay& display) {
-  if (display.name == "pending") return {};
-  if (display.seconds == 0 && !display.active) return {};
-  return formatDuration(display.seconds) + (display.seconds < 3600 ? " min" : "");
-}
 
 // " on uconsole · attempt 2" after a status badge: where the run executes.
 std::string runnerNote(const CiRunRecord& run) {
@@ -155,7 +110,7 @@ std::string renderCiRuns(const ProjectSummary& project) {
 
 std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& run,
                               const std::optional<std::string>& live_log, std::size_t live_step,
-                              const std::string& nonce) {
+                              const std::string& nonce, const std::vector<CiWorkflowJobSummary>& jobs) {
   const CiRunDisplay display = ciRunDisplay(run);
   const std::string project_url = "/project/" + htmlEscape(project.name);
   std::string out = "<p><a href=\"" + project_url + "/ci\">\xe2\x86\x90 Back to CI</a></p>";
@@ -183,6 +138,16 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
     out += "<dt>Attempt</dt><dd>" + std::to_string(run.attempt) +
            " <span class=\"muted\">(an earlier runner was lost; its logs are kept on the server)</span></dd>";
   }
+  if (run.execution) {
+    const auto& execution = *run.execution;
+    out += "<dt>Execution (runner-reported)</dt><dd>" + htmlEscape(execution.platform) + "/" +
+        htmlEscape(execution.architecture) + "; isolation " + htmlEscape(execution.isolation) +
+        "; network " + htmlEscape(execution.network) + "</dd>";
+    out += "<dt>Limits per step</dt><dd>Memory: " +
+        (execution.memory_bytes ? htmlEscape(formatBytes(execution.memory_bytes)) : "not configured") +
+        "; processes: " + (execution.process_limit ? std::to_string(execution.process_limit) : "not configured") +
+        "; timeout: " + (execution.timeout_seconds ? std::to_string(execution.timeout_seconds) + "s" : "not configured") + "</dd>";
+  }
   if (!run.detail.empty()) out += "<dt>Detail</dt><dd>" + htmlEscape(run.detail) + "</dd>";
   out += "</dl>";
 
@@ -206,8 +171,24 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
            "The recorded status settles at the next runner sweep.</p>";
   }
 
-  out += "<h2>Steps</h2><ol class=\"ci-steps\">";
-  for (std::size_t index = 0; index < run.steps.size(); ++index) {
+  if (!run.parent_run_id.empty()) {
+    out += "<p>Job <strong>" + htmlEscape(run.workflow_job) + "</strong> of <a href=\"" + project_url +
+           "/ci/" + htmlEscape(run.parent_run_id) + "\">workflow " + htmlEscape(run.parent_run_id) + "</a></p>";
+  }
+  if (!jobs.empty()) {
+    out += "<h2>Jobs</h2><table><thead><tr><th>Job</th><th>Status</th><th>Requested labels</th>"
+           "<th>Runner</th><th>Attempt</th></tr></thead><tbody>";
+    for (const auto& job : jobs) {
+      out += "<tr><td><a href=\"" + project_url + "/ci/" + htmlEscape(job.run_id) + "\">" + htmlEscape(job.name) +
+             "</a></td><td>" + htmlEscape(ciRunStatusName(job.status)) + "</td><td>" +
+             htmlEscape(formatCiLabelList(job.runs_on)) + "</td><td>" +
+             (job.placement.runner.empty() ? "Waiting for matching labels" : htmlEscape(job.placement.runner)) +
+             "</td><td>" + std::to_string(job.placement.attempt) + "</td></tr>";
+    }
+    out += "</tbody></table>";
+  }
+  if (jobs.empty()) out += "<h2>Steps</h2><ol class=\"ci-steps\">";
+  if (jobs.empty()) for (std::size_t index = 0; index < run.steps.size(); ++index) {
     const CiStepResult& step = run.steps[index];
     const std::string label = step.name.empty() ? ("step " + std::to_string(index)) : step.name;
     const std::string url = project_url + "/ci/" + htmlEscape(run.run_id) + "/" + std::to_string(index) + ".log";
@@ -216,14 +197,14 @@ std::string renderCiRunDetail(const ProjectSummary& project, const CiRunRecord& 
            url + "\">" + htmlEscape(label) + "</a> <span class=\"muted\">(" + htmlEscape(state) +
            (step.output_truncated ? ", log truncated" : "") + ")</span></li>";
   }
-  const bool show_live = display.active && live_log.has_value();
+  const bool show_live = jobs.empty() && display.active && live_log.has_value();
   if (show_live) {
     out += "<li class=\"ci-step-running\"><span class=\"ci-icon\" aria-hidden=\"true\">" +
            std::string(ciRunStatusIcon(CiRunStatus::Running)) + "</span> <a href=\"" + project_url + "/ci/" +
            htmlEscape(run.run_id) + "/" + std::to_string(live_step) + ".log\">step " + std::to_string(live_step) +
            "</a> <span class=\"muted\">(running\xe2\x80\xa6)</span></li>";
   }
-  out += "</ol>";
+  if (jobs.empty()) out += "</ol>";
 
   if (show_live) {
     // project.name and run.run_id are validated tokens ([A-Za-z0-9._-] etc.), so

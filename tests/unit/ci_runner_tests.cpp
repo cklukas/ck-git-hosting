@@ -145,17 +145,29 @@ void testSuccess() {
       "  - name: build\n"
       "    steps:\n"
       "      - name: greet\n"
-      "        run: echo hello-from-ci\n"
+      "        run: echo hello-from-ci; echo execution 1,windows,x64,lpac,denied,4294967296,64,60\n"
       "      - run: [true]\n");
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id));
   require(record.status == ckgit::CiRunStatus::Success,
           "a passing workflow succeeds (detail=" + record.detail + ")");
   require(record.steps.size() == 2, "both steps recorded");
+  require(record.execution && record.execution->memory_bytes == 0 && record.execution->process_limit == 0 &&
+      record.execution->timeout_seconds == fixture.options(id).timeout_seconds, "POSIX reports applied step bounds without invented memory/process caps");
+#ifdef __APPLE__
+  require(record.execution->platform == "macos" && record.execution->isolation == "none" &&
+      record.execution->network == "unrestricted", "macOS reports its actual unisolated development execution");
+#elif defined(__linux__)
+  require(record.execution->platform == "linux" &&
+      (record.execution->isolation == "linux-namespaces" ||
+       (record.execution->isolation == "none" && record.execution->network == "unrestricted")),
+      "Linux reports actual child namespace creation or explicit degraded execution");
+#endif
   require(record.steps[0].name == "greet" && record.steps[0].exit_code == 0, "first step ok");
   require(readFile(fixture.stepLog(record, 0)).find("hello-from-ci") != std::string::npos,
           "the step's output is captured to its log");
   const auto runs = ckgit::loadCiRuns(fixture.state, "demo");
   require(runs.size() == 1 && runs[0].status == ckgit::CiRunStatus::Success, "the run is persisted");
+  require(runs[0].execution == record.execution, "POSIX execution properties are persisted");
 }
 
 void testFailureStops() {
@@ -186,6 +198,7 @@ void testTimeout() {
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(opts);
   require(record.status == ckgit::CiRunStatus::Timeout, "a step over budget times out");
   require(record.steps.size() == 1 && record.steps[0].timed_out, "the timeout is recorded on the step");
+  require(record.execution && record.execution->timeout_seconds == 1, "timeout retains the child setup report");
 }
 
 void testOutputCap() {
@@ -349,6 +362,7 @@ void testSkippedWithoutWorkflow() {
   const std::string id = fixture.commit("just a readme\n", "README.md");
   const ckgit::CiRunRecord record = ckgit::runCiWorkflow(fixture.options(id));
   require(record.status == ckgit::CiRunStatus::Skipped, "a commit with no workflow is skipped");
+  require(!record.execution, "a skipped workflow has no applied execution properties");
 }
 
 void testRunIdReusedFromOptions() {

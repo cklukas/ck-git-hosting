@@ -4,6 +4,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -27,8 +28,8 @@ class SyncLock {
   SyncLock& operator=(const SyncLock&) = delete;
 
  private:
-  explicit SyncLock(int descriptor);
-  int descriptor_{-1};
+  explicit SyncLock(std::intptr_t descriptor);
+  std::intptr_t descriptor_{-1};
 };
 
 // The private managed inventory records one absolute main-checkout path per

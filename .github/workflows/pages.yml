@@ -36,7 +36,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential git curl python3
+          sudo apt-get install -y --no-install-recommends build-essential cmake git curl python3
       - name: Build tools and render the web tour
         run: |
           make BUILD_ROOT="$RUNNER_TEMP" BUILD_DIR="$RUNNER_TEMP/build" all

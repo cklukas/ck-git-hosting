@@ -49,7 +49,7 @@ int defaultBranchCommand(const std::vector<std::string>& arguments) {
     std::cerr << "ckgit: usage: ckgit default-branch [--project NAME] [BRANCH] [--yes] [--dry-run]\n";
     return kUsage;
   }
-  const auto config = ckgit::loadClientConfig(resolveConfigPath(options.config_path));
+  const auto config = loadConfiguredClient(resolveConfigPath(options.config_path));
   const auto project = resolveCiProject(config, options);
   if (!project.has_value()) return kUsage;
   try {

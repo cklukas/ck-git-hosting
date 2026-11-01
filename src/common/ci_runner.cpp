@@ -4,6 +4,7 @@
 #include "ckgit/ci_runner.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -179,6 +180,11 @@ std::vector<std::string> buildEnv(const CiWorkflow& workflow, const CiJob& ci_jo
   return env;
 }
 
+struct SandboxEntry {
+  bool namespaces = false;
+  bool loopback = false;
+};
+
 #if defined(__linux__)
 void writeProcFile(const char* path, const std::string& content) {
   const int fd = ::open(path, O_WRONLY | O_CLOEXEC);
@@ -212,14 +218,14 @@ bool bringUpLoopback() {
 
 // In the freshly forked child: enter unprivileged user, mount, and (unless
 // allowed) network namespaces, so the step has no network and cannot see the
-// host mount table. Returns false if the kernel denies unprivileged namespaces.
-bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
+// host mount table. Records the actual namespace and loopback setup results.
+SandboxEntry enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
                   const SandboxMounts& mounts) {
   const uid_t uid = ::getuid();
   const gid_t gid = ::getgid();
   int flags = CLONE_NEWUSER | CLONE_NEWNS;
   if (!allow_network) flags |= CLONE_NEWNET;
-  if (::unshare(flags) != 0) return false;
+  if (::unshare(flags) != 0) return {};
   writeProcFile("/proc/self/setgroups", "deny");
   writeProcFile("/proc/self/uid_map", "0 " + std::to_string(uid) + " 1\n");
   writeProcFile("/proc/self/gid_map", "0 " + std::to_string(gid) + " 1\n");
@@ -228,7 +234,7 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
   // 127.0.0.1/::1. Best-effort like the mounts below: a systemic failure here
   // is caught early by probeLoopback() into CiSandboxReport, not discovered
   // silently the first time a step's own loopback traffic fails.
-  if (!allow_network) bringUpLoopback();
+  const bool loopback = allow_network || bringUpLoopback();
   // Keep our mount changes from propagating back to the host namespace.
   ::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
   if (!bind_source.empty()) {
@@ -270,7 +276,7 @@ bool enterSandbox(bool allow_network, const std::filesystem::path& bind_source,
     if (!std::filesystem::exists(path, error)) continue;
     ::mount("tmpfs", path.c_str(), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=65536");
   }
-  return true;
+  return {true, loopback};
 }
 
 bool probeUserNamespaces(bool allow_network) {
@@ -385,7 +391,7 @@ bool probeSandboxWorkspace(const std::filesystem::path& source) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #else
-bool enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return false; }
+SandboxEntry enterSandbox(bool, const std::filesystem::path&, const SandboxMounts&) { return {}; }
 bool probeUserNamespaces(bool) { return false; }
 bool probeLoopback() { return false; }
 bool probeFilesystemMask() { return false; }
@@ -409,6 +415,7 @@ struct StepOutcome {
   bool truncated = false;
   bool spawn_failed = false;
   bool cancelled = false;
+  std::optional<CiExecutionReport> execution;
 };
 
 // Progress callbacks a running step reports through, polled roughly once a
@@ -433,17 +440,32 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     outcome.spawn_failed = true;
     return outcome;
   }
+  int setup_fd[2];
+  if (::pipe(setup_fd) != 0) {
+    ::close(pipe_fd[0]); ::close(pipe_fd[1]);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
+  if (::fcntl(setup_fd[0], F_SETFD, FD_CLOEXEC) != 0 ||
+      ::fcntl(setup_fd[1], F_SETFD, FD_CLOEXEC) != 0) {
+    ::close(setup_fd[0]); ::close(setup_fd[1]);
+    ::close(pipe_fd[0]); ::close(pipe_fd[1]);
+    outcome.spawn_failed = true;
+    return outcome;
+  }
   const pid_t pid = ::fork();
   if (pid < 0) {
+    ::close(setup_fd[0]); ::close(setup_fd[1]);
     ::close(pipe_fd[0]);
     ::close(pipe_fd[1]);
     outcome.spawn_failed = true;
     return outcome;
   }
   if (pid == 0) {
+    ::close(setup_fd[0]);
     ::close(pipe_fd[0]);
     ::setpgid(0, 0);
-    enterSandbox(options.allow_network, bind_source, mounts);
+    const auto applied = enterSandbox(options.allow_network, bind_source, mounts);
     applyRlimits();
     const int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (devnull >= 0) {
@@ -462,10 +484,23 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
     for (const std::string& assignment : env) raw_env.push_back(const_cast<char*>(assignment.c_str()));
     raw_env.push_back(nullptr);
     environ = raw_env.data();
+    // Dedicated, close-on-exec channel owned only by the trusted fork stub.
+    // Report the actual namespace/loopback calls, not the earlier host probes.
+    // Close it before untrusted code can inherit or forge a report.
+    const char mode = !applied.namespaces ? 'H' : options.allow_network ? 'U' : applied.loopback ? 'L' : 'D';
+    ssize_t acknowledged;
+    do { acknowledged = ::write(setup_fd[1], &mode, 1); } while (acknowledged < 0 && errno == EINTR);
+    ::close(setup_fd[1]);
+    if (acknowledged != 1) _exit(126);
     ::execvp(raw_argv[0], raw_argv.data());
     _exit(127);
   }
 
+  ::close(setup_fd[1]);
+  struct SetupReadGuard {
+    int fd;
+    ~SetupReadGuard() { if (fd >= 0) ::close(fd); }
+  } setup_read{setup_fd[0]};
   ::setpgid(pid, pid);
   ::close(pipe_fd[1]);
   const auto deadline =
@@ -523,6 +558,33 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
   ::close(pipe_fd[0]);
   int status = 0;
   while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+  char mode = 0;
+  ssize_t acknowledged;
+  do { acknowledged = ::read(setup_fd[0], &mode, 1); } while (acknowledged < 0 && errno == EINTR);
+  ::close(setup_fd[0]);
+  setup_read.fd = -1;
+  // Unknown architectures/platforms keep an absent report rather than guessing.
+#if defined(__linux__)
+  const std::string platform = "linux";
+#elif defined(__APPLE__)
+  const std::string platform = "macos";
+#else
+  const std::string platform;
+#endif
+#if defined(__aarch64__) || defined(__arm64__)
+  const std::string architecture = "arm64";
+#elif defined(__x86_64__)
+  const std::string architecture = "x64";
+#elif defined(__i386__)
+  const std::string architecture = "x86";
+#else
+  const std::string architecture;
+#endif
+  if (acknowledged == 1 && !platform.empty() && !architecture.empty() &&
+      (mode == 'H' || mode == 'U' || mode == 'L' || mode == 'D')) {
+    outcome.execution = CiExecutionReport{platform, architecture, mode == 'H' ? "none" : "linux-namespaces",
+        mode == 'L' ? "loopback-only" : mode == 'D' ? "denied" : "unrestricted", 0, 0, options.timeout_seconds};
   }
   if (outcome.timed_out || outcome.cancelled) {
     outcome.exit_code = -1;  // the step was killed, not exited: its code is meaningless
@@ -759,71 +821,6 @@ CacheProvision provisionCaches(const CiWorkflow& workflow, const std::string& pr
 
 }  // namespace
 
-void cloneCiCheckout(const std::string& url, const CiCheckoutRequest& request, const std::filesystem::path& destination,
-                     const std::vector<std::string>& environment, const std::string& upload_pack) {
-  if (!isValidObjectId(request.commit)) throw std::runtime_error("invalid commit for checkout");
-  // Every git process runs with a scrubbed configuration: no system or user
-  // config, no prompts, and no hooks (fetch and checkout run none here anyway).
-  std::vector<std::string> base = {"env", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-                                   "GIT_TERMINAL_PROMPT=0", "LANG=C"};
-  base.insert(base.end(), environment.begin(), environment.end());
-  base.insert(base.end(), {"git", "-c", "core.hooksPath=/dev/null", "-c", "advice.detachedHead=false"});
-  const auto git = [&](std::vector<std::string> arguments, std::chrono::seconds timeout, const std::string& what) {
-    std::vector<std::string> command = base;
-    command.insert(command.end(), arguments.begin(), arguments.end());
-    ProcessOptions options;
-    options.timeout = timeout;
-    options.output_limit = 64 * 1024;
-    const ProcessResult result = runProcess(command, options);
-    if (result.timed_out || result.exit_code != 0) {
-      std::string reason = result.output;
-      while (!reason.empty() && (reason.back() == '\n' || reason.back() == '\r')) reason.pop_back();
-      const std::size_t last = reason.rfind('\n');
-      if (last != std::string::npos) reason = reason.substr(last + 1);
-      throw std::runtime_error(what + (result.timed_out ? " timed out" : " failed") +
-                               (reason.empty() ? "" : ": " + reason.substr(0, 200)));
-    }
-  };
-  const std::string dir = destination.string();
-  git({"init", "--quiet", "--initial-branch=ckgit-ci", dir}, std::chrono::seconds(30), "git init");
-  std::vector<std::string> fetch = {"-C", dir, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules"};
-  if (!request.spec.since.empty()) {
-    fetch.push_back("--shallow-since=" + request.spec.since);
-  } else if (request.spec.depth != 0) {
-    fetch.push_back("--depth=" + std::to_string(request.spec.depth));
-  }
-  if (!upload_pack.empty()) fetch.push_back("--upload-pack=" + upload_pack);
-  fetch.push_back("--end-of-options");
-  fetch.push_back(url);
-  fetch.push_back(request.commit);
-  if (request.spec.tags) fetch.push_back("+refs/tags/*:refs/tags/*");
-  git(fetch, std::chrono::seconds(1800), "git fetch of " + request.project);
-  if (!request.spec.tags && request.ref.rfind("refs/tags/", 0) == 0) {
-    // The build's own tag too, so `git describe` names it even at depth 1.
-    // Best-effort: the commit is what the run needs, and the tag may already
-    // have been deleted or moved since the push.
-    fetch.pop_back();
-    fetch.push_back("+" + request.ref + ":" + request.ref);
-    try {
-      git(fetch, std::chrono::seconds(300), "git fetch of " + request.ref);
-    } catch (const std::exception&) {
-    }
-  }
-  git({"-C", dir, "checkout", "--quiet", "--detach", request.commit}, std::chrono::seconds(600), "git checkout");
-  if (request.ref.rfind("refs/heads/", 0) == 0) {
-    const std::string branch = request.ref.substr(11);
-    if (isValidBranchName(branch)) {
-      git({"-C", dir, "update-ref", "refs/remotes/origin/" + branch, request.commit}, std::chrono::seconds(30),
-          "git update-ref");
-    }
-  }
-  if (request.spec.archive) {
-    std::error_code error;
-    std::filesystem::remove_all(destination / ".git", error);
-    if (error) throw std::runtime_error("could not drop .git for an archive checkout");
-  }
-}
-
 bool ciSandboxAvailable() { return probeUserNamespaces(false); }
 
 bool ciSandboxCompiledIn() {
@@ -834,7 +831,8 @@ bool ciSandboxCompiledIn() {
 #endif
 }
 
-CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job) {
+CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobRequest& job,
+                            bool allow_workflow_parent) {
   CiPreparation result;
   CiPreparedJob prepared;
   prepared.job = job;
@@ -850,6 +848,16 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
     prepared.workflow = parseCiWorkflow(*text);
   } catch (const std::exception& error) {
     return outcome(CiRunStatus::Error, std::string("workflow: ") + error.what());
+  }
+  if (prepared.workflow.version == 2) {
+    if (!job.parent_run_id.empty()) {
+      if (!isValidCiId(job.parent_run_id) || job.parent_run_id == job.job_id)
+        return outcome(CiRunStatus::Error, "invalid workflow parent assignment");
+      try { prepared.workflow = selectCiWorkflowJob(std::move(prepared.workflow), job.workflow_job); }
+      catch (const std::exception& error) { return outcome(CiRunStatus::Error, error.what()); }
+    }
+  } else if (!job.parent_run_id.empty() || !job.workflow_job.empty()) {
+    return outcome(CiRunStatus::Error, "legacy workflow cannot have a child assignment");
   }
   const CiWorkflow& workflow = prepared.workflow;
 
@@ -918,6 +926,10 @@ CiPreparation prepareCiJob(const std::filesystem::path& repository, const CiJobR
   } catch (const std::exception& error) {
     return outcome(CiRunStatus::Error, std::string("sisters: ") + error.what());
   }
+  // Trigger and definition errors remain the same for legacy queue entries;
+  // only an actually executable distributed parent needs a child assignment.
+  if (prepared.workflow.version == 2 && job.parent_run_id.empty() && !allow_workflow_parent)
+    return outcome(CiRunStatus::Error, "distributed workflow requires a child assignment");
   result.prepared = std::move(prepared);
   return result;
 }
@@ -926,6 +938,8 @@ CiRunRecord recordCiOutcome(const std::filesystem::path& state_root, const CiJob
                             const std::string& detail) {
   CiRunRecord record;
   record.run_id = job.job_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
@@ -949,6 +963,8 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
   const CiWorkflow& workflow = prepared.workflow;
   CiRunRecord record;
   record.run_id = job.job_id;
+  record.parent_run_id = job.parent_run_id;
+  record.workflow_job = job.workflow_job;
   record.project_name = job.project_name;
   record.ref = job.ref;
   record.commit_id = job.commit_id;
@@ -1111,6 +1127,7 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
   std::string detail;
   std::size_t step_index = 0;
   bool stop = false;
+  bool consistent_execution = true;
   for (const CiJob& ci_job : workflow.jobs) {
     if (stop) break;
     if (sink.cancelRequested()) {
@@ -1129,13 +1146,22 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       }
       std::vector<std::string> argv;
       if (step.usesShell()) {
-        argv = {"/bin/sh", "-ec", step.script};
+        if (step.shell.empty() || step.shell == "sh") argv = {"/bin/sh", "-ec", step.script};
+        else argv = {step.shell, "-NoProfile", "-NonInteractive", "-Command",
+                     "$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; & {\n" +
+                     step.script + "\n}; if (!$?) { exit 1 }; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }"};
       } else {
         argv = step.argv;
       }
       sink.stepStarted(record, step_index);
       const StepOutcome outcome =
           executeStep(argv, work_visible, env, options, sink, step_index, bind_source, sandbox_mounts, hooks);
+      if (outcome.execution && consistent_execution) {
+        if (record.execution && record.execution != outcome.execution) {
+          record.execution.reset();
+          consistent_execution = false;
+        } else record.execution = outcome.execution;
+      }
       CiStepResult result;
       result.name = step.name.empty() ? ci_job.name : step.name;
       result.exit_code = outcome.exit_code;
@@ -1200,8 +1226,9 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       try {
         sink.putPagesSite(site);
       } catch (const std::exception& publish_error) {
-        status = CiRunStatus::Error;
-        detail = std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
+        status = sink.cancelRequested() ? CiRunStatus::Cancelled : CiRunStatus::Error;
+        detail = status == CiRunStatus::Cancelled ? "cancelled during Pages publication"
+            : std::string("steps passed but the Pages site failed to publish: ") + publish_error.what();
       }
     }
   }
@@ -1381,7 +1408,9 @@ CiRunRecord LocalCiSink::finish(CiRunRecord record) {
   policy.artifact_retention_days = options_.artifact_retention_days;
   policy.artifact_max_retention_days = options_.artifact_max_retention_days;
   policy.artifact_max_bytes = options_.artifact_max_bytes;
-  return commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
+  const auto stored = commitCiRun(policy, prepared_, std::move(record), outputs_, site_);
+  finalizeCiParentForChild(policy, prepared_.job);
+  return stored;
 }
 
 CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, const std::string& commit) {
@@ -1395,6 +1424,43 @@ CiQueuePolicy ciWorkflowQueuePolicy(const std::filesystem::path& repository, con
   return {};
 }
 
+void enqueueCiWorkflow(const std::filesystem::path& state_root, const std::filesystem::path& repository,
+                       CiJobRequest parent) {
+  const auto policy = ciWorkflowQueuePolicy(repository, parent.commit_id);
+  parent.runs_on = policy.runs_on;
+  parent.auto_cancel = policy.auto_cancel;
+  std::optional<CiWorkflow> workflow;
+  try {
+    const auto text = readWorkflowBlob(repository, parent.commit_id);
+    if (text) workflow = parseCiWorkflow(*text);
+  } catch (const std::exception&) {
+    // Preserve legacy handling of invalid definitions: the queued run gets
+    // the ordinary error record when prepared by a runner.
+  }
+  if (!workflow || workflow->version == 1) { enqueueCiJob(state_root, parent); return; }
+  const auto preparation = prepareCiJob(repository, parent, true);
+  if (!preparation.prepared) {
+    // Keep the normal queue policy (including superseding older branch runs)
+    // for skipped/error outcomes that need no distributed execution.
+    enqueueCiJob(state_root, parent);
+    return;
+  }
+  std::map<std::string, std::string> ids;
+  for (const auto& job : workflow->jobs) ids.emplace(job.name, generateCiId());
+  std::vector<CiJobRequest> children;
+  for (const auto& job : workflow->jobs) {
+    auto child = parent;
+    child.job_id = ids.at(job.name);
+    child.parent_run_id = parent.job_id;
+    child.workflow_job = job.name;
+    child.runs_on = job.runs_on;
+    child.needs.clear();
+    for (const auto& dependency : job.needs) child.needs.push_back(ids.at(dependency));
+    children.push_back(std::move(child));
+  }
+  enqueueCiWorkflowJobs(state_root, parent, children);
+}
+
 CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandbox) {
   if (!isValidProjectName(options.project_name)) throw std::runtime_error("ci runner: invalid project name");
   CiJobRequest job;
@@ -1405,6 +1471,8 @@ CiRunRecord runCiWorkflow(const CiRunnerOptions& options, CiSandboxReport* sandb
   job.client_id = kCiPrimaryRunnerName;
   job.queued_epoch_seconds = nowEpoch();
   job.attempt = options.attempt;
+  job.parent_run_id = options.parent_run_id;
+  job.workflow_job = options.workflow_job;
 
   // A cancel requested while the job was still queued ends it before anything
   // is read: no workflow, no sandbox probe, no checkout.

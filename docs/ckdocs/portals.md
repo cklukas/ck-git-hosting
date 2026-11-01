@@ -113,7 +113,9 @@ finds the tree in this order:
    files if it is a Git work tree, a directory walk otherwise.
 2. Inside a Git work tree, `<ref>` or else `origin/<ref>`, extracted with
    `git archive` into a private temporary directory that is removed after
-   the build. Uncommitted changes on that branch are not included.
+   the build. The bundled archive library performs extraction; no external
+   `tar` is required. Only regular files and directories are materialized;
+   links are omitted. Uncommitted changes on that branch are not included.
 3. Otherwise the build fails with, for example:
    `site 'python': ref 'main' is not available (no Git repository here, or a clone without that branch); fetch it, or pass --ref-tree main=DIR`.
 

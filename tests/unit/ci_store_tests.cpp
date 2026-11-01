@@ -85,7 +85,7 @@ void testAutoCancel() {
   {
     std::ifstream input(old_file);
     std::string bytes((std::istreambuf_iterator<char>(input)), {});
-    bytes.replace(0, std::string("schema_version=4").size(), "schema_version=3");
+    bytes.replace(0, std::string("schema_version=5").size(), "schema_version=3");
     bytes.erase(bytes.find("auto_cancel="));
     std::ofstream(old_file) << bytes;
   }

@@ -19,6 +19,10 @@ retention sweep never touches them. A tag triggers a release when it matches
   removes them too. There is no expiry and no admin step — pushing and deleting
   tags is the whole workflow.
 
+For an annotated tag, the release listing currently identifies the tag object
+in its `commit` field; peel it with `git rev-parse TAG^{commit}` when the
+underlying commit ID is needed.
+
 ```text
 git tag -a v1.0.0 -m 'Release 1.0'      # annotate for release notes
 git push origin v1.0.0                   # build and publish the release
@@ -53,10 +57,12 @@ sudo access on the server at all.
 ### Deploying ck-git-hosting's own release
 
 This project builds and packages itself through its own CI (`.ckgit/ci.yml`
-at the repository root): a tag push produces a release whose `packages` asset
-is the server `.deb`. The packaged `ck-git-hosting-deploy` command installs
-it and restarts the services, with a health check and automatic rollback to
-the last healthy package:
+at the repository root): a successful tag push combines the Linux `packages`
+asset, which contains the server `.deb`, and the Windows
+`windows-installers` asset, which contains the native installers and portable
+ZIP. A release is published only after both jobs succeed. The packaged
+`ck-git-hosting-deploy` command installs the server package and restarts its
+services, with a health check and automatic rollback to the last healthy package:
 
 ```text
 sudo ck-git-hosting-deploy --dry-run   # preview the newest release
@@ -72,7 +78,7 @@ release asset's checksum from its own sidecar before installing anything,
 refuses to run while a CI build is in progress (`--wait SECONDS` polls
 instead of refusing immediately), and confirms every daemon reports the
 release's commit before declaring success — not just that the services
-restarted. Nothing here runs on its own; there is no timer yet, so a release
-is deployed only when this command is run by hand. See
+restarted. The packaged deployment timer is disabled by default; enabling it
+trusts tag publishers to trigger deployment. See
 [Packages, continuous integration, and releases](02-packages-and-releases.md)
-for how the packages themselves are built.
+for the deployment implications and how the packages are built.

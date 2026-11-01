@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -38,6 +39,9 @@ std::string sha256Hex(std::string_view data);
 
 // One-shot digest of a regular file, read through an O_NOFOLLOW descriptor.
 // Throws std::runtime_error if the path is not a readable regular file.
-std::string sha256HexOfFile(const std::filesystem::path& path);
+// Optional continuation callback runs before each bounded read; false interrupts
+// hashing with an exception. Callback exceptions also close the file handle.
+std::string sha256HexOfFile(const std::filesystem::path& path,
+                          const std::function<bool()>& should_continue = {});
 
 }  // namespace ckgit

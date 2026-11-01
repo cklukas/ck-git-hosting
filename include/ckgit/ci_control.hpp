@@ -48,6 +48,11 @@ struct CiRunReport {
   CiRunRecord run;
 };
 
+// Optional, runner-reported execution properties. Separate operation preserves
+// the existing ci-run wire format for older clients.
+std::string formatCiExecutionControlResponse(const CiRunRecord& run);
+std::optional<CiExecutionReport> parseCiExecutionControlResponse(std::string_view response);
+
 // `ci-placement`: the runner that executes (or executed) a run -- "primary"
 // for the server's own, a remote runner's name otherwise, empty while the run
 // is queued -- and which attempt the run is on.
@@ -55,6 +60,23 @@ struct CiRunPlacement {
   std::string runner;
   unsigned attempt = 1;
 };
+
+struct CiWorkflowJobSummary {
+  std::string name;
+  std::string run_id;
+  CiRunStatus status = CiRunStatus::Pending;
+  CiRunPlacement placement;
+  std::vector<std::string> runs_on;
+};
+struct CiJobsReport {
+  std::string parent_run_id;
+  std::vector<CiWorkflowJobSummary> jobs;
+};
+// Hosting-side reader; immutable job mapping plus current child placement/status.
+CiJobsReport loadCiJobsReport(const std::filesystem::path& state_root,
+    std::string_view project, std::string_view parent_run_id);
+std::string formatCiJobsControlResponse(const CiJobsReport& report);
+CiJobsReport parseCiJobsControlResponse(std::string_view response);
 
 // `ci-log`: up to kMaximumControlLogChunkBytes of one step's log starting at
 // `offset`. `complete` means the step's log has ended and this chunk reaches

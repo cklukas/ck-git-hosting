@@ -560,6 +560,11 @@ class ProjectIndex::Impl {
 
   // Reads one run fresh from disk (bypassing the cached snapshot) so the live
   // status view sees the current heartbeat, step count, and status.
+  std::vector<CiWorkflowJobSummary> readCiJobs(std::string_view project, std::string_view run_id) const {
+    if (!state_root_ || !isValidProjectName(project) || !isValidCiId(run_id)) return {};
+    return loadCiJobsReport(*state_root_, project, run_id).jobs;
+  }
+
   std::optional<CiRunRecord> readCiRun(std::string_view project, std::string_view run_id) const {
     if (!state_root_ || !isValidProjectName(project)) return std::nullopt;
     return ckgit::loadCiRun(*state_root_, project, run_id);
@@ -671,7 +676,7 @@ class ProjectIndex::Impl {
     if (state_root_) {
       summary.checkouts = loadCheckoutMetadata(*state_root_, summary.name);
       summary.events = loadProjectEvents(*state_root_, summary.name);
-      summary.ci_runs = loadCiRuns(*state_root_, summary.name);
+      summary.ci_runs = loadCiRuns(*state_root_, summary.name, 16, true);
       summary.releases = loadReleases(*state_root_, summary.name);
     }
   }
@@ -824,6 +829,9 @@ std::optional<std::string> ProjectIndex::readCiLog(std::string_view project, std
 std::optional<CiLogTail> ProjectIndex::readCiLogTail(std::string_view project, std::string_view run_id,
                                                      std::size_t step_index, std::size_t max_bytes) const {
   return impl_->readCiLogTail(project, run_id, step_index, max_bytes);
+}
+std::vector<CiWorkflowJobSummary> ProjectIndex::readCiJobs(std::string_view project, std::string_view run_id) const {
+  return impl_->readCiJobs(project, run_id);
 }
 std::optional<CiRunRecord> ProjectIndex::readCiRun(std::string_view project,
                                                    std::string_view run_id) const {

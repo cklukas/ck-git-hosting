@@ -125,6 +125,10 @@ steps() {
     [ -e "$bin_dir/$binary" ] && act "remove $bin_dir/$binary" remove_path "$bin_dir/$binary"
   done
   [ -e "$hook_parent" ] && act "remove $hook_parent" remove_path "$hook_parent"
+  for notice in COPYING SOURCE-NOTICES.txt; do
+    archive_notice="$staging/usr/share/doc/ck-git-hosting/libarchive/$notice"
+    [ -f "$archive_notice" ] && act "remove $archive_notice" remove_path "$archive_notice"
+  done
   if [ -e "$sshd_dropin" ]; then
     act "remove $sshd_dropin" remove_path "$sshd_dropin"
     [ -z "$staging" ] && act 'validate sshd configuration and reload ssh.service' reload_sshd

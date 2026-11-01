@@ -38,39 +38,7 @@ std::optional<std::string> readCurrent(const fs::path& base) {
   return id;
 }
 
-// A single request path component that is safe to resolve within a site.
-bool safeComponent(std::string_view component) {
-  if (component.empty() || component == "." || component == "..") return false;
-  for (const unsigned char byte : component) {
-    if (byte < 0x20 || byte == 0x7f || byte == '/' || byte == '\\') return false;
-  }
-  return true;
-}
-
 }  // namespace
-
-std::string pagesContentType(std::string_view name) {
-  const auto dot = name.rfind('.');
-  const std::string_view ext = dot == std::string_view::npos ? std::string_view{} : name.substr(dot + 1);
-  if (ext == "html" || ext == "htm") return "text/html; charset=utf-8";
-  if (ext == "css") return "text/css; charset=utf-8";
-  if (ext == "js" || ext == "mjs") return "text/javascript; charset=utf-8";
-  if (ext == "json" || ext == "map") return "application/json";
-  if (ext == "svg") return "image/svg+xml";
-  if (ext == "png") return "image/png";
-  if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
-  if (ext == "gif") return "image/gif";
-  if (ext == "webp") return "image/webp";
-  if (ext == "ico") return "image/x-icon";
-  if (ext == "txt" || ext == "md") return "text/plain; charset=utf-8";
-  if (ext == "xml") return "application/xml";
-  if (ext == "pdf") return "application/pdf";
-  if (ext == "wasm") return "application/wasm";
-  if (ext == "woff2") return "font/woff2";
-  if (ext == "woff") return "font/woff";
-  if (ext == "ttf") return "font/ttf";
-  return "application/octet-stream";
-}
 
 void publishPagesSite(const fs::path& pages_root, std::string_view project, std::string_view run_id,
                       const fs::path& source, std::size_t keep_versions) {
@@ -176,90 +144,6 @@ std::optional<PageFile> readCurrentPage(const fs::path& pages_root, std::string_
   const std::optional<std::string> version = readCurrent(base);
   if (!version.has_value()) return std::nullopt;
   return readSiteFile(base / "versions" / *version, path, cap);
-}
-
-std::optional<PageFile> readSiteFile(const fs::path& site, std::string_view path, std::size_t cap) {
-  // Split the request path into components; an empty path or a trailing slash
-  // resolves to index.html.
-  std::vector<std::string> components;
-  std::size_t start = 0;
-  while (start <= path.size()) {
-    const std::size_t slash = path.find('/', start);
-    const std::string_view part =
-        path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
-    if (!part.empty()) {
-      if (!safeComponent(part)) return std::nullopt;
-      components.emplace_back(part);
-    }
-    if (slash == std::string_view::npos) break;
-    start = slash + 1;
-  }
-  if (components.empty() || (!path.empty() && path.back() == '/')) components.emplace_back("index.html");
-
-  // Walk into the site directory one component at a time, never following a
-  // symlink, so a site file cannot redirect the read outside its version.
-  int dir = ::open(site.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (dir < 0) return std::nullopt;
-  for (std::size_t index = 0; index + 1 < components.size(); ++index) {
-    const int next = ::openat(dir, components[index].c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    ::close(dir);
-    if (next < 0) return std::nullopt;
-    dir = next;
-  }
-  const int file = ::openat(dir, components.back().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  ::close(dir);
-  if (file < 0) return std::nullopt;
-
-  struct stat status {};
-  if (::fstat(file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_size < 0 ||
-      static_cast<std::size_t>(status.st_size) > cap) {
-    ::close(file);
-    return std::nullopt;
-  }
-  std::string content;
-  content.resize(static_cast<std::size_t>(status.st_size));
-  std::size_t offset = 0;
-  while (offset < content.size()) {
-    const ssize_t received = ::read(file, content.data() + offset, content.size() - offset);
-    if (received < 0 && errno == EINTR) continue;
-    if (received <= 0) {
-      ::close(file);
-      return std::nullopt;
-    }
-    offset += static_cast<std::size_t>(received);
-  }
-  ::close(file);
-  return PageFile{std::move(content), pagesContentType(components.back())};
-}
-
-namespace {
-
-int hexNibble(unsigned char character) {
-  if (character >= '0' && character <= '9') return character - '0';
-  if (character >= 'a' && character <= 'f') return character - 'a' + 10;
-  if (character >= 'A' && character <= 'F') return character - 'A' + 10;
-  return -1;
-}
-
-}  // namespace
-
-std::optional<std::string> decodeRequestPath(std::string_view target) {
-  std::string out;
-  for (std::size_t index = 0; index < target.size(); ++index) {
-    if (target[index] == '%') {
-      if (index + 2 >= target.size()) return std::nullopt;
-      const int high = hexNibble(static_cast<unsigned char>(target[index + 1]));
-      const int low = hexNibble(static_cast<unsigned char>(target[index + 2]));
-      if (high < 0 || low < 0) return std::nullopt;
-      const unsigned char byte = static_cast<unsigned char>((high << 4) | low);
-      if (byte < 0x20 || byte == 0x7f) return std::nullopt;
-      out.push_back(static_cast<char>(byte));
-      index += 2;
-    } else {
-      out.push_back(target[index]);
-    }
-  }
-  return out;
 }
 
 void removeProjectPages(const fs::path& pages_root, std::string_view project) {

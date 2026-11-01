@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "ckgit/project_summary.hpp"
+#include "ckgit/ci_control.hpp"
 
 namespace ckgit {
 
@@ -59,6 +60,7 @@ class ProjectIndex {
                                          std::size_t step_index, std::size_t max_bytes) const;
   // Reads one run fresh from disk (with artifacts), bypassing the cached
   // snapshot so the live status page reflects the run's current bytes.
+  std::vector<CiWorkflowJobSummary> readCiJobs(std::string_view project_name, std::string_view run_id) const;
   std::optional<CiRunRecord> readCiRun(std::string_view project_name, std::string_view run_id) const;
   // Reads only a step log's bytes appended past `offset`, for live SSE tailing.
   std::optional<std::string> readCiLogChunk(std::string_view project_name, std::string_view run_id,

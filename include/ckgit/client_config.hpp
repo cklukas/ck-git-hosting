@@ -25,6 +25,8 @@ struct ClientConfig {
   // restricted Git account. An empty host keeps the legacy host-only default.
   std::string web_host{};
   unsigned short web_port{8420};
+  std::filesystem::path git_program;
+  std::filesystem::path ssh_program;
 };
 
 // Loads the strict, bounded version-1 client configuration.  Unknown fields,

@@ -190,11 +190,19 @@ bool parse_double(std::string_view text, double& out) {
     // changes fegetround), strtod is correctly rounded and agrees with
     // from_chars bit-for-bit for every value both accept.
     if (text.front() == '+') return false;   // from_chars rejects a leading '+'
+#ifdef _WIN32
+    static const ::_locale_t kCLocale = ::_create_locale(LC_ALL, "C");
+#else
     static const ::locale_t kCLocale = ::newlocale(LC_ALL_MASK, "C", (::locale_t)0);
+#endif
     if (!kCLocale) return false;             // newlocale("C") failed: refuse, don't UB
     const std::string buf(text);             // strtod needs a NUL terminator
     char* end = nullptr;
+#ifdef _WIN32
+    value = ::_strtod_l(buf.c_str(), &end, kCLocale);
+#else
     value = ::strtod_l(buf.c_str(), &end, kCLocale);
+#endif
     if (end != buf.c_str() + buf.size()) return false;
     // Overflow saturates to ±inf (nan is unreachable — the char scan forbids
     // 'n'/'a'); from_chars rejects such inputs, so reject them here too.
