@@ -94,8 +94,11 @@ SSH negotiation or pending claim, stops that SSH process and removes the
 session workspace. Installer upgrades of this idle state are checked in both
 installation scopes. A service upgrade during an active compiler invocation
 was also tested: the runner handed the job back, restarted, and completed a
-fresh attempt. An upgrade during artifact upload is not yet qualified; wait
-for the job to finish before upgrading in production.
+fresh attempt. Another fixture upgrade began after an artifact upload request
+was observed; the job was handed back and the second attempt published a
+checksum-verified 64 MiB artifact. The measurement did not establish that a
+network request was still in flight at the instant of service stop, so wait
+for jobs to finish before upgrading in production.
 The transport now interrupts a silent stream greeting or an in-flight artifact
 upload when the broker receives a stop request. Upload retry delays also check
 for shutdown, cancellation and lease loss, and interrupted bytes are not
@@ -111,8 +114,8 @@ Use a short `ci_build_root` on Windows: the runner adds session and job
 directories, and compiler-generated paths can exceed MSVC's limits. In the
 service qualification, a deeply nested temporary root produced C1083 while
 creating a libarchive object; a retry uses a shorter root on the same drive.
-The active-build upgrade test used an installer with unchanged runner binary
-bytes; it does not establish compatibility across arbitrary versions.
+The active-build and upload upgrade tests used installers with unchanged runner
+binary bytes; they do not establish compatibility across arbitrary versions.
 
 The Windows service host is under qualification. Its `service --config PATH
 --log PATH --service-name NAME` entry point connects to the Service Control
@@ -168,7 +171,8 @@ service and a disabled service that cannot restart. The active-compiler
 fixture completed a real retried LPAC job and verified its four packages.
 An idle installed service was then upgraded between different GitHub builds,
 restarted with its configuration intact, and completed another full LPAC build.
-Upgrades during an active artifact upload remain unqualified.
+A separate upload-stage upgrade returned the job and successfully retried it;
+the exact stop instant relative to an in-flight network request was not proven.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.

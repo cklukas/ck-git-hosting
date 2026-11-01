@@ -254,7 +254,7 @@
     "tunnel_fixture": "Automation parent inherited ignore-Ctrl+C. Fixture explicitly resets inheritance before launching own console; production client unchanged. Ctrl+C passed, exit0, port released, no SSH survivors."
   },
   "remaining": [
-    "A live service upgrade during an active artifact upload has not been qualified; transport cancellation is covered by automated tests.",
+    "The upload-stage service upgrade was verified after observing an artifact upload request; sampling did not prove that a network request was still in flight at the instant of service stop. Automated tests cover in-flight transport cancellation.",
     "Combined release success and partial failure were checked live; restart and repeated finalization are covered by automated tests."
   ],
   "checks": {
@@ -1675,5 +1675,20 @@
       },
       "build_duration_review": "476 seconds compared with prior 529, 615 and 744 seconds; compiler log shows a fresh Ninja build, package checksums and 303 source hashes match, and all four x64 executable timestamps fall inside the build."
     }
+  },
+  "live_upload_stage_upgrade": {
+    "date": "2026-11-01",
+    "project": "ck-upload-qual-20261101 (temporary; removed)",
+    "parent_run": "00001793558361067598-07c7ca38",
+    "job_run": "00001793558361141004-3654fd53",
+    "observed_upload_utc": "2026-11-01T18:40:48.7466734Z",
+    "installer_sha256": "24ff8492ef99c8ec7814b29d1efd0b8bb49d79b961f600861f2bc381e4aae471",
+    "installer_exit": 0,
+    "service": "isolated ckgit-upload-probe; production service left running",
+    "result": "Service restarted with unchanged configuration, attempt 1 was handed back, attempt 2 succeeded under LPAC with network denied, artifact downloaded and checksum verified.",
+    "artifact_bytes": 67110912,
+    "artifact_sha256": "da243d75d33231a8fd6d7f9c791cfd4847a97fa25712472e9b7d5a1ab75fc85a",
+    "limitations": "Fixture installer contains unchanged runner binary; upload request observed before stop but sampled stop did not prove a request was in flight at that instant.",
+    "cleanup": "Fixture service, installation, private key, runner registration, restricted authorization, temporary project and its trash removed; production runner remained running."
   }
 }
