@@ -845,6 +845,43 @@
       ],
       "administrator": true
     },
-    "scope": "GitHub Windows job succeeded; full run still in progress. Installed executable hashes match portable package and existing runner configuration remained unchanged."
+    "scope": "GitHub Windows job succeeded; full run still in progress. Installed executable hashes match portable package and existing runner configuration remained unchanged.",
+    "github_all_jobs": "Run 41312688096 completed successfully."
+  },
+  "windows_cli_mutations": {
+    "result": {
+      "start": "2026-11-01T14:08:04.1089163Z",
+      "create_project": "win-create-7ca67efba5a2",
+      "success": true,
+      "publish_project": "win-publish-7ca67efba5a2",
+      "repository": "V:\\tmp\\ckgit-windows-20261026-01\\client-journey-20261101\\mutation-7ca67efba5a2",
+      "head": "618033f08fbe02b01dcc377b1f00cf3a51cebefe",
+      "end": "2026-11-01T14:08:18.8136621Z"
+    },
+    "scope": "Installed dafdda9 client under ordinary limited UAC token; create, publish, sync and status against rpi4; published main equals recorded head.",
+    "cleanup": "Two task-owned test projects removed via ckgit-admin, verified test trash entries purged; local test workspace awaits final journey cleanup."
+  },
+  "windows_cli_cancel": {
+    "run": "00001793542243019316-8e8a86fa",
+    "child": "00001793542243218950-c3e540f9",
+    "result": "Both parent and child cancelled; executed under ordinary Windows user token.",
+    "windows": {
+      "run": "00001793542243019316-8e8a86fa",
+      "utc": "2026-11-01T14:10:57.2788314Z",
+      "exit": 0
+    },
+    "forget": {
+      "exit": 0,
+      "utc": "2026-11-01T14:11:27.7722934Z"
+    },
+    "cleanup": "Task-owned project removed and its verified test trash repository purged; logs retained."
+  },
+  "windows_cli_fixture_cleanup": {
+    "windows": {
+      "scope": "Temporary Windows client journey, including copied private key",
+      "utc": "2026-11-01T14:12:08.1984186Z",
+      "success": true
+    },
+    "authorization": "Both exact task-owned SSH authorization lines revoked on rpi4; result recorded at /home/klukas/tmp/ckgit-client-journey-20261101/authorization-revoked.json."
   }
 }
