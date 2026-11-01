@@ -627,18 +627,35 @@ fi
 
 # ckgit open: the paired checkout's own pages through the same tunnel.
 open_url() {  # open_url ARGS...: start ckgit open, print the announced URL, stop it
+  # Truncate synchronously: the background shell may not have opened its
+  # redirection before the readiness loop starts reading the previous call.
+  : >"$test_root/open.out"
   (cd "$test_root/work" && PATH="$test_root/web-bin:$PATH" TEST_ROOT="$test_root" CKGIT_HOSTINGD="$CKGIT_HOSTINGD" \
     exec "$CKGIT" open --config "$test_root/client.ini" --no-open --port 18421 "$@") >"$test_root/open.out" 2>&1 &
   open_pid=$!
   attempt=0
-  while ! grep -q '^Dashboard: ' "$test_root/open.out" 2>/dev/null; do
+  while :; do
+    # `grep`/`sed` can observe the prefix before the writer has finished the
+    # URL. `read` succeeds only after the complete newline-terminated line.
+    opened=''
+    if [ -f "$test_root/open.out" ]; then
+      while IFS= read -r line; do
+        case "$line" in 'Dashboard: '*) opened=${line#Dashboard: } ;; esac
+      done <"$test_root/open.out"
+    fi
+    [ -n "$opened" ] && break
     kill -0 "$open_pid" 2>/dev/null || { cat "$test_root/open.out" >&2; echo "ckgit open exited early" >&2; exit 1; }
     attempt=$((attempt + 1))
     [ "$attempt" -lt 20 ] || { cat "$test_root/open.out" >&2; echo "ckgit open announced no URL" >&2; exit 1; }
     sleep 1
   done
-  opened=$(sed -n 's/^Dashboard: //p' "$test_root/open.out")
-  opened_status=$(curl --max-time 3 --silent -o /dev/null -w '%{http_code}' "$opened")
+  attempt=0
+  while ! opened_status=$(curl --max-time 3 --silent -o /dev/null -w '%{http_code}' "$opened"); do
+    kill -0 "$open_pid" 2>/dev/null || { cat "$test_root/open.out" >&2; echo "ckgit open exited before the tunnel became ready" >&2; exit 1; }
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 20 ] || { echo "ckgit open tunnel did not become ready" >&2; exit 1; }
+    sleep 1
+  done
   kill -INT "$open_pid"
   wait "$open_pid" 2>/dev/null || true
   sleep 1

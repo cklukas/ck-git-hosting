@@ -977,6 +977,35 @@
       "success": true,
       "uninstall_exit": 0,
       "foreign_state": "Running"
+    },
+    "active_build": {
+      "result": {
+        "start": "2026-11-01T14:29:49.5681943Z",
+        "host_before": 72820,
+        "service": "ckgit-active-upgrade-test",
+        "config_before": "405E1B566BE1477BAF61407DF126213D15F3EA886485CA7C2D54D5349BD84647",
+        "compiler_path": "V:\\tmp\\ug8c\\w\\runner-session-a6fa53ab4d7a4d8977d6ec9b3f5b21c7\\jobs\\ckgit-lpac-e0a1a529cedd6c1e4df5ea8c8dccda3d\\tool files\\msvc\\bin\\Hostx64\\x64\\cl.exe",
+        "installer_sha256": "24FF8492EF99C8EC7814B29D1EFD0B8BB49D79B961F600861F2BC381E4AAE471",
+        "compiler_pid": 93940,
+        "service_state": "Running",
+        "end": "2026-11-01T14:29:58.4896531Z",
+        "host_after": 91172,
+        "exit": 0,
+        "old_compiler_survived": false,
+        "config_after": "405E1B566BE1477BAF61407DF126213D15F3EA886485CA7C2D54D5349BD84647"
+      },
+      "parent": "00001793543217955288-84ca1030",
+      "child": "00001793543218091296-6c07b05c",
+      "post_upgrade": "Host recorded confirmed hand-back, requeued and claimed attempt 2. Build completion not yet verified.",
+      "scope": "Actual compiler active in LPAC when dedicated fixture service upgraded; fixture package contains unchanged executable bytes."
     }
+  },
+  "github_intermittent_failure": {
+    "run": 41314562243,
+    "commit": "0bfea567ac4943d04dbf1d611d1cdf139a0d7850",
+    "job": "macOS arm64",
+    "result": "failed",
+    "observation": "control_socket integration: curl reported blank option argument; daemon log includes checkout metadata staging warning. Cause not yet established.",
+    "later_comparison": "macOS arm64 job for run 41315057899 succeeded; this does not establish the cause."
   }
 }
