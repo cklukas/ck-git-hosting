@@ -104,7 +104,7 @@
     "parent": "00001793536102902606-6753aea2",
     "linux": "00001793536102977405-ccd2825d",
     "windows": "00001793536102977419-66a5a6ef",
-    "status": "Windows success; Linux sibling still running at 2026-11-01T12:45Z",
+    "status": "Both children and parent succeeded; parent lists Linux packages and Windows installer artifacts.",
     "windows_verification": {
       "run": "00001793536102977419-66a5a6ef",
       "bundle_sha256": "ea87bd79b3a2464c4a63d4536a3e7f47c3587040ca39cb666ab803376d76d7a3",
@@ -160,7 +160,20 @@
       "binary_sha256": "AA40D15EDDE0B7AEB23A58B8A64FE5424946BE18E7F0DC6881029711D87A6EDB",
       "start": "2026-11-01T12:28:28.3285504Z"
     },
-    "duration_review": "531 seconds vs prior 361-second standalone build. Configuration took204.4 seconds; full compilation/link/package logs,302 source hashes and4 PE timestamps verify freshness. Exact reason for duration difference not established."
+    "duration_review": "531 seconds vs prior 361-second standalone build. Configuration took204.4 seconds; full compilation/link/package logs,302 source hashes and4 PE timestamps verify freshness. Exact reason for duration difference not established.",
+    "linux_verification": {
+      "run": "00001793536102977405-ccd2825d",
+      "status": "success",
+      "steps": [
+        "build",
+        "check",
+        "docs",
+        "package"
+      ],
+      "duration_seconds": 5213,
+      "artifact_sha256": "c7f40016772f1d3c1a0cad855621759a1bd68c50a41f4f1b2cbd499821a5adc2",
+      "artifact_bytes": 15032320
+    }
   },
   "dashboard": {
     "verified": "Live upgraded rpi4 dashboard via existing Mac ckgit web SSH tunnel. Screenshot visually confirmed parent job table; clicked Windows child and verified backlink and live compiler output.",
@@ -172,7 +185,7 @@
       "attempt"
     ],
     "tunnel_cleanup": "Owned CLI PID66784 received SIGINT and exited0 with Tunnel closed.",
-    "limitations": "Combined workflow still running; final parent artifacts not yet checked.",
+    "limitations": "Parent and both platform children completed successfully; CLI parent lists both artifacts. Live UI after parent completion not yet checked.",
     "final_windows_child": "Live deployed rpi4 UI visually verified: success, windows/x64, isolation lpac, network denied,4GiB memory,64 processes,14400s timeout,exit0,11.5MiB artifact link, parent backlink."
   },
   "client_follow_up": {
@@ -617,5 +630,221 @@
       },
       "coverage": "The integrated Windows service test rejects drive-relative, rooted-relative and relative executable paths before registration, then exercises normal stop and worker/supervisor crash recovery."
     }
+  },
+  "installed_8cc509f": {
+    "clients": {
+      "run": 41312108032,
+      "commit": "8cc509fc563418bf8b88ab28c146de99a83074ff",
+      "success": true,
+      "end": "2026-11-01T13:45:12.2234353Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+g8cc509fc5634",
+          "scope": "CURRENTUSER",
+          "sha256": "7F4B61169D57D140BDB43FEB76E409A47C224F73D1F6A4540DF8BD2E4EE07D11",
+          "product": "ckgit",
+          "installer_sha256": "5DA78A2A6DA70C9291F9CA5EC9BA019532413EB1566AF6079CA4293E039F5D93",
+          "previous_sha256": "8BC4A7BB085078727DD7D037809E49B5FF954976FD6C6F4BD48BE7AB3DAA43C3",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+g8cc509fc5634",
+          "scope": "CURRENTUSER",
+          "sha256": "B6E1222DB0C5908CDD6B18B758A98ED5EBECB5B277C651A7A1C346ADD2F6D1E4",
+          "product": "ckdocs",
+          "installer_sha256": "7E55A218221C70701F555020A557DF709D66CCEB5EE107894EFCD9D3372B6725",
+          "previous_sha256": "288763313D8AD28D70D19C66FBA0FBD804730E3EA1D63944B81F1F287DB73EFE",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 41312108032,
+      "commit": "8cc509fc563418bf8b88ab28c146de99a83074ff",
+      "success": true,
+      "end": "2026-11-01T13:45:15.1870777Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+g8cc509fc5634",
+          "scope": "ALLUSERS",
+          "sha256": "1300B6A1A0705049680D12D3960B991B143711E8F696D6CF720AF03EC0C8D100",
+          "product": "ck-git-runner",
+          "installer_sha256": "F884C41BC80BED6BA73991B7723965D3D8455902A7E646185A9203252BAAED1A",
+          "previous_sha256": "AA40D15EDDE0B7AEB23A58B8A64FE5424946BE18E7F0DC6881029711D87A6EDB",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "helper": {
+      "runner_sha256": "1300B6A1A0705049680D12D3960B991B143711E8F696D6CF720AF03EC0C8D100",
+      "utc": "2026-11-01T13:45:30.9390829Z",
+      "version": "ck-ci-runnerd 0.8.2+g8cc509fc5634",
+      "registration_helper_sha256": "C7A05E4130434803B1122C4B9F45D693CBB2670BA737843E0A6E7E8CEF475F49",
+      "helper_path": "V:\\Programs\\ck-git-runner\\register-service.ps1"
+    },
+    "helper_source": "Installed helper matches repository source after CRLF normalization from Windows checkout.",
+    "limitations": "Installed GitHub runner not yet qualified through a real CI job; service permissions and full compiler job remain open.",
+    "service_fixture": {
+      "runner_sha256": "1300B6A1A0705049680D12D3960B991B143711E8F696D6CF720AF03EC0C8D100",
+      "end": "2026-11-01T13:46:10.9666262Z",
+      "cycles": [
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-2656658401-3008753470-2822300034-1514483911-4120398997",
+          "stop_seconds": 0.2689283,
+          "host_pid": 82892,
+          "mode": "normal",
+          "worker_pid": 86148
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-2656658401-3008753470-2822300034-1514483911-4120398997",
+          "stop_seconds": 0.32052379999999997,
+          "host_pid": 72164,
+          "mode": "worker-crash",
+          "worker_pid": 79756
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-2656658401-3008753470-2822300034-1514483911-4120398997",
+          "stop_seconds": 0.038895599999999995,
+          "host_pid": 79708,
+          "mode": "supervisor-crash",
+          "worker_pid": 89148
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-2656658401-3008753470-2822300034-1514483911-4120398997",
+          "stop_seconds": 0.2621753,
+          "host_pid": 89796,
+          "mode": "normal",
+          "worker_pid": 78468
+        }
+      ],
+      "success": true,
+      "start": "2026-11-01T13:45:53.4637986Z"
+    },
+    "service_fixture_scope": "Installed GitHub runner and registration helper copied to isolated SCM fixture; protocol fixture, no active compile. Normal stop, worker/supervisor crashes and recovery passed.",
+    "real_service_ci": {
+      "parent": "00001793540852309827-adfe5183",
+      "windows_child": "00001793540852452629-98351aeb",
+      "commit": "2c1b1fd235cf53dd1a46dc043dfed184e52e7093",
+      "result": "failure",
+      "failure": "MSVC C1083 creating an object in the deeply nested test workspace; failure after 66/260 steps.",
+      "log_sha256": "af4b0af736b0bc378bc1d2c176e5862ad4efb34efaf592aecfddc1aac360f873",
+      "retry_parent": "00001793541180221994-a2dcd16b",
+      "retry_windows_child": "00001793541180415246-0e0c42a5",
+      "retry_root": "V:\\tmp\\cg8c1",
+      "retry_result": "success",
+      "verification": {
+        "run": "00001793541180415246-0e0c42a5",
+        "bundle_sha256": "6916d4fe8c4e6d3893ecabb94f2a8b3c59b91c83ff7477cdaf5e895a3f6820ff",
+        "bundle_bytes": 12118528,
+        "packages": {
+          "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+            "sha256": "08ce8b7dd596d470eab46dd2fd32677035f37753982f62f90aec5978ce826046",
+            "bytes": 2521505
+          },
+          "ckdocs-0.8.2-windows-x64-setup.exe": {
+            "sha256": "55dbfa9697ef850da48b08fbf2ac7fc7abf6a8b5ae8a8ede937dfa0a667a8bcb",
+            "bytes": 3224628
+          },
+          "ckgit-0.8.2-windows-x64-setup.exe": {
+            "sha256": "39ced485dd1ca1adc9eb9d629512935872211187fbd2b5142263191e12f6ce65",
+            "bytes": 3505703
+          },
+          "ckgit-0.8.2-windows-x64.zip": {
+            "sha256": "0ee330878226ca72f1ca20ccb176f305705874d1d980cea53e109944fd9cfd71",
+            "bytes": 2828242
+          }
+        },
+        "source_files_verified_against_git": 303,
+        "build": {
+          "commit": "6c38eed74f230597d4994526aa63b15b944815d0",
+          "version": "0.8.2+g6c38eed74f23",
+          "configuration": "Release",
+          "generator": "Ninja",
+          "start_epoch": "1793541258",
+          "end_epoch": "1793541875",
+          "elapsed_seconds": "617",
+          "binary_directory": "V:/tmp/cg8c1/runner-session-37976b384cf448975056cbc0bf81f5f0/jobs/ckgit-lpac-12e949143dd49bd121198c95d9a28dd9/work/tmp/b/bin"
+        },
+        "portable_executables_verified_x64": [
+          "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+        ],
+        "artifact_files": [
+          "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+          "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64.zip",
+          "dist/windows-build-inputs.sha256",
+          "dist/windows-build.txt",
+          "dist/windows-packages.sha256"
+        ]
+      },
+      "execution": "LPAC, network denied, 4GiB, 64 processes; installed GitHub runner under dedicated service account",
+      "duration_review": "617s build versus previous console LPAC 531s; full compiler log, 303 source hashes and four PE timestamps verified. Duration difference not fully established.",
+      "cleanup": {
+        "workspace_removed": true,
+        "utc": "2026-11-01T14:05:48.2138135Z",
+        "service": "ckgit-live-test-8cc509f",
+        "success": true,
+        "copied_key_removed": true
+      }
+    },
+    "github_all_jobs": "Run 41312108032 completed successfully on all jobs."
+  },
+  "installed_dafdda9": {
+    "clients": {
+      "run": 41312688096,
+      "commit": "dafdda929e8ad0c50124c8108464ccb69021a47a",
+      "success": true,
+      "end": "2026-11-01T14:06:38.6507897Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+gdafdda929e8a",
+          "scope": "CURRENTUSER",
+          "sha256": "8D36C2A859352B45829DA08C5EBA30BA5FF6D55A7755496E58BF713CD51EA21B",
+          "product": "ckgit",
+          "installer_sha256": "EA8069A041CAD20C9B4F418AB3ABDCE1C0AB544589407C7DB55D2051CFAB4DB5",
+          "previous_sha256": "7F4B61169D57D140BDB43FEB76E409A47C224F73D1F6A4540DF8BD2E4EE07D11",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+gdafdda929e8a",
+          "scope": "CURRENTUSER",
+          "sha256": "0C9420B9143D218F96F08B827075D1B2F5E3DC4A7DA14B50EB6C0EE4CBB2868A",
+          "product": "ckdocs",
+          "installer_sha256": "3828DCEC1D67ABD1F8E8075F63FABC7097B70001C2593CEF5E18B172A7109654",
+          "previous_sha256": "B6E1222DB0C5908CDD6B18B758A98ED5EBECB5B277C651A7A1C346ADD2F6D1E4",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 41312688096,
+      "commit": "dafdda929e8ad0c50124c8108464ccb69021a47a",
+      "success": true,
+      "end": "2026-11-01T14:06:41.6969338Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+gdafdda929e8a",
+          "scope": "ALLUSERS",
+          "sha256": "38AB8A92E112D89FC91EEA5CF9537B3E8352A15BBF4FBFEEA299311FA34E118A",
+          "product": "ck-git-runner",
+          "installer_sha256": "23ECF7AA633E874236F7AB86E8333720B3B650A30150E85092854DC0E5B58E0C",
+          "previous_sha256": "1300B6A1A0705049680D12D3960B991B143711E8F696D6CF720AF03EC0C8D100",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "scope": "GitHub Windows job succeeded; full run still in progress. Installed executable hashes match portable package and existing runner configuration remained unchanged."
   }
 }

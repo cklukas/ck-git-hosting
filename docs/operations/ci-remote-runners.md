@@ -105,6 +105,10 @@ lease recovery remains responsible for the job. Native process tests cover
 silent greetings, uploads, log acknowledgements, finish and hand-back requests.
 Artifact checksum calculation also checks cancellation and pumps heartbeats
 between 64 KiB reads; a blocked filesystem read itself is not interrupted.
+Use a short `ci_build_root` on Windows: the runner adds session and job
+directories, and compiler-generated paths can exceed MSVC's limits. In the
+service qualification, a deeply nested temporary root produced C1083 while
+creating a libarchive object; a retry uses a shorter root on the same drive.
 The complete active-job installer-upgrade sequence is not yet qualified.
 
 The Windows service host is under qualification. Its `service --config PATH
@@ -148,8 +152,12 @@ supervisor termination and a final normal stop using the same work root.
 Both crash/restart runs passed: no fixture processes survived, old sessions
 were recovered on restart, and the final stop removed all session directories.
 These are idle-runner tests with a protocol fixture, not active compiler tests.
-Service provisioning, active-job shutdown and a full service compiler build
-remain to be qualified before service installation is ready.
+The same registration and crash-recovery fixture passed with the installed
+GitHub runner from commit `8cc509f`. A separate service test connected to the
+real host and built this repository's Windows installers under LPAC with the
+short build root; its four packages and source fingerprints were verified.
+ACL provisioning remains manual. Active-job shutdown and installer upgrades
+under a service still need qualification.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
