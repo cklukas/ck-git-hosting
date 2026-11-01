@@ -1503,5 +1503,14 @@
         ]
       }
     }
+  },
+  "linux_current_push_failure": {
+    "parent": "00001793546081150784-d7c24b39",
+    "linux": "00001793546081213745-fb85f9c6",
+    "commit": "93b40e8b7c321ba549b8ce3bcdcf03a3616aaffd",
+    "result": "failure",
+    "observation": "Unit test claim delay expected a job to remain younger than 150 ms; it was already eligible under heavy parallel CPU load.",
+    "fix": "Test controls spool modification time and removes the 150 ms race.",
+    "verification": "Mac CMake incremental unit target rebuilt from changed source; full ckgit-unit-tests passed."
   }
 }

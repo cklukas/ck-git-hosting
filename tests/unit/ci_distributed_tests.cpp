@@ -885,10 +885,10 @@ void testClaimDelay() {
   const std::string id = ckgit::generateCiId();
   ckgit::enqueueCiJob(fixture.state, sampleJob(id));
   ckgit::CiClaimOptions primary;
-  primary.min_age = std::chrono::seconds(60);
+  primary.min_age = std::chrono::hours(1);
   std::optional<std::chrono::milliseconds> retry;
   require(!ckgit::claimCiJob(fixture.state, primary, &retry).has_value(), "the primary leaves a fresh job alone");
-  require(retry.has_value() && *retry > std::chrono::seconds(50) && *retry <= std::chrono::seconds(60),
+  require(retry.has_value() && *retry > std::chrono::minutes(50) && *retry <= std::chrono::hours(1),
           "the primary learns when the job becomes eligible");
   ckgit::CiClaimOptions secondary;
   secondary.runner = "uconsole";
@@ -898,9 +898,14 @@ void testClaimDelay() {
 
   const std::string later = ckgit::generateCiId();
   ckgit::enqueueCiJob(fixture.state, sampleJob(later, "refs/heads/other"));
-  primary.min_age = std::chrono::milliseconds(150);
+  // Control the spool timestamp rather than racing a short wall-clock sleep:
+  // loaded CI hosts can deschedule the test between enqueue and claim.
+  const auto spool_file = fixture.state / "ci" / "spool" / (later + ".ini");
+  const auto file_now = std::filesystem::file_time_type::clock::now();
+  primary.min_age = std::chrono::minutes(1);
+  std::filesystem::last_write_time(spool_file, file_now + std::chrono::hours(1));
   require(!ckgit::claimCiJob(fixture.state, primary).has_value(), "inside the delay the job waits");
-  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  std::filesystem::last_write_time(spool_file, file_now - std::chrono::hours(1));
   const auto taken = ckgit::claimCiJob(fixture.state, primary);
   require(taken.has_value() && taken->job.job_id == later, "after the delay the primary claims it");
 }
