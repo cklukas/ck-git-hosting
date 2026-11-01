@@ -444,9 +444,9 @@ cannot operate on a child lease even when they supply its token.
 
 Push processing creates distributed graphs, and the gateway prepares one
 assigned child and collects the parent results at completion. Claim polling
-also retries interrupted parent publication. The production Windows runner
-and deployment qualification remain in progress; gateway integration tests
-are not yet the Linux-to-Windows end-to-end qualification.
+also retries interrupted parent publication. A separately installed Windows runner has also completed the Linux-to-Windows
+end-to-end installer build; see [the runner guide](../operations/ci-remote-runners.md)
+for setup and current qualification limits.
 
 Tokens are unquoted `[A-Za-z0-9._-]`; a command is at most 1024 bytes and ten
 tokens. `wait-seconds` is a canonical decimal from 0 to 120; `job-id` is a CI

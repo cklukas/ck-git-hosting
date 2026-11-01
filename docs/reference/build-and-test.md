@@ -3,18 +3,19 @@ description: Compile ck-git-hosting from source, run the test suite, and choose 
 ---
 # Build from source
 
-## Windows builds (port in progress)
+## Windows builds
 
 The CMake build produces native x64 `ckgit`, `ckdocs`, their tests, and the
-AppContainer qualification tools. The connected Windows CI runner is still
-under development; the hosting server remains Linux-only.
+AppContainer qualification tools and a remote Windows CI runner. The hosting
+server remains Linux-only.
 The version-2 workflow parser supports per-job `runs_on`, dependency lists
 (`needs`), and job/step script shells (`sh`, `powershell`, `pwsh`). The push hook now
 queues distributed graphs, and the primary runner and protocol-2 gateway
 prepare only the assigned child. Protocol 1 cannot claim these children.
 The installed Windows runner has completed the native installer job against
-the Linux hosting server used in qualification. Full portability qualification remains in
-progress; automatic runner startup and broader client journeys are separate checks.
+the Linux hosting server used in qualification. A virtual-account Windows
+service has also completed an LPAC installer build; see the [runner setup](../operations/runner-windows.md)
+and [qualification details](../operations/ci-remote-runners.md#windows-runner).
 
 The queue implementation stores parent/child membership and dependency IDs.
 A durable graph journal repairs an interrupted enqueue before claims resume;
@@ -107,7 +108,8 @@ operator-selected tree and sealed read-only. The native daemon now provides
 protocol negotiation against a local SSH fixture, empty-queue exit, workspace
 cleanup and the single-instance lock. The runner installer passes install,
 reinstall and uninstall in both scopes, including CurrentUser with a non-admin
-token. Automatic startup remains to be implemented and qualified.
+token. The installer does not register or start a service automatically;
+an administrator can register one and enable automatic startup explicitly.
 
 The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
 `windows-installers` job selected by the `windows` and `x64` labels. The Windows
@@ -300,8 +302,9 @@ A full Ninja self-build also passed with the LOCAL-pipe patch and quoted tool
 paths. The integrated private tool-directory change also passed a full
 ordinary-user build in 361 seconds with a build root containing no spaces;
 the staged Ninja toolchain also passed the live Windows CI job above.
-Restricted-account service qualification remains open;
-see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
+A separately registered virtual-account service has also completed a live
+installer build; see [Windows runner](../operations/ci-remote-runners.md#windows-runner)
+for its setup and qualification limits.
 
 For a small path-compatibility diagnostic without staging the compiler, run:
 

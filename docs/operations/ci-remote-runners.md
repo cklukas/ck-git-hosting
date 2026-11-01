@@ -120,7 +120,7 @@ creating a libarchive object; a retry uses a shorter root on the same drive.
 The active-build and upload upgrade tests used installers with unchanged runner
 binary bytes; they do not establish compatibility across arbitrary versions.
 
-The Windows service host is under qualification. Its `service --config PATH
+The Windows service host's `service --config PATH
 --log PATH --service-name NAME` entry point connects to the Service Control
 Manager and requires the matching non-administrator `NT SERVICE\NAME` virtual
 account. It does not accept LocalSystem or register itself automatically.
@@ -132,8 +132,9 @@ the administrator must grant the resulting `NT SERVICE\NAME` account read
 access to the executable, configuration, SSH identity, known-hosts file and
 toolchain, and the required write access to its build, cache and log paths.
 Keep these permissions restricted to the service account and administrators;
-the script does not modify ACLs or validate effective access. Service setup
-and full compiler execution remain under qualification.
+the script does not modify ACLs or validate effective access. A separately
+registered virtual-account service has completed a full installer build; see
+[the Windows setup guide](runner-windows.md) for configuration steps.
 The supervisor starts a persistent worker with the same local identity and a
 new logon session, explicitly attached to the parent's noninteractive desktop.
 The worker can then create fresh per-step Window Stations. No existing station
