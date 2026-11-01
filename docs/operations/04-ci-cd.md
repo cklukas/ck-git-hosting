@@ -9,7 +9,9 @@ commit in order, set [`auto_cancel: false`](06-ci-yml-reference.md#superseded-br
 in that same workflow.
 Results, logs, and artifacts appear in the dashboard and in `ckgit ci`.
 
-The server administrator first [configures the CI runner](ci-runner.md).
+The server administrator first [configures the main host runner](ci-runner.md).
+To build on another machine, see [Install and connect CI runners](runner-setup.md),
+including the [Windows runner setup](runner-windows.md).
 
 ## Enable CI for a project
 

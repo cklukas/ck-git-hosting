@@ -8,6 +8,7 @@ Repositories use standard Git and OpenSSH on Debian, including Raspberry Pi.
 
 [Install the server](docs/operations/01-installation.md) ·
 [Set up a device](docs/guides/client-setup.md) ·
+[Install CI runners](docs/operations/runner-setup.md) ·
 [Explore the dashboard](docs/operations/08-web-dashboard.md)
 
 ![Dashboard file browser and rendered README](docs/images/web-files.png)
@@ -36,7 +37,7 @@ Replace `server` with your SSH host and `laptop` with your paired device ID.
 | Choose or repair a local checkout | [Manage checkouts](docs/guides/manage-checkouts.md) |
 | Browse files, commits, and build results | [Dashboard tour](docs/operations/08-web-dashboard.md) |
 | Run automated builds | [Continuous integration](docs/operations/04-ci-cd.md) |
-| Let other machines take on CI jobs | [Remote runners](docs/operations/ci-remote-runners.md) |
+| Install and connect Linux or Windows CI runners | [Runner installation and configuration](docs/operations/runner-setup.md) · [Windows runner](docs/operations/runner-windows.md) |
 | Follow builds and get release packages | [Builds and releases](docs/guides/ci-and-releases.md) |
 | Publish documentation and Mermaid diagrams | [Get started with ckdocs](docs/operations/07-docs-sites.md) |
 | Protect or recover your repositories | [Backup and recovery](docs/operations/03-backup-and-recovery.md) |

@@ -28,6 +28,8 @@ nav:
   - title: Server
     pages:
       - docs/operations/01-installation.md
+      - docs/operations/runner-setup.md
+      - docs/operations/runner-windows.md
       - docs/operations/02-packages-and-releases.md
       - docs/operations/manage-projects.md
       - docs/operations/03-backup-and-recovery.md
@@ -35,6 +37,8 @@ nav:
   - title: CI
     pages:
       - docs/operations/04-ci-cd.md
+      - docs/operations/runner-setup.md
+      - docs/operations/runner-windows.md
       - docs/operations/ci-runner.md
       - docs/operations/ci-remote-runners.md
       - docs/operations/ci-artifacts-and-cache.md

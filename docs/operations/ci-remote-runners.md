@@ -11,6 +11,9 @@ same sandbox, and sends everything back. Results live only on the server; the
 dashboard, `ckgit ci`, release downloads and Pages work exactly as for a job
 the server ran, and nothing ever connects to the runner.
 
+For step-by-step setup and connection instructions, start with [Install and
+connect CI runners](runner-setup.md) or [Install and connect a Windows runner](runner-windows.md).
+
 ## How jobs are shared
 
 Remote runners negotiate protocol version 2 before claiming work. POSIX runners
