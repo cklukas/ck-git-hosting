@@ -16,6 +16,11 @@
       "run": 41320044543,
       "commit": "93b40e8b7c321ba549b8ce3bcdcf03a3616aaffd",
       "result": "all nine jobs passed"
+    },
+    "corrected_test_run": {
+      "run": 41328471265,
+      "commit": "412455684e70ed9c3d6e1ab6c4a7afa45bcf7d20",
+      "result": "all nine jobs passed"
     }
   },
   "artifact_manifest": {
@@ -1511,6 +1516,78 @@
     "result": "failure",
     "observation": "Unit test claim delay expected a job to remain younger than 150 ms; it was already eligible under heavy parallel CPU load.",
     "fix": "Test controls spool modification time and removes the 150 ms race.",
-    "verification": "Mac CMake incremental unit target rebuilt from changed source; full ckgit-unit-tests passed."
+    "verification": "Mac CMake incremental unit target rebuilt from changed source; full ckgit-unit-tests passed.",
+    "retry": {
+      "parent": "00001793551901566674-53415191",
+      "windows": "00001793551901667975-9755c0f1",
+      "linux": "00001793551901667923-bff7f9fb",
+      "commit": "412455684e70ed9c3d6e1ab6c4a7afa45bcf7d20",
+      "windows_status": "success",
+      "linux_status": "success",
+      "windows_artifact": {
+        "run": "00001793551901667975-9755c0f1",
+        "bundle_sha256": "463d3b4dd2de5bbe76c9ed5153f59228b09e8178dea246e5b14c151e55ae9eca",
+        "bundle_bytes": 12119552,
+        "packages": {
+          "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+            "sha256": "4579da1302524d896964feaf6ca96c23f9e6ec1ee3dfb43d943cb2d1089bb12d",
+            "bytes": 2522905
+          },
+          "ckdocs-0.8.2-windows-x64-setup.exe": {
+            "sha256": "513e321d1b564de0a82c78f362be06a4e7c4871c62b56480e2e14e0a0fc4757e",
+            "bytes": 3224400
+          },
+          "ckgit-0.8.2-windows-x64-setup.exe": {
+            "sha256": "96689b753be490566adb5ef98582773b94450584445108ace5c7865750ee14ec",
+            "bytes": 3506074
+          },
+          "ckgit-0.8.2-windows-x64.zip": {
+            "sha256": "46fd0e1ac4dcb9354d1be9d6e0877b54f93262af0a20f31e83da0eda7fd2fb78",
+            "bytes": 2828246
+          }
+        },
+        "source_files_verified_against_git": 303,
+        "build": {
+          "commit": "412455684e70ed9c3d6e1ab6c4a7afa45bcf7d20",
+          "version": "0.8.2+g412455684e70",
+          "configuration": "Release",
+          "generator": "Ninja",
+          "start_epoch": "1793552027",
+          "end_epoch": "1793552556",
+          "elapsed_seconds": "529",
+          "binary_directory": "V:/tmp/ckrun/runner-session-bd03f8dd14338c5b7bae0154283ba228/jobs/ckgit-lpac-de93d900535291ea25875ef657b65f91/work/tmp/b/bin"
+        },
+        "portable_executables_verified_x64": [
+          "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+        ],
+        "artifact_files": [
+          "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+          "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64.zip",
+          "dist/windows-build-inputs.sha256",
+          "dist/windows-build.txt",
+          "dist/windows-packages.sha256"
+        ]
+      },
+      "parent_status": "success",
+      "linux_steps": [
+        "build",
+        "check",
+        "docs",
+        "package"
+      ],
+      "linux_artifact_sha256": "3a40ea1e7ff0772754da3b17d3ed41924cf8dfba00451a15cee570fe5eedf4dc"
+    }
+  },
+  "server_update_pending": {
+    "current_version": "0.8.2+g5bd1c65560dc",
+    "candidate": "0.8.2+g412455684e70",
+    "candidate_sha256": "001809794544838a2f34bb00ffea70a9ffca56f9835f97a5236f2670561e1c39",
+    "reason": "another project claimed the primary runner immediately after qualification; do not interrupt it",
+    "impact": "the source fix for stale parent workflow heartbeat is not yet deployed on rpi4"
   }
 }
