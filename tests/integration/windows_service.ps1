@@ -5,7 +5,8 @@
 param(
  [Parameter(Mandatory=$true)][string]$Runner,
  [Parameter(Mandatory=$true)][string]$FakeSsh,
- [Parameter(Mandatory=$true)][string]$TestRoot
+ [Parameter(Mandatory=$true)][string]$TestRoot,
+ [switch]$ExerciseCrashRecovery
 )
 $ErrorActionPreference='Stop'
 $Runner=(Resolve-Path -LiteralPath $Runner).Path
@@ -63,7 +64,7 @@ ci_build_root=$root\work
 ssh_program=$root\bin\ssh-fixture.exe
 ci_toolchain_root=$root\tools
 ci_toolchain_paths=bin
-"@ | Set-Content -Encoding ASCII "$root\runner.ini"
+"@ | ForEach-Object { [IO.File]::WriteAllText("$root\runner.ini", $_, (New-Object Text.UTF8Encoding($false))) }
 $handle=[IntPtr]::Zero
 $r=@{success=$false;start=[DateTime]::UtcNow.ToString('o');runner_sha256=(Get-FileHash "$root\bin\ck-ci-runnerd.exe").Hash}
 try {
@@ -82,33 +83,56 @@ try {
   $a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')))
   Set-Acl "$root\$dir" $a
  }
- Start-Service -Name $name
- $svc=Get-Service -Name $name
- $svc.WaitForStatus('Running',[TimeSpan]::FromSeconds(30))
- $proc=Get-CimInstance Win32_Service -Filter "Name='$name'"
- $r.account=$proc.StartName;$r.pid=$proc.ProcessId
- if($proc.StartName -ne "NT SERVICE\$name"){throw 'Unexpected service identity'}
- $running=Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.ProcessId)"
- if($running.ExecutablePath -ne "$root\bin\ck-ci-runnerd.exe"){throw 'Unexpected service executable'}
- for($i=0;$i -lt 100;$i++){
-  if((Test-Path "$root\logs\service.log") -and (Read-SharedLog "$root\logs\service.log").Contains('Connected to')){break}
-  Start-Sleep -Milliseconds 100
+ $cycles=New-Object 'System.Collections.Generic.List[object]'
+ $modes=if($ExerciseCrashRecovery){@('normal','worker-crash','supervisor-crash','normal')}else{@('normal')}
+ $previous=@()
+ foreach($mode in $modes){
+  $logOffset=if(Test-Path "$root\logs\service.log"){(Read-SharedLog "$root\logs\service.log").Length}else{0}
+  Start-Service -Name $name
+  $svc=Get-Service -Name $name
+  $svc.WaitForStatus('Running',[TimeSpan]::FromSeconds(30))
+  foreach($old in $previous){if(Test-Path -LiteralPath $old){throw 'Restart did not recover a previous session workspace'}}
+  $proc=Get-CimInstance Win32_Service -Filter "Name='$name'"
+  if($proc.StartName -ne "NT SERVICE\$name"){throw 'Unexpected service identity'}
+  $running=Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.ProcessId)"
+  if($running.ExecutablePath -ne "$root\bin\ck-ci-runnerd.exe"){throw 'Unexpected service executable'}
+  for($i=0;$i -lt 100;$i++){
+   if((Test-Path "$root\logs\service.log") -and (Read-SharedLog "$root\logs\service.log").Substring($logOffset).Contains('Connected to')){break}
+   Start-Sleep -Milliseconds 100
+  }
+  if(!(Read-SharedLog "$root\logs\service.log").Substring($logOffset).Contains('Connected to')){throw 'Service never negotiated the fixture protocol'}
+  $hostLog=Read-SharedLog "$root\logs\service.log.host.log"
+  $workerMatches=[regex]::Matches($hostLog,'Service worker pid=(\d+)')
+  if(!$workerMatches.Count){throw 'Worker PID missing'}
+  $workerId=[int]$workerMatches[$workerMatches.Count-1].Groups[1].Value
+  $worker=Get-CimInstance Win32_Process -Filter "ProcessId=$workerId"
+  if(!$worker -or $worker.ExecutablePath -ne "$root\bin\ck-ci-runnerd.exe" -or $worker.CommandLine -notmatch 'service-worker'){throw 'Persistent worker is not running'}
+  $owner=Invoke-CimMethod -InputObject $worker -MethodName GetOwnerSid
+  if($owner.ReturnValue -ne 0 -or $owner.Sid -ne $sid.Value){throw 'Unexpected worker identity'}
+  $previous=@(Get-ChildItem "$root\work" -Directory -Filter 'runner-session-*' | ForEach-Object {$_.FullName})
+  if($previous.Count -ne 2){throw 'Expected one supervisor and one worker session'}
+  $stop=[DateTime]::UtcNow
+  if($mode -eq 'normal'){Stop-Service -Name $name}
+  else {
+   $targetId=if($mode -eq 'worker-crash'){$workerId}else{[int]$proc.ProcessId}
+   # Recheck the exact fixture binary immediately before terminating this PID.
+   $target=Get-Process -Id $targetId
+   if($target.Path -ne "$root\bin\ck-ci-runnerd.exe"){throw 'Crash target changed'}
+   $target.Kill();$target.WaitForExit();$target.Dispose()
+  }
+  $svc.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(10))
+  $elapsed=([DateTime]::UtcNow-$stop).TotalSeconds
+  for($i=0;$i -lt 100;$i++){
+   $left=@(Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath -like "$root\*"})
+   if(!$left.Count){break}
+   Start-Sleep -Milliseconds 50
+  }
+  if($left.Count){throw 'Service fixture process survived stop/crash'}
+  if($mode -eq 'normal' -and (Get-ChildItem "$root\work" -Directory -Filter 'runner-session-*')){throw 'Service session workspace survived normal stop'}
+  $cycles.Add(@{mode=$mode;host_pid=$proc.ProcessId;worker_pid=$workerId;worker_sid=$owner.Sid;stop_seconds=$elapsed;remaining_processes=$left.Count})
+  $svc.Dispose()
  }
- if(!(Read-SharedLog "$root\logs\service.log").Contains('Connected to')){throw 'Service never negotiated the fixture protocol'}
- $hostLog=Read-SharedLog "$root\logs\service.log.host.log"
- if($hostLog -notmatch 'Service worker pid=(\d+)'){throw 'Worker PID missing'}
- $workerId=[int]$Matches[1]
- $worker=Get-CimInstance Win32_Process -Filter "ProcessId=$workerId"
- if(!$worker -or $worker.ExecutablePath -ne "$root\bin\ck-ci-runnerd.exe" -or $worker.CommandLine -notmatch 'service-worker'){throw 'Persistent worker is not running'}
- $owner=Invoke-CimMethod -InputObject $worker -MethodName GetOwnerSid
- if($owner.ReturnValue -ne 0 -or $owner.Sid -ne $sid.Value){throw 'Unexpected worker identity'}
- $r.worker_pid=$workerId;$r.worker_sid=$owner.Sid
- $stop=[DateTime]::UtcNow
- Stop-Service -Name $name
- $svc.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(10))
- $r.stop_seconds=([DateTime]::UtcNow-$stop).TotalSeconds
- if(Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue){throw 'Service process survived stop'}
- if(Get-ChildItem "$root\work" -Directory -Filter 'runner-session-*'){throw 'Service session workspace survived stop'}
+ $r.cycles=$cycles
  $r.success=$true
 } catch {$r.error=$_.ToString();$r.position=$_.InvocationInfo.PositionMessage}
 finally {
@@ -119,7 +143,7 @@ finally {
   [CkgitServiceFixture]::Delete($handle)
  }
  $r.end=[DateTime]::UtcNow.ToString('o')
- $r | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $TestRoot ($name+'.json'))
+ $r | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $TestRoot ($name+'.json'))
 }
 Get-Content (Join-Path $TestRoot ($name+'.json')) -Raw
 if(Test-Path "$root\logs\service.log"){Get-Content "$root\logs\service.log" -Tail 15}

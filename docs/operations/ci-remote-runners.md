@@ -103,6 +103,8 @@ a two-second timeout; the runner reports a confirmed hand-back only after the
 host acknowledges it. Otherwise it reports the uncertainty and the host's
 lease recovery remains responsible for the job. Native process tests cover
 silent greetings, uploads, log acknowledgements, finish and hand-back requests.
+Artifact checksum calculation also checks cancellation and pumps heartbeats
+between 64 KiB reads; a blocked filesystem read itself is not interrupted.
 The complete active-job installer-upgrade sequence is not yet qualified.
 
 The Windows service host is under qualification. Its `service --config PATH
@@ -131,8 +133,13 @@ checks the running worker's SID and executable, stops it, verifies workspace
 and process cleanup, and removes the service. The test passed on 2026-11-01;
 the persistent worker stopped in 0.262 seconds. The normal process suite and
 LPAC path-isolation regression also passed after the atomic Job Object change.
-Service provisioning, crash/active-job shutdown and a full service compiler
-build remain to be qualified before service installation is ready.
+Add `-ExerciseCrashRecovery` to exercise normal stop, worker termination,
+supervisor termination and a final normal stop using the same work root.
+Both crash/restart runs passed: no fixture processes survived, old sessions
+were recovered on restart, and the final stop removed all session directories.
+These are idle-runner tests with a protocol fixture, not active compiler tests.
+Service provisioning, active-job shutdown and a full service compiler build
+remain to be qualified before service installation is ready.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.

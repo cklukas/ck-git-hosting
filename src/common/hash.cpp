@@ -83,7 +83,12 @@ std::string sha256Hex(std::string_view data) {
   return hash.finish();
 }
 
-std::string sha256HexOfFile(const std::filesystem::path& path) {
+std::string sha256HexOfFile(const std::filesystem::path& path,
+                          const std::function<bool()>& should_continue) {
+  const auto check = [&] {
+    if (should_continue && !should_continue()) throw std::runtime_error("checksum interrupted");
+  };
+  check();
 #ifdef _WIN32
   const HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                   OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
@@ -97,6 +102,7 @@ std::string sha256HexOfFile(const std::filesystem::path& path) {
   Sha256 hash;
   std::array<unsigned char, 65536> buffer{};
   for (;;) {
+    check();
     DWORD count = 0;
     if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr))
       throw std::runtime_error("could not read checksum file");
@@ -111,19 +117,19 @@ std::string sha256HexOfFile(const std::filesystem::path& path) {
     if (fd >= 0) ::close(fd);
     throw std::runtime_error("could not checksum regular file: " + path.string());
   }
+  struct Close { int fd; ~Close() { ::close(fd); } } close{fd};
   Sha256 hash;
   std::array<unsigned char, 65536> buffer{};
   while (true) {
+    check();
     const auto count = ::read(fd, buffer.data(), buffer.size());
     if (count < 0 && errno == EINTR) continue;
     if (count < 0) {
-      ::close(fd);
       throw std::runtime_error("could not checksum " + path.string());
     }
     if (count == 0) break;
     hash.add(buffer.data(), static_cast<std::size_t>(count));
   }
-  ::close(fd);
   return hash.finish();
 #endif
 }

@@ -384,6 +384,133 @@
     },
     "coverage": "Real SCM starts dedicated nonadmin virtual service and persistent worker; worker identity/path verified, LPAC USER32 startup check succeeded before readiness, protocol2 fake endpoint, stop request propagated, host/worker/jobs workspaces removed. Process/protocol regression and LPAC path diagnostics passed.",
     "mechanism": "Private readiness/stop events; same-local-identity new logon; supervisor outer kill-on-close job permits explicit trusted broker breakaway. LPAC roots are atomically assigned to non-breakaway UI-restricted jobs via PROC_THREAD_ATTRIBUTE_JOB_LIST. No ancestor ACL changes.",
-    "limits": "Not yet full compiler/active-job/crash/service-install qualification. Production installed runner remains GitHub9b; newest native dev runner matches current source."
+    "limits": "Idle worker/supervisor crash and same-root restart passed. Full compiler, active-job shutdown and service installation still need qualification. Production installed runner remains GitHub9b.",
+    "crash_recovery": [
+      {
+        "runner_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+        "end": "2026-11-01T13:24:00.3695710Z",
+        "cycles": [
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-489704255-1637629834-677379472-521311504-2898105733",
+            "stop_seconds": 0.2656097,
+            "host_pid": 78888,
+            "mode": "normal",
+            "worker_pid": 78140
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-489704255-1637629834-677379472-521311504-2898105733",
+            "stop_seconds": 0.39998469999999997,
+            "host_pid": 13844,
+            "mode": "worker-crash",
+            "worker_pid": 80256
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-489704255-1637629834-677379472-521311504-2898105733",
+            "stop_seconds": 0.0621269,
+            "host_pid": 89324,
+            "mode": "supervisor-crash",
+            "worker_pid": 83148
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-489704255-1637629834-677379472-521311504-2898105733",
+            "stop_seconds": 0.2757309,
+            "host_pid": 86536,
+            "mode": "normal",
+            "worker_pid": 89996
+          }
+        ],
+        "success": true,
+        "start": "2026-11-01T13:23:41.3432612Z"
+      },
+      {
+        "runner_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+        "end": "2026-11-01T13:28:38.0555785Z",
+        "cycles": [
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-3867282228-3715841703-588729057-475805902-536405292",
+            "stop_seconds": 0.26055239999999996,
+            "host_pid": 86636,
+            "mode": "normal",
+            "worker_pid": 85712
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-3867282228-3715841703-588729057-475805902-536405292",
+            "stop_seconds": 0.317038,
+            "host_pid": 82012,
+            "mode": "worker-crash",
+            "worker_pid": 11220
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-3867282228-3715841703-588729057-475805902-536405292",
+            "stop_seconds": 0.293559,
+            "host_pid": 61716,
+            "mode": "supervisor-crash",
+            "worker_pid": 86300
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-3867282228-3715841703-588729057-475805902-536405292",
+            "stop_seconds": 0.263368,
+            "host_pid": 86284,
+            "mode": "normal",
+            "worker_pid": 84948
+          }
+        ],
+        "success": true,
+        "start": "2026-11-01T13:28:22.2174057Z"
+      }
+    ]
+  },
+  "hash_shutdown": {
+    "mac": {
+      "start": "2026-11-01T13:30:23.399363+00:00",
+      "target": "ckgit-process-tests",
+      "configuration": "existing CMake Release",
+      "baseline_seconds": 3.8022545,
+      "inputs": {
+        "include/ckgit/hash.hpp": {
+          "before": "79ffbc719d0034d630174bf55bff37babf71cb5e0cee6ae7b3bf1f63efe8b82d",
+          "after": "14fb93f8d3e16858ca99b50c6a1106db3813168e3dafd4bdb5aea9a9e6fbd04e"
+        },
+        "src/common/hash.cpp": {
+          "before": "5d9faabbe42aafe317ba8ae8f5e68d1f8d95d95be2246937aa401ed1cddf1b0f",
+          "after": "9fd00e1442c8e5a2b3ccaed825e07ee66a337308a9fb1ed45d2ae3dedab21e01"
+        },
+        "src/common/ci_remote.cpp": {
+          "before": "858594a1dbcdd514862611a04f18c9fb4d13bb1fc9ec40372a7f01a884fd1560",
+          "after": "9bbc03ad86af2193903d891907cf73ef3558ea05a01fc489be5d5656d83966ef"
+        },
+        "tests/platform/process_tests.cpp": {
+          "before": "e79013cfc40936ea735aa64060e0141b7f5b5769995559617a4cf16d4455e880",
+          "after": "af6da78b680a4609375f2d3023fcf428d716434eced1652cab3a95c6982c1d1b"
+        }
+      },
+      "exit": 0,
+      "seconds": 2.7761417080000683,
+      "end": "2026-11-01T13:30:26.175893+00:00",
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckgit-process-tests",
+      "sha256": "884ee23819c9ef92d2d37260ab1cdf9144149d0df874a33de96a67222a17611e",
+      "test_exit": 0
+    },
+    "windows": {
+      "start": "2026-11-01T13:30:22.5332889Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 29.9031943,
+      "exit": 0,
+      "source_archive_sha256": "7054E5A801B3C454E49C0A49058F7A6F36415EBEDBCB5E4B6C66149992B77BB7",
+      "helper_sha256": "68F1EE5736BF828E760E81E35813462A4417679CA43D2D5D5229E5830456F95C",
+      "target": "ckgit-process-tests Release",
+      "end": "2026-11-01T13:30:52.4282144Z"
+    },
+    "tests": "Process and portable protocol tests passed on both platforms. Mid-file cancellation, digest equality, callback exceptions, Windows handle cleanup and upload shutdown exercised.",
+    "limits": "Synchronous filesystem read itself cannot be interrupted; continuation checked before each 64KiB read.",
+    "duration_review": "Mac 2.776s vs prior 3.802s; Windows 29.903s vs prior 22.516s with hash header dependents rebuilt. Actual compiler/link output confirms updated inputs."
   }
 }

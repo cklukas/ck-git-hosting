@@ -354,6 +354,27 @@ int run(const std::vector<std::string>& args) {
     for (std::size_t i = 0; i < payload.size(); ++i) payload[i] = static_cast<char>(i % 256);
     { std::ofstream stream(file, std::ios::binary); stream.write(payload.data(), payload.size()); }
     {
+      unsigned checks = 0;
+      bool interrupted = false;
+      try { (void)ckgit::sha256HexOfFile(file, [&] { return ++checks < 4; }); }
+      catch (const std::runtime_error& error) { interrupted = std::string_view(error.what()) == "checksum interrupted"; }
+      require(interrupted && checks == 4, "file hashing stops between chunks");
+      checks = 0;
+      require(ckgit::sha256HexOfFile(file, [&] { ++checks; return true; }) == ckgit::sha256Hex(payload) && checks > 4,
+          "continued file hashing preserves the complete digest");
+      bool propagated = false;
+      try { (void)ckgit::sha256HexOfFile(file, [&]() -> bool {
+        if (++checks > 20) throw std::runtime_error("callback failure");
+        return true;
+      }); }
+      catch (const std::runtime_error& error) { propagated = std::string_view(error.what()) == "callback failure"; }
+      require(propagated, "hash callback errors propagate");
+      // Windows refuses this rename if an interrupted hash leaked its handle.
+      const auto renamed = root / "renamed-payload";
+      std::filesystem::rename(file, renamed);
+      std::filesystem::rename(renamed, file);
+    }
+    {
       ckgit::RunnerConfig config;
       config.server = "runner@example.test";
       config.name = "native-test";

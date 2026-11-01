@@ -328,7 +328,6 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
   command.kind = kind;
   command.name = name;
   command.total = total;
-  command.sha256 = sha256HexOfFile(file);
   std::ifstream in(file, std::ios::binary);
   std::uint64_t offset = 0;
   unsigned failures = 0;
@@ -344,6 +343,10 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
   const auto require_upload = [&] {
     if (!keep_uploading()) throw std::runtime_error("runner upload interrupted");
   };
+  command.sha256 = sha256HexOfFile(file, [&] {
+    require_upload();
+    return true;
+  });
   do {
     require_upload();
     const std::size_t length =
