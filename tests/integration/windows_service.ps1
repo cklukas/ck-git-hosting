@@ -6,7 +6,8 @@ param(
  [Parameter(Mandatory=$true)][string]$Runner,
  [Parameter(Mandatory=$true)][string]$FakeSsh,
  [Parameter(Mandatory=$true)][string]$TestRoot,
- [switch]$ExerciseCrashRecovery
+ [switch]$ExerciseCrashRecovery,
+ [string]$RegisterScript=(Join-Path $PSScriptRoot '../../packaging/windows/register-service.ps1')
 )
 $ErrorActionPreference='Stop'
 $Runner=(Resolve-Path -LiteralPath $Runner).Path
@@ -36,14 +37,14 @@ using System;
 using System.Runtime.InteropServices;
 public static class CkgitServiceFixture {
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenSCManager(string machine,string database,uint access);
- [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateService(IntPtr manager,string name,string display,uint access,uint type,uint start,uint error,string binary,string group,IntPtr tag,string dependencies,string account,string password);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenService(IntPtr manager,string name,uint access);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool DeleteService(IntPtr service);
  [DllImport("advapi32.dll")] static extern bool CloseServiceHandle(IntPtr handle);
- public static IntPtr Create(string name,string command) {
-  IntPtr manager=OpenSCManager(null,null,2);
+ public static IntPtr Open(string name) {
+  IntPtr manager=OpenSCManager(null,null,1);
   if(manager==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();
   try {
-   IntPtr service=CreateService(manager,name,name,0xF01FF,0x10,3,1,command,null,IntPtr.Zero,null,"NT SERVICE\\"+name,null);
+   IntPtr service=OpenService(manager,name,0x10000);
    if(service==IntPtr.Zero)throw new System.ComponentModel.Win32Exception();
    return service;
   } finally {CloseServiceHandle(manager);}
@@ -69,7 +70,8 @@ $handle=[IntPtr]::Zero
 $r=@{success=$false;start=[DateTime]::UtcNow.ToString('o');runner_sha256=(Get-FileHash "$root\bin\ck-ci-runnerd.exe").Hash}
 try {
  $command='"'+$root+'\bin\ck-ci-runnerd.exe" service --config "'+$root+'\runner.ini" --log "'+$root+'\logs\service.log" --service-name '+$name
- $handle=[CkgitServiceFixture]::Create($name,$command)
+ & $RegisterScript -Runner "$root\bin\ck-ci-runnerd.exe" -Config "$root\runner.ini" -Log "$root\logs\service.log" -Name $name
+ $handle=[CkgitServiceFixture]::Open($name)
  $sid=(New-Object Security.Principal.NTAccount("NT SERVICE\$name")).Translate([Security.Principal.SecurityIdentifier])
  $acl=New-Object Security.AccessControl.DirectorySecurity
  $acl.SetAccessRuleProtection($true,$false)

@@ -512,5 +512,63 @@
     "tests": "Process and portable protocol tests passed on both platforms. Mid-file cancellation, digest equality, callback exceptions, Windows handle cleanup and upload shutdown exercised.",
     "limits": "Synchronous filesystem read itself cannot be interrupted; continuation checked before each 64KiB read.",
     "duration_review": "Mac 2.776s vs prior 3.802s; Windows 29.903s vs prior 22.516s with hash header dependents rebuilt. Actual compiler/link output confirms updated inputs."
+  },
+  "service_registration": {
+    "service_test": {
+      "runner_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+      "end": "2026-11-01T13:35:31.9454432Z",
+      "cycles": [
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-585515022-2555854029-2907062815-1194025891-88355993",
+          "stop_seconds": 0.25637899999999997,
+          "host_pid": 87464,
+          "mode": "normal",
+          "worker_pid": 86964
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-585515022-2555854029-2907062815-1194025891-88355993",
+          "stop_seconds": 0.42577139999999997,
+          "host_pid": 85128,
+          "mode": "worker-crash",
+          "worker_pid": 85400
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-585515022-2555854029-2907062815-1194025891-88355993",
+          "stop_seconds": 0.0994789,
+          "host_pid": 69804,
+          "mode": "supervisor-crash",
+          "worker_pid": 71484
+        },
+        {
+          "remaining_processes": 0,
+          "worker_sid": "S-1-5-80-585515022-2555854029-2907062815-1194025891-88355993",
+          "stop_seconds": 0.2585298,
+          "host_pid": 88692,
+          "mode": "normal",
+          "worker_pid": 37180
+        }
+      ],
+      "success": true,
+      "start": "2026-11-01T13:35:13.2346172Z"
+    },
+    "installer_fixture": {
+      "seconds": 2.8687367,
+      "uninstall_exit": 0,
+      "runner": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+      "start": "2026-11-01T13:36:24.5758954Z",
+      "success": true,
+      "setup": "V:\\tmp\\ckgit-windows-20261026-01\\register-installer-20261101\\dist\\ck-git-runner-0.8.2-windows-x64-setup.exe",
+      "install_exit": 0,
+      "sha256": "5084EC9C199A1EBB3F9D94AF33F461D924D0606935EABE95EE39F12DD4BF9012",
+      "baseline": "production single package 4.556s",
+      "script": "5D06634952A333DD4E83BE7A6F346BE416E583D8A092C5D947D1552EAA60EAFB",
+      "configuration": "isolated fixture AppId, Release",
+      "end": "2026-11-01T13:36:27.4406337Z"
+    },
+    "qualification": "Isolated SCM registration using shipped script, normal stop, worker/supervisor crash recovery; isolated installer AppId installed and uninstalled in CurrentUser mode.",
+    "limitations": "ACL provisioning remains manual; no full compiler job or active-job installer upgrade under service tested. The fixture runner executable predates the latest checksum change."
   }
 }

@@ -111,6 +111,16 @@ The Windows service host is under qualification. Its `service --config PATH
 --log PATH --service-name NAME` entry point connects to the Service Control
 Manager and requires the matching non-administrator `NT SERVICE\NAME` virtual
 account. It does not accept LocalSystem or register itself automatically.
+The runner package includes `register-service.ps1` for an explicit,
+administrator-initiated registration. It creates a stopped, manual-start
+service and refuses to replace an existing name. Supply absolute paths for
+`-Runner`, `-Config`, and `-Log`, and optionally a `-Name`. Before starting,
+the administrator must grant the resulting `NT SERVICE\NAME` account read
+access to the executable, configuration, SSH identity, known-hosts file and
+toolchain, and the required write access to its build, cache and log paths.
+Keep these permissions restricted to the service account and administrators;
+the script does not modify ACLs or validate effective access. Service setup
+and full compiler execution remain under qualification.
 The supervisor starts a persistent worker with the same local identity and a
 new logon session, explicitly attached to the parent's noninteractive desktop.
 The worker can then create fresh per-step Window Stations. No existing station

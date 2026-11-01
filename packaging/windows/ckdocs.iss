@@ -69,6 +69,7 @@ Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Components: ckdocs; Flags: 
 Source: "{#BinaryDir}\ck-ci-runnerd.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\ckgit-job-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "runner.ini.example"; DestDir: "{app}"; Flags: ignoreversion
+Source: "register-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 #elif Product == "ckdocs"
 Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Flags: ignoreversion
 #endif
