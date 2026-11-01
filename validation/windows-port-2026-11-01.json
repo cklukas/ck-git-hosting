@@ -1183,5 +1183,131 @@
         "service_removed": true
       }
     }
+  },
+  "live_tag_release_qualification": {
+    "project": "ck-windows-release-20261101",
+    "success": {
+      "schema_version": 1,
+      "project": "ck-windows-release-20261101",
+      "server_epoch": 1793545900,
+      "run": {
+        "run_id": "00001793545275812395-b66f873a",
+        "status": "success",
+        "display_status": "success",
+        "active": false,
+        "ref": "refs/tags/verify-success-20261101",
+        "commit": "66fcf8258be91e331757962d8505d7dae4f532e9",
+        "started_epoch": 1793545274,
+        "finished_epoch": 1793545843,
+        "heartbeat_epoch": 1793545843,
+        "duration_seconds": 569,
+        "completed_steps": 0
+      },
+      "detail": "2/2 jobs completed",
+      "runner": null,
+      "attempt": 1,
+      "steps": [],
+      "execution": null,
+      "artifacts": [],
+      "jobs": [
+        {
+          "name": "linux",
+          "run_id": "00001793545275979892-9dda2502",
+          "status": "success",
+          "runner": "primary",
+          "attempt": 1,
+          "runs_on": [
+            "linux"
+          ]
+        },
+        {
+          "name": "windows",
+          "run_id": "00001793545275979925-1b8df5e3",
+          "status": "success",
+          "runner": "windows",
+          "attempt": 1,
+          "runs_on": [
+            "windows",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "failed": {
+      "schema_version": 1,
+      "project": "ck-windows-release-20261101",
+      "server_epoch": 1793545903,
+      "run": {
+        "run_id": "00001793545199089488-f2dbd5aa",
+        "status": "error",
+        "display_status": "error",
+        "active": false,
+        "ref": "refs/tags/verify-20261101",
+        "commit": "0b29333b29583efefba61e9daff6795fd102ddba",
+        "started_epoch": 1793545199,
+        "finished_epoch": 1793545843,
+        "heartbeat_epoch": 1793545843,
+        "duration_seconds": 644,
+        "completed_steps": 0
+      },
+      "detail": "2/2 jobs completed",
+      "runner": null,
+      "attempt": 1,
+      "steps": [],
+      "execution": null,
+      "artifacts": [],
+      "jobs": [
+        {
+          "name": "linux",
+          "run_id": "00001793545199293911-68380e8c",
+          "status": "success",
+          "runner": "primary",
+          "attempt": 1,
+          "runs_on": [
+            "linux"
+          ]
+        },
+        {
+          "name": "windows",
+          "run_id": "00001793545199293935-31ae589a",
+          "status": "error",
+          "runner": "windows",
+          "attempt": 1,
+          "runs_on": [
+            "windows",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "release_listing": {
+      "schema_version": 1,
+      "releases": [
+        {
+          "tag": "verify-success-20261101",
+          "commit": "66fcf8258be91e331757962d8505d7dae4f532e9",
+          "created_epoch": 1793545844,
+          "assets": [
+            {
+              "name": "linux-package",
+              "bytes": 10240,
+              "sha256": "3b55a2a9c67d5b0fb455d698c553137fc2e43cbb205ba24ac2800e2f52e17870"
+            },
+            {
+              "name": "windows-package",
+              "bytes": 2560,
+              "sha256": "6d9757fa221142e5d0fdb0c30684d91a125e1e4649f830c8af61077c76c95f39"
+            }
+          ]
+        }
+      ]
+    },
+    "before_linux_completed": "No releases visible while the Windows child succeeded and the Linux child was pending.",
+    "failure_reason": "Windows job requested an unstaged cmd.exe; sandbox rejected it.",
+    "verified_downloads": {
+      "linux-package.tar": "3b55a2a9c67d5b0fb455d698c553137fc2e43cbb205ba24ac2800e2f52e17870",
+      "windows-package.tar": "6d9757fa221142e5d0fdb0c30684d91a125e1e4649f830c8af61077c76c95f39"
+    },
+    "notes": "Annotated tags are reported as their tag-object ID in the commit field; the tagged checkout was successful."
   }
 }

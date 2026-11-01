@@ -19,6 +19,10 @@ retention sweep never touches them. A tag triggers a release when it matches
   removes them too. There is no expiry and no admin step — pushing and deleting
   tags is the whole workflow.
 
+For an annotated tag, the release listing currently identifies the tag object
+in its `commit` field; peel it with `git rev-parse TAG^{commit}` when the
+underlying commit ID is needed.
+
 ```text
 git tag -a v1.0.0 -m 'Release 1.0'      # annotate for release notes
 git push origin v1.0.0                   # build and publish the release
