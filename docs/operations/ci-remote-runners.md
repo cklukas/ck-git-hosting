@@ -97,9 +97,13 @@ not yet qualified; wait for the job to finish before upgrading.
 The transport now interrupts a silent stream greeting or an in-flight artifact
 upload when the broker receives a stop request. Upload retry delays also check
 for shutdown, cancellation and lease loss, and interrupted bytes are not
-declared as a successful artifact. Native process tests cover silent greetings
-and uploads. This does not yet qualify shutdown during final result reporting
-or the complete active-job installer-upgrade sequence.
+declared as a successful artifact. Log acknowledgement waits, final-result
+requests and retry delays also observe shutdown. A final hand-back request has
+a two-second timeout; the runner reports a confirmed hand-back only after the
+host acknowledges it. Otherwise it reports the uncertainty and the host's
+lease recovery remains responsible for the job. Native process tests cover
+silent greetings, uploads, log acknowledgements, finish and hand-back requests.
+The complete active-job installer-upgrade sequence is not yet qualified.
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
@@ -203,7 +207,8 @@ attempt: the dashboard shows it Pending again, the lost attempt's step logs are
 kept aside on the server, and the next free runner — or the server itself —
 runs it. After `ci_max_attempts` (default 2) a job whose runner keeps getting
 lost is recorded as an error. A runner that is stopped cleanly (`systemctl
-stop`, shutdown) hands its job back at once instead of waiting for the lease.
+stop`, shutdown) attempts to hand its job back immediately. If the host cannot
+confirm that request, recovery follows the lease policy instead.
 A runner that wakes up after its job was requeued learns that its lease is gone
 and discards its work; its results can never overwrite the newer attempt.
 

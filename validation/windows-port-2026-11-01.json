@@ -262,6 +262,37 @@
     },
     "windows_tests": "process and portable protocol tests passed; tool exit0",
     "coverage": "silent stream greeting and in-flight artifact upload stop within3seconds; successful log/artifact/pages/finish regression passes",
-    "remaining": "finish-report requests, log-drain wait, abandon request, payload hashing and whole active-job upgrade qualification"
+    "remaining": "Payload hashing and whole active-job upgrade qualification; finish/log-drain/abandon follow-up covered in finish_shutdown."
+  },
+  "finish_shutdown": {
+    "mac": {
+      "start": "2026-11-01T12:52:04.246565+00:00",
+      "inputs": {
+        "src/common/ci_remote.cpp": "858594a1dbcdd514862611a04f18c9fb4d13bb1fc9ec40372a7f01a884fd1560",
+        "tests/platform/process_tests.cpp": "e79013cfc40936ea735aa64060e0141b7f5b5769995559617a4cf16d4455e880"
+      },
+      "target": "ckgit-process-tests Release",
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckgit-process-tests",
+      "baseline_seconds": 2.608451,
+      "exit": 0,
+      "seconds": 3.8022545000003447,
+      "end": "2026-11-01T12:52:08.050006+00:00",
+      "output_sha256": "bbfff984e7daea7ea4ba448013e32f534ea86908bdf0a798be8903dc383bf2d5",
+      "test_exit": 0
+    },
+    "windows": {
+      "start": "2026-11-01T12:52:23.9821696Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 22.5162519,
+      "exit": 0,
+      "source_archive_sha256": "52308B399595CE3DF2AD03613D673BFB5BF773D7C459148EBC02B7B7E277004C",
+      "helper_sha256": "8E2E65DA10C1946005CDC250643F8909692208B2139B8C51DEBFD83082C5CBFE",
+      "target": "ckgit-process-tests Release",
+      "end": "2026-11-01T12:52:46.4929054Z"
+    },
+    "windows_tests": "process and portable protocol tests passed; exit0",
+    "coverage": "silent log acknowledgement,finish and abandon; shutdown within4seconds; confirmed return is Pending, unconfirmed return Error; normal successful sink regression passes",
+    "duration_review": "Mac3.802s vs2.608s; Windows22.516s vs24.148s for same two translation units and relink. Actual compile/link output verified.",
+    "remaining": "Payload hashing and whole active-job installer upgrade, service logon qualification; production runner still installed9b63daf."
   }
 }

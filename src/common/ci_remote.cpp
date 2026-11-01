@@ -162,7 +162,7 @@ void RemoteCiSink::send(const std::string& frame) {
 
 // Writes as much of the outgoing buffer as the connection takes now.
 void RemoteCiSink::pump() {
-  while (connected_ && !out_buffer_.empty()) {
+  while (connected_ && !stopping() && !out_buffer_.empty()) {
     const auto written = session_->write(out_buffer_);
     if (written > 0) {
       out_buffer_.erase(0, static_cast<std::size_t>(written));
@@ -177,7 +177,7 @@ void RemoteCiSink::pump() {
 void RemoteCiSink::flushStep(std::size_t index, bool force) {
   StepLog& step = steps_[index];
   std::ifstream relay;
-  while (connected_ && step.sent < step.size && (force || out_buffer_.size() < 256 * 1024)) {
+  while (connected_ && !stopping() && step.sent < step.size && (force || out_buffer_.size() < 256 * 1024)) {
     if (!relay.is_open()) relay.open(relayPath(index), std::ios::binary);
     const std::size_t length =
         static_cast<std::size_t>(std::min<std::uint64_t>(step.size - step.sent, kMaximumCiLogFrameBytes));
@@ -434,8 +434,10 @@ void RemoteCiSink::abandon() {
   command.op = CiRunnerOp::kAbandon;
   command.job_id = job_.prepared.job.job_id;
   command.token = job_.token;
-  transport_.run(command, {}, std::chrono::seconds(30));
-  abandoned_ = true;
+  // A close/shutdown handler has only a short cleanup window. If the host
+  // cannot acknowledge hand-back, lease expiry remains the recovery mechanism.
+  const auto result = transport_.run(command, {}, std::chrono::seconds(2));
+  abandoned_ = result.exit_code == 0 && firstLine(result.output) == "ok";
 }
 
 CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
@@ -445,17 +447,19 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
     record.detail = "this runner lost its lease on the job; it was requeued";
     return record;
   }
-  if (stopping() && !cancel_) {
-    // Shutting down mid-run: hand the job back for another runner instead of
-    // reporting a cancel nobody asked for.
+  const auto interrupted = [&] {
     disconnect();
     abandon();
-    record.detail = "handed back: the runner is shutting down";
+    record.status = abandoned_ ? CiRunStatus::Pending : CiRunStatus::Error;
+    record.detail = abandoned_ ? "handed back: the runner is shutting down"
+                              : "runner stopped; hand-back unconfirmed; host lease recovery applies";
     return record;
-  }
+  };
+  if (stopping()) return interrupted();
   // Let the main host catch up on the logs before the run commits.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   for (;;) {
+    if (stopping()) return interrupted();
     tick();
     flush(true);
     const bool caught_up = std::all_of(steps_.begin(), steps_.end(),
@@ -465,6 +469,7 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
   }
   disconnect();
   if (lease_lost_) return finish(std::move(record));
+  if (stopping()) return interrupted();
 
   CiFinishReport report;
   report.status = record.status;
@@ -479,17 +484,25 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
   command.token = job_.token;
   const std::string payload = formatCiFinishReport(report);
   for (unsigned attempt = 0; attempt < 8; ++attempt) {
-    const CiRemoteTransport::Result result = transport_.run(command, payload, std::chrono::seconds(600));
+    if (stopping()) return interrupted();
+    const CiRemoteTransport::Result result = transport_.run(command, payload, std::chrono::seconds(600),
+        [this] { return !stopping(); });
     const std::string reply = firstLine(result.output);
     if (result.exit_code == 0 && reply.rfind("ok ", 0) == 0) {
       if (const std::optional<CiRunStatus> stored = ciRunStatusFromName(reply.substr(3))) record.status = *stored;
       return record;
     }
+    if (stopping()) return interrupted();
     if (reply.find("lease-lost") != std::string::npos) {
       lease_lost_ = true;
       return finish(std::move(record));
     }
-    std::this_thread::sleep_for(std::chrono::seconds(1u << std::min(attempt, 5u)));
+    const auto retry_at = std::chrono::steady_clock::now() +
+        std::chrono::seconds(1u << std::min(attempt, 5u));
+    while (std::chrono::steady_clock::now() < retry_at) {
+      if (stopping()) return interrupted();
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
   }
   record.status = CiRunStatus::Error;
   record.detail = "could not report the result to the main host";

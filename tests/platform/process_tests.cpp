@@ -98,6 +98,16 @@ int run(const std::vector<std::string>& args) {
 #endif
       const auto command = ckgit::parseCiRunnerCommand(args.back());
       if (!command) return 2;
+      if (command->job_id == "waiting-finish" || command->job_id == "waiting-drain" ||
+          command->job_id == "waiting-abandon") {
+        if (command->op == ckgit::CiRunnerOp::kAbandon && command->job_id != "waiting-abandon") {
+          std::cout << "ok\n";
+          return 0;
+        }
+        if (command->op == ckgit::CiRunnerOp::kStream) std::cout << "ready\n" << std::flush;
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+        return 0;
+      }
       if (command->job_id == "waiting-transport") {
         std::this_thread::sleep_for(std::chrono::seconds(30));
         return 0;
@@ -425,6 +435,32 @@ int run(const std::vector<std::string>& args) {
         require(sink.finish(record).status == ckgit::CiRunStatus::Success, "native sink commits logs and declared outputs");
       }
       require(std::filesystem::is_empty(root / "relay"), "native sink removes private relay staging");
+      for (const auto* mode : {"waiting-finish", "waiting-drain", "waiting-abandon"}) {
+        ckgit::CiRemoteJob job;
+        job.prepared.job.job_id = mode;
+        job.token = std::string(32, 'b');
+        auto stop_at = std::chrono::steady_clock::time_point::max();
+        ckgit::RemoteCiSink sink(transport, job, root / "relay", [&] {
+          return std::chrono::steady_clock::now() >= stop_at;
+        });
+        ckgit::CiRunRecord record;
+        record.started_epoch_seconds = 1;
+        record.status = ckgit::CiRunStatus::Success;
+        if (std::string_view(mode) == "waiting-drain") {
+          sink.runStarted(record);
+          sink.stepStarted(record, 0);
+          sink.appendLog(0, "log awaiting acknowledgement");
+        }
+        const auto began = std::chrono::steady_clock::now();
+        stop_at = began + std::chrono::milliseconds(200);
+        const auto finished = sink.finish(record);
+        const bool acknowledged = std::string_view(mode) != "waiting-abandon";
+        require(sink.abandoned() == acknowledged &&
+                    finished.status == (acknowledged ? ckgit::CiRunStatus::Pending : ckgit::CiRunStatus::Error),
+            "shutdown only reports hand-back when host acknowledged it");
+        require(std::chrono::steady_clock::now() - began < std::chrono::seconds(4),
+            "shutdown bounds log drain, silent finish and hand-back requests");
+      }
       for (const bool greeting : {true, false}) {
         ckgit::CiRemoteJob job;
         job.prepared.job.job_id = "waiting-transport";
