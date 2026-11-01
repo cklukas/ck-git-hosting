@@ -21,6 +21,11 @@
       "run": 41328471265,
       "commit": "412455684e70ed9c3d6e1ab6c4a7afa45bcf7d20",
       "result": "all nine jobs passed"
+    },
+    "final_docs_run": {
+      "run": 41333348878,
+      "commit": "568bd050da56e43677ef35786a6422e594a3a83b",
+      "result": "all nine jobs passed"
     }
   },
   "artifact_manifest": {
@@ -249,12 +254,8 @@
     "tunnel_fixture": "Automation parent inherited ignore-Ctrl+C. Fixture explicitly resets inheritance before launching own console; production client unchanged. Ctrl+C passed, exit0, port released, no SSH survivors."
   },
   "remaining": [
-    "Restricted-account Windows service and production logon/session qualification",
-    "Active-build/upload shutdown and Windows CLI/tunnel lifecycle",
-    "Complete Windows CLI mutation journeys with fresh isolated SSH authorization",
-    "Final distributed artifacts and isolation reports",
-    "Live combined tag release, failure/restart/idempotence acceptance",
-    "Final cleanup and documentation audit"
+    "A live service upgrade during an active artifact upload has not been qualified; transport cancellation is covered by automated tests.",
+    "Combined release success and partial failure were checked live; restart and repeated finalization are covered by automated tests."
   ],
   "checks": {
     "windows_process_regression": "passed with current rebuilt console helper",
@@ -1340,7 +1341,7 @@
       "windows": "00001793546081213768-9533307c",
       "linux": "00001793546081213745-fb85f9c6",
       "commit": "93b40e8b7c321ba549b8ce3bcdcf03a3616aaffd",
-      "status": "Windows success; Linux running",
+      "status": "Windows succeeded; Linux initially failed a scheduling-sensitive test. The corrected retry passed both jobs (see linux_current_push_failure.retry).",
       "verified_artifact": {
         "run": "00001793546081213768-9533307c",
         "bundle_sha256": "18da88a5682bb2e53b1dc364cc1e58d0c820fd1995390631c05499611574ebc3",
@@ -1583,11 +1584,27 @@
       "linux_artifact_sha256": "3a40ea1e7ff0772754da3b17d3ed41924cf8dfba00451a15cee570fe5eedf4dc"
     }
   },
-  "server_update_pending": {
-    "current_version": "0.8.2+g5bd1c65560dc",
-    "candidate": "0.8.2+g412455684e70",
-    "candidate_sha256": "001809794544838a2f34bb00ffea70a9ffca56f9835f97a5236f2670561e1c39",
-    "reason": "another project claimed the primary runner immediately after qualification; do not interrupt it",
-    "impact": "the source fix for stale parent workflow heartbeat is not yet deployed on rpi4"
+  "server_update_4124556": {
+    "result": {
+      "start": "2026-11-01T18:21:49.806847+00:00",
+      "package_sha256": "001809794544838a2f34bb00ffea70a9ffca56f9835f97a5236f2670561e1c39",
+      "rollback_sha256": "54ea9ad09e6aa89c604b7e523f13ee30b987a8896a742eb16c8df3ac77b3bf3e",
+      "config_before": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd",
+      "steps": [
+        "Idle services stopped; state and configuration snapshot verified"
+      ],
+      "success": true,
+      "state_snapshot_sha256": "cf5c06eb24612900c6418b6407d6b9e823ee6b2ef104e2e668972c8e20ac9593",
+      "state_snapshot_bytes": 825917440,
+      "runtime": [
+        "version=0.8.2+g412455684e70\npid=851589\nstarted=1793557350\n",
+        "version=0.8.2+g412455684e70\npid=851767\nstarted=1793557353\n",
+        "version=0.8.2+g412455684e70\npid=851981\nstarted=1793557354\n"
+      ],
+      "end": "2026-11-01T18:22:35.255250+00:00",
+      "config_after": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd"
+    },
+    "external_checks": "All three systemd units active; dashboard HTTP check passed; ckgit ci show returned the completed Linux+Windows parent and both artifacts; Windows service reconnected using protocol 2.",
+    "backup": "Verified state/configuration snapshot retained on rpi4 for recovery."
   }
 }
