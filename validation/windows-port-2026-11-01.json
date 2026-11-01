@@ -294,5 +294,96 @@
     "coverage": "silent log acknowledgement,finish and abandon; shutdown within4seconds; confirmed return is Pending, unconfirmed return Error; normal successful sink regression passes",
     "duration_review": "Mac3.802s vs2.608s; Windows22.516s vs24.148s for same two translation units and relink. Actual compile/link output verified.",
     "remaining": "Payload hashing and whole active-job installer upgrade, service logon qualification; production runner still installed9b63daf."
+  },
+  "service_host_prototype": {
+    "build": {
+      "start": "2026-11-01T12:55:34.9022061Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 7.303113,
+      "exit": 0,
+      "source_archive_sha256": "9420726BF557BA91B5ECA087E152EF5412D8F03F6AFFA8996D9D10A25E7ECBFB",
+      "helper_sha256": "AB68AF92D50F4C1358E9655B2590589ADC666AE6D01DDF56441C509F409ABE9B",
+      "target": "ck-ci-runnerd Release",
+      "end": "2026-11-01T12:55:42.2002982Z"
+    },
+    "test": {
+      "position": "At V:\\tmp\\ckgit-windows-20261026-01\\service-host-test.ps1:59 char:2\r\n+  Start-Service -Name $name\r\n+  ~~~~~~~~~~~~~~~~~~~~~~~~~",
+      "end": "2026-11-01T12:56:56.0638517Z",
+      "start": "2026-11-01T12:56:50.7239189Z",
+      "error": "Failed to start service 'ckgit-service-test-20261101 (ckgit-service-test-20261101)'.",
+      "success": false,
+      "runner_sha256": "AB68AF92D50F4C1358E9655B2590589ADC666AE6D01DDF56441C509F409ABE9B"
+    },
+    "observed": "SCM starts dedicated virtual account, token guard passes, AppContainer profile allocation succeeds, private station CREATE_ONLY fails183 because service logon already has its own station. Service stops with error and fixture registration removed. No production configuration or keys used.",
+    "remaining": "Qualify secure desktop/station arrangement for real service session before installation option is ready. Do not claim service support complete.",
+    "source": "Uncommitted prototype src/ci-runner-windows/main.cpp; fixture script in task scratch/service-host-test.ps1"
+  },
+  "service_session_qualification": {
+    "scm_start_stop": {
+      "end": "2026-11-01T13:07:06.7364572Z",
+      "start": "2026-11-01T13:07:02.9062523Z",
+      "success": true,
+      "stop_seconds": 0.2607873,
+      "pid": 3692,
+      "account": "NT SERVICE\\ckgit-service-test-20261101",
+      "runner_sha256": "A75FE768B6E84E9DE4B129B05B532568323FC6C02F5A28CDF5ADF441186594BE"
+    },
+    "build": {
+      "start": "2026-11-01T13:05:54.1152076Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 18.8456158,
+      "exit": 0,
+      "source_archive_sha256": "E04EF0DBB61C371E94C154474DBC487266113BEC01F23398A98D41E45E553885",
+      "helper_sha256": "A75FE768B6E84E9DE4B129B05B532568323FC6C02F5A28CDF5ADF441186594BE",
+      "target": "ck-ci-runnerd Release",
+      "end": "2026-11-01T13:06:12.9535541Z"
+    },
+    "mechanism": "Virtual service account creates NEW_CREDENTIALS token with same local identity, unused outbound credentials, launches own worker via CreateProcessWithTokenW on parent desktop. Worker verifies virtual account/no admin and allocates fresh OS-named station using unchanged production sandbox code. LPAC path child exit0; ancestors remain access denied; protocol2 fake server negotiation passed. Parent idle SCM stop0.261s; no fixture processes/session directories survive.",
+    "limitations": "Proof of mechanism only: worker ran serve --once and finished before parent reported Running. Persistent worker readiness/stop IPC, process-tree lifetime, crash cleanup, full compiler job, installer service integration not implemented/qualified.",
+    "rejected": "Existing owned service station with low label and job-SID mask34, then all-access diagnostic, both child0xc0000142. Label restored and fixture services removed. No ACL workaround in repository.",
+    "native_source_state": "Superseded by persistent_service_worker; current native runner now matches repository worker implementation. Earlier one-shot prototype retained only as evidence."
+  },
+  "persistent_service_worker": {
+    "result": {
+      "worker_sid": "S-1-5-80-2067567371-1043072614-2090129112-970569321-1493810695",
+      "start": "2026-11-01T13:18:50.6372394Z",
+      "success": true,
+      "worker_pid": 77660,
+      "stop_seconds": 0.2620782,
+      "pid": 83668,
+      "account": "NT SERVICE\\ckgit-service-test-2a802784a10046a98dad4e290d0be666",
+      "end": "2026-11-01T13:18:54.8421478Z",
+      "runner_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE"
+    },
+    "build": {
+      "start": "2026-11-01T13:15:59.5814947Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 8.973722,
+      "exit": 0,
+      "source_archive_sha256": "09A15D95F5207575A7459F1354EB4F8A7E434550C706C81CD137793EA1B3BDB3",
+      "helper_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+      "target": "ck-ci-runnerd Release",
+      "end": "2026-11-01T13:16:08.5489066Z"
+    },
+    "process_build": {
+      "start": "2026-11-01T13:14:51.8924873Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 25.016099099999998,
+      "exit": 0,
+      "source_archive_sha256": "7ABAB7EFB5FEEBB44FC90CFCB63374B2716C66C086D2CE41985E8362AF5F7038",
+      "helper_sha256": "61C8576E9B7DA6135E653E77366CEFA63DD439473C53D2E220CE5F0F61B502AE",
+      "target": "ck-ci-runnerd Release",
+      "end": "2026-11-01T13:15:16.9085864Z"
+    },
+    "inputs": {
+      "CMakeLists.txt": "60bdaa4d7b526a7171675f84ddee33f765f446a97c02574f3d07166fbdf3a1aa",
+      "src/ci-runner-windows/main.cpp": "55a74da3b98193b1f35cfba2f5040b0038c9484ff0a235f846807339ec98314f",
+      "src/ci-job-launcher/main.cpp": "3f992047c3257b2a82b779814d05f853292773cfc48e5a6b2381c199d6fb4e26",
+      "src/common/process_windows.cpp": "fbd6789088a3fd40f0a6ec6ea05a5e3cab0a032687c493ec905eaaef4f87cc56",
+      "tests/integration/windows_service.ps1": "9a87eff0743c019e29f5a834508a2d3d66d479c7bc327a9e45c648b42913afdc"
+    },
+    "coverage": "Real SCM starts dedicated nonadmin virtual service and persistent worker; worker identity/path verified, LPAC USER32 startup check succeeded before readiness, protocol2 fake endpoint, stop request propagated, host/worker/jobs workspaces removed. Process/protocol regression and LPAC path diagnostics passed.",
+    "mechanism": "Private readiness/stop events; same-local-identity new logon; supervisor outer kill-on-close job permits explicit trusted broker breakaway. LPAC roots are atomically assigned to non-breakaway UI-restricted jobs via PROC_THREAD_ATTRIBUTE_JOB_LIST. No ancestor ACL changes.",
+    "limits": "Not yet full compiler/active-job/crash/service-install qualification. Production installed runner remains GitHub9b; newest native dev runner matches current source."
   }
 }

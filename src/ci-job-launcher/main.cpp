@@ -12,13 +12,20 @@
 
 int wmain(int argc, wchar_t** argv) {
   try {
-    if (argc < 3) throw std::invalid_argument("job launcher requires TEMP and an absolute executable");
+    const bool self_check = argc == 2 && std::wstring_view(argv[1]) == L"--self-check";
+    if (!self_check && argc < 3) throw std::invalid_argument("job launcher requires TEMP and an absolute executable");
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) throw std::runtime_error("query launcher token");
     DWORD isolated = 0, bytes = 0;
     const auto queried = GetTokenInformation(token, TokenIsAppContainer, &isolated, sizeof(isolated), &bytes);
     CloseHandle(token);
     if (!queried || !isolated) throw std::runtime_error("job launcher requires an AppContainer");
+    if (self_check) {
+      if (!GetProcessWindowStation() || !GetThreadDesktop(GetCurrentThreadId()))
+        throw std::runtime_error("AppContainer USER32 initialization unavailable");
+      std::cout << "LPAC launcher ready\n";
+      return 0;
+    }
     const auto work = std::filesystem::current_path();
     const bool selected_directory = argc >= 5 && std::wstring_view(argv[2]) == L"--cwd";
     const int executable_index = selected_directory ? 4 : 2;

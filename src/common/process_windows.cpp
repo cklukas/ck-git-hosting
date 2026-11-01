@@ -154,7 +154,7 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   }
   std::vector<HANDLE> inherited{input.value, write.value};
   if (options.inherit_stderr) inherited.push_back(stderr_handle);
-  Attributes attributes(sandbox ? 3 : 1);
+  Attributes attributes(sandbox ? 4 : 1);
   if (!UpdateProcThreadAttribute(attributes.list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                                   inherited.data(), inherited.size() * sizeof(HANDLE), nullptr, nullptr)) fail("restrict inherited handles");
   SECURITY_CAPABILITIES capabilities{};
@@ -247,6 +247,23 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
         JOB_OBJECT_UILIMIT_READCLIPBOARD | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
     if (!SetInformationJobObject(job.value, JobObjectBasicUIRestrictions, &ui, sizeof(ui))) fail("restrict sandbox UI");
   }
+  DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+  if (sandbox) {
+    // UI-restricted jobs cannot be nested. A trusted service supervisor may
+    // permit explicit breakaway; the new LPAC process is atomically assigned
+    // to its own non-breakaway job during creation, before any code can run.
+    BOOL in_job = FALSE;
+    if (!IsProcessInJob(GetCurrentProcess(), nullptr, &in_job)) fail("query broker job membership");
+    if (in_job) {
+      JOBOBJECT_EXTENDED_LIMIT_INFORMATION parent{};
+      if (!QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &parent, sizeof(parent), nullptr))
+        fail("query broker job policy");
+      if (parent.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_BREAKAWAY_OK)
+        creation_flags |= CREATE_BREAKAWAY_FROM_JOB;
+    }
+    if (!UpdateProcThreadAttribute(attributes.list, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+        &job.value, sizeof(job.value), nullptr, nullptr)) fail("assign sandbox job at process creation");
+  }
   STARTUPINFOEXW startup{};
   startup.StartupInfo.cb = sizeof(startup);
   startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -261,12 +278,12 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
   {
   const std::lock_guard lock(windowsProcessCreationMutex());
   if (!CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE,
-                      EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                      creation_flags,
                       environment_block.empty() ? nullptr : environment_block.data(), sandbox ? directory.c_str() : nullptr,
                       &startup.StartupInfo, &info)) fail("start process");
   }
   Handle process(info.hProcess), thread(info.hThread);
-  if (!AssignProcessToJobObject(job.value, process.value)) {
+  if (!sandbox && !AssignProcessToJobObject(job.value, process.value)) {
     const DWORD code = GetLastError();
     TerminateProcess(process.value, 127);
     WaitForSingleObject(process.value, INFINITE);
@@ -274,6 +291,9 @@ static ProcessResult runProcessImpl(const std::vector<std::string>& arguments, c
     fail("assign process job");
   }
   if (sandbox) {
+    BOOL assigned = FALSE;
+    if (!IsProcessInJob(process.value, job.value, &assigned) || !assigned)
+      throw std::runtime_error("sandbox process was not assigned to its job at creation");
     Handle token;
     if (!OpenProcessToken(process.value, TOKEN_QUERY | TOKEN_DUPLICATE, &token.value)) fail("inspect sandbox token");
     DWORD app = 0, bytes = 0;

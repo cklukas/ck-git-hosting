@@ -104,6 +104,36 @@ host acknowledges it. Otherwise it reports the uncertainty and the host's
 lease recovery remains responsible for the job. Native process tests cover
 silent greetings, uploads, log acknowledgements, finish and hand-back requests.
 The complete active-job installer-upgrade sequence is not yet qualified.
+
+The Windows service host is under qualification. Its `service --config PATH
+--log PATH --service-name NAME` entry point connects to the Service Control
+Manager and requires the matching non-administrator `NT SERVICE\NAME` virtual
+account. It does not accept LocalSystem or register itself automatically.
+The supervisor starts a persistent worker with the same local identity and a
+new logon session, explicitly attached to the parent's noninteractive desktop.
+The worker can then create fresh per-step Window Stations. No existing station
+ACLs are broadened. Windows network credentials are deliberately unusable;
+remote repository access continues to use the configured SSH identity.
+
+Private events carry readiness and stop signals. Readiness follows a real
+LPAC/USER32 process self-check, also performed by `check` and console `serve`.
+The supervisor guards the worker process tree; LPAC roots are created atomically
+in their own UI-restricted Job Objects because Windows does not allow those UI
+restrictions in nested jobs. Build processes cannot break away from their jobs.
+A worker that ignores shutdown is terminated after ten seconds and is reported
+as an error. Recorded workspaces support cleanup on the next start.
+The worker writes `--log`; the supervisor appends `.host.log` to that path.
+
+The opt-in `tests/integration/windows_service.ps1` test takes `-Runner`,
+`-FakeSsh` (the built `ckgit-process-tests.exe`) and an existing `-TestRoot`.
+It requires an administrator to create a disposable virtual-account service,
+checks the running worker's SID and executable, stops it, verifies workspace
+and process cleanup, and removes the service. The test passed on 2026-11-01;
+the persistent worker stopped in 0.262 seconds. The normal process suite and
+LPAC path-isolation regression also passed after the atomic Job Object change.
+Service provisioning, crash/active-job shutdown and a full service compiler
+build remain to be qualified before service installation is ready.
+
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
