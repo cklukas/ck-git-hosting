@@ -18,8 +18,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <map>
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #include <io.h>
 #include <fcntl.h>
 #endif
@@ -31,19 +33,46 @@ void require(bool condition, const char* message) {
 int run(const std::vector<std::string>& args) {
   if (args.size() > 1) {
 #ifdef _WIN32
-    if (args[1] == "close-console" && args.size() == 3) {
+    if ((args[1] == "close-console" || args[1] == "interrupt-console") && args.size() == 3) {
       const auto pid = static_cast<DWORD>(std::stoul(args[2]));
       FreeConsole();
       require(AttachConsole(pid) != FALSE, "attach only the fixture runner console");
       DWORD clients[16]{};
       const auto count = GetConsoleProcessList(clients, 16);
+      std::map<DWORD, DWORD> parents;
+      if (args[1] == "interrupt-console") {
+        const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        require(snapshot != INVALID_HANDLE_VALUE, "snapshot fixture process ancestry");
+        PROCESSENTRY32W entry{};
+        entry.dwSize = sizeof(entry);
+        if (Process32FirstW(snapshot, &entry)) {
+          do { parents.emplace(entry.th32ProcessID, entry.th32ParentProcessID); }
+          while (Process32NextW(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
+      }
+      const auto owned = [&](DWORD client) {
+        if (client == GetCurrentProcessId() || client == pid) return true;
+        // Ctrl+C also reaches SSH descendants sharing this private console.
+        // Never signal a console containing an unrelated process or ancestor.
+        for (unsigned depth = 0; depth < 32 && parents.contains(client); ++depth) {
+          client = parents.at(client);
+          if (client == pid) return true;
+        }
+        return false;
+      };
       bool private_console = count > 0 && count <= 16;
       for (DWORD i = 0; i < std::min<DWORD>(count, 16); ++i)
-        private_console = private_console && (clients[i] == pid || clients[i] == GetCurrentProcessId());
+        private_console = private_console && owned(clients[i]);
       if (!private_console) { FreeConsole(); throw std::runtime_error("refusing to close a shared console"); }
-      const auto window = GetConsoleWindow();
-      require(window != nullptr, "fixture runner must have its own console window");
-      require(PostMessageW(window, WM_CLOSE, 0, 0) != FALSE, "close fixture console");
+      if (args[1] == "interrupt-console") {
+        require(SetConsoleCtrlHandler(nullptr, TRUE) != FALSE, "ignore Ctrl+C in sender");
+        require(GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != FALSE, "interrupt fixture console");
+      } else {
+        const auto window = GetConsoleWindow();
+        require(window != nullptr, "fixture runner must have its own console window");
+        require(PostMessageW(window, WM_CLOSE, 0, 0) != FALSE, "close fixture console");
+      }
       FreeConsole();
       return 0;
     }

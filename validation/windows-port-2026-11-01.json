@@ -1,0 +1,236 @@
+{
+  "date": "2026-11-01",
+  "scope": "Windows portability acceptance in progress; original plan not complete",
+  "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
+  "github": {
+    "run": 41305898555,
+    "windows_job": 124846087019,
+    "windows_status": "success",
+    "other_jobs": "All nine jobs completed successfully"
+  },
+  "artifact_manifest": {
+    "run": 41305898555,
+    "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
+    "files": {
+      "ck-git-runner-0.8.2-windows-x64-setup.exe": "27eddb75a2c8a93efc015cb73f95b298841369f2e5eb769db79a66bdde1c6c80",
+      "ckgit-0.8.2-windows-x64-setup.exe": "cc8c4a146dba45f8e28b59295411e4db91a2d31cf64799480e76f1af6f040daa",
+      "ckdocs-0.8.2-windows-x64-setup.exe": "89cd9a176b813f76b0f31f28ae537e55b8becf14928549d6a2ec99bf83581c66",
+      "ckgit-0.8.2-windows-x64.zip": "578282c6bf155045e870130101546eb80918ca875e5747d4c8676e4066ac19e7"
+    },
+    "portable_executables": {
+      "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe": "aa40d15edde0b7aeb23a58b8a64fe5424946be18e7f0dc6881029711d87a6edb",
+      "ckgit-0.8.2-windows-x64/bin/ckdocs.exe": "288763313d8ad28d70d19c66fba0fbd804730e3ea1d63944b81f1f287db73efe",
+      "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe": "1a9fb12d8ca21a64222874bd60c638e5bde5031cc2585922ff21f62b0ecd2f71",
+      "ckgit-0.8.2-windows-x64/bin/ckgit.exe": "8bc4a7bb085078727dd7d037809e49b5ff954976fd6c6f4bd48be7ab3daa43c3"
+    }
+  },
+  "installed": {
+    "clients": {
+      "run": 41305898555,
+      "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
+      "success": true,
+      "end": "2026-11-01T12:27:18.6947632Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+g9b63dafbc8f2",
+          "scope": "CURRENTUSER",
+          "sha256": "8BC4A7BB085078727DD7D037809E49B5FF954976FD6C6F4BD48BE7AB3DAA43C3",
+          "product": "ckgit",
+          "installer_sha256": "CC8C4A146DBA45F8E28B59295411E4DB91A2D31CF64799480E76F1AF6F040DAA",
+          "previous_sha256": "488A147F3BB3E5B3292AABB6C81A1412EECC1B29576C98D92A9ED2ABC12AFEB8",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+g9b63dafbc8f2",
+          "scope": "CURRENTUSER",
+          "sha256": "288763313D8AD28D70D19C66FBA0FBD804730E3EA1D63944B81F1F287DB73EFE",
+          "product": "ckdocs",
+          "installer_sha256": "89CD9A176B813F76B0F31F28AE537E55B8BECF14928549D6A2EC99BF83581C66",
+          "previous_sha256": "EE0AAD82FE0484062F1B136D2B1F31BAFBA506E2051F2D00A4BAC1886149E7A7",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 41305898555,
+      "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
+      "success": true,
+      "end": "2026-11-01T12:27:22.2180276Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+g9b63dafbc8f2",
+          "scope": "ALLUSERS",
+          "sha256": "AA40D15EDDE0B7AEB23A58B8A64FE5424946BE18E7F0DC6881029711D87A6EDB",
+          "product": "ck-git-runner",
+          "installer_sha256": "27EDDB75A2C8A93EFC015CB73F95B298841369F2E5EB769DB79A66BDDE1C6C80",
+          "previous_sha256": "5AD56F8A4F21F87380C0809B67CE16D653B25368F805C677C372DF9AEB65188D",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "toolchain_activation": {
+      "runner_sha256": "AA40D15EDDE0B7AEB23A58B8A64FE5424946BE18E7F0DC6881029711D87A6EDB",
+      "config_after": "56B342E5EB704083AF2DD979F5B5A503B34F9C7084A523071CFFBC0DDE16AD23",
+      "success": true,
+      "toolchain": "V:\\ProgramData\\ckgit-runner\\toolchain-ninja-20261028",
+      "config_before": "0373D58CFB23F987EDD6ED34FD788C26304FA0512AB82704667CD29547902B90",
+      "utc": "2026-11-01T12:28:05.1937549Z",
+      "backup": "V:\\ProgramData\\ckgit-runner\\runner.ini.before-ninja-20261101"
+    }
+  },
+  "server_upgrade": {
+    "start": "2026-11-01T12:26:50.457901+00:00",
+    "package_sha256": "54ea9ad09e6aa89c604b7e523f13ee30b987a8896a742eb16c8df3ac77b3bf3e",
+    "config_before": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd",
+    "steps": [
+      "Stopped idle services; state/config snapshot byte comparison passed",
+      "Package installation completed"
+    ],
+    "state_snapshot_sha256": "c40fa024ea40f7d127da651fae6519941132cf8d34faf76a8ea29c84efa80652",
+    "state_snapshot_bytes": 554803200,
+    "success": true,
+    "end": "2026-11-01T12:27:39.290979+00:00",
+    "runtime": {
+      "ck-git-hostingd": "version=0.8.2+g5bd1c65560dc\npid=117162\nstarted=1793536041\n",
+      "ck-ci-runnerd": "version=0.8.2+g5bd1c65560dc\npid=117345\nstarted=1793536043\n",
+      "ck-pagesd": "version=0.8.2+g5bd1c65560dc\npid=117542\nstarted=1793536046\n"
+    },
+    "config_after": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd",
+    "package_version": "0.8.2~20261028.1731.5bd1c65560dc"
+  },
+  "distributed_ci": {
+    "parent": "00001793536102902606-6753aea2",
+    "linux": "00001793536102977405-ccd2825d",
+    "windows": "00001793536102977419-66a5a6ef",
+    "status": "Windows success; Linux sibling still running at 2026-11-01T12:45Z",
+    "windows_verification": {
+      "run": "00001793536102977419-66a5a6ef",
+      "bundle_sha256": "ea87bd79b3a2464c4a63d4536a3e7f47c3587040ca39cb666ab803376d76d7a3",
+      "bundle_bytes": 12091904,
+      "packages": {
+        "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+          "sha256": "5f594d17bc4e6e275df932f17a4d52095480b407e14af08b4d208fdb3fc0c867",
+          "bytes": 2510244
+        },
+        "ckdocs-0.8.2-windows-x64-setup.exe": {
+          "sha256": "98ef645e175632b76355800f63b0a31b619d82ce7bff25ee64e09986de56f68d",
+          "bytes": 3224151
+        },
+        "ckgit-0.8.2-windows-x64-setup.exe": {
+          "sha256": "8204c0a5a8ee2bd75ee52194141b585549b45b08635f214d1e3ca91ce31815c6",
+          "bytes": 3505518
+        },
+        "ckgit-0.8.2-windows-x64.zip": {
+          "sha256": "dc0036cfa7f949dd3c8ebd0887c33faf10f98d03c9e8bcc9b3602d157372bc14",
+          "bytes": 2813829
+        }
+      },
+      "source_files_verified_against_git": 302,
+      "build": {
+        "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
+        "version": "0.8.2+g9b63dafbc8f2",
+        "configuration": "Release",
+        "generator": "Ninja",
+        "start_epoch": "1793536160",
+        "end_epoch": "1793536691",
+        "elapsed_seconds": "531",
+        "binary_directory": "V:/ProgramData/ckgit-runner/build/runner-session-aa7ba55b06f642fae37a77970c6d2169/jobs/ckgit-lpac-5cfe981d88d506fe2e1d2c43a3c3b419/work/tmp/b/bin"
+      },
+      "portable_executables_verified_x64": [
+        "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+        "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+        "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+        "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+      ],
+      "artifact_files": [
+        "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+        "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+        "dist/ckgit-0.8.2-windows-x64-setup.exe",
+        "dist/ckgit-0.8.2-windows-x64.zip",
+        "dist/windows-build-inputs.sha256",
+        "dist/windows-build.txt",
+        "dist/windows-packages.sha256"
+      ]
+    },
+    "runner_result": {
+      "exit": 0,
+      "end": "2026-11-01T12:38:23.0972988Z",
+      "binary_sha256": "AA40D15EDDE0B7AEB23A58B8A64FE5424946BE18E7F0DC6881029711D87A6EDB",
+      "start": "2026-11-01T12:28:28.3285504Z"
+    },
+    "duration_review": "531 seconds vs prior 361-second standalone build. Configuration took204.4 seconds; full compilation/link/package logs,302 source hashes and4 PE timestamps verify freshness. Exact reason for duration difference not established."
+  },
+  "dashboard": {
+    "verified": "Live upgraded rpi4 dashboard via existing Mac ckgit web SSH tunnel. Screenshot visually confirmed parent job table; clicked Windows child and verified backlink and live compiler output.",
+    "parent_fields": [
+      "job",
+      "status",
+      "requested labels",
+      "runner",
+      "attempt"
+    ],
+    "tunnel_cleanup": "Owned CLI PID66784 received SIGINT and exited0 with Tunnel closed.",
+    "limitations": "Combined workflow still running; final parent artifacts not yet checked.",
+    "final_windows_child": "Live deployed rpi4 UI visually verified: success, windows/x64, isolation lpac, network denied,4GiB memory,64 processes,14400s timeout,exit0,11.5MiB artifact link, parent backlink."
+  },
+  "client_follow_up": {
+    "old_fixture": "Previous temporary SSH wrapper/key intentionally cleaned; old client-journey config points to missing wrapper.",
+    "direct_openssh": "Read-only Windows CLI request with installed system OpenSSH timed out60sec. No cancellation was sent by Windows client.",
+    "stale_run_cancel": "Owned old pending5bd run cancelled through Mac CLI before idle server deployment; queues verified empty.",
+    "connect": {
+      "commands": [
+        {
+          "seconds": 0.0715739,
+          "name": "setup",
+          "exit": 0
+        },
+        {
+          "seconds": 2.826324,
+          "name": "doctor",
+          "exit": 0
+        },
+        {
+          "seconds": 3.3342829,
+          "name": "ci-show",
+          "exit": 0
+        }
+      ],
+      "utc": "2026-11-01T12:33:29.0611940Z",
+      "administrator": false,
+      "success": true
+    },
+    "tunnel": {
+      "helper_sha256": "6ECD663800DCE45A65C0442D2F3B9804D6A18C90A934EB2DD6655234D1A32381",
+      "success": true,
+      "client_sha256": "8BC4A7BB085078727DD7D037809E49B5FF954976FD6C6F4BD48BE7AB3DAA43C3",
+      "remaining_ssh": 0,
+      "utc": "2026-11-01T12:41:20.4847030Z",
+      "administrator": false
+    },
+    "download": {
+      "bytes": 12091904,
+      "sha256": "EA87BD79B3A2464C4A63D4536A3E7F47C3587040CA39CB666AB803376D76D7A3",
+      "success": true,
+      "seconds": 3.4438834999999997,
+      "utc": "2026-11-01T12:46:01.3184364Z",
+      "administrator": false
+    },
+    "temporary_authorization": "Active for remaining CLI journeys: windows-native-20261101; revoke exact recorded keys with paired cleanup script after tests.",
+    "tunnel_fixture": "Automation parent inherited ignore-Ctrl+C. Fixture explicitly resets inheritance before launching own console; production client unchanged. Ctrl+C passed, exit0, port released, no SSH survivors."
+  },
+  "remaining": [
+    "Restricted-account Windows service and production logon/session qualification",
+    "Active-build/upload shutdown and Windows CLI/tunnel lifecycle",
+    "Complete Windows CLI mutation journeys with fresh isolated SSH authorization",
+    "Final distributed artifacts and isolation reports",
+    "Live combined tag release, failure/restart/idempotence acceptance",
+    "Final cleanup and documentation audit"
+  ],
+  "checks": {
+    "windows_process_regression": "passed with current rebuilt console helper",
+    "documentation": "strict build passed:67 pages,2 sites,56 assets,26 redirects",
+    "diff": "git diff --check passed"
+  }
+}

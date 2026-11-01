@@ -131,6 +131,36 @@ downloaded through the parent: 7,454,720 bytes, SHA-256
 `5cb8af104c800e3e98c519b45fff77a905d7b0fbe13d12620dbcb0d1e920edb6`.
 This was a branch build; live tag-release publication is a separate check.
 
+On 2026-11-01, the installed GitHub runner built commit `9b63dafbc8f2`
+using MSVC/Ninja in LPAC as Windows child `00001793536102977419-66a5a6ef`
+of workflow `00001793536102902606-6753aea2`. Compilation and packaging
+took 531 seconds. All 302 source fingerprints, four package hashes and four
+x64 executable timestamps were verified. The 12,091,904-byte artifact has
+SHA-256 `ea87bd79b3a2464c4a63d4536a3e7f47c3587040ca39cb666ab803376d76d7a3`.
+The installed Windows client downloaded it successfully without administrator
+rights, including to a destination containing spaces:
+
+```powershell
+New-Item -ItemType Directory 'V:\tmp\YOUR-TASK\downloads'
+ckgit ci download 00001793536102902606-6753aea2 windows-installers --job windows-installers --project ck-git-hosting --into 'V:\tmp\YOUR-TASK\downloads'
+```
+
+The Linux sibling was still running when this Windows result was recorded.
+This proves the Windows child and artifact delivery, not completion of the
+combined workflow or a tagged release. All nine jobs in
+[GitHub run 41305898555](https://github.com/cklukas/ck-git-hosting/actions/runs/41305898555)
+also passed. Its exact client installers were installed in CurrentUser scope
+with an ordinary token and its runner installer in AllUsers scope; installed
+binary hashes matched the portable ZIP.
+
+`tests/integration/windows_cli_tunnel.ps1` is an opt-in real-SSH test. Supply
+`-Client`, `-ConsoleHelper` (the built `ckgit-process-tests.exe`), `-Config`
+and an existing `-TestRoot` on the development drive. It checks dashboard HTTP,
+Ctrl+C shutdown and port release in a private console. The fixture resets the
+automation parent's inherited ignore-Ctrl+C flag before launching the client.
+The installed client passed this test without administrator rights; no SSH
+children remained afterward.
+
 The installed GitHub runner subsequently built commit `d9b77de324f1` as child
 `00001793030294304599-54199f45`: compilation and packaging took 343 seconds,
 with 113 compilation actions in a fresh job workspace. Its artifact contains exactly
@@ -270,7 +300,8 @@ used an additionally restricted token, not an ordinary UAC token.
 A full Ninja self-build also passed with the LOCAL-pipe patch and quoted tool
 paths. The integrated private tool-directory change also passed a full
 ordinary-user build in 361 seconds with a build root containing no spaces;
-new toolchain deployment and restricted-account service qualification remain open;
+the staged Ninja toolchain also passed the live Windows CI job above.
+Restricted-account service qualification remains open;
 see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 
 For a small path-compatibility diagnostic without staging the compiler, run:
