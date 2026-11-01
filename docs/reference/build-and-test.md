@@ -112,7 +112,7 @@ token. Automatic startup remains to be implemented and qualified.
 The repository's own `.ckgit/ci.yml` now declares a version-2 Linux job and a
 `windows-installers` job selected by the `windows` and `x64` labels. The Windows
 job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
-with MSVC/NMake, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
+with MSVC/Ninja, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
 and places installer files plus input/output hashes in the `windows-installers`
 artifact. The Linux job remains the Pages producer. This workflow is the
 live rpi4-to-Windows acceptance case. On 2026-10-26, Windows child
@@ -176,9 +176,10 @@ ctest --preset windows-release
 cpack --config "$scratch\ckgit-ninja-release\CPackConfig.cmake" -C Release -B "$scratch\dist"
 ```
 
-The native AppContainer runner uses the separate `windows-lpac-release`
-preset with NMake. Ninja is supported for development and GitHub builds;
-its current LPAC limitations are described under [Windows runner](../operations/ci-remote-runners.md#windows-runner).
+The native AppContainer runner also uses `windows-release`, with an
+operator-built LPAC-compatible Ninja. The older `windows-lpac-release` NMake
+preset remains available for explicit diagnostics. Provisioning and remaining
+LPAC limitations are described under [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 
 Check each command's exit code before continuing. Supply
 `-DCKGIT_BUILD_VERSION=<exact-version>` when configuring a release; the default
@@ -266,7 +267,10 @@ an administrator token and an ordinary filtered UAC token. The latter was
 launched in the workstation's noninteractive test session; it does not qualify
 every interactive or service logon configuration. Earlier SAFER-token tests
 used an additionally restricted token, not an ordinary UAC token.
-Ninja compatibility and restricted-account service qualification remain open;
+A full Ninja self-build also passed with the LOCAL-pipe patch and quoted tool
+paths. The integrated private tool-directory change also passed a full
+ordinary-user build in 361 seconds with a build root containing no spaces;
+new toolchain deployment and restricted-account service qualification remain open;
 see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 
 For a small path-compatibility diagnostic without staging the compiler, run:
@@ -284,8 +288,9 @@ directory succeeded, while `GetLongPathNameW` failed with error 5 (access denied
 The ancestors outside the sandbox were inaccessible. Microsoft documents that
 [GetLongPathNameW may require access to parent directories](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlongpathnamew),
 even when the target is accessible. This is consistent with the absolute-path
-failures observed in Ninja's `cmd.exe` commands; it is not a successful Ninja
-qualification. The probe removes its profile and workspace on normal exit.
+failures observed in Ninja's `cmd.exe` commands. This path diagnostic alone
+does not qualify Ninja; the subsequent full self-build used the patched Ninja
+and a workspace path containing a space to obtain quoted tool paths. The probe removes its profile and workspace on normal exit.
 
 ## Compile and test
 

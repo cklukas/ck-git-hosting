@@ -1,7 +1,7 @@
 # Copyright (c) 2026 C. Klukas. All rights reserved.
 # SPDX-License-Identifier: MIT
 # Native CI entry point: an operator-staged MSVC/SDK environment, CMake,
-# NMake and Inno Setup must already be available inside the Windows job.
+# LPAC-compatible Ninja and Inno Setup must already be available inside the job.
 cmake_minimum_required(VERSION 3.24)
 if(NOT CMAKE_HOST_WIN32)
   message(FATAL_ERROR "Windows installers must be built on Windows")
@@ -56,9 +56,9 @@ file(REMOVE_RECURSE "${build}" "${output}")
 file(MAKE_DIRECTORY "${output}")
 fingerprint(inputs_before)
 string(TIMESTAMP start "%s" UTC)
-run("${CMAKE_COMMAND}" --preset windows-lpac-release -S "${source}" -B "${build}"
+run("${CMAKE_COMMAND}" --preset windows-release -S "${source}" -B "${build}"
     -DBUILD_TESTING=OFF "-DCKGIT_BUILD_VERSION=${stamp}")
-run("${CMAKE_COMMAND}" --build "${build}" --config Release)
+run("${CMAKE_COMMAND}" --build "${build}" --config Release --parallel 2)
 fingerprint(inputs_after)
 if(NOT inputs_before STREQUAL inputs_after)
   message(FATAL_ERROR "Source inputs changed during the Windows build")
@@ -85,7 +85,7 @@ string(TIMESTAMP end "%s" UTC)
 math(EXPR elapsed "${end} - ${start}")
 file(WRITE "${output}/windows-build-inputs.sha256" "${inputs_before}")
 file(WRITE "${output}/windows-build.txt"
-    "commit=$ENV{CKGIT_COMMIT}\nversion=${stamp}\nconfiguration=Release\ngenerator=NMake Makefiles\nstart_epoch=${start}\nend_epoch=${end}\nelapsed_seconds=${elapsed}\nbinary_directory=${build}/bin\n")
+    "commit=$ENV{CKGIT_COMMIT}\nversion=${stamp}\nconfiguration=Release\ngenerator=Ninja\nstart_epoch=${start}\nend_epoch=${end}\nelapsed_seconds=${elapsed}\nbinary_directory=${build}/bin\n")
 file(GLOB packages "${output}/*-setup.exe" "${output}/*.zip")
 set(hashes "")
 foreach(package IN LISTS packages)

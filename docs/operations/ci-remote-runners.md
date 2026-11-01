@@ -107,22 +107,42 @@ permanent directory such as `V:\ProgramData\ckgit-runner`. Verify `V:` exists
 before invoking development tools. Select a unique `V:\tmp` directory and set
 `TEMP`, `TMP` and `TMPDIR` to it before staging tools.
 
-`packaging/windows/stage-toolchain.ps1` copies an explicitly selected MSVC
-installation, Windows SDK, CMake and Inno Setup into a new toolchain directory.
+`packaging/windows/build-lpac-ninja.ps1` builds the pinned Ninja 1.13.2 source
+archive offline, applying the `LOCAL` named-pipe namespace required by LPAC.
+Supply absolute `-SourceArchive`, `-TemporaryRoot`, `-Destination` and
+`-CmakeProgram` paths. The script requires Visual Studio 2022 x64 tools,
+verifies the archive and patched source hashes, and retains the executable,
+license, build logs and provenance record. Obtain the upstream `v1.13.2` source
+archive before provisioning; no download occurs inside the job.
+
+`packaging/windows/stage-toolchain.ps1` copies explicitly selected MSVC,
+Windows SDK, CMake, Inno Setup and that Ninja package into a new toolchain.
 Supply `-Destination`, `-TemporaryRoot`, `-MsvcRoot`, `-SdkRoot`, `-SdkVersion`,
-`-CmakeRoot` and `-InnoRoot`. Existing destinations are refused. Every copied
-file is checked against its source SHA-256; installed tool permissions are
-unchanged. The optional `vctip.exe` telemetry uploader is omitted from the
-staged copy so resident uploaders cannot exhaust the job's process limit.
-The repository's installer job explicitly uses the `windows-lpac-release`
-CMake preset (NMake). Development and GitHub CI use the `windows-release`
-preset (Ninja). This is a configured build-tool choice, not an isolation
-fallback. In local qualification, stock Ninja 1.12.1 failed to create its output
-pipe in LPAC. A Ninja 1.13.2 build using Windows' documented `LOCAL` pipe
-namespace passed that point, but CMake-generated command-interpreter steps
-still failed with access denied, including the full project's compiler link
-test. Ninja inside LPAC is therefore not currently supported; do not switch the
-runner to it or broaden filesystem permissions to make it run.
+`-CmakeRoot`, `-InnoRoot` and `-NinjaRoot` (the previous script's destination).
+Existing destinations are refused. Every copied file is checked against its
+source SHA-256; installed tool permissions are unchanged. The optional
+`vctip.exe` telemetry uploader is omitted from the staged copy so resident
+uploaders cannot exhaust the job's process limit. Put `ninja` before
+`cmake/bin` in `ci_toolchain_paths`, as in the example configuration.
+
+The repository's installer job uses the `windows-release` CMake preset
+(Ninja), also used by development and GitHub CI. The older
+`windows-lpac-release` NMake preset remains available for explicit diagnostics;
+there is no automatic fallback. Updating an existing runner requires staging
+the LPAC-compatible Ninja before using this workflow.
+
+The runner copies tools into its private `tool files` directory. The space
+makes CMake quote absolute tool paths: unquoted absolute executable paths in
+`cmd.exe` failed in LPAC, while quoted paths worked. An initial full
+ck-git-hosting Ninja build produced all three installers and the portable ZIP
+under an ordinary filtered UAC token (381 seconds; 301 source hashes and all
+four executable timestamps verified). A second full build with the integrated private tool-directory change
+and a build root without spaces passed in 361 seconds, with the same
+source/package/timestamp checks. Final staged-toolchain deployment is tracked
+in the validation record. Absolute `cd /D`
+commands still failed in the diagnostic; this is not a claim that arbitrary
+Windows build scripts work in LPAC. Do not broaden filesystem permissions.
+
 An additional ordinary-user and administrator diagnostic mapped the existing
 workspace to a temporary, randomly named DOS device without changing drive
 letters or filesystem ACLs. `GetLongPathNameW` succeeded through that alias,

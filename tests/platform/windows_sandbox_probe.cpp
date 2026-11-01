@@ -257,6 +257,71 @@ int wmain(int argc, wchar_t** argv) {
       Sleep(30000);
       return 0;
     }
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--cmd-leaf") {
+      std::cout << "LPAC_CMD_LEAF_OK\n";
+      return 0;
+    }
+    if (argc >= 3 && (std::wstring_view(argv[1]) == L"--cmd-exec" ||
+                      std::wstring_view(argv[1]) == L"--cmd-script")) {
+      std::wstring executable, line;
+      if (std::wstring_view(argv[1]) == L"--cmd-exec") {
+        executable = argv[2];
+        std::vector<std::wstring> arguments;
+        for (int i = 2; i < argc; ++i) arguments.emplace_back(argv[i]);
+        line = ckgit::windowsCommandLine(arguments);
+      } else {
+        require(argc == 3, "one command script required");
+        wchar_t system[32768]{};
+        require(GetSystemDirectoryW(system, 32768) > 0, "system directory");
+        executable = (fs::path(system) / "cmd.exe").wstring();
+        line = L"\"" + executable + L"\" /d /s /c \"" + argv[2] + L"\"";
+      }
+      STARTUPINFOW startup{};
+      startup.cb = sizeof(startup);
+      startup.dwFlags = STARTF_USESTDHANDLES;
+      startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+      startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+      startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+      PROCESS_INFORMATION process{};
+      require(CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, TRUE,
+          CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process), "start diagnostic command");
+      CloseHandle(process.hThread);
+      const auto waited = WaitForSingleObject(process.hProcess, 10000);
+      DWORD code = 1;
+      if (waited != WAIT_OBJECT_0) TerminateProcess(process.hProcess, 124);
+      const auto obtained = GetExitCodeProcess(process.hProcess, &code);
+      CloseHandle(process.hProcess);
+      require(waited == WAIT_OBJECT_0 && obtained, "wait for diagnostic command");
+      return static_cast<int>(code);
+    }
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--cmd-path-diagnostics") {
+      ckgit::WindowsSandbox sandbox{fs::path(argv[2])};
+      const auto executable = sandbox.tools() / "path-probe.exe";
+      fs::copy_file(fs::path(argv[0]), executable);
+      fs::copy_file(fs::path(argv[0]).parent_path() / "ckgit-job-launcher.exe",
+                    sandbox.tools() / "ckgit-job-launcher.exe");
+      sandbox.sealTools();
+      wchar_t system[32768]{};
+      require(GetSystemDirectoryW(system, 32768) > 0, "system directory");
+      const std::map<std::wstring, std::wstring> env{{L"PATH", sandbox.tools().wstring() + L";" + system}};
+      const auto tool = ckgit::wideToUtf8(executable.wstring());
+      const std::vector<std::string> scripts{
+          "cd . && echo LPAC_CMD_CD_OK",
+          "path-probe.exe --cmd-leaf",
+          "\"" + tool + "\" --cmd-leaf",
+          tool + " --cmd-leaf",
+          "cd . && " + tool + " --cmd-leaf && cd .",
+          "cd . && \"" + tool + "\" --cmd-leaf && cd .",
+          "cd /D \"" + ckgit::wideToUtf8(sandbox.work().wstring()) + "\" && echo QUOTED_CD_OK",
+          "path-probe.exe --cmd-exec \"" + tool + "\" --cmd-leaf"};
+      for (const auto& script : scripts) {
+        const auto result = ckgit::runWindowsSandboxProcess(sandbox,
+            {tool, "--cmd-script", script}, ckgit::ProcessOptions{}, env);
+        std::cout << "CMD: " << script << "\n" << result.output << "exit=" << result.exit_code
+                  << " timeout=" << result.timed_out << "\n";
+      }
+      return 0;
+    }
     if (argc == 3 && std::wstring_view(argv[1]) == L"--path-child") {
       // Diagnose absolute-path compatibility without granting ancestor access.
       // A successful directory change does not imply GetLongPathName can walk

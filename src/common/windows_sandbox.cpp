@@ -229,7 +229,12 @@ WindowsSandbox::WindowsSandbox(const std::filesystem::path& parent) : state_(std
 WindowsSandbox::~WindowsSandbox() = default;
 void WindowsSandbox::retainWorkspace() { state_->record.retained = true; state_->record.write(); }
 std::filesystem::path WindowsSandbox::work() const { return state_->root / "work"; }
-std::filesystem::path WindowsSandbox::tools() const { return state_->root / "tools"; }
+std::filesystem::path WindowsSandbox::tools() const {
+  // CMake quotes tool paths containing spaces. In LPAC, cmd.exe's handling of
+  // unquoted absolute executable paths can require inaccessible ancestor
+  // directories. Keep tools private and read-only instead of widening ACLs.
+  return state_->root / "tool files";
+}
 void* WindowsSandbox::sid() const { return state_->sid; }
 std::vector<void*> WindowsSandbox::capabilitySids() const {
   std::vector<void*> result;

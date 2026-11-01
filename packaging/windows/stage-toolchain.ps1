@@ -8,14 +8,21 @@ param(
     [Parameter(Mandatory=$true)][string]$SdkRoot,
     [Parameter(Mandatory=$true)][string]$SdkVersion,
     [Parameter(Mandatory=$true)][string]$CmakeRoot,
-    [Parameter(Mandatory=$true)][string]$InnoRoot
+    [Parameter(Mandatory=$true)][string]$InnoRoot,
+    [Parameter(Mandatory=$true)][string]$NinjaRoot
 )
 $ErrorActionPreference = 'Stop'
-foreach ($path in @($Destination,$TemporaryRoot,$MsvcRoot,$SdkRoot,$CmakeRoot,$InnoRoot)) {
+foreach ($path in @($Destination,$TemporaryRoot,$MsvcRoot,$SdkRoot,$CmakeRoot,$InnoRoot,$NinjaRoot)) {
     if (![IO.Path]::IsPathRooted($path) -or $path -match '^[A-Za-z]:[^\\/]') { throw "Absolute path required: $path" }
 }
 if (Test-Path -LiteralPath $Destination) { throw 'Destination already exists; select a new toolchain version' }
 $TemporaryRoot = (Resolve-Path -LiteralPath $TemporaryRoot).Path
+$ninjaRecord = Get-Content -LiteralPath (Join-Path $NinjaRoot 'ninja-build.json') -Raw | ConvertFrom-Json
+if ($ninjaRecord.version -ne '1.13.2' -or $ninjaRecord.patch -ne 'LOCAL pipe namespace' -or
+    $ninjaRecord.source_after -ne 'd6cbc5d6d350e4677991abe5828483fad39c0bc4d911a5ad1594d8d82d09e517' -or
+    (Get-FileHash -LiteralPath (Join-Path $NinjaRoot 'ninja.exe')).Hash -ne $ninjaRecord.sha256) {
+    throw 'Build and verify LPAC Ninja with build-lpac-ninja.ps1 before staging'
+}
 $oldTemp=$env:TEMP; $oldTmp=$env:TMP; $oldTmpdir=$env:TMPDIR
 $stage = Join-Path $TemporaryRoot ('toolchain-stage-' + [guid]::NewGuid().ToString('N'))
 $start = [DateTime]::UtcNow
@@ -32,7 +39,7 @@ try {
         @((Join-Path $SdkRoot "Lib\$SdkVersion\ucrt\x64"),'sdk\lib\ucrt\x64'),
         @((Join-Path $SdkRoot "Lib\$SdkVersion\um\x64"),'sdk\lib\um\x64'),
         @((Join-Path $SdkRoot "bin\$SdkVersion\x64"),'sdk\bin\x64'),
-        @($CmakeRoot,'cmake'), @($InnoRoot,'inno')
+        @($CmakeRoot,'cmake'), @($InnoRoot,'inno'), @($NinjaRoot,'ninja')
     )
     foreach ($tree in $trees) {
         $source = (Resolve-Path -LiteralPath $tree[0]).Path.TrimEnd('\')
