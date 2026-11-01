@@ -165,8 +165,10 @@ runner in the installation directory, then restarts them. Setup exit code 20
 means the package was installed but at least one service did not restart;
 inspect the setup log and service logs. Tests cover idle services, an unrelated
 service and a disabled service that cannot restart. The active-compiler
-fixture completed a real retried LPAC job and verified its four packages;
-active-upload and cross-version upgrades remain unqualified.
+fixture completed a real retried LPAC job and verified its four packages.
+An idle installed service was then upgraded between different GitHub builds,
+restarted with its configuration intact, and completed another full LPAC build.
+Upgrades during an active artifact upload remain unqualified.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
