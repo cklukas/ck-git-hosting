@@ -92,8 +92,10 @@ AllUsers installation needs administrator rights. Installing the package does no
 runner or register its SSH key. Closing an idle Windows runner interrupts its
 SSH negotiation or pending claim, stops that SSH process and removes the
 session workspace. Installer upgrades of this idle state are checked in both
-installation scopes. Upgrading during an active build or artifact upload is
-not yet qualified; wait for the job to finish before upgrading.
+installation scopes. A service upgrade during an active compiler invocation
+was also tested: the runner handed the job back, restarted, and completed a
+fresh attempt. An upgrade during artifact upload is not yet qualified; wait
+for the job to finish before upgrading in production.
 The transport now interrupts a silent stream greeting or an in-flight artifact
 upload when the broker receives a stop request. Upload retry delays also check
 for shutdown, cancellation and lease loss, and interrupted bytes are not
@@ -109,7 +111,8 @@ Use a short `ci_build_root` on Windows: the runner adds session and job
 directories, and compiler-generated paths can exceed MSVC's limits. In the
 service qualification, a deeply nested temporary root produced C1083 while
 creating a libarchive object; a retry uses a shorter root on the same drive.
-The complete active-job installer-upgrade sequence is not yet qualified.
+The active-build upgrade test used an installer with unchanged runner binary
+bytes; it does not establish compatibility across arbitrary versions.
 
 The Windows service host is under qualification. Its `service --config PATH
 --log PATH --service-name NAME` entry point connects to the Service Control
@@ -161,8 +164,9 @@ running virtual-account services whose configured executable is exactly the
 runner in the installation directory, then restarts them. Setup exit code 20
 means the package was installed but at least one service did not restart;
 inspect the setup log and service logs. Tests cover idle services, an unrelated
-service and a disabled service that cannot restart. Active-job upgrades still
-need qualification; wait for the job to finish before upgrading.
+service and a disabled service that cannot restart. The active-compiler
+fixture completed a real retried LPAC job and verified its four packages;
+active-upload and cross-version upgrades remain unqualified.
 
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.

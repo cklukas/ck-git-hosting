@@ -996,8 +996,58 @@
       },
       "parent": "00001793543217955288-84ca1030",
       "child": "00001793543218091296-6c07b05c",
-      "post_upgrade": "Host recorded confirmed hand-back, requeued and claimed attempt 2. Build completion not yet verified.",
-      "scope": "Actual compiler active in LPAC when dedicated fixture service upgraded; fixture package contains unchanged executable bytes."
+      "post_upgrade": "Service handed back the active job, restarted, and attempt 2 succeeded with an LPAC build and uploaded artifact.",
+      "scope": "Actual compiler active in LPAC when dedicated fixture service upgraded; fixture package contains unchanged executable bytes.",
+      "verified_artifact": {
+        "run": "00001793543218091296-6c07b05c",
+        "bundle_sha256": "1ea9b042adc621ee003fe83441389f2f8f8cad9763336b00fdc4e186c24c9223",
+        "bundle_bytes": 12119552,
+        "packages": {
+          "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+            "sha256": "bb5d55c765526d7b5329baace480449ec8249cda5808b34906f657ebd44bea55",
+            "bytes": 2522933
+          },
+          "ckdocs-0.8.2-windows-x64-setup.exe": {
+            "sha256": "2a24e2f7b8776c7e0ecf62445453ebc53b32a65d4af7c92339786bc39596fb33",
+            "bytes": 3223971
+          },
+          "ckgit-0.8.2-windows-x64-setup.exe": {
+            "sha256": "abe9c32436ebef559b5bed49c50f2532c28e4306a66f1856faad7d6936a604cf",
+            "bytes": 3506277
+          },
+          "ckgit-0.8.2-windows-x64.zip": {
+            "sha256": "42c28f2226ca21df2789af7850d76fe838fd70efcba2d5ae87a41aac5bead006",
+            "bytes": 2828248
+          }
+        },
+        "source_files_verified_against_git": 303,
+        "build": {
+          "commit": "d9ad4526ceb3bd4c8a1fbafc57ba5c3573356efa",
+          "version": "0.8.2+gd9ad4526ceb3",
+          "configuration": "Release",
+          "generator": "Ninja",
+          "start_epoch": "1793543456",
+          "end_epoch": "1793544130",
+          "elapsed_seconds": "674",
+          "binary_directory": "V:/tmp/ug8c/w/runner-session-548a4fc16c9e96c5a6ab63f766b1d49b/jobs/ckgit-lpac-ea3031a01da5098cc316f1771d02a0a2/work/tmp/b/bin"
+        },
+        "portable_executables_verified_x64": [
+          "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+        ],
+        "artifact_files": [
+          "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+          "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64.zip",
+          "dist/windows-build-inputs.sha256",
+          "dist/windows-build.txt",
+          "dist/windows-packages.sha256"
+        ]
+      },
+      "cleanup": "Dedicated fixture service, its copied private key and V:/tmp/ug8c workspace removed after success."
     }
   },
   "github_intermittent_failure": {
