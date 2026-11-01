@@ -1,6 +1,6 @@
 {
   "date": "2026-11-01",
-  "scope": "Windows portability acceptance in progress; original plan not complete",
+  "scope": "Windows portability acceptance: implementation and end-to-end CI verified; remaining qualification limits listed below",
   "commit": "9b63dafbc8f2a08c3d29c16abc372cd5845a1988",
   "github": {
     "run": 41305898555,
@@ -1605,6 +1605,75 @@
       "config_after": "f4d19eb9099fcb0146c9c43542590f971a225967f3fafd9884faa434056030dd"
     },
     "external_checks": "All three systemd units active; dashboard HTTP check passed; ckgit ci show returned the completed Linux+Windows parent and both artifacts; Windows service reconnected using protocol 2.",
-    "backup": "Verified state/configuration snapshot retained on rpi4 for recovery."
+    "backup": "Verified state/configuration snapshot retained on rpi4 for recovery.",
+    "post_update_ci": {
+      "parent": "00001793557445866050-3ae8fc5e",
+      "child": "00001793557445960625-1e305ae2",
+      "status": "success",
+      "execution": "Windows x64 LPAC, network denied",
+      "parent_active_after_226_seconds": {
+        "run_id": "00001793557445866050-3ae8fc5e",
+        "status": "running",
+        "display_status": "running",
+        "active": true,
+        "ref": "refs/heads/codex/windows-final-ci",
+        "commit": "250bdd6ab6963b9333f9955f94fc9d53d61613a5",
+        "started_epoch": 1793557443,
+        "finished_epoch": 0,
+        "heartbeat_epoch": 1793557659,
+        "duration_seconds": 229,
+        "completed_steps": 0
+      },
+      "verified_artifact": {
+        "run": "00001793557445960625-1e305ae2",
+        "bundle_sha256": "4e43d1ee21915bb337b014899750bfa430af959cdd01f228dec724fbadd9a096",
+        "bundle_bytes": 12119552,
+        "packages": {
+          "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+            "sha256": "cc5e3744a71003a3c177b2f06b1513cf71c0339ce9544154bb8a40be05832dc3",
+            "bytes": 2522989
+          },
+          "ckdocs-0.8.2-windows-x64-setup.exe": {
+            "sha256": "996832be030227712860a03e5bd84ac94a447be569ad01325c04501c49fdd437",
+            "bytes": 3224419
+          },
+          "ckgit-0.8.2-windows-x64-setup.exe": {
+            "sha256": "4010d42d051b42782e88bd21a503d27968aaf72cd212e6602e16ad43b56e8ceb",
+            "bytes": 3505882
+          },
+          "ckgit-0.8.2-windows-x64.zip": {
+            "sha256": "2e63313c28175b838b6abbe7cb3710e3b2faf6be705add1015acdd60e16a8dc9",
+            "bytes": 2828244
+          }
+        },
+        "source_files_verified_against_git": 303,
+        "build": {
+          "commit": "250bdd6ab6963b9333f9955f94fc9d53d61613a5",
+          "version": "0.8.2+g250bdd6ab696",
+          "configuration": "Release",
+          "generator": "Ninja",
+          "start_epoch": "1793557485",
+          "end_epoch": "1793557961",
+          "elapsed_seconds": "476",
+          "binary_directory": "V:/tmp/ckrun/runner-session-bd03f8dd14338c5b7bae0154283ba228/jobs/ckgit-lpac-e15536dfecbd6f5524130377d11f579e/work/tmp/b/bin"
+        },
+        "portable_executables_verified_x64": [
+          "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+        ],
+        "artifact_files": [
+          "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+          "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64.zip",
+          "dist/windows-build-inputs.sha256",
+          "dist/windows-build.txt",
+          "dist/windows-packages.sha256"
+        ]
+      },
+      "build_duration_review": "476 seconds compared with prior 529, 615 and 744 seconds; compiler log shows a fresh Ninja build, package checksums and 303 source hashes match, and all four x64 executable timestamps fall inside the build."
+    }
   }
 }
