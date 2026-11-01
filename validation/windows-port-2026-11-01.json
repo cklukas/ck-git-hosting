@@ -6,7 +6,12 @@
     "run": 41305898555,
     "windows_job": 124846087019,
     "windows_status": "success",
-    "other_jobs": "All nine jobs completed successfully"
+    "other_jobs": "All nine jobs completed successfully",
+    "later_complete_run": {
+      "run": 41317107817,
+      "commit": "8841a18567d5c9c2ef27498791b7a889eba1b611",
+      "result": "all nine jobs passed"
+    }
   },
   "artifact_manifest": {
     "run": 41305898555,
@@ -1057,5 +1062,126 @@
     "result": "failed",
     "observation": "control_socket integration: curl reported blank option argument; daemon log includes checkout metadata staging warning. Cause not yet established.",
     "later_comparison": "macOS arm64 job for run 41315057899 succeeded; this does not establish the cause."
+  },
+  "installed_24c1f20": {
+    "clients": {
+      "run": 41316174488,
+      "commit": "24c1f20",
+      "success": true,
+      "end": "2026-11-01T14:45:29.2928486Z",
+      "products": [
+        {
+          "version": "ckgit 0.8.2+g24c1f203d4f3",
+          "scope": "CURRENTUSER",
+          "sha256": "0FC224B4C153BC7789EAAE3FA6A1EBA08F8443140103148C374E0E9195DB61F6",
+          "product": "ckgit",
+          "installer_sha256": "A1A9E0DCE7F26B7132730FE4D41FBDF5AEC79A505A0C005DBB86466C77EE1BA6",
+          "previous_sha256": "8D36C2A859352B45829DA08C5EBA30BA5FF6D55A7755496E58BF713CD51EA21B",
+          "executable": "V:\\Programs\\ckgit\\ckgit.exe"
+        },
+        {
+          "version": "ckdocs 0.8.2+g24c1f203d4f3",
+          "scope": "CURRENTUSER",
+          "sha256": "12318D1B90A66C03F8CDD840011ADE161CA3DABD1639165B43FCCC88E4D2022E",
+          "product": "ckdocs",
+          "installer_sha256": "54D4D3AADAC1F43EE484CC536CAF01126D6B804FF36B77E97773BC7CD43689F1",
+          "previous_sha256": "0C9420B9143D218F96F08B827075D1B2F5E3DC4A7DA14B50EB6C0EE4CBB2868A",
+          "executable": "V:\\Programs\\ckdocs\\ckdocs.exe"
+        }
+      ],
+      "administrator": false
+    },
+    "runner": {
+      "run": 41316174488,
+      "commit": "24c1f20",
+      "success": true,
+      "end": "2026-11-01T14:45:33.8547623Z",
+      "products": [
+        {
+          "version": "ck-ci-runnerd 0.8.2+g24c1f203d4f3",
+          "scope": "ALLUSERS",
+          "sha256": "83793773359B91339916E00DDC17B9997D96B58DFD239E62AF17968F7989D725",
+          "product": "ck-git-runner",
+          "installer_sha256": "20E634B56FA3791AC13D2D81EE757FC9320C13ECCF8D709F862DF8FACBB2A976",
+          "previous_sha256": "38AB8A92E112D89FC91EEA5CF9537B3E8352A15BBF4FBFEEA299311FA34E118A",
+          "executable": "V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe"
+        }
+      ],
+      "administrator": true
+    },
+    "config_preservation": {
+      "config_sha256": "56B342E5EB704083AF2DD979F5B5A503B34F9C7084A523071CFFBC0DDE16AD23",
+      "utc": "2026-11-01T14:45:33.9651121Z",
+      "runner_config_unchanged": true
+    },
+    "final_ci": {
+      "parent": "00001793544399852138-e91650ec",
+      "child": "00001793544399965504-201aa3d6",
+      "commit": "4e79fbbce35e29c96b99ea9b902bf28b59254eec",
+      "status": "success",
+      "execution": {
+        "platform": "windows",
+        "architecture": "x64",
+        "isolation": "lpac",
+        "network": "denied",
+        "attempt": 1
+      },
+      "verified_artifact": {
+        "run": "00001793544399965504-201aa3d6",
+        "bundle_sha256": "8ff9b35a20d61c540c9b463a6b1f20dea4829fbb68513a606931e057de0d905a",
+        "bundle_bytes": 12119040,
+        "packages": {
+          "ck-git-runner-0.8.2-windows-x64-setup.exe": {
+            "sha256": "971cc869930361ded83533c8834da8b42822fdc68766e027d1ca1552f12faba9",
+            "bytes": 2523036
+          },
+          "ckdocs-0.8.2-windows-x64-setup.exe": {
+            "sha256": "6546ea65550ff751bb46f6d026e8bc613ace16575ca284a033577a3d7bd6ba44",
+            "bytes": 3224216
+          },
+          "ckgit-0.8.2-windows-x64-setup.exe": {
+            "sha256": "c20a502eb2a22a0350db92fec2dc818ca8fbf0e5c2c88b9b3abb958b2e4b8f62",
+            "bytes": 3505572
+          },
+          "ckgit-0.8.2-windows-x64.zip": {
+            "sha256": "4d154978b1b80eb90037859abd056f6c026eb31970960a7c7a9c99fea2caa06f",
+            "bytes": 2828244
+          }
+        },
+        "source_files_verified_against_git": 303,
+        "build": {
+          "commit": "4e79fbbce35e29c96b99ea9b902bf28b59254eec",
+          "version": "0.8.2+g4e79fbbce35e",
+          "configuration": "Release",
+          "generator": "Ninja",
+          "start_epoch": "1793544464",
+          "end_epoch": "1793545009",
+          "elapsed_seconds": "545",
+          "binary_directory": "V:/tmp/fu8c/w/runner-session-66067d19bbc1b3af588c767182af72c7/jobs/ckgit-lpac-a45d58150c23f7eaae08fa49bf064be2/work/tmp/b/bin"
+        },
+        "portable_executables_verified_x64": [
+          "ckgit-0.8.2-windows-x64/bin/ck-ci-runnerd.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckdocs.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit-job-launcher.exe",
+          "ckgit-0.8.2-windows-x64/bin/ckgit.exe"
+        ],
+        "artifact_files": [
+          "dist/ck-git-runner-0.8.2-windows-x64-setup.exe",
+          "dist/ckdocs-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64-setup.exe",
+          "dist/ckgit-0.8.2-windows-x64.zip",
+          "dist/windows-build-inputs.sha256",
+          "dist/windows-build.txt",
+          "dist/windows-packages.sha256"
+        ]
+      },
+      "cleanup": {
+        "workspace_removed": true,
+        "installed_runner_preserved": "83793773359B91339916E00DDC17B9997D96B58DFD239E62AF17968F7989D725",
+        "end": "2026-11-01T14:57:52.2835275Z",
+        "success": true,
+        "service_removed": true
+      }
+    }
   }
 }
