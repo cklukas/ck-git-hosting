@@ -13,4 +13,4 @@
 # Example: keep build products off a network-mounted source volume. Several
 # approved roots may be listed, separated by spaces; BUILD_DIR may then be
 # beneath any of them.
-#BUILD_ROOT := /Volumes/S8T/tmp /Volumes/PRO-BLADE/tmp
+#BUILD_ROOT := /path/to/build-volume-one /path/to/build-volume-two

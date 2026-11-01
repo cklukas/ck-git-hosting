@@ -42,7 +42,7 @@ site and preservation of user data. Closing the Windows console now gives
 the preview loop time to perform that cleanup.
 For manual current-user upgrade qualification, run the preview and installer
 from an ordinary non-elevated shell. `runas /trustlevel:0x20000` adds SAFER
-restrictions and is not equivalent: on the Windows workstation it prevented
+restrictions and is not equivalent: on the Windows test machine it prevented
 Restart Manager from querying processes, while the ordinary limited UAC token
 completed the running-preview upgrade and cleanup successfully.
 Windows installers are unsigned. Git for Windows and OpenSSH are external

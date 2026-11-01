@@ -1,16 +1,16 @@
 # Copy to a protected permanent configuration path and select your SSH identity.
-# The Windows workstation uses V: for all runner data and staged SDK files.
+# Example paths only; replace them with protected directories on your machine.
 schema_version=1
-server=ckgit@rpi4
+server=ckgit@main-host
 name=windows
-ci_build_root=V:/ProgramData/ckgit-runner/build
-ci_cache_root=V:/ProgramData/ckgit-runner/cache
-identity=V:/ProgramData/ckgit-runner/ssh/id_ed25519
-known_hosts=V:/ProgramData/ckgit-runner/ssh/known_hosts
+ci_build_root=C:/ci-example/ProgramData/ckgit-runner/build
+ci_cache_root=C:/ci-example/ProgramData/ckgit-runner/cache
+identity=C:/ci-example/ProgramData/ckgit-runner/ssh/id_ed25519
+known_hosts=C:/ci-example/ProgramData/ckgit-runner/ssh/known_hosts
 # Use Git for Windows' SSH client for redirected protocol streams.
 ssh_program=C:/Program Files/Git/usr/bin/ssh.exe
 ci_allow_network=false
-ci_toolchain_root=V:/ProgramData/ckgit-runner/toolchain
+ci_toolchain_root=C:/ci-example/ProgramData/ckgit-runner/toolchain
 ci_toolchain_paths=msvc/bin/Hostx64/x64;sdk/bin/x64;ninja;cmake/bin;inno
 ci_toolchain_env.INCLUDE=${TOOLS}/msvc/include;${TOOLS}/sdk/include/ucrt;${TOOLS}/sdk/include/shared;${TOOLS}/sdk/include/um;${TOOLS}/sdk/include/winrt
 ci_toolchain_env.LIB=${TOOLS}/msvc/lib/x64;${TOOLS}/sdk/lib/ucrt/x64;${TOOLS}/sdk/lib/um/x64

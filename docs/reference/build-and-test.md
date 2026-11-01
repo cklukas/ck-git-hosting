@@ -13,7 +13,7 @@ The version-2 workflow parser supports per-job `runs_on`, dependency lists
 queues distributed graphs, and the primary runner and protocol-2 gateway
 prepare only the assigned child. Protocol 1 cannot claim these children.
 The installed Windows runner has completed the native installer job against
-the Linux hosting server on rpi4. Full portability qualification remains in
+the Linux hosting server used in qualification. Full portability qualification remains in
 progress; automatic runner startup and broader client journeys are separate checks.
 
 The queue implementation stores parent/child membership and dependency IDs.
@@ -45,7 +45,7 @@ link the C++ runtime statically.
 
 Runner configuration parsing is shared across platforms and accepts UTF-8
 paths and LF or CRLF line endings. Windows build, cache and credential paths
-must be absolute; drive-relative paths such as `V:build` are rejected. Windows
+must be absolute; drive-relative paths such as `C:build` are rejected. Windows
 also rejects `ci_allow_degraded=true`: there is no unsandboxed fallback. Native
 configuration tests cover Unicode paths, spaces and these refusal cases. This
 configuration support is also used by the connected Windows runner.
@@ -78,7 +78,7 @@ real Git pack traffic through a local SSH stand-in that checks the exact job
 ID, token and protocol version. Configuration paths include spaces, Unicode
 and an apostrophe. The Windows shim inherits only standard I/O and keeps its
 SSH child in a kill-on-close Job Object. The connected AppContainer executor
-has built this repository's Windows installers from a live rpi4 assignment.
+has built this repository's Windows installers from a live hosting-server assignment.
 The remote result sink now also builds natively. Its local SSH fixture checks
 acknowledged log frames, artifact and Pages upload checksums, and the terminal
 report. Relay files live in a private temporary subdirectory that is removed
@@ -115,7 +115,7 @@ job runs `packaging/windows/build-ci.cmake` natively: it builds this repository
 with MSVC/Ninja, invokes Inno Setup for both clients and the runner, creates the portable ZIP,
 and places installer files plus input/output hashes in the `windows-installers`
 artifact. The Linux job remains the Pages producer. This workflow is the
-live rpi4-to-Windows acceptance case. On 2026-10-26, Windows child
+live Linux-to-Windows acceptance case. On 2026-10-26, Windows child
 `00001793018912592353-4e89d914` succeeded for commit
 `8dcf98e5cc33af8074b419b6f02cdf2086b8e363` inside the connected LPAC runner.
 Compilation and packaging took 576 seconds. The uploaded `windows-installers`
@@ -141,8 +141,8 @@ The installed Windows client downloaded it successfully without administrator
 rights, including to a destination containing spaces:
 
 ```powershell
-New-Item -ItemType Directory 'V:\tmp\YOUR-TASK\downloads'
-ckgit ci download 00001793536102902606-6753aea2 windows-installers --job windows-installers --project ck-git-hosting --into 'V:\tmp\YOUR-TASK\downloads'
+New-Item -ItemType Directory 'C:\ci-example\tmp\YOUR-TASK\downloads'
+ckgit ci download 00001793536102902606-6753aea2 windows-installers --job windows-installers --project ck-git-hosting --into 'C:\ci-example\tmp\YOUR-TASK\downloads'
 ```
 
 The Linux sibling was still running when this Windows result was recorded.
@@ -183,21 +183,21 @@ tagged release. Later runs have their own run IDs and retention deadlines.
 The Windows job in [GitHub run 40345259988](https://github.com/cklukas/ck-git-hosting/actions/runs/40345259988)
 built all three installers and the portable ZIP from commit `93f70771e500`,
 passed native tests, and tested both installer scopes. Those exact client
-installers were installed on the workstation on 2026-10-26 with a non-admin
-token in CurrentUser mode, under `V:\Programs\ckgit` and `V:\Programs\ckdocs`.
-The runner was installed with an administrator token in AllUsers mode under
-`V:\Programs\ck-git-runner`. Installed executable hashes matched the CI ZIP,
+installers were installed on the test machine on 2026-10-26 with a non-admin
+token in CurrentUser mode. The runner was installed with an administrator
+token in AllUsers mode. Installed executable hashes matched the CI ZIP,
 and the executables reported `0.8.2+g93f70771e500`. That installed runner then
-negotiated protocol 2 with rpi4 and completed the `d9b77de324f1` job above.
+negotiated protocol 2 with the test host and completed the `d9b77de324f1` job above.
 Its executable SHA-256 was
 `e5ffda77c668f0006848bfddd5c4e88356a57b61b0a2fe586a25c4961ecacea3`.
 
-On the development workstation, keep sources in a permanent directory on
-`V:` and select a unique temporary directory before running development tools:
+Keep sources in a permanent directory and select a unique temporary directory
+before running development tools. Set `$scratchBase` to a writable directory:
 
 ```powershell
-if (!(Test-Path V:\)) { throw 'Development drive V: is unavailable' }
-$scratch = Join-Path V:\tmp ('ckgit-' + [guid]::NewGuid())
+$scratchBase = Join-Path $env:LOCALAPPDATA 'ckgit-builds'
+New-Item -ItemType Directory -Force $scratchBase | Out-Null
+$scratch = Join-Path $scratchBase ('ckgit-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $env:TEMP = $scratch; $env:TMP = $scratch; $env:TMPDIR = $scratch
 cmake --preset windows-release
@@ -271,9 +271,8 @@ it bundles both executables. The portable ZIP also contains both tools.
 The reusable GitHub Windows workflow builds the ZIP and all three installers,
 runs native tests and checks both installer scopes, including every client
 component selection. Its callers include push CI and the
-release workflow. Hosted runners use their supplied `RUNNER_TEMP`; the `V:`
-policy above applies to the development workstation. Installers are currently
-unsigned.
+release workflow. Hosted runners use their supplied `RUNNER_TEMP`; other
+build hosts can select suitable temporary paths. Installers are currently unsigned.
 
 ### AppContainer qualification
 
@@ -282,7 +281,7 @@ CMake and NMake binaries. Pass the temporary parent, MSVC Hostx64/x64 directory,
 CMake directory and `kernel32.lib` path, in that order.
 It is separate from CTest because it creates Windows-managed
 AppContainer profiles in the user's profile directory. Job data, tools and
-temporary output stay beneath the explicit test directory on `V:`.
+temporary output stay beneath the explicit test directory.
 
 Each executing step gets a fresh noninteractive Window Station and desktop.
 An administrator broker can choose the station name; a standard-user broker
@@ -294,7 +293,7 @@ tools; they do not launch Explorer or show a graphical session.
 
 The native compiler/linker/test and CMake/NMake fixtures have passed with both
 an administrator token and an ordinary filtered UAC token. The latter was
-launched in the workstation's noninteractive test session; it does not qualify
+launched in the test machine's noninteractive session; it does not qualify
 every interactive or service logon configuration. Earlier SAFER-token tests
 used an additionally restricted token, not an ordinary UAC token.
 A full Ninja self-build also passed with the LOCAL-pipe patch and quoted tool
@@ -307,14 +306,14 @@ see [Windows runner](../operations/ci-remote-runners.md#windows-runner).
 For a small path-compatibility diagnostic without staging the compiler, run:
 
 ```powershell
-ckgit-lpac-probe.exe --path-diagnostics V:\tmp\YOUR-TASK
+ckgit-lpac-probe.exe --path-diagnostics C:\ci-example\tmp\YOUR-TASK
 ```
 
 Keep `ckgit-job-launcher.exe` beside the probe. This mode creates one disposable
 LPAC profile and workspace, stages only these two executables, and reports the
 results and Win32 error codes for file attributes, full/long path conversion,
 and directory changes. It does not grant access to workspace ancestors.
-On the workstation, querying attributes and changing into the job's own work
+On the test machine, querying attributes and changing into the job's own work
 directory succeeded, while `GetLongPathNameW` failed with error 5 (access denied).
 The ancestors outside the sandbox were inaccessible. Microsoft documents that
 [GetLongPathNameW may require access to parent directories](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getlongpathnamew),
@@ -359,7 +358,7 @@ approved roots separated by spaces, such as two scratch volumes; `BUILD_DIR`
 can then be beneath any of them:
 
 ```text
-BUILD_ROOT := /Volumes/S8T/tmp /Volumes/PRO-BLADE/tmp
+BUILD_ROOT := /path/to/build-volume-one /path/to/build-volume-two
 ```
 
 `ckgit --version` identifies the release version and Git revision, including

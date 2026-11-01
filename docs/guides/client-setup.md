@@ -15,8 +15,8 @@ ckgit doctor
 On a new computer, run `ckgit setup`, then `ckgit doctor`. Setup previews and
 saves a private configuration; it requires `--overwrite` before replacing an
 existing file. The device ID must match its paired SSH key. The Git account
-(`server=ckgit@rpi4`, for example) and ordinary dashboard SSH login
-(`web_host=rpi4`) are separate settings. Optional `web_port` defaults to 8420.
+(`server=ckgit@main-host`, for example) and ordinary dashboard SSH login
+(`web_host=main-host`) are separate settings. Optional `web_port` defaults to 8420.
 Setup and Doctor report the absolute Git and SSH executable paths, using the
 configured selections or PATH when no selection is configured. Doctor
 tests that Git executable, and uses that SSH executable for its connection tests.
@@ -37,8 +37,8 @@ The Windows default configuration is
 location, including when development data must stay on a dedicated drive:
 
 ```powershell
-ckgit setup --config V:\ckgit\client.ini --server ckgit@server --client-id workstation --web-host server --scan-root V:\projects
-ckgit doctor --config V:\ckgit\client.ini
+ckgit setup --config C:\ci-example\ckgit\client.ini --server ckgit@server --client-id windows-pc --web-host server --scan-root C:\ci-example\projects
+ckgit doctor --config C:\ci-example\ckgit\client.ini
 ```
 
 Windows configuration and checkout-selection files use UTF-8, absolute drive
@@ -51,8 +51,8 @@ For portable Git or a particular OpenSSH installation, select the executables
 explicitly (PowerShell example):
 
 ```powershell
-ckgit setup --config V:\ckgit\client.ini --overwrite --yes --git-program 'V:\Tools\PortableGit\cmd\git.exe' --ssh-program 'V:\Tools\PortableGit\usr\bin\ssh.exe'
-ckgit doctor --config V:\ckgit\client.ini
+ckgit setup --config C:\ci-example\ckgit\client.ini --overwrite --yes --git-program 'C:\ci-example\Tools\PortableGit\cmd\git.exe' --ssh-program 'C:\ci-example\Tools\PortableGit\usr\bin\ssh.exe'
+ckgit doctor --config C:\ci-example\ckgit\client.ini
 ```
 
 The optional `git_program` and `ssh_program` configuration values are absolute

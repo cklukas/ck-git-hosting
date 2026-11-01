@@ -119,7 +119,7 @@ When the same source is published to more than one host, override `site.url`
 for that build instead of changing its configuration:
 
 ```sh
-ckdocs build --site-url http://rpi4:8421/my-project/ --strict
+ckdocs build --site-url http://main-host:8421/my-project/ --strict
 ```
 
 The override applies to single sites and portals, and is also available for

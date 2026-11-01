@@ -228,7 +228,7 @@ with the `windows` label skips unlabelled work.
 
 ```yaml
 version: 1
-runs_on: [macos, arm64]   # or a single label: runs_on: uconsole
+runs_on: [macos, arm64]   # or a single label: runs_on: linux-builder
 jobs:
   - name: build
     steps:
@@ -239,7 +239,7 @@ A runner's labels are set on the server, never by the runner itself: the
 server's own runner has `ci_runner_labels` in `server.ini`, and an
 administrator gives a remote runner its labels with `ckgit-admin runner
 labels` (see [Labels](ci-remote-runners.md#labels)). Every runner's name
-also counts as a label, so `runs_on: uconsole` picks that one runner and
+also counts as a label, so `runs_on: linux-builder` picks that one runner and
 `runs_on: primary` the server's own.
 
 The labels are read from the pushed commit's workflow when the push queues

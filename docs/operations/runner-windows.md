@@ -23,11 +23,11 @@ roles of the main host and runners, including Linux installation.
   provisioning scripts. Tools must be staged in advance: jobs cannot download
   dependencies from the network.
 
-The examples use `V:\Programs\ck-git-runner`, `V:\ProgramData\ckgit-runner`
-and `V:\tmp\ckrun`. Replace these with suitable absolute paths on your own
-machine and keep the build path short. On the development workstation, use `V:`
-for development data and set `TEMP`, `TMP` and `TMPDIR` to a task directory on
-`V:` before running development tools. Replace `main-host`, `windows-builder`
+The examples use `C:\ci-example\Programs\ck-git-runner`, `C:\ci-example\ProgramData\ckgit-runner`
+and `C:\ci-example\tmp\ckrun`. Replace these with suitable absolute paths on your own
+machine, ensure the chosen locations are writable by the runner account, and
+keep the build path short. Set `TEMP`, `TMP` and `TMPDIR` to a suitable task
+directory before staging tools. Replace `main-host`, `windows-builder`
 and `myproject` consistently throughout this guide.
 
 ## 1. Install and prepare the runner on Windows
@@ -42,10 +42,10 @@ an unencrypted key for unattended service operation, and restrict access to it
 and its parent directory to the runner account and administrators:
 
 ```powershell
-$root = 'V:\ProgramData\ckgit-runner'
-New-Item -ItemType Directory -Force "$root\ssh", "$root\cache", "$root\logs", 'V:\tmp\ckrun' | Out-Null
+$root = 'C:\ci-example\ProgramData\ckgit-runner'
+New-Item -ItemType Directory -Force "$root\ssh", "$root\cache", "$root\logs", 'C:\ci-example\tmp\ckrun' | Out-Null
 & 'C:\Program Files\Git\usr\bin\ssh-keygen.exe' -t ed25519 -f "$root\ssh\id_ed25519" -C 'windows-builder'
-Copy-Item 'V:\Programs\ck-git-runner\runner.ini.example' "$root\runner.ini"
+Copy-Item 'C:\ci-example\Programs\ck-git-runner\runner.ini.example' "$root\runner.ini"
 ```
 
 When prompted, leave the passphrase empty for an unattended runner. Generate a
@@ -67,7 +67,7 @@ Edit `$root\runner.ini` and set `server=ckgit@main-host`,
 `name=windows-builder`, `identity`, `known_hosts`, `ci_build_root`,
 `ci_cache_root`, `ssh_program`, and the toolchain settings to the actual paths.
 The installed example shows their format. `ssh_program` in the example selects
-Git for Windows' SSH client. Set `ci_build_root=V:/tmp/ckrun` if using the
+Git for Windows' SSH client. Set `ci_build_root=C:/ci-example/tmp/ckrun` if using the
 paths above. Paths must be accessible to the account that will run the broker.
 
 ## 2. Register its public key on the main host
@@ -97,18 +97,18 @@ Ninja 1.13.2 source archive. From PowerShell, replace every placeholder below
 with an existing absolute path and set `$scripts` to that directory:
 
 ```powershell
-$scripts = 'V:\dev\ck-git-hosting\packaging\windows'
-$temp = 'V:\tmp\runner-toolchain-setup'
+$scripts = 'C:\ci-example\dev\ck-git-hosting\packaging\windows'
+$temp = 'C:\ci-example\tmp\runner-toolchain-setup'
 New-Item -ItemType Directory -Force $temp | Out-Null
 $env:TEMP = $temp; $env:TMP = $temp; $env:TMPDIR = $temp
-& "$scripts\build-lpac-ninja.ps1" -SourceArchive 'V:\downloads\ninja-1.13.2.tar.gz' `
-  -TemporaryRoot $temp -Destination 'V:\dev\runner-ninja-1.13.2' `
-  -CmakeProgram 'V:\tools\cmake\bin\cmake.exe'
+& "$scripts\build-lpac-ninja.ps1" -SourceArchive 'C:\ci-example\downloads\ninja-1.13.2.tar.gz' `
+  -TemporaryRoot $temp -Destination 'C:\ci-example\dev\runner-ninja-1.13.2' `
+  -CmakeProgram 'C:\ci-example\tools\cmake\bin\cmake.exe'
 & "$scripts\stage-toolchain.ps1" -TemporaryRoot $temp `
-  -Destination 'V:\ProgramData\ckgit-runner\toolchain' `
+  -Destination 'C:\ci-example\ProgramData\ckgit-runner\toolchain' `
   -MsvcRoot 'C:\path\to\MSVC\version' -SdkRoot 'C:\path\to\Windows Kits\10' `
-  -SdkVersion '10.0.x.y' -CmakeRoot 'V:\tools\cmake' `
-  -InnoRoot 'C:\path\to\Inno Setup 6' -NinjaRoot 'V:\dev\runner-ninja-1.13.2'
+  -SdkVersion '10.0.x.y' -CmakeRoot 'C:\ci-example\tools\cmake' `
+  -InnoRoot 'C:\path\to\Inno Setup 6' -NinjaRoot 'C:\ci-example\dev\runner-ninja-1.13.2'
 ```
 
 The paths above are examples, not installed defaults. Both destination
@@ -125,8 +125,8 @@ For a **CurrentUser console runner**, run these in the account and logon
 session that will own the runner:
 
 ```powershell
-$runner = 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe'
-$config = 'V:\ProgramData\ckgit-runner\runner.ini'
+$runner = 'C:\ci-example\Programs\ck-git-runner\ck-ci-runnerd.exe'
+$config = 'C:\ci-example\ProgramData\ckgit-runner\runner.ini'
 & $runner check --config $config
 & $runner serve --remote --config $config
 ```
@@ -139,10 +139,10 @@ it explicitly. Create the log directory first. The script creates a stopped,
 manual-start service using `NT SERVICE\ckgit-runner`:
 
 ```powershell
-& 'V:\Programs\ck-git-runner\register-service.ps1' `
-  -Runner 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' `
-  -Config 'V:\ProgramData\ckgit-runner\runner.ini' `
-  -Log 'V:\ProgramData\ckgit-runner\logs\service.log' -Name 'ckgit-runner'
+& 'C:\ci-example\Programs\ck-git-runner\register-service.ps1' `
+  -Runner 'C:\ci-example\Programs\ck-git-runner\ck-ci-runnerd.exe' `
+  -Config 'C:\ci-example\ProgramData\ckgit-runner\runner.ini' `
+  -Log 'C:\ci-example\ProgramData\ckgit-runner\logs\service.log' -Name 'ckgit-runner'
 ```
 
 Before starting it, grant that service identity read/execute access to the
@@ -160,14 +160,14 @@ review its existing permissions first; the last block replaces the key's ACL
 with only the service, local Administrators and SYSTEM:
 
 ```powershell
-$root = 'V:\ProgramData\ckgit-runner'
+$root = 'C:\ci-example\ProgramData\ckgit-runner'
 $name = 'ckgit-runner'
 $sid = (New-Object Security.Principal.NTAccount("NT SERVICE\$name")).Translate([Security.Principal.SecurityIdentifier])
 $inherit = 'ContainerInherit,ObjectInherit'
 $acl = Get-Acl $root
 $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'ReadAndExecute',$inherit,'None','Allow')))
 Set-Acl $root $acl
-foreach ($dir in @("$root\cache", "$root\logs", 'V:\tmp\ckrun', 'V:\tmp\ckrun-service-tmp')) {
+foreach ($dir in @("$root\cache", "$root\logs", 'C:\ci-example\tmp\ckrun', 'C:\ci-example\tmp\ckrun-service-tmp')) {
   New-Item -ItemType Directory -Force $dir | Out-Null
   $acl = Get-Acl $dir
   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Modify',$inherit,'None','Allow')))
@@ -182,7 +182,7 @@ foreach ($id in @($sid, (New-Object Security.Principal.SecurityIdentifier('S-1-5
 }
 Set-Acl $key $keyAcl
 New-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\$name" -Name Environment -PropertyType MultiString `
-  -Value @('TEMP=V:\tmp\ckrun-service-tmp','TMP=V:\tmp\ckrun-service-tmp','TMPDIR=V:\tmp\ckrun-service-tmp') -Force | Out-Null
+  -Value @('TEMP=C:\ci-example\tmp\ckrun-service-tmp','TMP=C:\ci-example\tmp\ckrun-service-tmp','TMPDIR=C:\ci-example\tmp\ckrun-service-tmp') -Force | Out-Null
 ```
 
 Ensure the service also has read/execute permissions on the installation and
@@ -193,7 +193,7 @@ and replace the paths if your configuration differs. Then:
 ```powershell
 Start-Service ckgit-runner
 Get-Service ckgit-runner
-Get-Content 'V:\ProgramData\ckgit-runner\logs\service.log' -Tail 30
+Get-Content 'C:\ci-example\ProgramData\ckgit-runner\logs\service.log' -Tail 30
 # After confirming it connects and can run jobs:
 Set-Service ckgit-runner -StartupType Automatic
 ```

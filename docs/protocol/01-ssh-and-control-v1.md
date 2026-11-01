@@ -414,7 +414,7 @@ key of its own class. Its forced command adds `--runner-config FILE` (the
 server configuration the gateway reads):
 
 ```text
-restrict,command="/usr/bin/ck-git-shell --client-id uconsole --repo-root /srv/ck-git-hosting/repos --control-socket /run/ck-git-hosting/control.sock --state-root /var/lib/ck-git-hosting/state --runner-config /etc/ck-git-hosting/server.ini" ssh-ed25519 AAAA... uconsole
+restrict,command="/usr/bin/ck-git-shell --client-id linux-builder --repo-root /srv/ck-git-hosting/repos --control-socket /run/ck-git-hosting/control.sock --state-root /var/lib/ck-git-hosting/state --runner-config /etc/ck-git-hosting/server.ini" ssh-ed25519 AAAA... linux-builder
 ```
 
 With it, `ck-git-shell` accepts **only** the runner protocol, versions 1 and 2, and
@@ -446,7 +446,7 @@ Push processing creates distributed graphs, and the gateway prepares one
 assigned child and collects the parent results at completion. Claim polling
 also retries interrupted parent publication. The production Windows runner
 and deployment qualification remain in progress; gateway integration tests
-are not yet the rpi4-to-Windows end-to-end qualification.
+are not yet the Linux-to-Windows end-to-end qualification.
 
 Tokens are unquoted `[A-Za-z0-9._-]`; a command is at most 1024 bytes and ten
 tokens. `wait-seconds` is a canonical decimal from 0 to 120; `job-id` is a CI

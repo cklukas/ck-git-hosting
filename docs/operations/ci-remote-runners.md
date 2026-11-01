@@ -180,15 +180,15 @@ the exact stop instant relative to an in-flight network request was not proven.
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the
-qualification workstation, Windows' built-in OpenSSH returned protocol replies
+qualification machine, Windows' built-in OpenSSH returned protocol replies
 but hung at exit with redirected streams; Git for Windows' SSH completed those
 same exchanges. Adjust `ssh_program` if Git is installed in another location.
 
-On the development workstation, install to `V:\Programs\ck-git-runner` and
-keep configuration, credentials and the staged toolchain beneath a protected
-permanent directory such as `V:\ProgramData\ckgit-runner`. Verify `V:` exists
-before invoking development tools. Select a unique `V:\tmp` directory and set
-`TEMP`, `TMP` and `TMPDIR` to it before staging tools.
+For example, install to `C:\ci-example\Programs\ck-git-runner` and keep
+configuration, credentials and staged tools beneath a protected permanent
+directory such as `C:\ci-example\ProgramData\ckgit-runner`. Choose locations
+appropriate for your machine. Select a temporary directory and set `TEMP`,
+`TMP` and `TMPDIR` to it before staging tools.
 
 `packaging/windows/build-lpac-ninja.ps1` builds the pinned Ninja 1.13.2 source
 archive offline, applying the `LOCAL` named-pipe namespace required by LPAC.
@@ -246,8 +246,8 @@ configuration before serving. The configuration, SSH key, toolchain and build
 directory must be accessible to that account:
 
 ```powershell
-& 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' check --config 'V:\ProgramData\ckgit-runner\runner.ini'
-& 'V:\Programs\ck-git-runner\ck-ci-runnerd.exe' serve --remote --config 'V:\ProgramData\ckgit-runner\runner.ini'
+& 'C:\ci-example\Programs\ck-git-runner\ck-ci-runnerd.exe' check --config 'C:\ci-example\ProgramData\ckgit-runner\runner.ini'
+& 'C:\ci-example\Programs\ck-git-runner\ck-ci-runnerd.exe' serve --remote --config 'C:\ci-example\ProgramData\ckgit-runner\runner.ini'
 ```
 
 `--once` drains available jobs and exits when the queue is empty. The build
@@ -337,7 +337,7 @@ as for the server's own runner — see
 
 ```text
 sudo apt install ./ck-git-runner_VERSION_ARCH.deb
-sudo ck-git-runner register --server ckgit@rpi4 --name uconsole
+sudo ck-git-runner register --server ckgit@main-host --name linux-builder
 ```
 
 The package adds the `ckgit-runner` account, its home `/var/lib/ck-git-runner`
@@ -349,7 +349,7 @@ commands that follow.
 On the server, admit the runner's key (it is printed by `register`):
 
 ```text
-sudo -u ckgit ckgit-admin runner add uconsole --public-key uconsole.pub \
+sudo -u ckgit ckgit-admin runner add linux-builder --public-key linux-builder.pub \
   --config /etc/ck-git-hosting/server.ini | sudo tee -a /etc/ck-git-hosting/authorized_keys
 ```
 
@@ -364,8 +364,8 @@ journalctl -u ck-git-runner.service -f
 
 ```text
 schema_version=1
-server=ckgit@rpi4                 # the server's SSH destination
-name=uconsole                     # the runner's name (its key's client id)
+server=ckgit@main-host                 # the server's SSH destination
+name=linux-builder                     # the runner's name (its key's client id)
 ci_build_root=/var/lib/ck-git-runner/ci-build
 identity=/var/lib/ck-git-runner/.ssh/id_ed25519
 known_hosts=/var/lib/ck-git-runner/.ssh/known_hosts
@@ -395,9 +395,9 @@ In the server's `server.ini`:
 
 ```text
 sudo -u ckgit ckgit-admin runner list --config /etc/ck-git-hosting/server.ini
-sudo -u ckgit ckgit-admin runner disable uconsole --config /etc/ck-git-hosting/server.ini
-sudo -u ckgit ckgit-admin runner enable uconsole --config /etc/ck-git-hosting/server.ini
-sudo -u ckgit ckgit-admin runner remove uconsole --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner disable linux-builder --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner enable linux-builder --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner remove linux-builder --config /etc/ck-git-hosting/server.ini
 ```
 
 `disable` drains a runner: it finishes its current job but claims no new one.
@@ -413,7 +413,7 @@ server:
 
 ```text
 sudo -u ckgit ckgit-admin runner labels mac-mini macos,arm64 --config /etc/ck-git-hosting/server.ini
-sudo -u ckgit ckgit-admin runner labels uconsole - --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner labels linux-builder - --config /etc/ck-git-hosting/server.ini
 ```
 
 The first command sets a runner's labels, and `-` removes them all. `runner
