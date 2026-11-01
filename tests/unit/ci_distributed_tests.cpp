@@ -1144,6 +1144,17 @@ void testGatewayDistributedRelease() {
           linux->prepared.workflow.jobs.size() == 1 && linux->prepared.workflow.jobs[0].name == "linux" &&
           windows->prepared.workflow.jobs.size() == 1 && windows->prepared.workflow.jobs[0].name == "windows",
           "gateway assigns different children of the same push to matching runners");
+  auto stale_parent = *ckgit::loadCiRun(fixture.state, "demo", parent.job_id);
+  stale_parent.status = ckgit::CiRunStatus::Running;
+  stale_parent.heartbeat_epoch_seconds = 1;
+  ckgit::writeCiRunRecord(fixture.state, stale_parent);
+  const auto stream_tail = linux->prepared.job.job_id + " " + linux->token;
+  gateway(config, "linux-worker", "ckgit-runner 2 stream " + stream_tail, "heartbeat\n", fixture);
+  const auto refreshed_parent = ckgit::loadCiRun(fixture.state, "demo", parent.job_id);
+  const auto refreshed_child = ckgit::loadCiRun(fixture.state, "demo", linux->prepared.job.job_id);
+  require(refreshed_parent && refreshed_child && refreshed_parent->heartbeat_epoch_seconds >= refreshed_child->heartbeat_epoch_seconds &&
+              refreshed_parent->heartbeat_epoch_seconds > 1,
+          "live child stream refreshes the distributed parent heartbeat");
   const auto finish = [&](const ckgit::CiRemoteJob& remote, const std::string& runner, const std::string& name) {
     const auto tail = remote.prepared.job.job_id + " " + remote.token;
     const auto bytes = runner + "-output";

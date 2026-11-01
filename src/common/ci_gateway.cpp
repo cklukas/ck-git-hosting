@@ -430,6 +430,13 @@ class StreamSession {
     last_write_ = now;
     record_.heartbeat_epoch_seconds = now;
     writeCiRunRecord(state_, record_);
+    // A distributed parent has no runner of its own. Refresh its aggregate
+    // from child heartbeats while long-running jobs are streaming, even if no
+    // new queue claim or completion happens for longer than the stale limit.
+    if (!job_.parent_run_id.empty() && (last_parent_refresh_ == 0 || now - last_parent_refresh_ >= 30)) {
+      refreshCiWorkflowGroups(state_);
+      last_parent_refresh_ = now;
+    }
   }
 
   void appendLog(std::size_t index, std::uint64_t offset, std::string_view bytes) {
@@ -537,6 +544,7 @@ class StreamSession {
   CiRunRecord record_;
   std::uint64_t max_log_ = 0;
   std::uint64_t last_write_ = 0;
+  std::uint64_t last_parent_refresh_ = 0;
   std::uint64_t last_seen_note_ = 0;
   bool cancel_sent_ = false;
 };
