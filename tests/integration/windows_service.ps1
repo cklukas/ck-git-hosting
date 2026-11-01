@@ -71,6 +71,12 @@ $registered=$false
 $r=@{success=$false;start=[DateTime]::UtcNow.ToString('o');runner_sha256=(Get-FileHash "$root\bin\ck-ci-runnerd.exe").Hash}
 try {
  $command='"'+$root+'\bin\ck-ci-runnerd.exe" service --config "'+$root+'\runner.ini" --log "'+$root+'\logs\service.log" --service-name '+$name
+ foreach ($invalid in @('V:relative.exe','\relative.exe','relative.exe')) {
+  $rejected=$false
+  try { & $RegisterScript -Runner $invalid -Config "$root\runner.ini" -Log "$root\logs\service.log" -Name $name }
+  catch { if ($_.ToString() -match 'Paths must be absolute') { $rejected=$true } else { throw } }
+  if (!$rejected -or (Get-Service -Name $name -ErrorAction SilentlyContinue)) { throw 'Invalid path was accepted' }
+ }
  & $RegisterScript -Runner "$root\bin\ck-ci-runnerd.exe" -Config "$root\runner.ini" -Log "$root\logs\service.log" -Name $name
  $registered=$true
  $handle=[CkgitServiceFixture]::Open($name)

@@ -569,6 +569,53 @@
       "end": "2026-11-01T13:36:27.4406337Z"
     },
     "qualification": "Isolated SCM registration using shipped script, normal stop, worker/supervisor crash recovery; isolated installer AppId installed and uninstalled in CurrentUser mode.",
-    "limitations": "ACL provisioning remains manual; no full compiler job or active-job installer upgrade under service tested. The fixture runner executable predates the latest checksum change."
+    "limitations": "ACL provisioning remains manual; no full compiler job or active-job installer upgrade under service tested. The fixture runner executable predates the latest checksum change.",
+    "production_preflight": {
+      "result": "Existing production configuration, build root and cache inherit an Administrators/SYSTEM-only ACL; the executable directory grants users read/execute. The existing toolchain has a separate ACL. No production ACL or service state was modified.",
+      "implication": "A dedicated virtual service account needs explicitly provisioned access before a real compiler job; do not start it against the existing protected configuration as-is."
+    },
+    "path_validation_test": {
+      "result": {
+        "runner_sha256": "77D2BAB4AD0174EEB9D70465AB0D105A026E88C0BB4A40D1E86F8715435FC0AE",
+        "end": "2026-11-01T13:40:45.5065622Z",
+        "cycles": [
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-1655491834-902703160-2182676331-454793875-2774483477",
+            "stop_seconds": 0.2578762,
+            "host_pid": 89424,
+            "mode": "normal",
+            "worker_pid": 82564
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-1655491834-902703160-2182676331-454793875-2774483477",
+            "stop_seconds": 0.3310454,
+            "host_pid": 84980,
+            "mode": "worker-crash",
+            "worker_pid": 88084
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-1655491834-902703160-2182676331-454793875-2774483477",
+            "stop_seconds": 0.3088313,
+            "host_pid": 86100,
+            "mode": "supervisor-crash",
+            "worker_pid": 88976
+          },
+          {
+            "remaining_processes": 0,
+            "worker_sid": "S-1-5-80-1655491834-902703160-2182676331-454793875-2774483477",
+            "stop_seconds": 0.25917409999999996,
+            "host_pid": 82284,
+            "mode": "normal",
+            "worker_pid": 69904
+          }
+        ],
+        "success": true,
+        "start": "2026-11-01T13:40:29.2654395Z"
+      },
+      "coverage": "The integrated Windows service test rejects drive-relative, rooted-relative and relative executable paths before registration, then exercises normal stop and worker/supervisor crash recovery."
+    }
   }
 }
