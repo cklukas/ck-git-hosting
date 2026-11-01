@@ -74,6 +74,7 @@ std::filesystem::path RemoteCiSink::relayPath(std::size_t index) const {
 }
 
 bool RemoteCiSink::connect() {
+  if (stopping()) return false;
   last_connect_attempt_ = std::chrono::steady_clock::now();
   CiRunnerCommand command;
   command.op = CiRunnerOp::kStream;
@@ -88,7 +89,7 @@ bool RemoteCiSink::connect() {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   std::string buffer;
   bool ready = false;
-  while (!ready && std::chrono::steady_clock::now() < deadline) {
+  while (!ready && !stopping() && std::chrono::steady_clock::now() < deadline) {
     char chunk[4096];
     const auto received = session_->read(chunk, sizeof(chunk));
     if (received < 0) break;
@@ -332,7 +333,19 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
   std::uint64_t offset = 0;
   unsigned failures = 0;
   auto last_progress = std::chrono::steady_clock::now();
+  // Keep the live stream responsive while a separate upload request waits.
+  // Do not reconnect here: a silent greeting must not delay cancellation of
+  // the in-flight transport request.
+  const auto keep_uploading = [this] {
+    readReplies();
+    maybeHeartbeat(false);
+    return !cancelRequested() && !leaseLost();
+  };
+  const auto require_upload = [&] {
+    if (!keep_uploading()) throw std::runtime_error("runner upload interrupted");
+  };
   do {
+    require_upload();
     const std::size_t length =
         static_cast<std::size_t>(std::min<std::uint64_t>(total - offset, kMaximumCiUploadChunkBytes));
     std::string chunk(length, '\0');
@@ -340,7 +353,8 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
     in.read(chunk.data(), static_cast<std::streamsize>(length));
     if (static_cast<std::size_t>(in.gcount()) != length) throw std::runtime_error("could not read runner upload payload");
     command.offset = offset;
-    const CiRemoteTransport::Result result = transport_.run(command, chunk, std::chrono::seconds(300));
+    const CiRemoteTransport::Result result = transport_.run(command, chunk, std::chrono::seconds(300), keep_uploading);
+    require_upload();
     const std::string reply = firstLine(result.output);
     if (result.exit_code == 0 && reply.rfind("ok ", 0) == 0) {
       offset = parseCount(reply.substr(3));
@@ -353,9 +367,16 @@ void RemoteCiSink::upload(const std::string& kind, const std::string& name, cons
     } else {
       // A dropped connection: wait, then resume from whatever the main host
       // holds (an offset-0 retry of the same upload is answered with it).
-      std::this_thread::sleep_for(std::chrono::seconds(1u << std::min(failures, 5u)));
+      const auto retry_at = std::chrono::steady_clock::now() +
+          std::chrono::seconds(1u << std::min(failures, 5u));
+      while (std::chrono::steady_clock::now() < retry_at) {
+        require_upload();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+      require_upload();
       command.offset = 0;
-      const CiRemoteTransport::Result probe = transport_.run(command, {}, std::chrono::seconds(60));
+      const CiRemoteTransport::Result probe = transport_.run(command, {}, std::chrono::seconds(60), keep_uploading);
+      require_upload();
       const std::string probe_reply = firstLine(probe.output);
       if (probe.exit_code == 0 && probe_reply.rfind("ok ", 0) == 0) offset = parseCount(probe_reply.substr(3));
     }

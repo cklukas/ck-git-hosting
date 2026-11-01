@@ -425,6 +425,28 @@ int run(const std::vector<std::string>& args) {
         require(sink.finish(record).status == ckgit::CiRunStatus::Success, "native sink commits logs and declared outputs");
       }
       require(std::filesystem::is_empty(root / "relay"), "native sink removes private relay staging");
+      for (const bool greeting : {true, false}) {
+        ckgit::CiRemoteJob job;
+        job.prepared.job.job_id = "waiting-transport";
+        job.token = std::string(32, 'b');
+        const auto began = std::chrono::steady_clock::now();
+        ckgit::RemoteCiSink sink(transport, job, root / "relay", [&] {
+          return std::chrono::steady_clock::now() - began >= std::chrono::milliseconds(200);
+        });
+        if (greeting) {
+          ckgit::CiRunRecord record;
+          record.started_epoch_seconds = 1;
+          sink.runStarted(record);
+        } else {
+          ckgit::CiArtifact artifact;
+          artifact.name = "build";
+          const auto interrupted = sink.putArtifact(artifact, file, {}, false);
+          require(interrupted.bytes == 0 && interrupted.note == "runner upload interrupted",
+              "stopped upload is not reported as a successful artifact");
+        }
+        require(std::chrono::steady_clock::now() - began < std::chrono::seconds(3),
+            "shutdown interrupts silent stream greeting and artifact upload promptly");
+      }
     }
     ckgit::ProcessOptions options;
     options.input_file = file;

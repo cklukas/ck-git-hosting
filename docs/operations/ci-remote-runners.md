@@ -94,6 +94,12 @@ SSH negotiation or pending claim, stops that SSH process and removes the
 session workspace. Installer upgrades of this idle state are checked in both
 installation scopes. Upgrading during an active build or artifact upload is
 not yet qualified; wait for the job to finish before upgrading.
+The transport now interrupts a silent stream greeting or an in-flight artifact
+upload when the broker receives a stop request. Upload retry delays also check
+for shutdown, cancellation and lease loss, and interrupted bytes are not
+declared as a successful artifact. Native process tests cover silent greetings
+and uploads. This does not yet qualify shutdown during final result reporting
+or the complete active-job installer-upgrade sequence.
 Use a dedicated runner identity with the
 server's restricted runner key, and pin the server's host key in `known_hosts`.
 The example selects Git for Windows' `usr/bin/ssh.exe` explicitly. On the

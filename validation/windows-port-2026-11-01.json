@@ -232,5 +232,36 @@
     "windows_process_regression": "passed with current rebuilt console helper",
     "documentation": "strict build passed:67 pages,2 sites,56 assets,26 redirects",
     "diff": "git diff --check passed"
+  },
+  "upload_shutdown": {
+    "mac": {
+      "start": "2026-11-01T12:49:24.020366+00:00",
+      "inputs": {
+        "src/common/ci_remote.cpp": "f8506c9d1a5c6d084e0154c61a86968eec151a182d5bcc17c04514af0637f55e",
+        "tests/platform/process_tests.cpp": "86d216c845b2d008139b6dd71581e3d8e3362ee2513dd463035d73a6176f7f9e"
+      },
+      "target": "ckgit-process-tests",
+      "configuration": "existing CMake build",
+      "output": "/Volumes/S8T/tmp/ckgit-windows-20261026-01/build/bin/ckgit-process-tests",
+      "baseline": "Prior comparable process-helper incremental rebuilds14.626/19.219seconds on Windows; no comparable Mac target-only baseline established.",
+      "exit": 0,
+      "seconds": 2.6084510830005456,
+      "end": "2026-11-01T12:49:26.629217+00:00",
+      "output_sha256": "b4320c993f8e431b6f4d8ed81a47000fceebdc055f741ecc4815605f903dfe86",
+      "test_exit": 0
+    },
+    "windows": {
+      "start": "2026-11-01T12:49:51.4186033Z",
+      "baseline": "Prior broad header changes115.671s; two Windows TUs+relink12.812s. Inspect actual dependent compilation.",
+      "seconds": 24.1477444,
+      "exit": 0,
+      "source_archive_sha256": "50EA4899C6D618EC9C0FCA8E33743012EDD2043D0A8AC754EE9FD6337EA3596F",
+      "helper_sha256": "3EB5F8546CC2C08EBA7A051936A6A48C305F67CEA8A3DA13C51F2401B7ED4B9D",
+      "target": "ckgit-process-tests Release",
+      "end": "2026-11-01T12:50:15.5628330Z"
+    },
+    "windows_tests": "process and portable protocol tests passed; tool exit0",
+    "coverage": "silent stream greeting and in-flight artifact upload stop within3seconds; successful log/artifact/pages/finish regression passes",
+    "remaining": "finish-report requests, log-drain wait, abandon request, payload hashing and whole active-job upgrade qualification"
   }
 }
