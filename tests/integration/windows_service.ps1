@@ -67,10 +67,12 @@ ci_toolchain_root=$root\tools
 ci_toolchain_paths=bin
 "@ | ForEach-Object { [IO.File]::WriteAllText("$root\runner.ini", $_, (New-Object Text.UTF8Encoding($false))) }
 $handle=[IntPtr]::Zero
+$registered=$false
 $r=@{success=$false;start=[DateTime]::UtcNow.ToString('o');runner_sha256=(Get-FileHash "$root\bin\ck-ci-runnerd.exe").Hash}
 try {
  $command='"'+$root+'\bin\ck-ci-runnerd.exe" service --config "'+$root+'\runner.ini" --log "'+$root+'\logs\service.log" --service-name '+$name
  & $RegisterScript -Runner "$root\bin\ck-ci-runnerd.exe" -Config "$root\runner.ini" -Log "$root\logs\service.log" -Name $name
+ $registered=$true
  $handle=[CkgitServiceFixture]::Open($name)
  $sid=(New-Object Security.Principal.NTAccount("NT SERVICE\$name")).Translate([Security.Principal.SecurityIdentifier])
  $acl=New-Object Security.AccessControl.DirectorySecurity
@@ -143,6 +145,14 @@ finally {
   if($svc -and $svc.Status -ne 'Stopped'){Stop-Service -Name $name -ErrorAction Continue;$svc.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(15))}
   if($svc){$svc.Dispose()}
   [CkgitServiceFixture]::Delete($handle)
+ } elseif ($registered) {
+  # Registration succeeded but opening the delete handle failed. Only remove
+  # the service if it is still the exact stopped fixture we created.
+  $created=Get-CimInstance Win32_Service -Filter "Name='$name'"
+  if (!$created -or $created.State -ne 'Stopped' -or $created.PathName -ne $command -or
+      $created.StartName -ne "NT SERVICE\$name") { throw 'Refusing unexpected fixture cleanup' }
+  & sc.exe delete $name | Out-Null
+  if ($LASTEXITCODE) { throw 'Could not remove fixture service' }
  }
  $r.end=[DateTime]::UtcNow.ToString('o')
  $r | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $TestRoot ($name+'.json'))
