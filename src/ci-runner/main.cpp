@@ -398,8 +398,9 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
   const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(config_path);
   const bool vm_active = config.macos_vm_base.has_value();
 #ifdef __APPLE__
-  if (!config.macos_native_socket && !vm_active) {
-    std::cerr << "ck-ci-runnerd: configure a native macOS supervisor or a macOS VM before running jobs\n";
+  if (!config.macos_native_socket && !vm_active && !config.allow_degraded) {
+    std::cerr << "ck-ci-runnerd: configure a native macOS supervisor or a macOS VM before running jobs "
+                 "(or explicitly set ci_allow_degraded=true)\n";
     return 1;
   }
   struct BrokerLock { int fd = -1; ~BrokerLock() { if (fd >= 0) ::close(fd); } } broker_lock;
@@ -412,7 +413,7 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
     if (broker_lock.fd < 0 || ::fstat(broker_lock.fd,&lock_info)!=0 || !S_ISREG(lock_info.st_mode) ||
         lock_info.st_uid!=::geteuid() || lock_info.st_nlink!=1 || ::flock(broker_lock.fd,LOCK_EX|LOCK_NB)!=0)
       throw std::runtime_error("native runner is already active or its broker lock is unavailable");
-  } else {
+  } else if (vm_active) {
     ckgit::validateMacosVmStorage(*config.macos_vm_base, *config.macos_vm_work_root, config.macos_vm_min_free_gib);
     validateVmBuildRoot(config.build_root, *config.macos_vm_base, *config.macos_vm_work_root);
     vm_lock = std::make_unique<ckgit::MacosVmRunnerLock>(*config.macos_vm_work_root);
