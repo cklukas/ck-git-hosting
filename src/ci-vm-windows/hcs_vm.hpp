@@ -13,6 +13,8 @@ struct HcsCiVmOptions {
  std::string id;
  std::filesystem::path os_disk,work_disk,tools_disk;
  unsigned memory_mb=8192,processors=4;
+ // Only disposable per-job disk files may receive the VM-specific ACL.
+ bool grant_private_disk_access=false;
 };
 // Only a typed offline CI topology is admitted: three disks and one private
 // Hyper-V socket service. No caller JSON, NIC, share or redirected devices.

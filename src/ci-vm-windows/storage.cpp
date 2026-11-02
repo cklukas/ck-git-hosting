@@ -57,8 +57,8 @@ HcsCiVmOptions WindowsVmImages::createWorkspace(const fs::path& parent)const{
  // Flush a fixed owner record before any VM creation. The exact same GUID is
  // supplied to HCS; a successor proves its absence before deleting this root.
  writePrivateWindowsFile(root/L"vm-owner.txt","ckgit-windows-hcs-v1\n"+id+"\n",false,false);
- HcsCiVmOptions result;result.id=id;result.memory_mb=state_->memory;result.processors=state_->processors;result.os_disk=root/L"os.vhdx";result.work_disk=root/L"work.vhdx";result.tools_disk=state_->paths[2];
- try{difference(state_->paths[0],result.os_disk);difference(state_->paths[1],result.work_disk);}catch(...){cleanup(root,id);throw;}return result;
+ HcsCiVmOptions result;result.id=id;result.memory_mb=state_->memory;result.processors=state_->processors;result.os_disk=root/L"os.vhdx";result.work_disk=root/L"work.vhdx";result.tools_disk=root/L"sdk.vhdx";result.grant_private_disk_access=true;
+ try{difference(state_->paths[0],result.os_disk);difference(state_->paths[1],result.work_disk);difference(state_->paths[2],result.tools_disk);}catch(...){cleanup(root,id);throw;}return result;
 }
 void WindowsVmImages::cleanup(const fs::path& root,const std::string& id){
  if(readOwner(root)!=id || !HcsCiVm::confirmedAbsent(id))throw std::runtime_error("VM workspace stop/ownership unconfirmed; retained and runner quarantined");

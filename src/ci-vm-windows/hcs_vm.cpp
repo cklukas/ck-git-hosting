@@ -67,6 +67,18 @@ struct HcsCiVm::State {
   if(options){if(!validId(options->id))throw std::runtime_error("broker must supply a journaled fresh VM GUID");id=options->id;}
   auto config=utf8ToWide(configuration(options));auto identity=utf8ToWide(id);
   {Operation op;op.finish(HcsCreateComputeSystem(identity.c_str(),config.c_str(),op.value,nullptr,&system),keep);}
+  if(options && options->grant_private_disk_access){
+   const auto root=options->os_disk.parent_path();
+   if(root.filename()!=pathFromUtf8("ckgit-vm-"+id) || options->os_disk!=root/L"os.vhdx" ||
+      options->work_disk!=root/L"work.vhdx" || options->tools_disk!=root/L"sdk.vhdx")
+    throw std::runtime_error("VM ACL grants require the exact disposable three-disk workspace");
+   // Hyper-V uses a separate VM account to open attachments. The broker's
+   // own access does not admit that account. Never change the sealed parents.
+   for(const auto& path:std::array<fs::path,3>{options->os_disk,options->work_disk,options->tools_disk}){
+    const auto access=HcsGrantVmAccess(identity.c_str(),path.c_str());
+    if(FAILED(access))throw std::runtime_error("cannot grant private VM disk access: "+std::to_string(static_cast<unsigned long>(access)));
+   }
+  }
   {Operation op;op.finish(HcsStartComputeSystem(system,op.value,nullptr),keep,std::chrono::seconds(options?120:30));}
   Operation query;auto properties=query.finish(HcsGetComputeSystemProperties(system,query.value,L"{\"PropertyTypes\":[\"TerminateOnLastHandleClosed\"]}"),keep);
   if(!std::regex_search(properties,std::wregex(L"\"TerminateOnLastHandleClosed\"\\s*:\\s*true")))throw std::runtime_error("HCS did not attest kill-on-owner-close");
