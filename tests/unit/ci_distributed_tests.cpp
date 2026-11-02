@@ -1036,7 +1036,9 @@ void testProtocolRoundTrips() {
   require(parsed.execution == report.execution, "execution properties survive the finish protocol");
   require(throws([&]() { ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report) +
       "execution=1,windows,x64,lpac,denied,4294967296,64,1800\n"); }), "duplicate execution report rejected");
-  for (const std::string bad : {"2,windows,x64,lpac,denied,0,0,0", "1,linux,x64,lpac,denied,0,0,0",
+  const auto hcs = ckgit::parseCiExecutionReport("1,windows,x64,hyperv-hcs,denied,8589934592,0,7200");
+  require(hcs.isolation == "hyperv-hcs" && ckgit::formatCiExecutionReport(hcs) == "1,windows,x64,hyperv-hcs,denied,8589934592,0,7200", "HCS execution report round trip");
+  for (const std::string bad : {"2,windows,x64,lpac,denied,0,0,0", "1,linux,x64,lpac,denied,0,0,0", "1,macos,arm64,hyperv-hcs,denied,0,0,0", "1,linux,x64,hyperv-hcs,denied,0,0,0",
       "1,windows,x64,lpac,domains-only,0,0,0", "1,windows,x64,lpac,denied,-1,0,0",
       "1,windows,x64,lpac,denied,0,4294967296,0", "1,windows,x64,lpac,denied,0,0,0,extra"})
     require(throws([&]() { ckgit::parseCiExecutionReport(bad); }), "malformed execution report rejected");
