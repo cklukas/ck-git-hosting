@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#include <cwctype>
 namespace {
 namespace fs=std::filesystem;
 std::atomic_bool stopped=false;
@@ -29,7 +30,22 @@ void manageVolumes(){HANDLE token=nullptr;if(!OpenProcessToken(GetCurrentProcess
 struct Volume{std::wstring path;DWORD flags=0;};
 Volume findVolume(const wchar_t* label){wchar_t name[1024]{};HANDLE search=FindFirstVolumeW(name,1024);if(search==INVALID_HANDLE_VALUE)throw std::runtime_error("cannot enumerate guest volumes");Volume found;try{do{wchar_t actual[256]{},filesystem[256]{};DWORD flags=0;if(GetVolumeInformationW(name,actual,256,nullptr,nullptr,&flags,filesystem,256) && _wcsicmp(actual,label)==0){if(!found.path.empty() || _wcsicmp(filesystem,L"NTFS"))throw std::runtime_error("ambiguous or unsupported guest disk role");found={name,flags};}}while(FindNextVolumeW(search,name,1024));FindVolumeClose(search);return found;}catch(...){FindVolumeClose(search);throw;}}
 std::wstring volumeAt(const wchar_t* path){wchar_t volume[1024]{};if(!GetVolumeNameForVolumeMountPointW(path,volume,1024))return {};return volume;}
-void mount(const wchar_t* path,const Volume& volume){auto previous=volumeAt(path);if(!previous.empty()){if(_wcsicmp(previous.c_str(),volume.path.c_str()))throw std::runtime_error("guest development mount already has another volume");return;}if(!SetVolumeMountPointW(path,volume.path.c_str())){const auto error=GetLastError();startup_error=error;throw std::runtime_error("cannot mount guest disk role at "+ckgit::wideToUtf8(path)+": Win32 "+std::to_string(error));}}
+// Windows permits one drive letter per volume. Fresh data disks can receive
+// a letter automatically before the service starts; move only this verified
+// development volume, never the system volume or an unrelated target.
+void releaseOtherDriveLetters(const wchar_t* target,const Volume& volume){
+ if(wcslen(target)!=3 || target[1]!=L':' || target[2]!=L'\\')return;
+ wchar_t system[MAX_PATH]{};if(!GetWindowsDirectoryW(system,MAX_PATH))throw std::runtime_error("cannot identify guest system drive");
+ DWORD size=0;GetVolumePathNamesForVolumeNameW(volume.path.c_str(),nullptr,0,&size);
+ if(!size || size>65536)throw std::runtime_error("cannot size guest development volume mount paths");
+ std::vector<wchar_t> paths(size);if(!GetVolumePathNamesForVolumeNameW(volume.path.c_str(),paths.data(),size,&size))throw std::runtime_error("cannot inspect guest development volume mount paths");
+ for(const wchar_t* p=paths.data();*p;p+=wcslen(p)+1){
+  if(wcslen(p)!=3 || p[1]!=L':' || p[2]!=L'\\' || !_wcsicmp(p,target))continue;
+  if(towupper(p[0])==towupper(system[0]) || _wcsicmp(volumeAt(p).c_str(),volume.path.c_str()))throw std::runtime_error("refuse to reassign an unexpected guest volume");
+  if(!DeleteVolumeMountPointW(p))throw std::runtime_error("cannot release guest development drive letter: Win32 "+std::to_string(GetLastError()));
+ }
+}
+void mount(const wchar_t* path,const Volume& volume){auto previous=volumeAt(path);if(!previous.empty()){if(_wcsicmp(previous.c_str(),volume.path.c_str()))throw std::runtime_error("guest development mount already has another volume");return;}releaseOtherDriveLetters(path,volume);if(!SetVolumeMountPointW(path,volume.path.c_str())){const auto error=GetLastError();startup_error=error;throw std::runtime_error("cannot mount guest disk role at "+ckgit::wideToUtf8(path)+": Win32 "+std::to_string(error));}}
 void prepareVolumes(){DWORD optIn=1,bytes=sizeof(optIn);if(RegGetValueW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Policies\\Microsoft\\VisualStudio\\SQM",L"OptIn",RRF_RT_REG_DWORD,nullptr,&optIn,&bytes)!=ERROR_SUCCESS || optIn!=0)throw std::runtime_error("guest requires machine Visual Studio telemetry opt-out policy");manageVolumes();Volume work,tools;auto end=std::chrono::steady_clock::now()+std::chrono::seconds(60);while(std::chrono::steady_clock::now()<end && !stopped){work=findVolume(L"CKGIT_WORK");tools=findVolume(L"CKGIT_SDK");if(!work.path.empty() && !tools.path.empty())break;std::this_thread::sleep_for(std::chrono::milliseconds(200));}if(work.path.empty() || tools.path.empty() || work.path==tools.path || (work.flags&FILE_READ_ONLY_VOLUME) || !(tools.flags&FILE_READ_ONLY_VOLUME))throw std::runtime_error("guest disk roles/read-only SDK were not established");mount(L"V:\\",work);fs::create_directory(L"V:\\tools");mount(L"V:\\tools\\",tools);
  const auto canary=L"V:\\tools\\.ckgit-guest-write-probe";HANDLE probe=CreateFileW(canary,GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(probe!=INVALID_HANDLE_VALUE){CloseHandle(probe);DeleteFileW(canary);throw std::runtime_error("guest can write its SDK disk");}
  fs::create_directory(L"V:\\tmp");for(auto name:{L"TEMP",L"TMP",L"TMPDIR"})if(!SetEnvironmentVariableW(name,L"V:\\tmp"))throw std::runtime_error("cannot set guest temporary root");

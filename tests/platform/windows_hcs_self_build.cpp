@@ -3,6 +3,7 @@
 // Opt-in full repository qualification using the production Windows executor.
 #include "../../src/ci-vm-windows/executor.hpp"
 #include "ckgit/runner_config.hpp"
+#include "ckgit/ci_vm_protocol.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/windows.hpp"
@@ -86,11 +87,15 @@ int wmain(int argc, wchar_t** argv) {
     prepared.job.project_name = "orthomap";
     prepared.workflow_text=workflow_text;
     prepared.job.job_id="00000000000000000001-abcdabcd";
+    prepared.job.parent_run_id="00000000000000000002-dcbadcba";
     prepared.job.attempt=1;
 
     prepared.job.workflow_job = "windows-gui";
     prepared.job.commit_id = commit;
     prepared.job.ref = "refs/heads/main";
+    ckgit::CiRemotePolicy policy;policy.timeout_seconds=config.timeout_seconds.value_or(1800);policy.max_log_bytes=4u<<20;policy.artifact_max_bytes=static_cast<std::size_t>(2)<<30;policy.allow_network=false;
+    (void)ckgit::parseCiVmAssignment(ckgit::formatCiVmAssignment(prepared,policy));
+    std::cout<<"Canonical full workflow assignment roundtrip passed\n";
     ckgit::WindowsVmImages images(*config.windows_vm_profile);
     ckgit::WindowsVmImages::recover(config.build_root);
     ckgit::CiExecutionOptions options;

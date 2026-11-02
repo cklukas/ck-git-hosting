@@ -40,6 +40,7 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
  auto disks=images.createWorkspace(options.build_root);const auto root=disks.os_disk.parent_path();
  CiRunRecord record;record.run_id=prepared.job.job_id;record.parent_run_id=prepared.job.parent_run_id;record.workflow_job=prepared.job.workflow_job;record.project_name=prepared.job.project_name;record.ref=prepared.job.ref;record.commit_id=prepared.job.commit_id;record.attempt=prepared.job.attempt;record.runner=options.runner;record.status=CiRunStatus::Running;record.started_epoch_seconds=epoch();
  const CiExecutionReport execution{"windows","x64","hyperv-hcs","denied",static_cast<std::uint64_t>(disks.memory_mb)*1024*1024,0,options.timeout_seconds};
+ std::string phase="source preparation";
  const auto host_started=record.started_epoch_seconds;record.execution=execution;ReportingSink reporting(sink,options.runner,execution,host_started);std::unique_ptr<HcsCiVm> vm;
  auto heartbeat=std::chrono::steady_clock::now();
  const auto pulse=[&]{sink.tick();auto now=std::chrono::steady_clock::now();if(now-heartbeat>=std::chrono::seconds(1)){reporting.heartbeat(record);heartbeat=now;}};
@@ -56,11 +57,11 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
    std::vector<std::string> paths;for(const auto& child:fs::directory_iterator(destination))paths.push_back(pathToUtf8(child.path().filename()));
    auto archive=inputs/pathFromUtf8("source-"+std::to_string(i)+".tar");TarPackOptions pack;pack.max_bytes=kWindowsVmSourceBytes;pack.should_continue=keep;packRegularTreeTar(destination,paths,archive,pack);archives.push_back(archive);
   }
-  vm=std::make_unique<HcsCiVm>(disks,keep);
+  phase="VM startup";vm=std::make_unique<HcsCiVm>(disks,keep);
   WindowsVmConnection connection(vm->runtimeId(),std::chrono::minutes(10),keep);CiVmChannel channel(connection.socket());CiRemotePolicy policy;policy.timeout_seconds=options.timeout_seconds;policy.max_log_bytes=options.max_log_bytes;policy.artifact_max_bytes=options.artifact_max_bytes;policy.allow_network=false;
-  ciVmHostHandshake(channel,prepared,policy,std::chrono::minutes(2),keep);sendWindowsVmSources(channel,prepared,archives,keep);
-  record=relayCiVmResults(channel,prepared,policy,reporting,relay);record.runner=options.runner;record.execution=execution;
- }catch(const std::exception& e){record.status=sink.cancelRequested()?CiRunStatus::Cancelled:CiRunStatus::Error;record.detail=std::string(e.what()).substr(0,200);}
+  phase="assignment handshake";ciVmHostHandshake(channel,prepared,policy,std::chrono::minutes(2),keep);phase="source transfer";sendWindowsVmSources(channel,prepared,archives,keep);
+  phase="job execution/results";record=relayCiVmResults(channel,prepared,policy,reporting,relay);record.runner=options.runner;record.execution=execution;
+ }catch(const std::exception& e){record.status=sink.cancelRequested()?CiRunStatus::Cancelled:CiRunStatus::Error;record.detail=(phase+": "+e.what()).substr(0,200);}
  // Cancellation or lease expiry cannot interrupt teardown. A failed absence
  // check preserves disks and escapes to the daemon's fatal refusal path.
  if(vm && !vm->stop([&]{pulse();return true;}))throw std::runtime_error("HCS shutdown unconfirmed; workspace retained, runner must stop");

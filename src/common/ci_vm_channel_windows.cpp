@@ -43,7 +43,7 @@ void CiVmChannel::send(CiVmFrameType type,std::string_view payload,std::chrono::
       const auto remaining=std::min<std::size_t>(frame.size()-offset,64*1024);
       int count=::send(fd_,frame.data()+offset,static_cast<int>(remaining),0);
       if(count==SOCKET_ERROR && retry())continue;
-      if(count<=0)throw std::runtime_error("VM socket write failed");offset+=static_cast<std::size_t>(count);
+      if(count<=0){const auto error=count==SOCKET_ERROR?WSAGetLastError():0;throw std::runtime_error("VM socket write failed: Winsock "+std::to_string(error)+", requested "+std::to_string(remaining)+" bytes");}offset+=static_cast<std::size_t>(count);
     }
   }catch(...){failed_=true;throw;}
 }
