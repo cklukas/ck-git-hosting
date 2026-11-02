@@ -1,0 +1,115 @@
+{
+  "start_epoch": 1793581315.411278,
+  "target": "native supervisor, runner, admin, unit tests",
+  "configuration": "Debug",
+  "output": "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin",
+  "baseline": "Helper-only incremental builds 1.50\u20132.40s; full native/executor regression increment 3.32s.",
+  "end_epoch": 1793581316.842342,
+  "exit": 0,
+  "elapsed_seconds": 1.4310638904571533,
+  "outputs": {
+    "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin/ckgit-macos-native": {
+      "sha256": "d33e2204bf21465b0f99dc45c779f6fd5d1de066d83c9959ad5dec7f18f6a084",
+      "mtime": 1793581316.8361843
+    },
+    "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin/ckgit-admin": {
+      "sha256": "914efb6d03f1b5d3137f663b66f01cb306a81f5fd4c904356e4f8079b1a6479a",
+      "mtime": 1793580828.2890716
+    },
+    "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin/ck-ci-runnerd": {
+      "sha256": "3047d62482bbf7cd0a22eaf3a40b7af0e252483ddc97103dea498c98aade9b53",
+      "mtime": 1793580828.1229506
+    },
+    "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin/ckgit-unit-tests": {
+      "sha256": "0a14133fe25fbc0ae576cc43f4acf8289be9c7d739a76c6fb7b476a60cb25a12",
+      "mtime": 1793580828.1871362
+    }
+  },
+  "inputs_unchanged": true,
+  "inputs": {
+    "CMakeLists.txt": "38159dff40156b3f429a28e3230f00eb07432722ee09e094f99d2b9912e2fea1",
+    "include/ckgit/macos_native.hpp": "f63eac6ea6f39beaa03bb3e2c91ce97da7292ce602e35f3a1867f70e25446cb9",
+    "include/ckgit/ci_runner.hpp": "a5d1e40906ebb7765ad88757a6b2a81baea6c3d6429f4a8aafa691cf2904f122",
+    "include/ckgit/runner_config.hpp": "65dec7ed2de9b03aeef0143c0d66ae5860fdbce3dce5e3b004dfeffb6f6aa9ac",
+    "src/ci-native-macos/main.cpp": "a3705620c4628691ce2778e8b001454458df16f7746d3808ea91ef5b8bf0a986",
+    "src/ci-native-macos/setup.inc": "2fd795530f3f4ff7d4ee19ebb20a9f9eb22481419d3011bc5edd45aea99bc3e9",
+    "src/ci-native-macos/qualify.inc": "c753d4c5a2cb7e88f3cca9460f2a781126bdf28f74481f0a82b955928ec106c5",
+    "src/ci-native-macos/wire.hpp": "2f9b8544a130505993ee082f900995948641e0e0a2d49edc1f811a903b10f55e",
+    "src/common/macos_native.cpp": "c42b7679ad947f170b10fb4c2e94bd35ccb67dd107b2c2f0f0250d3c6a372405",
+    "src/common/ci_runner.cpp": "ee01e1b928c70a56e855cbf03244efa123b5529dad705ee7f22b762b3a5df66c",
+    "src/ci-runner/main.cpp": "75ce0f235afb5f3cdcd320e6f663741a870e39150cc667bba221b058f12bde0a",
+    "src/admin/main.cpp": "a6d0bc93ab83b3fda805e51c1582c72f28f2f4e4f826ecce1197bcab750f21be",
+    "src/common/runner_config.cpp": "1f3fcc7411e0a9dda5453771599b85949b1f105e3610378b5f0535d89325b51d",
+    "tests/unit/ci_runner_tests.cpp": "50e27eaee380397094bc0aac43d4e34277d2905c5c7d4ede107c24cef96cbbcd",
+    "tests/unit/ci_distributed_tests.cpp": "3c4ca9fa058eae6b22658c23729c6336ff19b745d6060b7547e55ff86952e661",
+    "tests/integration/macos_native.sh": "f869159e573ecb53a75bb2889bdc56f54d842f37eda447faef7da2cb54783b34",
+    "tests/integration/macos_native_policy.sh": "9e4b395f98f8d464cb2f7d89d4f2b8db4d11b5142b85c0c50da2ca43ba99193a"
+  },
+  "unit_and_output_regression_log": "Test project /Volumes/S8T/tmp/ckgit-native-implementation-20261102/build\n    Start 3: macos-native-policy\n1/2 Test #3: macos-native-policy ..............   Passed    0.31 sec\n    Start 4: unit\n2/2 Test #4: unit .............................   Passed   75.66 sec\n\n100% tests passed out of 2\n\nTotal Test time (real) =  75.98 sec\n",
+  "final_policy_log": "Test project /Volumes/S8T/tmp/ckgit-native-implementation-20261102/build\n    Start 3: macos-native-policy\n1/1 Test #3: macos-native-policy ..............   Passed    0.32 sec\n\n100% tests passed out of 1\n\nTotal Test time (real) =   0.33 sec\n",
+  "compiler_smoke": {
+    "start_epoch": 1793580950.601883,
+    "configuration": "Apple clang default, native policy, explicit SDK",
+    "target": "C smoke",
+    "source": "#include <stdio.h>\nint main(void){puts(\"native compile works\");return 0;}\n",
+    "source_sha256": "998bc313fb66a05fdd98adf6881362f8bb4fdec477decdce062fc7bc5ae44b63",
+    "policy_sha256": "499b6a8df345dd73c07c735fe32736158a9b15e5d2b911284767dcffaefe91fb",
+    "output": "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/compiler-probe/smoke",
+    "baseline_seconds": 0.08524417877197266,
+    "end_epoch": 1793580950.683519,
+    "exit": 0,
+    "log": "",
+    "elapsed_seconds": 0.08163595199584961,
+    "output_sha256": "c85a9e13cdc5173b7cc631b494e97c3947309be61fa54918033c0f90d3afa73e",
+    "run": {
+      "exit": 0,
+      "output": "native compile works\n"
+    }
+  },
+  "toolchain_checks": [
+    {
+      "command": [
+        "/usr/bin/xcrun",
+        "--show-sdk-path"
+      ],
+      "exit": 0,
+      "stdout": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/usr/bin/clang",
+        "--version"
+      ],
+      "exit": 0,
+      "stdout": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin\n",
+      "stderr": ""
+    }
+  ],
+  "admin_preview": {
+    "argv": [
+      "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin/ckgit-admin",
+      "runner",
+      "macos-native",
+      "setup",
+      "--config",
+      "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/admin-preview-final/runner.ini",
+      "--broker-user",
+      "klukas",
+      "--work-root",
+      "/Volumes/S8T/tmp/ckgit-native-implementation-20261102/admin-preview-final/jobs",
+      "--dry-run"
+    ],
+    "exit": 0,
+    "stdout": "Native setup for native-preview:\n  broker klukas (UID 501)\n  exclusive build account _ckgit_native-preview (UID/GID 61000)\n  work \"/Volumes/S8T/tmp/ckgit-native-implementation-20261102/admin-preview-final/jobs\"\n  supervisor \"/Library/LaunchDaemons/org.ckgit.native.native-preview.plist\"\n  broker \"/Library/LaunchDaemons/org.ckgit.runner.native-preview.plist\"\n  network denied; shared caches disabled; no VM\nPreview only; no files, accounts or services changed.\n",
+    "stderr": "",
+    "non_root_setup_exit": 1,
+    "non_root_setup_stderr": "ckgit-macos-native: setup needs administrator privileges; rerun this exact command with sudo\n"
+  },
+  "root_integration": {
+    "status": "pending administrator authentication",
+    "command": "TMPDIR=/Volumes/S8T/tmp/ckgit-native-implementation-20261102 sudo /bin/sh /Volumes/PRO-BLADE/git/ck-git-hosting/tests/integration/macos_native.sh /Volumes/S8T/tmp/ckgit-native-implementation-20261102/build/bin klukas /Volumes/S8T/tmp/ckgit-native-admin-qualification-20261102-01",
+    "reason": "sudo -n /usr/bin/id -u returned: sudo: a password is required"
+  },
+  "deployment": "No account, service or hosted runner installed by this task. Admin setup leaves broker stopped; health gate requires successful root qualification."
+}

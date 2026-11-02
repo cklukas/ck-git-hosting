@@ -521,6 +521,34 @@ void testArtifactOverCap() {
           "an over-cap artifact has no downloadable bundle");
 }
 
+void testOutputSymlinkBoundaries() {
+  for (const std::string attack : {"operand", "checkout", "staging", "pages"}) {
+    RunnerFixture fixture;
+    const auto outside = fixture.root / "outside";
+    std::filesystem::create_directory(outside);
+    std::ofstream(outside / "secret") << "broker-private-sentinel";
+    std::ofstream(outside / "index.html") << "broker-private-page";
+    const std::string script = attack == "checkout"
+        ? "mv \"$PWD\" ../original-src; ln -s \"$OUTSIDE\" ../src"
+        : attack == "staging" ? "mkdir out; echo build > out/file; ln -s \"$OUTSIDE\" ../.outputs"
+        : "ln -s \"$OUTSIDE\" out";
+    const auto id = fixture.commit("version: 1\n" +
+        std::string(attack == "pages" ? "pages: { path: out }\n" : "") +
+        "jobs:\n  - name: build\n    steps:\n      - run: sh -ec '" + script + "'\n" +
+        (attack == "pages" ? "" : "    artifacts:\n      name: leak\n      paths: [" +
+          std::string(attack == "checkout" ? "secret" : attack == "staging" ? "out" : "out/secret") + "]\n"));
+    auto options = fixture.options(id);
+    options.extra_env.push_back("OUTSIDE="+outside.string());
+    options.pages_root = fixture.root / "pages";
+    const auto record = ckgit::runCiWorkflow(options);
+    require(record.steps.size() == 1 && record.steps[0].exit_code == 0, "output attack fixture executed");
+    require(!ckgit::readCiArtifact(fixture.state,"demo",record.run_id,"leak",1u<<20), "symlink output did not leak broker files");
+    require(!ckgit::currentPagesVersion(options.pages_root,"demo"), "symlink Pages root did not publish broker files");
+    require(readFile(outside/"secret") == "broker-private-sentinel" && !std::filesystem::exists(outside/"leak.tar"),
+            "artifact staging did not write outside the workspace");
+  }
+}
+
 void testReleaseOnTag() {
   RunnerFixture fixture;
   const std::string id = fixture.commit(
@@ -922,6 +950,7 @@ void testCiRunner() {
   testSelfSister();
   testArtifacts();
   testArtifactOverCap();
+  testOutputSymlinkBoundaries();
   testReleaseOnTag();
   testReleaseArtifactNamedReleaseRejected();
   testReleaseFailedPublishesNothing();

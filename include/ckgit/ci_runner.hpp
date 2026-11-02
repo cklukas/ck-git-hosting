@@ -254,6 +254,7 @@ class CiResultSink {
 
 // The runner-side knobs of an execution.
 struct CiExecutionOptions {
+  std::optional<std::filesystem::path> macos_native_socket;
   std::string runner;  // the executing runner's name, recorded on the run
   std::filesystem::path build_root;
   unsigned timeout_seconds = 1800;

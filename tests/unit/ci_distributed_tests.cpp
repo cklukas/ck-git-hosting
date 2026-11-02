@@ -1415,6 +1415,15 @@ void testRunnerConfig() {
   require(rejected(base + "name=x\nname=y\n"), "a duplicate key is refused");
   require(rejected("schema_version=1\nserver=ckgit@rpi4\nname=x\n"), "the build root is required");
   require(rejected(base + "name=x\nclaim_wait_seconds=500\n"), "a long poll over the bound is refused");
+  const auto native = base + "name=x\nci_allow_network=false\nci_macos_native_socket=/var/run/ckgit-native-x.sock\n";
+  write(native);
+  const auto native_config = ckgit::loadRunnerConfig(file);
+  write(ckgit::renderRunnerConfig(native_config));
+  require(ckgit::loadRunnerConfig(file).macos_native_socket == native_config.macos_native_socket,
+          "native supervisor configuration round trips");
+  require(rejected(base + "name=x\nci_macos_native_socket=/socket\n"), "native requires offline policy");
+  require(rejected(native + "ci_allow_degraded=true\n"), "native refuses degraded execution");
+  require(rejected(native + "ci_cache_root=/cache\n"), "native refuses shared caches");
 }
 
 

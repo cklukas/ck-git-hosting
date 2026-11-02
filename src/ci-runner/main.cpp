@@ -16,6 +16,8 @@
 #include <fstream>
 #include <sstream>
 #include <pwd.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -32,6 +34,7 @@
 #include "ckgit/server_config.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/process.hpp"
+#include "ckgit/macos_native.hpp"
 #include "ckgit/text.hpp"
 
 namespace {
@@ -356,19 +359,35 @@ bool emptyDirectory(const std::filesystem::path& directory) {
 // back to the queue. With `once`, exits when the queue is empty.
 int serveRemote(const std::filesystem::path& config_path, bool once) {
   const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(config_path);
+#ifdef __APPLE__
+  if (!config.macos_native_socket) {
+    std::cerr << "ck-ci-runnerd: configure a native macOS supervisor before running jobs\n";
+    return 1;
+  }
+  struct BrokerLock { int fd = -1; ~BrokerLock() { if (fd >= 0) ::close(fd); } } broker_lock;
+  ckgit::macNativeReady(*config.macos_native_socket, config.build_root);
+  broker_lock.fd = ::open((config.macos_native_socket->string()+".broker-lock").c_str(), O_RDWR|O_NOFOLLOW|O_CLOEXEC);
+  struct stat lock_info{};
+  if (broker_lock.fd < 0 || ::fstat(broker_lock.fd, &lock_info) != 0 || !S_ISREG(lock_info.st_mode) ||
+      lock_info.st_uid != ::geteuid() || lock_info.st_nlink != 1 || ::flock(broker_lock.fd, LOCK_EX|LOCK_NB) != 0)
+    throw std::runtime_error("native runner is already active or its broker lock is unavailable");
+#else
+  if (config.macos_native_socket) throw std::runtime_error("native macOS supervisor configuration requires macOS");
+#endif
   ckgit::CiRemoteTransport transport(config, config_path);
   std::signal(SIGTERM, onStop);
   std::signal(SIGINT, onStop);
   std::signal(SIGPIPE, SIG_IGN);
   std::error_code error;
   std::filesystem::create_directories(config.build_root, error);
-  ::chmod(config.build_root.c_str(), 0700);
+  if (error) throw std::runtime_error("cannot create runner build root");
+  ::chmod(config.build_root.c_str(), config.macos_native_socket ? 0711 : 0700);
   // A clean runner: whatever a crash or power loss left behind goes first.
   if (!emptyDirectory(config.build_root)) {
     std::cerr << "ck-ci-runnerd: cannot empty the build root " << config.build_root << "\n";
     return 1;
   }
-  if (!ckgit::ciSandboxAvailable() && !config.allow_degraded) {
+  if (!config.macos_native_socket && !ckgit::ciSandboxAvailable() && !config.allow_degraded) {
     std::cerr << "ck-ci-runnerd: unprivileged namespaces are unavailable on this host; refusing to run jobs "
                  "without the sandbox (set ci_allow_degraded=true to accept that)\n";
     return 1;
@@ -420,6 +439,7 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
               << job->prepared.job.attempt << ")\n";
     ckgit::CiExecutionOptions execution;
     execution.runner = config.name;
+    execution.macos_native_socket = config.macos_native_socket;
     execution.build_root = config.build_root;
     execution.timeout_seconds = job->policy.timeout_seconds;
     if (config.timeout_seconds.has_value()) {
@@ -444,6 +464,10 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
     } catch (const std::exception& run_error) {
       std::cerr << "ck-ci-runnerd: run failed for " << run_id << ": " << run_error.what() << "\n";
     }
+#ifdef __APPLE__
+    // Cleanup is safe only after the supervisor confirms all job UIDs drained.
+    if (config.macos_native_socket) ckgit::macNativeReady(*config.macos_native_socket, config.build_root);
+#endif
     // Keep nothing: the checkout, sisters, build outputs, packed bundles.
     if (!emptyDirectory(config.build_root)) {
       std::cerr << "ck-ci-runnerd: could not empty the build root after " << run_id << "; not taking new jobs\n";

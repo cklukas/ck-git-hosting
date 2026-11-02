@@ -15,6 +15,9 @@
 #include <thread>
 #include <vector>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/ci_store.hpp"
@@ -55,6 +58,9 @@ void usage(std::ostream& output) {
          << "                     [--labels LABEL[,LABEL...]]\n"
          << "  ckgit-admin runner labels NAME LABEL[,LABEL...]|- (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin runner (list | enable NAME | disable NAME | remove NAME) (--config FILE | --state-root ROOT)\n"
+#ifdef __APPLE__
+         << "  ckgit-admin runner macos-native setup --config RUNNER.INI --broker-user USER --work-root DIR [--toolchain DIR] [--dry-run]\n"
+#endif
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
          << "              optionally --hook-directory PATH to select destination post-receive hooks.\n"
@@ -567,6 +573,15 @@ std::string ageText(std::uint64_t then) {
 int runnerCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
+#ifdef __APPLE__
+  if (action == "macos-native") {
+    char self[4096]; uint32_t size = sizeof(self);
+    if (_NSGetExecutablePath(self, &size) != 0) throw std::runtime_error("cannot locate admin executable");
+    std::vector<std::string> command{(std::filesystem::canonical(self).parent_path() / "ckgit-macos-native").string()};
+    for (int i = 3; i < argc; ++i) command.emplace_back(argv[i]);
+    return ckgit::execProcess(command);
+  }
+#endif
   if (action != "add" && action != "list" && action != "enable" && action != "disable" && action != "remove" &&
       action != "labels") {
     std::cerr << "ckgit-admin: runner action must be add, list, labels, enable, disable, or remove\n";

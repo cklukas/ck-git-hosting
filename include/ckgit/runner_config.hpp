@@ -41,6 +41,8 @@ struct RunnerConfig {
   std::optional<std::filesystem::path> toolchain_root;
   std::vector<std::filesystem::path> toolchain_paths{"bin"};
   std::map<std::string, std::string> toolchain_environment;
+  // Authenticated root supervisor for offline native macOS jobs.
+  std::optional<std::filesystem::path> macos_native_socket;
 };
 
 RunnerConfig loadRunnerConfig(const std::filesystem::path& path);

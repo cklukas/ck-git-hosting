@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "ckgit/ci_runner.hpp"
+#include "ckgit/macos_native.hpp"
 
 #include <algorithm>
 #include <map>
@@ -329,7 +330,7 @@ bool probeFilesystemMask() {
   if (::mkdtemp(pattern) == nullptr) return false;
   const std::string probe_dir = pattern;
   const std::string sentinel = probe_dir + "/sentinel";
-  const int sentinel_fd = ::open(sentinel.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  const int sentinel_fd = ::open(sentinel.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
   if (sentinel_fd >= 0) {
     const ssize_t written = ::write(sentinel_fd, "x", 1);
     ::close(sentinel_fd);
@@ -435,6 +436,31 @@ StepOutcome executeStep(const std::vector<std::string>& argv, const std::filesys
                         CiResultSink& sink, std::size_t step_index, const std::filesystem::path& bind_source,
                         const SandboxMounts& mounts, const StepHooks& hooks) {
   StepOutcome outcome;
+#ifdef __APPLE__
+  if (options.macos_native_socket) {
+    auto last_heartbeat = std::chrono::steady_clock::now();
+    const auto result = runMacNative(*options.macos_native_socket, cwd.parent_path(), argv, env,
+        options.timeout_seconds, options.max_log_bytes,
+        [&](std::string_view bytes) { sink.appendLog(step_index, bytes); }, hooks.cancel_requested,
+        [&] {
+          if (hooks.tick) hooks.tick();
+          if (std::chrono::steady_clock::now() - last_heartbeat >= std::chrono::seconds(1)) {
+            last_heartbeat = std::chrono::steady_clock::now();
+            if (hooks.heartbeat) hooks.heartbeat();
+          }
+        });
+    outcome.exit_code = result.exit_code; outcome.cancelled = result.cancelled;
+    outcome.timed_out = result.timed_out; outcome.truncated = result.truncated;
+#if defined(__arm64__) || defined(__aarch64__)
+    const std::string architecture = "arm64";
+#else
+    const std::string architecture = "x64";
+#endif
+    if (result.exit_code != 126)
+      outcome.execution = CiExecutionReport{"macos", architecture, "seatbelt", "denied", 0, 0, options.timeout_seconds};
+    return outcome;
+  }
+#endif
   int pipe_fd[2];
   if (::pipe(pipe_fd) != 0) {
     outcome.spawn_failed = true;
@@ -701,12 +727,30 @@ PackOutcome packToFile(const std::vector<std::string>& argv, const std::filesyst
   return outcome;
 }
 
+// Collection runs as the broker after execution. Never let a job redirect
+// an output operand (or replace src itself) to a broker-only host directory.
+bool safeOutputPath(const std::filesystem::path& root, const std::filesystem::path& relative) {
+  std::error_code error;
+  if (!std::filesystem::is_directory(std::filesystem::symlink_status(root, error)) || error || relative.is_absolute()) return false;
+  auto current = root;
+  for (const auto& component : relative) {
+    if (component == "..") return false;
+    if (component == "." || component.empty()) continue;
+    current /= component;
+    const auto status = std::filesystem::symlink_status(current,error);
+    if (error || std::filesystem::is_symlink(status) || !std::filesystem::exists(status)) return false;
+  }
+  return true;
+}
+
 // Packs one job's declared artifact from the checkout into `bundle` (a tar).
 // Returns an empty string on success, or the short note recorded instead of
 // the bundle when it cannot be packed or is over the cap (and then removes any
 // partial bundle). Never fails the build.
 std::string packArtifact(const CiArtifact& artifact, const std::filesystem::path& work,
                          const std::filesystem::path& bundle, std::size_t max_bytes) {
+  for (const auto& path : artifact.paths)
+    if (!safeOutputPath(work,path)) return "artifact path is missing or traverses a symlink";
   std::vector<std::string> argv = {"tar", "-cf", "-", "-C", work.string(), "--"};
   for (const std::string& path : artifact.paths) argv.push_back(path);
   const PackOutcome outcome = packToFile(argv, bundle, max_bytes, 300);
@@ -1198,6 +1242,10 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
     if (!stop && ci_job.artifact.has_value()) {
       try {
         std::error_code error;
+        const auto output_status = std::filesystem::symlink_status(outputs,error);
+        if (std::filesystem::exists(output_status) && !std::filesystem::is_directory(output_status))
+          throw std::runtime_error("artifact staging path is not a real directory");
+        error.clear();
         std::filesystem::create_directories(outputs, error);
         const std::filesystem::path bundle = outputs / (ci_job.artifact->name + ".tar");
         const std::string note = packArtifact(*ci_job.artifact, work, bundle, options.artifact_max_bytes);
@@ -1222,7 +1270,10 @@ CiRunRecord executeCiJob(const CiPreparedJob& prepared, const CiExecutionOptions
       prepared.is_default_branch) {
     const std::filesystem::path site = work / *workflow.pages_path;
     std::error_code error;
-    if (std::filesystem::is_directory(site, error)) {
+    if (!safeOutputPath(work,*workflow.pages_path)) {
+      status = CiRunStatus::Error;
+      detail = "Pages source is missing or traverses a symlink";
+    } else if (std::filesystem::is_directory(site, error)) {
       try {
         sink.putPagesSite(site);
       } catch (const std::exception& publish_error) {

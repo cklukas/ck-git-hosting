@@ -91,6 +91,8 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
       config.ssh_program = absolute(value);
     } else if (key == "ci_cache_root") {
       config.cache_root = absolute(value);
+    } else if (key == "ci_macos_native_socket") {
+      config.macos_native_socket = absolute(value);
     } else if (key == "ci_toolchain_root") {
       config.toolchain_root = absolute(value);
     } else if (key == "ci_toolchain_paths") {
@@ -134,6 +136,8 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
     throw std::runtime_error("runner configuration needs schema_version, server, name and ci_build_root: " +
                              path.string());
   }
+  if (config.macos_native_socket && (config.allow_network || config.allow_degraded || config.cache_root))
+    throw std::runtime_error("native macOS requires offline execution, no degraded mode and no shared cache");
 #ifndef _WIN32
   for (const std::filesystem::path* used : {&config.build_root, &config.ssh_program}) {
     if (!isShellSafe(used->string())) throw std::runtime_error("runner paths may use only [A-Za-z0-9/._-]");
@@ -154,6 +158,7 @@ std::string renderRunnerConfig(const RunnerConfig& config) {
   if (config.timeout_seconds) out += "ci_timeout_seconds=" + std::to_string(*config.timeout_seconds) + "\n";
   if (config.allow_degraded) out += "ci_allow_degraded=true\n";
   if (config.toolchain_root) out += "ci_toolchain_root=" + pathText(*config.toolchain_root) + "\n";
+  if (config.macos_native_socket) out += "ci_macos_native_socket=" + pathText(*config.macos_native_socket) + "\n";
   if (config.toolchain_paths != RunnerConfig{}.toolchain_paths) {
     out += "ci_toolchain_paths=";
     for (std::size_t i = 0; i < config.toolchain_paths.size(); ++i) {
