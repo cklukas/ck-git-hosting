@@ -1402,6 +1402,45 @@ std::optional<std::string> readCiRunLogChunk(const std::filesystem::path& state_
   }
 }
 
+CiStoredFile::~CiStoredFile() { if (descriptor_ >= 0) ::close(descriptor_); }
+CiStoredFile::CiStoredFile(CiStoredFile&& other) noexcept
+    : descriptor_(other.descriptor_), size_(other.size_) { other.descriptor_ = -1; }
+CiStoredFile& CiStoredFile::operator=(CiStoredFile&& other) noexcept {
+  if (this != &other) {
+    if (descriptor_ >= 0) ::close(descriptor_);
+    descriptor_ = other.descriptor_; size_ = other.size_; other.descriptor_ = -1;
+  }
+  return *this;
+}
+
+namespace {
+std::optional<CiStoredFile> openStoredFileAt(int directory, const std::string& name) {
+  const int raw = ::openat(directory, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+  if (raw < 0) return std::nullopt;
+  Descriptor file(raw);
+  struct stat status {};
+  if (::fstat(file, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+      (status.st_mode & 0077) != 0 || status.st_size < 0) return std::nullopt;
+  return CiStoredFile(file.release(), static_cast<std::uint64_t>(status.st_size));
+}
+}
+
+std::optional<CiStoredFile> openCiArtifact(const std::filesystem::path& state_root,
+                                           std::string_view project, std::string_view run,
+                                           std::string_view name) {
+  if (!isValidProjectName(project) || !isValidCiId(run) || !isValidCiArtifactName(name)) return std::nullopt;
+  try {
+    Descriptor root(openDir(validatedMetadataRoot(state_root)));
+    bool missing = false;
+    Descriptor ci(openDirAt(root, "ci", &missing)); if (missing) return std::nullopt;
+    Descriptor runs(openDirAt(ci, "runs", &missing)); if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(runs, std::string(project), &missing)); if (missing) return std::nullopt;
+    Descriptor run_fd(openDirAt(project_fd, std::string(run), &missing)); if (missing) return std::nullopt;
+    Descriptor artifacts(openDirAt(run_fd, "artifacts", &missing)); if (missing) return std::nullopt;
+    return openStoredFileAt(artifacts, std::string(name) + ".tar");
+  } catch (const std::exception&) { return std::nullopt; }
+}
+
 std::optional<std::string> readCiArtifact(const std::filesystem::path& state_root,
                                           std::string_view project_name, std::string_view run_id,
                                           std::string_view artifact_name, std::size_t cap) {
@@ -2215,6 +2254,22 @@ std::vector<CiReleaseRecord> loadReleases(const std::filesystem::path& state_roo
   });
   if (releases.size() > maximum) releases.resize(maximum);
   return releases;
+}
+
+std::optional<CiStoredFile> openCiReleaseAsset(const std::filesystem::path& state_root,
+                                               std::string_view project, std::string_view tag,
+                                               std::string_view name) {
+  if (!isValidProjectName(project) || !isValidReleaseTag(tag) || !isValidCiArtifactName(name)) return std::nullopt;
+  try {
+    Descriptor root(openDir(validatedMetadataRoot(state_root)));
+    bool missing = false;
+    Descriptor releases(openDirAt(root, "releases", &missing)); if (missing) return std::nullopt;
+    Descriptor project_fd(openDirAt(releases, std::string(project), &missing)); if (missing) return std::nullopt;
+    Descriptor tag_fd(openDirAt(project_fd, std::string(tag), &missing)); if (missing) return std::nullopt;
+    const auto release = readCappedAt(tag_fd, "release.ini", kMaximumReleaseRecordBytes, &missing);
+    if (missing || parseRelease(release).tag != tag) return std::nullopt;
+    return openStoredFileAt(tag_fd, std::string(name) + ".tar");
+  } catch (const std::exception&) { return std::nullopt; }
 }
 
 std::optional<std::string> readCiReleaseAsset(const std::filesystem::path& state_root,

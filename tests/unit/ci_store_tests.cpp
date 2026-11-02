@@ -306,6 +306,24 @@ void testArtifactRoundTrip() {
           "a traversal artifact name is rejected");
 }
 
+void testArtifactStreamingOpen() {
+  StoreFixture fixture;
+  constexpr auto run = "00000000000000000001-aaaaaaaa";
+  writeRunWithArtifact(fixture.state, run, "large", 32, 1000, 2000);
+  const auto path = fixture.state / "ci/runs/demo" / run / "artifacts/large.tar";
+  constexpr off_t size = (static_cast<off_t>(513) << 20) + 7;
+  require(::truncate(path.c_str(), size) == 0, "sparse artifact created");
+  auto file = ckgit::openCiArtifact(fixture.state, "demo", run, "large");
+  require(file && file->size() == static_cast<std::uint64_t>(size), "large artifact opened without buffering");
+  require(!ckgit::openCiArtifact(fixture.state, "demo", run, "../escape"), "stream path traversal rejected");
+  require(::unlink(path.c_str()) == 0, "unlink artifact while open");
+  require(::symlink("/etc/passwd", path.c_str()) == 0, "replace artifact with symlink");
+  require(!ckgit::openCiArtifact(fixture.state, "demo", run, "large"), "stream symlink rejected");
+  char byte = 1;
+  require(::pread(file->descriptor(), &byte, 1, size - 1) == 1 && byte == 0,
+          "opened descriptor remains usable after retention unlink");
+}
+
 void testArtifactSweep() {
   const std::uint64_t future = 9999999999ull;
   // Timer expiry, with keep-latest protecting the newest run.
@@ -404,6 +422,18 @@ void testReleaseRoundTrip() {
   require(blob.has_value() && blob->size() == 20, "the release asset downloads with its bytes");
   require(!ckgit::readCiReleaseAsset(fixture.state, "demo", "v1.0.0", "../escape", 1u << 20).has_value(),
           "a traversal asset name is rejected");
+  auto file = ckgit::openCiReleaseAsset(fixture.state, "demo", "v1.0.0", "app");
+  require(file && file->size() == 20, "release asset opened for streaming");
+  require(!ckgit::openCiReleaseAsset(fixture.state, "demo", "v1.0.0", "../escape"),
+          "release stream traversal rejected");
+  const auto path = fixture.state / "releases/demo/v1.0.0/app.tar";
+  require(::unlink(path.c_str()) == 0 && ::symlink("/etc/passwd", path.c_str()) == 0,
+          "replace release asset with symlink");
+  require(!ckgit::openCiReleaseAsset(fixture.state, "demo", "v1.0.0", "app"),
+          "release stream symlink rejected");
+  char byte = 0;
+  require(::pread(file->descriptor(), &byte, 1, 0) == 1 && byte == 'x',
+          "release descriptor survives unlink");
 }
 
 void testReleaseRemovalCascades() {
@@ -633,6 +663,7 @@ void testCiStore() {
   testRunsNewestFirstAndCap();
   testProjectOptIn();
   testArtifactRoundTrip();
+  testArtifactStreamingOpen();
   testArtifactSweep();
   testReleaseRoundTrip();
   testReleaseRemovalCascades();

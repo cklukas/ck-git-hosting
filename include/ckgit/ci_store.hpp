@@ -29,6 +29,27 @@ namespace ckgit {
 // daemon dashboard only ever reads runs. No component in this file executes
 // anything — it is storage only.
 
+// An already-validated, open private store file. Move-only so the descriptor
+// remains valid even if retention unlinks the pathname during a download.
+class CiStoredFile {
+ public:
+  CiStoredFile(int descriptor, std::uint64_t size) : descriptor_(descriptor), size_(size) {}
+  ~CiStoredFile();
+  CiStoredFile(const CiStoredFile&) = delete;
+  CiStoredFile& operator=(const CiStoredFile&) = delete;
+  CiStoredFile(CiStoredFile&& other) noexcept;
+  CiStoredFile& operator=(CiStoredFile&& other) noexcept;
+  int descriptor() const { return descriptor_; }
+  std::uint64_t size() const { return size_; }
+ private:
+  int descriptor_;
+  std::uint64_t size_;
+};
+std::optional<CiStoredFile> openCiArtifact(const std::filesystem::path&, std::string_view project,
+                                           std::string_view run, std::string_view name);
+std::optional<CiStoredFile> openCiReleaseAsset(const std::filesystem::path&, std::string_view project,
+                                               std::string_view tag, std::string_view name);
+
 enum class CiRunStatus {
   Pending,
   Running,

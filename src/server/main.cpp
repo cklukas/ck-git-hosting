@@ -38,6 +38,7 @@
 #endif
 
 #include "ckgit/ci_control.hpp"
+#include "ckgit/ci_store.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/control_rpc.hpp"
 #include "ckgit/dashboard.hpp"
@@ -761,7 +762,22 @@ bool sendHttpBytes(int descriptor, std::string_view bytes, Deadline deadline) {
   }
   return true;
 }
-void sendHttp(int descriptor, const ckgit::DashboardResponse& response, bool head_only, Deadline deadline) {
+void sendHttp(int descriptor, const ckgit::DashboardResponse& response, bool head_only, Deadline deadline,
+              const ckgit::CiStoredFile* file = nullptr) {
+  // A large transfer has a separate total deadline and progress deadline. Limit
+  // the number of long-lived workers so downloads cannot starve the dashboard.
+  static std::atomic<unsigned> downloads{0};
+  struct Slot { std::atomic<unsigned>* count = nullptr; ~Slot() { if (count) --*count; } } slot;
+  if (file && !head_only) {
+    if (downloads.fetch_add(1) >= 3) {
+      --downloads;
+      ckgit::DashboardResponse busy; busy.status = 503; busy.body = "Too many downloads.";
+      sendHttp(descriptor, busy, false, deadline);
+      return;
+    }
+    slot.count = &downloads;
+    deadline = std::chrono::steady_clock::now() + std::chrono::hours(4);
+  }
   const auto reason = response.status == 200 ? "OK" : response.status == 302 ? "Found" : response.status == 303 ? "See Other" :
       response.status == 400 ? "Bad Request" : response.status == 403 ? "Forbidden" : response.status == 404 ? "Not Found" :
       response.status == 405 ? "Method Not Allowed" : response.status == 413 ? "Content Too Large" : "Service Unavailable";
@@ -791,8 +807,18 @@ void sendHttp(int descriptor, const ckgit::DashboardResponse& response, bool hea
       ckgit::parseHttpRoute(response.location).kind != ckgit::RouteKind::kNotFound) {
     headers += "Location: " + response.location + "\r\n";
   }
-  headers += "Connection: close\r\nContent-Length: " + std::to_string(response.body.size()) + "\r\n\r\n";
-  if (sendHttpBytes(descriptor, headers, deadline) && !head_only) sendHttpBytes(descriptor, response.body, deadline);
+  headers += "Connection: close\r\nContent-Length: " + std::to_string(file ? file->size() : response.body.size()) + "\r\n\r\n";
+  auto idleDeadline = [&] { return std::min(deadline, std::chrono::steady_clock::now() + std::chrono::seconds(30)); };
+  if (!sendHttpBytes(descriptor, headers, file ? idleDeadline() : deadline) || head_only) return;
+  if (!file) { sendHttpBytes(descriptor, response.body, deadline); return; }
+  std::array<char, 64 * 1024> chunk{};
+  std::uint64_t remaining = file->size();
+  while (remaining && !stop_requested) {
+    const auto count = ::read(file->descriptor(), chunk.data(), static_cast<std::size_t>(std::min<std::uint64_t>(remaining, chunk.size())));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0 || !sendHttpBytes(descriptor, std::string_view(chunk.data(), static_cast<std::size_t>(count)), idleDeadline())) return;
+    remaining -= static_cast<std::uint64_t>(count);
+  }
 }
 // True for an Origin the dashboard will accept on its one mutating endpoint:
 // its own loopback origin. The server binds only to 127.0.0.1, so a legitimate
@@ -973,6 +999,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
   }
   const auto parsed = ckgit::parseReadOnlyHttpRequest(request);
   ckgit::DashboardResponse response;
+  std::optional<ckgit::CiStoredFile> download;
   if (!parsed) {
     response.status = 400; response.body = ckgit::pageLayout("Bad Request", "<h1>Bad Request</h1>");
     sendHttp(descriptor, response, false, deadline); return;
@@ -1114,19 +1141,17 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
                          "'; connect-src 'self'";
         }
       } else if (route.kind == ckgit::RouteKind::kCiArtifact) {
-        const auto blob = index.readCiArtifact(route.project, route.run_id, route.path);
-        if (!blob) throw ckgit::WebError(404, "Artifact was not found.");
+        if (state_root) download = ckgit::openCiArtifact(*state_root, route.project, route.run_id, route.path);
+        if (!download) throw ckgit::WebError(404, "Artifact was not found.");
         response.raw = true;
         response.content_type = "application/x-tar";
         response.filename = route.path + ".tar";
-        response.body = *blob;
       } else if (route.kind == ckgit::RouteKind::kReleaseAsset) {
-        const auto blob = index.readReleaseAsset(route.project, route.run_id, route.path);
-        if (!blob) throw ckgit::WebError(404, "Release asset was not found.");
+        if (state_root) download = ckgit::openCiReleaseAsset(*state_root, route.project, route.run_id, route.path);
+        if (!download) throw ckgit::WebError(404, "Release asset was not found.");
         response.raw = true;
         response.content_type = "application/x-tar";
         response.filename = route.path + ".tar";
-        response.body = *blob;
       } else if (route.kind == ckgit::RouteKind::kCiLog) {
         const int step = std::max(0, route.step);
         // A step log can exceed what one page holds (up to ci_max_log_bytes);
@@ -1158,6 +1183,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       }
     }
   } catch (const ckgit::WebError& error) {
+    download.reset();
     if (project.has_value()) {
       response = ckgit::renderDashboardError(route, *project, error.status, error.what());
     } else {
@@ -1165,6 +1191,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       response.body = ckgit::pageLayout("Repository view unavailable", "<h1>Repository view unavailable</h1><p>" + ckgit::htmlEscape(error.what()) + "</p>");
     }
   } catch (const std::exception&) {
+    download.reset();
     const std::string message = "Repository data exceeded a limit or could not be read. Try again shortly.";
     if (project.has_value()) {
       response = ckgit::renderDashboardError(route, *project, 503, message);
@@ -1173,7 +1200,7 @@ void handleHttpClient(int descriptor, const std::filesystem::path& root, ckgit::
       response.body = ckgit::pageLayout("View unavailable", "<h1>View unavailable</h1><p>" + message + "</p>");
     }
   }
-  sendHttp(descriptor, response, is_head, deadline);
+  sendHttp(descriptor, response, is_head, deadline, download ? &*download : nullptr);
 }
 
 void serveHttp(int listener, const std::filesystem::path& root, ckgit::ProjectIndex& index,

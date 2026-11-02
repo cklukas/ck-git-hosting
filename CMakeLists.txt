@@ -180,6 +180,10 @@ if(NOT WIN32)
     add_test(NAME unit COMMAND ckgit-unit-tests)
     set_tests_properties(unit PROPERTIES ENVIRONMENT
       "CKGIT_TEST_ROOT=${CMAKE_BINARY_DIR};CKGIT_SOURCE_ROOT=${CMAKE_SOURCE_DIR};TMPDIR=${CMAKE_BINARY_DIR}/test-tmp")
+    add_test(NAME ci-artifact-stream COMMAND ${CMAKE_COMMAND} -E env
+      "TMPDIR=${CMAKE_BINARY_DIR}/test-tmp" "CKGIT_HOSTINGD=$<TARGET_FILE:ck-git-hostingd>"
+      /bin/sh "${CMAKE_SOURCE_DIR}/tests/integration/ci_artifact_stream.sh")
+    set_tests_properties(ci-artifact-stream PROPERTIES TIMEOUT 180)
     add_test(NAME ci-distributed COMMAND ckgit-unit-tests --ci-distributed-only)
     set_tests_properties(ci-distributed PROPERTIES ENVIRONMENT
       "CKGIT_TEST_ROOT=${CMAKE_BINARY_DIR};CKGIT_SOURCE_ROOT=${CMAKE_SOURCE_DIR};TMPDIR=${CMAKE_BINARY_DIR}/test-tmp")
