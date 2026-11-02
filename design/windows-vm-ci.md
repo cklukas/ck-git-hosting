@@ -1,7 +1,10 @@
 # Windows VM CI backend investigation
 
-Status: a lifecycle primitive is qualified. No Windows VM runner backend is
-implemented, registered or advertised. No hosted Orthomap artifact exists.
+Status: the offline HCS broker/guest/storage implementation compiles with MSVC
+in this isolated branch. Source/result framing and configuration tests pass;
+the diskless lifetime primitive is qualified. The first real Windows guest is
+being initialized. No runner is registered or advertised and no hosted
+Orthomap artifact exists.
 
 ## Why another Windows boundary is needed
 
@@ -41,7 +44,7 @@ V: and set TEMP/TMP/TMPDIR before configuring, building and running CTest. The
 probe enforces that qualification location. Its source and build records must
 be verified before execution. Do not reuse the GUI VM or recovery VM.
 
-## Backend still to implement and qualify
+## Implemented topology, still requiring actual guest/job qualification
 
 - An operator-selected, sealed Windows base without host credentials; all OS,
   tool and development disk paths configurable. Workstation paths stay on V:.
@@ -74,3 +77,37 @@ be verified before execution. Do not reuse the GUI VM or recovery VM.
 - [HCS schema](https://learn.microsoft.com/en-us/virtualization/api/hcs/schemareference)
 - [HCS operation sample](https://learn.microsoft.com/en-us/virtualization/api/hcs/reference/operationcompletionsample)
 - [CLR metadata API limitations](https://learn.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.runtimeenvironment.getruntimeinterfaceasobject)
+
+## Operator selection and admission
+
+`ci_windows_backend=hyperv-hcs` selects this backend explicitly. LPAC remains
+unchanged by default. HCS requires `ci_allow_network=false`, no shared cache,
+and an absolute `ci_windows_vm_profile`. The profile has exactly these fields:
+`schema_version=1`, `os_disk`, `os_sha256`, `work_disk`, `work_sha256`,
+`sdk_disk`, `sdk_sha256`, `memory_mb` and `processors`. All image and temporary
+paths are on V:. Images are hashed with deny-write/delete handles retained for
+the broker lifetime. The operator supplies already initialized images; jobs
+cannot install software, select a base or provide arbitrary HCS JSON.
+
+A job receives fresh native differencing disks and a read-only SDK disk. Its
+GUID ownership record is flushed before HCS creation. Recovery checks only
+those exact recorded IDs, refuses unknown/reparse entries and requires absence
+before deleting a workspace. Unconfirmed stop or cleanup is fatal to claiming.
+Host SSH credentials and lease tokens never enter the guest. Returned terminal
+success is provisional until shutdown and workspace cleanup are confirmed.
+The host replaces guest execution metadata with `windows/x64`, `hyperv-hcs`,
+network denied and its configured resource limits.
+
+`ckgit-windows-vm-host-check --preflight` creates a diskless disposable VM.
+`--storage-check PROFILE WORKROOT` verifies image hashes, locks, differencing
+creation and absence-checked cleanup without booting an OS. The operator-only
+`--initialize-base OS WORK SDK ACCEPTANCE` boots only explicitly selected new
+base images, allows bounded Windows setup restarts, waits for the guest's
+setup-complete readiness greeting, and requires clean shutdown before success.
+A matching human license acceptance record is mandatory. The guest also
+requires the machine Visual Studio `OptIn=0` policy before it can accept a job.
+No project code or host credential is sent during initialization.
+
+None of those local checks substitutes for actual offline Orthomap WinUI job,
+forced owner death/cancellation, clean subsequent job, service-account HCS
+qualification, hosted protocol execution and downloaded app verification.

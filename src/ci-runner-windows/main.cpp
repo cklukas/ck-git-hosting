@@ -1,6 +1,7 @@
 // Copyright (c) 2026 C. Klukas. All rights reserved.
 // SPDX-License-Identifier: MIT
 #include "ckgit/ci_remote.hpp"
+#include "../ci-vm-windows/executor.hpp"
 #include "ckgit/windows_ci_executor.hpp"
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows.hpp"
@@ -58,26 +59,36 @@ struct RunLock {
 };
 int serve(const fs::path& config_path, bool once, bool check_only, const std::function<void()>& ready = {}) {
   auto config = ckgit::loadRunnerConfig(config_path);
-  if (!config.toolchain_root) throw std::runtime_error("Windows runner requires ci_toolchain_root");
-  ordinaryDirectory(*config.toolchain_root);
+  const bool hcs = config.windows_backend == "hyperv-hcs";
+  if (!hcs && !config.toolchain_root) throw std::runtime_error("Windows runner requires ci_toolchain_root");
+  if (!hcs) ordinaryDirectory(*config.toolchain_root);
   fs::create_directories(config.build_root);
   ordinaryDirectory(config.build_root);
   RunLock lock(config.build_root / "runner.lock");
-  ckgit::WindowsRunnerSession session(config.build_root);
+  const auto session_parent = hcs ? config.build_root / "broker-sessions" : config.build_root;
+  fs::create_directories(session_parent);
+  ckgit::WindowsRunnerSession session(session_parent);
   const auto temporary = session.root() / "tmp";
   fs::create_directory(temporary);
   for (const auto* key : {L"TEMP", L"TMP", L"TMPDIR"})
     if (_wputenv_s(key, temporary.c_str())) throw std::runtime_error("cannot set runner temporary directory");
   ckgit::WindowsCiToolchain toolchain;
-  toolchain.root = *config.toolchain_root;
+  if (!hcs) toolchain.root = *config.toolchain_root;
   toolchain.launcher = executableDirectory() / "ckgit-job-launcher.exe";
-  if (!fs::is_regular_file(toolchain.launcher)) throw std::runtime_error("ckgit-job-launcher.exe is missing beside the runner");
+  if (!hcs && !fs::is_regular_file(toolchain.launcher)) throw std::runtime_error("ckgit-job-launcher.exe is missing beside the runner");
   toolchain.binary_directories = config.toolchain_paths;
   toolchain.environment = config.toolchain_environment;
-  for (const auto& relative : toolchain.binary_directories) ordinaryDirectory(toolchain.root / relative);
+  if (!hcs) for (const auto& relative : toolchain.binary_directories) ordinaryDirectory(toolchain.root / relative);
+  std::unique_ptr<ckgit::WindowsVmImages> images;
+  const auto vm_jobs = config.build_root / "vm-jobs";
   // Verify the required broker privileges before claiming a lease. Profiles
   // are disposable; there is no fallback to an unrestricted process.
-  {
+  if (hcs) {
+    fs::create_directories(vm_jobs);ordinaryDirectory(vm_jobs);
+    ckgit::WindowsVmImages::recover(vm_jobs);
+    images = std::make_unique<ckgit::WindowsVmImages>(*config.windows_vm_profile, [] { return !stop_requested.load(); });
+    ckgit::HcsCiVm::preflight([] { return !stop_requested.load(); });
+  } else {
     ckgit::WindowsSandbox probe(session.root());
     const auto launcher = probe.tools() / "ckgit-job-launcher.exe";
     fs::copy_file(toolchain.launcher, launcher);
@@ -90,7 +101,7 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
     if (checked.exit_code != 0 || checked.timed_out || (checked.output != "LPAC launcher ready\n" && checked.output != "LPAC launcher ready\r\n"))
       throw std::runtime_error("AppContainer startup self-check failed: " + checked.output);
   }
-  if (check_only) { std::cout << "Windows runner configuration and AppContainer broker available\n"; return 0; }
+  if (check_only) { std::cout << "Windows runner configuration and " << (hcs ? "HCS VM" : "AppContainer") << " isolation available\n"; return 0; }
   if (ready) ready();
   config.build_root = session.root();
   ckgit::CiRemoteTransport transport(config, config_path);
@@ -129,7 +140,7 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
     std::cout << "Claimed " << job->prepared.job.project_name << ' ' << id << '\n';
     ckgit::CiExecutionOptions execution;
     execution.runner = config.name;
-    execution.build_root = session.root() / "jobs";
+    execution.build_root = hcs ? vm_jobs : session.root() / "jobs";
     execution.timeout_seconds = std::min(job->policy.timeout_seconds, config.timeout_seconds.value_or(86400));
     execution.max_log_bytes = static_cast<std::size_t>(job->policy.max_log_bytes);
     execution.artifact_max_bytes = static_cast<std::size_t>(job->policy.artifact_max_bytes);
@@ -140,10 +151,12 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
     ckgit::RemoteCiSource source(transport, id, job->token);
     ckgit::RemoteCiSink sink(transport, *job, session.root() / "relay", [] { return stop_requested.load(); });
     try {
-      const auto record = ckgit::executeWindowsCiJob(job->prepared, execution, toolchain, source, sink);
+      const auto record = hcs ? ckgit::executeWindowsHcsJob(job->prepared, execution, *images, source, sink)
+                              : ckgit::executeWindowsCiJob(job->prepared, execution, toolchain, source, sink);
       std::cout << "Finished " << id << ' ' << (sink.abandoned() ? "handed back" : ckgit::ciRunStatusName(record.status)) << '\n';
     } catch (const std::exception& error) {
       std::cerr << "Job " << id << " reporting failed: " << error.what() << '\n';
+      if (hcs) return 1; // Includes unconfirmed teardown: never claim again.
     }
   }
   return 0;
@@ -162,13 +175,14 @@ struct ServiceHost {
 ServiceHost service;
 void serviceStatus(DWORD state, DWORD error = NO_ERROR) {
   std::lock_guard lock(service.mutex);
+  const DWORD checkpoint = service.status.dwCurrentState == state ? service.status.dwCheckPoint + 1 : 1;
   service.status = {};
   service.status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
   service.status.dwCurrentState = state;
   service.status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
   service.status.dwWin32ExitCode = error;
   if (state == SERVICE_START_PENDING || state == SERVICE_STOP_PENDING) {
-    service.status.dwCheckPoint = 1;
+    service.status.dwCheckPoint = checkpoint;
     service.status.dwWaitHint = state == SERVICE_START_PENDING ? 60000 : 10000;
   }
   if (!SetServiceStatus(service.handle, &service.status))
@@ -332,7 +346,8 @@ int superviseServiceWorker() {
   if (ResumeThread(child.thread) == static_cast<DWORD>(-1)) throw std::runtime_error("cannot start service worker");
   std::cout << "Service worker pid=" << info.dwProcessId << '\n';
   bool running = false, stopping = false;
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  auto deadline = std::chrono::steady_clock::now() + (config.windows_backend == "hyperv-hcs" ? std::chrono::seconds(1200) : std::chrono::seconds(60));
+  auto startup_pulse = std::chrono::steady_clock::now();
   for (;;) {
     const auto exited = WaitForSingleObject(child.process, 50);
     if (exited == WAIT_OBJECT_0) {
@@ -351,6 +366,9 @@ int superviseServiceWorker() {
       serviceStatus(SERVICE_RUNNING);
       running = true;
       std::cout << "Service worker ready\n";
+    }
+    if (!running && !stopping && std::chrono::steady_clock::now() - startup_pulse >= std::chrono::seconds(2)) {
+      serviceStatus(SERVICE_START_PENDING);startup_pulse = std::chrono::steady_clock::now();
     }
     if ((!running || stopping) && std::chrono::steady_clock::now() >= deadline)
       throw std::runtime_error(stopping ? "service worker stop timed out; terminating process tree" : "service worker startup timed out");
