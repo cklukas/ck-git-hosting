@@ -144,7 +144,7 @@ void testCiVmProtocol() {
     CiVmChannel host(pair.fd[0]), guest(pair.fd[1]);
     std::optional<CiVmAssignment> assigned;
     std::exception_ptr guest_error;
-    std::jthread worker([&] {
+    std::thread worker([&] {
       try { assigned = ciVmGuestHandshake(guest, std::chrono::seconds(2)); }
       catch (...) { guest_error = std::current_exception(); }
     });
@@ -166,7 +166,7 @@ void testCiVmProtocol() {
     CiVmChannel sender(pair.fd[0]), receiver(pair.fd[1]);
     const std::string payload(kCiVmChunkPayloadMax, 'z');
     std::exception_ptr send_error;
-    std::jthread writer([&] {
+    std::thread writer([&] {
       try { sender.send(CiVmFrameType::Chunk, payload, std::chrono::seconds(2)); }
       catch (...) { send_error = std::current_exception(); }
     });
