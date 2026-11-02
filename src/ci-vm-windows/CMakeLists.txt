@@ -1,0 +1,16 @@
+add_library(ckgit_windows_vm_protocol STATIC
+  ../common/ci_vm_channel_windows.cpp source_transfer.cpp
+  ../ci-vm-host-macos/result_relay.cpp ../ci-vm-guest-macos/result_sink.cpp)
+target_link_libraries(ckgit_windows_vm_protocol PUBLIC ckgit_remote ckgit_archive ws2_32)
+if(BUILD_TESTING)
+  add_executable(ckgit-windows-vm-channel-test ../../tests/platform/windows_vm_channel_test.cpp)
+  target_link_libraries(ckgit-windows-vm-channel-test PRIVATE ckgit_windows_vm_protocol)
+  add_test(NAME windows-vm-channel COMMAND ckgit-windows-vm-channel-test)
+  set_tests_properties(windows-vm-channel PROPERTIES TIMEOUT 30)
+endif()
+if(BUILD_TESTING)
+  add_executable(ckgit-windows-vm-relay-test ../../tests/platform/windows_vm_result_relay_test.cpp)
+  target_link_libraries(ckgit-windows-vm-relay-test PRIVATE ckgit_windows_vm_protocol)
+  add_test(NAME windows-vm-relay COMMAND ckgit-windows-vm-relay-test)
+  set_tests_properties(windows-vm-relay PROPERTIES TIMEOUT 60)
+endif()

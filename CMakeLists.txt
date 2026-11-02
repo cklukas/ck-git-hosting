@@ -35,7 +35,7 @@ set(PORTABLE_SOURCES
   src/common/client_config.cpp src/common/client_state.cpp src/common/runner_config.cpp
   src/common/ci_control.cpp src/common/server_identity.cpp src/common/ci_runner_protocol.cpp
   src/common/release_control.cpp src/common/display_format.cpp
-  src/common/ci_workflow.cpp src/common/cli_help.cpp src/common/control_rpc.cpp
+  src/common/ci_workflow.cpp src/common/ci_vm_protocol.cpp src/common/cli_help.cpp src/common/control_rpc.cpp
   src/common/docs_i18n.cpp src/common/emoji.cpp src/common/hash.cpp
   src/common/tree_file.cpp src/common/temp_directory.cpp src/common/site_file.cpp
   src/common/highlight.cpp src/common/http_request.cpp src/common/http_router.cpp
@@ -71,6 +71,7 @@ target_link_libraries(ckgit_remote PUBLIC ckgit_remote_transport ckgit_client_su
 if(WIN32)
   add_library(ckgit_windows_executor STATIC src/common/windows_ci_executor.cpp)
   target_link_libraries(ckgit_windows_executor PUBLIC ckgit_remote ckgit_archive)
+  add_subdirectory(src/ci-vm-windows)
   add_executable(ck-ci-runnerd src/ci-runner-windows/main.cpp)
   target_link_libraries(ck-ci-runnerd PRIVATE ckgit_windows_executor)
   add_dependencies(ck-ci-runnerd ckgit-job-launcher)

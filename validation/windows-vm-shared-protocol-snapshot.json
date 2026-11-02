@@ -1,0 +1,29 @@
+{
+  "scope": "Snapshot of existing peer VM framing/relay sources for Windows port; shared worktree unchanged",
+  "files": [
+    {
+      "path": "include/ckgit/ci_vm_protocol.hpp",
+      "sha256": "2f1998feba4f519d29fbdcb652dab2df4012d04e0f72e81d24f5ba9cec250740"
+    },
+    {
+      "path": "src/common/ci_vm_protocol.cpp",
+      "sha256": "ac6df8c52b2dd08c9a852363cc58e58f96e2616597726e7ff67b1339511094b7"
+    },
+    {
+      "path": "src/ci-vm-host-macos/result_relay.hpp",
+      "sha256": "30db9c992b94ebadd902e259c18acfeb17e47a5e2e50c4a24d9d190e335f16e5"
+    },
+    {
+      "path": "src/ci-vm-host-macos/result_relay.cpp",
+      "sha256": "1041e6b19fac45173f58312eb1b93ca50dfe3c33360c82e43834cf572c29fa5e"
+    },
+    {
+      "path": "src/ci-vm-guest-macos/result_sink.hpp",
+      "sha256": "08eb148b29d2292d9880a8e9e9674e2d9edd8f6b77a6150977afff66722e86d8"
+    },
+    {
+      "path": "src/ci-vm-guest-macos/result_sink.cpp",
+      "sha256": "3ddb2d4396b986be2314f46bea2a4a48e513e41c9e595c7f029dea5b2977dc5a"
+    }
+  ]
+}
