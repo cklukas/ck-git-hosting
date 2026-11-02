@@ -228,9 +228,12 @@ void testCiVmProtocol() {
     } cleanup{root};
     std::filesystem::create_directory(root / "base");
     std::filesystem::create_directory(root / "work");
+    require(chmod((root / "base").c_str(), 0700) == 0, "cannot protect VM base fixture");
     require(chmod((root / "work").c_str(), 0700) == 0, "cannot protect VM lock fixture");
-    for (const char* name : {"Disk.img", "AuxiliaryStorage", "MachineIdentifier", "HardwareModel"})
+    for (const char* name : {"Disk.img", "AuxiliaryStorage", "MachineIdentifier", "HardwareModel"}) {
       std::ofstream(root / "base" / name) << "test image component";
+      require(chmod((root / "base" / name).c_str(), 0600) == 0, "cannot protect VM base component");
+    }
     ckgit::MacosVmRunnerLock runner_lock(root / "work");
     require(rejects([&] { ckgit::MacosVmRunnerLock other(root / "work"); }),
             "a second VM runner acquired the same work root");
