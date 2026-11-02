@@ -147,6 +147,7 @@ class RemoteCiSink : public CiResultSink {
   CiRemoteTransport::Session session_{};
   bool connected_ = false;
   std::chrono::steady_clock::time_point last_connect_attempt_{};
+  std::chrono::steady_clock::time_point greeting_deadline_{};
   std::chrono::steady_clock::time_point last_flush_{};
   std::chrono::steady_clock::time_point last_heartbeat_{};
   std::string reply_buffer_;
@@ -154,6 +155,7 @@ class RemoteCiSink : public CiResultSink {
   std::vector<StepLog> steps_;
   std::uint64_t started_epoch_ = 0;
   std::string detail_;
+  std::string execution_;
   bool cancel_ = false;
   bool lease_lost_ = false;
   bool abandoned_ = false;

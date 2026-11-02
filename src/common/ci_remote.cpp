@@ -74,39 +74,37 @@ std::filesystem::path RemoteCiSink::relayPath(std::size_t index) const {
 }
 
 bool RemoteCiSink::connect() {
-  if (stopping()) return false;
-  last_connect_attempt_ = std::chrono::steady_clock::now();
-  CiRunnerCommand command;
-  command.op = CiRunnerOp::kStream;
-  command.job_id = job_.prepared.job.job_id;
-  command.token = job_.token;
-  try {
-    session_ = transport_.open(command);
-  } catch (const std::exception&) {
-    return false;
+  if (stopping() || lease_lost_) return false;
+  if (!session_) {
+    last_connect_attempt_ = std::chrono::steady_clock::now();
+    CiRunnerCommand command;
+    command.op = CiRunnerOp::kStream;
+    command.job_id = job_.prepared.job.job_id;
+    command.token = job_.token;
+    try { session_ = transport_.open(command); }
+    catch (const std::exception&) { return false; }
+    reply_buffer_.clear();
+    greeting_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   }
-  // The greeting: what the main host already holds, then "ready".
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-  std::string buffer;
-  bool ready = false;
-  while (!ready && !stopping() && std::chrono::steady_clock::now() < deadline) {
-    char chunk[4096];
+  // Process only currently available greeting bytes. A stalled SSH handshake
+  // must never hold a VM guest acknowledgement for its entire timeout.
+  char chunk[4096];
+  for (unsigned reads = 0; reads < 16; ++reads) {
     const auto received = session_->read(chunk, sizeof(chunk));
-    if (received < 0) break;
-    if (!received) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
-    buffer.append(chunk, static_cast<std::size_t>(received));
+    if (received < 0) { disconnect(); return false; }
+    if (received == 0) break;
+    reply_buffer_.append(chunk, static_cast<std::size_t>(received));
+    if (reply_buffer_.size() > 256 * 1024) { disconnect(); return false; }
     std::size_t newline;
-    while ((newline = buffer.find('\n')) != std::string::npos) {
-      const std::string line = buffer.substr(0, newline);
-      buffer.erase(0, newline + 1);
+    while ((newline = reply_buffer_.find('\n')) != std::string::npos) {
+      const std::string line = reply_buffer_.substr(0, newline);
+      reply_buffer_.erase(0, newline + 1);
       if (line == "ready") {
-        ready = true;
-        break;
+        connected_ = true;
+        resend();
+        return connected_;
       }
-      if (line == "lease-lost") {
-        lease_lost_ = true;
-        break;
-      }
+      if (line == "lease-lost") { lease_lost_ = true; disconnect(); return false; }
       if (line.rfind("held ", 0) == 0) {
         const std::size_t space = line.find(' ', 5);
         if (space == std::string::npos) continue;
@@ -118,16 +116,9 @@ bool RemoteCiSink::connect() {
         }
       }
     }
-    if (lease_lost_) break;
   }
-  if (!ready) {
-    CiRemoteTransport::close(session_);
-    return false;
-  }
-  reply_buffer_ = buffer;
-  connected_ = true;
-  resend();
-  return true;
+  if (std::chrono::steady_clock::now() >= greeting_deadline_) disconnect();
+  return false;
 }
 
 void RemoteCiSink::disconnect() {
@@ -140,6 +131,7 @@ void RemoteCiSink::disconnect() {
 // it ignores what it already has.
 void RemoteCiSink::resend() {
   if (started_epoch_ != 0) send("started " + std::to_string(started_epoch_) + "\n");
+  if (!execution_.empty()) send("execution " + execution_ + "\n");
   for (std::size_t index = 0; index < steps_.size(); ++index) {
     StepLog& step = steps_[index];
     step.sent = step.acked;
@@ -258,8 +250,8 @@ void RemoteCiSink::maybeHeartbeat(bool force) {
 }
 
 void RemoteCiSink::tick() {
-  if (!connected_ && !lease_lost_ &&
-      std::chrono::steady_clock::now() - last_connect_attempt_ >= std::chrono::seconds(2)) {
+  if (!connected_ && !lease_lost_ && (session_ ||
+      std::chrono::steady_clock::now() - last_connect_attempt_ >= std::chrono::seconds(2))) {
     connect();
   }
   readReplies();
@@ -293,8 +285,10 @@ void RemoteCiSink::appendLog(std::size_t index, std::string_view bytes) {
 }
 
 void RemoteCiSink::stepFinished(const CiRunRecord& record, std::size_t index) {
-  if (transport_.supportsExecutionReport())
-    send("execution " + (record.execution ? formatCiExecutionReport(*record.execution) : "-") + "\n");
+  if (transport_.supportsExecutionReport()) {
+    execution_ = record.execution ? formatCiExecutionReport(*record.execution) : "-";
+    send("execution " + execution_ + "\n");
+  }
   if (index >= steps_.size() || record.steps.empty()) return;
   StepLog& step = steps_[index];
   step.ended = true;
@@ -467,7 +461,8 @@ CiRunRecord RemoteCiSink::finish(CiRunRecord record) {
     flush(true);
     const bool caught_up = std::all_of(steps_.begin(), steps_.end(),
                                        [](const StepLog& step) { return step.acked >= step.size; });
-    if ((caught_up && out_buffer_.empty()) || lease_lost_ || std::chrono::steady_clock::now() >= deadline) break;
+    if ((connected_ && caught_up && out_buffer_.empty()) || lease_lost_ ||
+        std::chrono::steady_clock::now() >= deadline) break;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   disconnect();

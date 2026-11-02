@@ -128,9 +128,10 @@ int run(const std::vector<std::string>& args) {
           return 1;
         }
       }
-      if (command->job_id == "sink-job") {
+      if (command->job_id == "sink-job" || command->job_id == "sink-job-delay") {
         if (command->protocol_version != 2 || command->token != std::string(32, 'b')) return 2;
         if (command->op == ckgit::CiRunnerOp::kStream) {
+          if (command->job_id == "sink-job-delay") std::this_thread::sleep_for(std::chrono::milliseconds(700));
           std::cout << "ready\n" << std::flush;
           std::uint64_t held = 0;
           bool execution_seen = false;
@@ -426,9 +427,9 @@ int run(const std::vector<std::string>& args) {
       require(output == "ready\nheartbeat\n", "native SSH transport carries bidirectional stream frames");
       ckgit::CiRemoteTransport::close(session);
       require(!session, "native SSH transport closes session ownership");
-      {
+      for (const auto* mode : {"sink-job", "sink-job-delay"}) {
         ckgit::CiRemoteJob job;
-        job.prepared.job.job_id = "sink-job";
+        job.prepared.job.job_id = mode;
         job.token = std::string(32, 'b');
         ckgit::RemoteCiSink sink(transport, job, root / "relay", nullptr);
         ckgit::CiRunRecord record;
@@ -481,6 +482,22 @@ int run(const std::vector<std::string>& args) {
             "shutdown only reports hand-back when host acknowledged it");
         require(std::chrono::steady_clock::now() - began < std::chrono::seconds(4),
             "shutdown bounds log drain, silent finish and hand-back requests");
+      }
+      {
+        ckgit::CiRemoteJob job;
+        job.prepared.job.job_id = "waiting-transport";
+        job.token = std::string(32, 'b');
+        ckgit::RemoteCiSink sink(transport, job, root / "relay", nullptr);
+        ckgit::CiRunRecord record;
+        record.started_epoch_seconds = 1;
+        const auto began = std::chrono::steady_clock::now();
+        sink.runStarted(record);
+        for (unsigned n = 0; n != 20; ++n) {
+          sink.tick();
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        require(std::chrono::steady_clock::now() - began < std::chrono::seconds(3),
+            "a silent stream greeting must not block guest acknowledgement polling");
       }
       for (const bool greeting : {true, false}) {
         ckgit::CiRemoteJob job;
