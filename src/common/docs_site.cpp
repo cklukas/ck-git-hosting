@@ -2098,6 +2098,11 @@ struct SiteContext {
 std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir,
                                const DocsUiText& ui);
 
+// A standalone site can still expose related published sites in the same
+// left-side selector.  Unlike a portal selector these entries are all
+// external, so there is no current site entry or generated-site separator.
+std::string renderStandaloneSiteSelector(const DocsConfig& config, const DocsUiText& ui);
+
 // Header links, as configured.
 std::string renderHeaderLinks(const std::vector<DocsLink>& links, const DocsUiText& ui);
 
@@ -2447,6 +2452,7 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
     out += "<header class=\"site\"><a class=\"brand\" href=\"" + url(model.pages[model.home].output) + "\">";
     if (!context.logo_output.empty()) out += "<img src=\"" + url(context.logo_output) + "\" alt=\"\">";
     out += escapeHtml(model.config.brand.empty() ? model.title : model.config.brand) + "</a>";
+    if (!model.config.selector.links.empty()) out += renderStandaloneSiteSelector(model.config, ui);
   }
   out += "<nav class=\"tabs\" aria-label=\"" + escapeHtml(ui.sections) + "\">";
   for (const auto& item : model.nav) {
@@ -2630,6 +2636,21 @@ std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std:
     for (const auto& link : portal.config.selector.links) {
       out += "<li><a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + icon(link.icon) + escapeHtml(link.title) + "</a></li>";
     }
+  }
+  return out + "</ul></nav></details>";
+}
+
+std::string renderStandaloneSiteSelector(const DocsConfig& config, const DocsUiText& ui) {
+  std::string out = "<details class=\"site-select\" style=\"--site-select-icon-size:" +
+                    std::to_string(config.selector.icon_size) + "px\"><summary>" +
+                    escapeHtml(config.brand.empty() ? config.title : config.brand) +
+                    "</summary><nav aria-label=\"" + escapeHtml(ui.documentation_sites) + "\"><ul>";
+  for (const auto& link : config.selector.links) {
+    const std::string icon = link.icon.empty() ? std::string() :
+        "<img class=\"site-select-icon\" src=\"" + escapeHtml(link.icon) +
+        "\" alt=\"\" aria-hidden=\"true\">";
+    out += "<li><a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + icon +
+           escapeHtml(link.title) + "</a></li>";
   }
   return out + "</ul></nav></details>";
 }
