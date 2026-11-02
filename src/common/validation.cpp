@@ -181,8 +181,11 @@ std::string formatCiLabelList(const std::vector<std::string>& labels) {
 bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
                      const std::vector<std::string>& runs_on) {
   // Unlabelled legacy workflows assume the original POSIX execution environment.
-  // Windows is opt-in through server-controlled labels, never a fallback worker.
-  if (runs_on.empty() && std::find(labels.begin(), labels.end(), "windows") != labels.end()) return false;
+  // Windows and the Apple VM backend are opt-in through server-controlled
+  // labels, never fallback workers for legacy Linux-oriented workflows.
+  if (runs_on.empty() && (std::find(labels.begin(), labels.end(), "windows") != labels.end() ||
+                          name == "macos-vm" || std::find(labels.begin(), labels.end(), "macos-vm") != labels.end()))
+    return false;
   return std::all_of(runs_on.begin(), runs_on.end(), [&](const std::string& wanted) {
     return wanted == name || std::find(labels.begin(), labels.end(), wanted) != labels.end();
   });

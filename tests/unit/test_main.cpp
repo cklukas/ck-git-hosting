@@ -1140,6 +1140,11 @@ void testClientManagement();
 void testSetupConfig();
 void testYamlSubset();
 void testCiWorkflow();
+void testCiDependencyLock();
+void testCiDependencyStore();
+void testCiDependencyCommit();
+void testCiProvisionedInventory();
+void testCiVmProtocol();
 void testCiStore();
 void testCiRunner();
 void testCiDistributed();
@@ -1154,6 +1159,16 @@ int main(int argc, char** argv) {
   // inside the sandbox costs one TCP round trip, not the full suite.
   if (argc > 1 && std::string(argv[1]) == "--loopback-probe") {
     return runLoopbackProbe();
+  }
+  if (argc > 1 && std::string(argv[1]) == "--ci-distributed-only") {
+    try { testCiDistributed(); }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    return failures == 0 ? 0 : 1;
+  }
+  if (argc > 1 && std::string(argv[1]) == "--ci-dependency-only") {
+    try { testCiDependencyLock(); testCiDependencyStore(); testCiDependencyCommit(); testCiProvisionedInventory(); }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    return failures == 0 ? 0 : 1;
   }
   try {
     testProjectIndex();
@@ -1174,6 +1189,11 @@ int main(int argc, char** argv) {
     testSetupConfig();
     testYamlSubset();
     testCiWorkflow();
+    testCiDependencyLock();
+    testCiDependencyStore();
+    testCiDependencyCommit();
+    testCiProvisionedInventory();
+    testCiVmProtocol();
     testCiStore();
     testCiRunner();
     testCiDistributed();

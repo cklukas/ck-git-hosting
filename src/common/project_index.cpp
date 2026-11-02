@@ -475,6 +475,9 @@ class ProjectIndex::Impl {
         found->second.checkouts = std::move(updated.checkouts);
         found->second.events = std::move(updated.events);
         found->second.ci_runs = std::move(updated.ci_runs);
+        found->second.dependency_requests = std::move(updated.dependency_requests);
+        found->second.dependency_requests_truncated = updated.dependency_requests_truncated;
+        found->second.dependency_error = std::move(updated.dependency_error);
         found->second.releases = std::move(updated.releases);
       } else {
         found->second.index_error = std::move(error);
@@ -677,6 +680,12 @@ class ProjectIndex::Impl {
       summary.checkouts = loadCheckoutMetadata(*state_root_, summary.name);
       summary.events = loadProjectEvents(*state_root_, summary.name);
       summary.ci_runs = loadCiRuns(*state_root_, summary.name, 16, true);
+      try {
+        summary.dependency_requests = listCiDependencyRequests(*state_root_, summary.name, 16,
+                                                                &summary.dependency_requests_truncated);
+      } catch (const std::exception&) {
+        summary.dependency_error = "Dependency review records are unavailable or invalid.";
+      }
       summary.releases = loadReleases(*state_root_, summary.name);
     }
   }

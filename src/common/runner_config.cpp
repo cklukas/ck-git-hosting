@@ -93,6 +93,12 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
       config.cache_root = absolute(value);
     } else if (key == "ci_macos_native_socket") {
       config.macos_native_socket = absolute(value);
+    } else if (key == "ci_macos_vm_base") {
+      config.macos_vm_base = absolute(value);
+    } else if (key == "ci_macos_vm_work_root") {
+      config.macos_vm_work_root = absolute(value);
+    } else if (key == "ci_macos_vm_min_free_gib") {
+      config.macos_vm_min_free_gib = integer(value, 1, 65536);
     } else if (key == "ci_toolchain_root") {
       config.toolchain_root = absolute(value);
     } else if (key == "ci_toolchain_paths") {
@@ -136,8 +142,19 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
     throw std::runtime_error("runner configuration needs schema_version, server, name and ci_build_root: " +
                              path.string());
   }
-  if (config.macos_native_socket && (config.allow_network || config.allow_degraded || config.cache_root))
-    throw std::runtime_error("native macOS requires offline execution, no degraded mode and no shared cache");
+  if (config.macos_native_socket && (config.macos_vm_base || config.macos_vm_work_root || config.allow_network || config.allow_degraded || config.cache_root))
+    throw std::runtime_error("native macOS requires offline execution, no degraded mode, no shared cache and no VM configuration");
+  if (config.macos_vm_base.has_value() != config.macos_vm_work_root.has_value() ||
+      (seen.count("ci_macos_vm_min_free_gib") && !config.macos_vm_base)) {
+    throw std::runtime_error("macOS VM configuration requires both a base and a work root");
+  }
+  if (config.macos_vm_base && (config.allow_degraded || config.allow_network || config.cache_root)) {
+    throw std::runtime_error("macOS VM configuration requires ci_allow_network=false, no degraded mode and no shared cache");
+  }
+  if (config.macos_vm_base && (config.toolchain_root || !config.toolchain_environment.empty() ||
+                               config.toolchain_paths != RunnerConfig{}.toolchain_paths)) {
+    throw std::runtime_error("macOS VM jobs use tools installed in the guest; remove Windows ci_toolchain settings");
+  }
 #ifndef _WIN32
   for (const std::filesystem::path* used : {&config.build_root, &config.ssh_program}) {
     if (!isShellSafe(used->string())) throw std::runtime_error("runner paths may use only [A-Za-z0-9/._-]");
@@ -159,6 +176,10 @@ std::string renderRunnerConfig(const RunnerConfig& config) {
   if (config.allow_degraded) out += "ci_allow_degraded=true\n";
   if (config.toolchain_root) out += "ci_toolchain_root=" + pathText(*config.toolchain_root) + "\n";
   if (config.macos_native_socket) out += "ci_macos_native_socket=" + pathText(*config.macos_native_socket) + "\n";
+  if (config.macos_vm_base) out += "ci_macos_vm_base=" + pathText(*config.macos_vm_base) + "\n";
+  if (config.macos_vm_work_root) out += "ci_macos_vm_work_root=" + pathText(*config.macos_vm_work_root) + "\n";
+  if (config.macos_vm_base && config.macos_vm_min_free_gib != 20)
+    out += "ci_macos_vm_min_free_gib=" + std::to_string(config.macos_vm_min_free_gib) + "\n";
   if (config.toolchain_paths != RunnerConfig{}.toolchain_paths) {
     out += "ci_toolchain_paths=";
     for (std::size_t i = 0; i < config.toolchain_paths.size(); ++i) {

@@ -11,10 +11,13 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -37,6 +40,8 @@
 #include "ckgit/pages_store.hpp"
 #include "ckgit/dir_watch.hpp"
 #include "ckgit/validation.hpp"
+#include "ckgit/macos_vm_storage.hpp"
+#include "ckgit/macos_vm_workspace.hpp"
 
 namespace {
 
@@ -365,6 +370,33 @@ std::uint64_t epochNow() {
 
 // R1: a claim records a lease that only its holder can renew; releasing the
 // job drops the lease with it.
+void testDependencyAdmissionHeld() {
+  Fixture fixture;
+  auto protected_job = sampleJob(ckgit::generateCiId());
+  protected_job.dependency_lock_sha256 = std::string(64, 'a');
+  ckgit::enqueueCiJob(fixture.state, protected_job);
+  ckgit::CiClaimOptions options;
+  options.runner = "uconsole";
+  for (unsigned version : {1u, 2u, 3u}) {
+    options.protocol_version = version;
+    require(!ckgit::claimCiJob(fixture.state, options), "dependency job stays queued without start admission");
+  }
+  const auto path = fixture.state / "ci" / "spool" / (protected_job.job_id + ".ini");
+  std::ifstream input(path);
+  const std::string contents((std::istreambuf_iterator<char>(input)), {});
+  require(contents.starts_with("schema_version=6\n") &&
+              contents.find("dependency_lock_sha256=" + protected_job.dependency_lock_sha256 + "\n") != std::string::npos,
+          "dependency requirement is stored in a fail-closed record version");
+  ckgit::requestCiCancel(fixture.state, protected_job.project_name, protected_job.job_id);
+  require(!ckgit::claimCiJob(fixture.state, options) && !std::filesystem::exists(path),
+          "held dependency job can be cancelled without a lease");
+  auto ordinary = sampleJob(ckgit::generateCiId());
+  ckgit::enqueueCiJob(fixture.state, ordinary);
+  options.protocol_version = 1;
+  const auto claim = ckgit::claimCiJob(fixture.state, options);
+  require(claim && claim->job.job_id == ordinary.job_id, "legacy jobs remain claimable");
+}
+
 void testLeaseClaimRenewRelease() {
   Fixture fixture;
   const std::string id = ckgit::generateCiId();
@@ -379,10 +411,32 @@ void testLeaseClaimRenewRelease() {
   require(claim->lease.expires_epoch_seconds >= epochNow() + 55, "the lease lasts its configured length");
   const auto loaded = ckgit::loadCiClaim(fixture.state, id);
   require(loaded.has_value() && loaded->lease.token == claim->lease.token, "the claim can be looked up");
+  bool called = false;
+  const auto transaction = [&](const ckgit::CiClaim& active) {
+    called = active.job.job_id == id && active.job.attempt == 1 && active.lease.runner == "uconsole";
+  };
+  require(!ckgit::withLiveCiClaim(fixture.state, id, "other", claim->lease.token, transaction) && !called,
+          "wrong runner cannot enter a live-lease transaction");
+  require(!ckgit::withLiveCiClaim(fixture.state, id, "uconsole", std::string(32, '0'), transaction) && !called,
+          "wrong token cannot enter a live-lease transaction");
+  require(ckgit::withLiveCiClaim(fixture.state, id, "uconsole", claim->lease.token, transaction) && called,
+          "the exact live lease enters the transaction");
+  const auto lease_path = fixture.state / "ci" / "leases" / (id + ".ini");
+  std::ifstream lease_input(lease_path);
+  const std::string lease_text((std::istreambuf_iterator<char>(lease_input)), {});
+  const auto expires = lease_text.find("expires_epoch=");
+  require(expires != std::string::npos, "lease fixture contains expiry");
+  std::ofstream(lease_path, std::ios::trunc) << lease_text.substr(0, expires) << "expires_epoch=1\n";
+  called = false;
+  require(!ckgit::withLiveCiClaim(fixture.state, id, "uconsole", claim->lease.token, transaction) && !called,
+          "an expired lease cannot enter the transaction");
+  std::ofstream(lease_path, std::ios::trunc) << lease_text;
   require(ckgit::renewCiLease(fixture.state, id, claim->lease.token, 60), "the holder renews its lease");
   require(!ckgit::renewCiLease(fixture.state, id, std::string(32, '0'), 60), "another token cannot renew it");
   require(!ckgit::claimCiJob(fixture.state, options).has_value(), "a claimed job is not handed out twice");
   ckgit::releaseCiJob(fixture.state, id);
+  require(!ckgit::withLiveCiClaim(fixture.state, id, "uconsole", claim->lease.token, transaction),
+          "released lease cannot enter the transaction");
   require(!ckgit::loadCiClaim(fixture.state, id).has_value(), "a released job is no longer claimed");
   require(!ckgit::renewCiLease(fixture.state, id, claim->lease.token, 60), "a released lease cannot be renewed");
   require(!std::filesystem::exists(fixture.state / "ci" / "leases" / (id + ".ini")), "the lease file is gone");
@@ -556,12 +610,25 @@ void testVersionOneJobStillClaims() {
   windows.protocol_version = 2;
   require(!ckgit::claimCiJob(fixture.state, windows), "Windows must leave an unlabelled legacy job queued");
   require(!ckgit::loadCiClaim(fixture.state, id), "rejecting a legacy job must not create a lease");
+  ckgit::CiClaimOptions mac_vm;
+  mac_vm.runner = "mac-vm-builder";
+  mac_vm.labels = {"macos-vm", "arm64"};
+  mac_vm.protocol_version = 2;
+  require(!ckgit::claimCiJob(fixture.state, mac_vm), "macOS VM must leave an unlabelled legacy job queued");
+  require(!ckgit::loadCiClaim(fixture.state, id), "macOS VM rejection must not create a lease");
+  require(!ckgit::ciRunnerMatches("macos-vm", {}, {}), "a runner named macos-vm is also opt-in");
   auto explicit_windows = sampleJob(ckgit::generateCiId(), "refs/heads/windows");
   explicit_windows.runs_on = {"windows", "x64"};
   ckgit::enqueueCiJob(fixture.state, explicit_windows);
   const auto windows_claim = ckgit::claimCiJob(fixture.state, windows);
   require(windows_claim && windows_claim->job.job_id == explicit_windows.job_id,
           "Windows skips older unlabelled work and claims its explicitly labelled job");
+  auto explicit_mac = sampleJob(ckgit::generateCiId(), "refs/heads/macos");
+  explicit_mac.runs_on = {"macos-vm", "arm64"};
+  ckgit::enqueueCiJob(fixture.state, explicit_mac);
+  const auto mac_claim = ckgit::claimCiJob(fixture.state, mac_vm);
+  require(mac_claim && mac_claim->job.job_id == explicit_mac.job_id,
+          "macOS VM skips unlabelled work and claims its explicitly labelled job");
   const auto claim = ckgit::claimCiJob(fixture.state, ckgit::CiClaimOptions{});
   require(claim.has_value() && claim->job.attempt == 1 && claim->job.ref == "refs/heads/main",
           "a version-1 job is claimed as a first attempt");
@@ -965,6 +1032,40 @@ void testRunnerCommandGrammar() {
           "a device key cannot run runner operations");
 }
 
+void testDependencyPermitWire() {
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\n", 3), "missing capability rejected");
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\ndependency_admission=0\n", 3), "disabled capability rejected");
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\ndependency_admission=permit-v2\n", 3), "mismatched capability rejected");
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\ndependency_admission=permit-v1\ndependency_admission=permit-v1\n", 3), "duplicate capability rejected");
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\nprotocol=2\ndependency_admission=permit-v1\n", 3), "duplicate protocol rejected");
+  require(!ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=2\ndependency_admission=permit-v1\n", 2), "legacy capability rejected");
+  require(ckgit::ciServerAdvertisesDependencyPermitV1("ok\nprotocol=3\ndependency_admission=permit-v1\n", 3), "exact future capability recognized");
+  ckgit::CiDependencyStartPermit p;
+  p.project = "demo"; p.commit = std::string(40, 'a'); p.lock_sha256 = std::string(64, 'b');
+  p.inventory_sha256 = std::string(64, 'c'); p.platform = "macos"; p.architecture = "arm64";
+  p.abi = "arm64-macos"; p.job_id = "00000000000000000001-aaaaaaaa"; p.lease_sha256 = std::string(64, 'd');
+  p.nonce = std::string(32, 'e'); p.attempt = 2; p.issued_epoch = 1000; p.expires_epoch = 1120;
+  const auto wire = ckgit::formatCiDependencyStartPermit(p);
+  const auto parsed = ckgit::parseCiDependencyStartPermit(wire);
+  require(parsed.lock_sha256 == p.lock_sha256 && parsed.inventory_sha256 == p.inventory_sha256 &&
+              parsed.lease_sha256 == p.lease_sha256 && parsed.nonce == p.nonce && parsed.attempt == 2,
+          "dependency permit keeps distinct lock, inventory and lease identities");
+  require(!ckgit::ciDependencyStartPermitValidAt(parsed, 999) && ckgit::ciDependencyStartPermitValidAt(parsed, 1000) &&
+              ckgit::ciDependencyStartPermitValidAt(parsed, 1119) && !ckgit::ciDependencyStartPermitValidAt(parsed, 1120),
+          "dependency permit time window is bounded and exclusive at expiry");
+  auto altered = wire;
+  altered.replace(altered.find("attempt=2"), std::string("attempt=2").size(), "attempt=02");
+  require(throws([&] { (void)ckgit::parseCiDependencyStartPermit(altered); }), "noncanonical attempt rejected");
+  require(throws([&] { (void)ckgit::parseCiDependencyStartPermit(wire + "extra=x\n"); }), "extra permit fields rejected");
+  require(throws([&] { (void)ckgit::parseCiDependencyStartPermit(wire.substr(0, wire.size() - 1)); }), "unterminated permit rejected");
+  auto bad = p; bad.expires_epoch = 1121;
+  require(throws([&] { (void)ckgit::formatCiDependencyStartPermit(bad); }), "excessive permit lifetime rejected");
+  bad = p; bad.nonce = "short";
+  require(throws([&] { (void)ckgit::formatCiDependencyStartPermit(bad); }), "malformed permit nonce rejected");
+  bad = p; bad.lease_sha256 = std::string(64, 'A');
+  require(throws([&] { (void)ckgit::formatCiDependencyStartPermit(bad); }), "noncanonical lease digest rejected");
+}
+
 // R4: what the gateway sends and the runner reads back are one definition.
 void testProtocolRoundTrips() {
   ckgit::CiPreparedJob prepared;
@@ -1036,7 +1137,9 @@ void testProtocolRoundTrips() {
   require(parsed.execution == report.execution, "execution properties survive the finish protocol");
   require(throws([&]() { ckgit::parseCiFinishReport(ckgit::formatCiFinishReport(report) +
       "execution=1,windows,x64,lpac,denied,4294967296,64,1800\n"); }), "duplicate execution report rejected");
-  for (const std::string bad : {"2,windows,x64,lpac,denied,0,0,0", "1,linux,x64,lpac,denied,0,0,0",
+  const auto hcs = ckgit::parseCiExecutionReport("1,windows,x64,hyperv-hcs,denied,8589934592,0,7200");
+  require(hcs.isolation == "hyperv-hcs" && ckgit::formatCiExecutionReport(hcs) == "1,windows,x64,hyperv-hcs,denied,8589934592,0,7200", "HCS execution report round trip");
+  for (const std::string bad : {"2,windows,x64,lpac,denied,0,0,0", "1,linux,x64,lpac,denied,0,0,0", "1,macos,arm64,hyperv-hcs,denied,0,0,0", "1,linux,x64,hyperv-hcs,denied,0,0,0",
       "1,windows,x64,lpac,domains-only,0,0,0", "1,windows,x64,lpac,denied,-1,0,0",
       "1,windows,x64,lpac,denied,0,4294967296,0", "1,windows,x64,lpac,denied,0,0,0,extra"})
     require(throws([&]() { ckgit::parseCiExecutionReport(bad); }), "malformed execution report rejected");
@@ -1103,8 +1206,11 @@ void testProtocolVersionIsolation() {
   ckgit::enqueueCiJob(fixture.state, child);
   require(gateway(config, "worker", "ckgit-runner 1 claim 0", "", fixture) == "none\n",
           "legacy gateway claim leaves children queued");
-  require(gateway(config, "worker", "ckgit-runner 2 hello 74657374", "", fixture).find("protocol=2\n") != std::string::npos,
+  const auto hello = gateway(config, "worker", "ckgit-runner 2 hello 74657374", "", fixture);
+  require(hello.find("protocol=2\n") != std::string::npos,
           "hello acknowledges the explicitly selected protocol");
+  require(hello.find("\ndependency_admission=0\n") != std::string::npos,
+          "server explicitly reports dependency admission unavailable");
   ckgit::CiClaimOptions options;
   options.runner = "worker";
   options.protocol_version = 2;
@@ -1403,6 +1509,19 @@ void testRunnerConfig() {
   const auto argv = transport.sshArguments();
   require(argv.back() == "ckgit@rpi4" && std::find(argv.begin(), argv.end(), "BatchMode=yes") != argv.end(),
           "the transport runs ssh non-interactively against the server");
+#ifndef _WIN32
+  auto long_path_config = config;
+  long_path_config.build_root = std::filesystem::path("/") / std::string(120, 'a') / "build";
+  const auto long_argv = ckgit::CiRemoteTransport(long_path_config, file).sshArguments();
+  require(std::find(long_argv.begin(), long_argv.end(), "ControlMaster=no") != long_argv.end() &&
+              std::find(long_argv.begin(), long_argv.end(), "ControlPath=none") != long_argv.end(),
+          "long runner paths disable SSH multiplexing instead of exceeding Unix socket limits");
+  auto percent_config = config;
+  percent_config.build_root = "/short%path/build";
+  const auto percent_argv = ckgit::CiRemoteTransport(percent_config, file).sshArguments();
+  require(std::find(percent_argv.begin(), percent_argv.end(), "ControlPath=\"/short%%path/.ssh-control-%C\"") !=
+              percent_argv.end(), "literal percent signs in the control directory are escaped");
+#endif
   require(transport.fetchUrl("demo") == "ckgit@rpi4:demo.git", "a project is fetched from the server");
   const auto rejected = [&](const std::string& text) {
     write(text);
@@ -1424,6 +1543,254 @@ void testRunnerConfig() {
   require(rejected(base + "name=x\nci_macos_native_socket=/socket\n"), "native requires offline policy");
   require(rejected(native + "ci_allow_degraded=true\n"), "native refuses degraded execution");
   require(rejected(native + "ci_cache_root=/cache\n"), "native refuses shared caches");
+  require(rejected(native + "ci_macos_vm_base=/base\nci_macos_vm_work_root=/work\n"), "native and VM modes are exclusive");
+  const auto vm = base + "name=x\nci_allow_network=false\nci_macos_vm_base=/base/VM.bundle\n"
+                         "ci_macos_vm_work_root=/Volumes/PRO-BLADE/ci-vms\nci_macos_vm_min_free_gib=40\n";
+  write(vm);
+  const auto vm_config = ckgit::loadRunnerConfig(file);
+  require(vm_config.macos_vm_base == "/base/VM.bundle" &&
+              vm_config.macos_vm_work_root == "/Volumes/PRO-BLADE/ci-vms" &&
+              vm_config.macos_vm_min_free_gib == 40 && !vm_config.allow_network,
+          "macOS VM storage configuration parses");
+  write(ckgit::renderRunnerConfig(vm_config));
+  require(ckgit::loadRunnerConfig(file).macos_vm_work_root == vm_config.macos_vm_work_root &&
+              ckgit::loadRunnerConfig(file).macos_vm_min_free_gib == 40,
+          "macOS VM configuration round trips");
+  require(rejected(base + "name=x\nci_macos_vm_base=/base\n"), "incomplete VM configuration rejected");
+  require(rejected(base + "name=x\nci_macos_vm_min_free_gib=40\n"), "orphan VM storage limit rejected");
+  require(rejected(base + "name=x\nci_macos_vm_base=/base\nci_macos_vm_work_root=/work\n"),
+          "VM configuration cannot allow network by default");
+  require(rejected(vm + "ci_allow_degraded=true\n"), "VM configuration cannot allow degraded execution");
+  require(rejected(vm + "ci_cache_root=/cache\n"), "VM configuration cannot expose a shared host cache");
+  require(rejected(vm + "ci_toolchain_root=/tools\n"), "VM configuration rejects a host toolchain root");
+  require(rejected(vm + "ci_toolchain_paths=other\n"), "VM configuration rejects host toolchain paths");
+  require(rejected(vm + "ci_toolchain_env.INCLUDE=/tools/include\n"), "VM configuration rejects host toolchain environment");
+  const auto vm_base = fixture.root / "vm-base";
+  const auto vm_work = fixture.root / "vm-work";
+  std::filesystem::create_directory(vm_base);
+  std::filesystem::create_directory(vm_work);
+  require(chmod(vm_base.c_str(), 0700) == 0, "private VM base directory");
+  require(chmod(vm_work.c_str(), 0700) == 0, "private VM work directory");
+  for (const char* name : {"Disk.img", "AuxiliaryStorage", "MachineIdentifier", "HardwareModel"}) {
+    std::ofstream(vm_base / name) << "base contents";
+    require(chmod((vm_base / name).c_str(), 0600) == 0, "private VM base component");
+  }
+  require(ckgit::validateMacosVmStorage(vm_base, vm_work, 1) >= 1024ull * 1024 * 1024,
+          "VM storage preflight accepts a private work directory with space");
+  require(chmod(vm_base.c_str(), 0755) == 0, "public VM base directory fixture");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, vm_work, 1); }),
+          "a VM base readable by other users is rejected");
+  require(chmod(vm_base.c_str(), 0700) == 0, "restore private VM base directory");
+  std::filesystem::remove(vm_base / "HardwareModel");
+  require(mkfifo((vm_base / "HardwareModel").c_str(), 0600) == 0, "create special VM image component fixture");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, vm_work, 1); }),
+          "a FIFO VM image component is rejected without blocking");
+  std::filesystem::remove(vm_base / "HardwareModel");
+  std::ofstream(vm_base / "HardwareModel") << "base contents";
+  require(chmod((vm_base / "HardwareModel").c_str(), 0600) == 0, "restore private VM base component");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, fixture.root / "missing", 1); }),
+          "missing VM volume or directory is rejected");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, vm_base, 1); }),
+          "VM work root cannot be the base");
+  require(throws([&] { ckgit::validateMacosVmStorage(fixture.root, vm_work, 1); }),
+          "VM work root cannot be inside the base");
+  require(chmod(vm_work.c_str(), 0755) == 0, "unsafe VM directory permissions fixture");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, vm_work, 1); }),
+          "public VM work directory is rejected");
+  require(chmod(vm_work.c_str(), 0700) == 0, "restore private VM directory");
+  std::filesystem::create_directory_symlink(vm_work, fixture.root / "linked-vm-work");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, fixture.root / "linked-vm-work", 1); }),
+          "symlinked VM work root is rejected");
+  require(throws([&] { ckgit::validateMacosVmStorage(vm_base, vm_work, 65536); }),
+          "insufficient free space is rejected");
+#ifdef __APPLE__
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    require(std::filesystem::exists(workspace.bundle() / ".ckgit-disposable-vm") &&
+                std::filesystem::exists(workspace.exchange()), "disposable VM workspace is prepared");
+    require(throws([&] { ckgit::MacosVmWorkspace concurrent(vm_base, vm_work, 1); }),
+            "a second runner cannot use the same VM work root");
+    std::ofstream(workspace.bundle() / "Disk.img", std::ios::trunc) << "job contents";
+    std::ifstream base_disk(vm_base / "Disk.img");
+    std::string base_contents;
+    std::getline(base_disk, base_contents);
+    require(base_contents == "base contents", "changing a clone preserves the VM base");
+    std::filesystem::create_directory(workspace.exchange() / "nested");
+    std::ofstream(workspace.exchange() / "nested" / "result") << "job output";
+    std::filesystem::create_symlink(vm_base / "Disk.img", workspace.exchange() / "outside-link");
+    const auto job_path = workspace.bundle().parent_path();
+    unsigned cleanup_progress = 0;
+    workspace.removeAfterConfirmedStop([&] { ++cleanup_progress; });
+    require(cleanup_progress > 0, "VM cleanup reports progress while retaining its workspace");
+    require(!std::filesystem::exists(job_path) && std::filesystem::exists(vm_base / "Disk.img"),
+            "cleanup removes only the job and does not follow output symlinks");
+    require(throws([&] { workspace.removeAfterConfirmedStop(); }), "duplicate cleanup is rejected");
+  }
+  {
+    std::filesystem::path interrupted_cleanup;
+    {
+      ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+      interrupted_cleanup = workspace.bundle().parent_path();
+      for (unsigned i = 0; i < 160; ++i)
+        std::ofstream(workspace.exchange() / ("source-" + std::to_string(i))) << "fixture";
+      unsigned updates = 0;
+      require(throws([&] { workspace.removeAfterConfirmedStop([&] {
+        if (++updates == 2) throw std::runtime_error("simulated interruption during cleanup");
+      }); }), "interrupted cleanup is observable");
+      require(updates >= 2 && std::filesystem::exists(workspace.bundle() / ".ckgit-vm-stopped") &&
+                  std::filesystem::exists(workspace.bundle() / ".ckgit-vm-use.lock"),
+              "partial cleanup retains its stop proof and helper lock");
+    }
+    ckgit::MacosVmWorkspace next(vm_base, vm_work, 1);
+    require(!std::filesystem::exists(interrupted_cleanup), "partial stopped cleanup recovers on the same boot");
+    next.removeAfterConfirmedStop();
+  }
+  std::filesystem::remove(vm_base / "HardwareModel");
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }),
+          "a missing VM base component is rejected");
+  require(std::filesystem::is_empty(vm_work), "invalid VM base leaves no workspace behind");
+  std::ofstream(vm_base / "HardwareModel") << "base contents";
+  require(chmod((vm_base / "HardwareModel").c_str(), 0600) == 0, "restore missing VM base component");
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    const auto original = workspace.bundle().parent_path();
+    const auto moved = original.string() + "-moved";
+    std::filesystem::rename(original, moved);
+    std::filesystem::create_directory(original);
+    std::ofstream(original / "untouched") << "not runner data";
+    require(throws([&] { workspace.removeAfterConfirmedStop(); }), "replaced workspace is not removed");
+    require(std::filesystem::exists(original / "untouched"), "replacement data remains intact");
+    std::filesystem::remove(original / "untouched");
+    std::filesystem::remove(original);
+    std::filesystem::rename(moved, original);
+    workspace.removeAfterConfirmedStop();
+  }
+  std::filesystem::path interrupted;
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    interrupted = workspace.bundle().parent_path();
+  }
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }) &&
+              std::filesystem::exists(interrupted),
+          "current-boot interrupted VM workspace is preserved and blocks another job");
+  {
+    const auto marker_path = interrupted / ".ckgit-workspace";
+    std::ifstream input(marker_path);
+    std::string marker((std::istreambuf_iterator<char>(input)), {});
+    require(marker.size() == 60, "VM workspace marker shape");
+    for (std::size_t i = 23; i < 59; ++i)
+      if (marker[i] >= 'a' && marker[i] <= 'f') marker[i] = static_cast<char>(marker[i] - 'a' + 'A');
+    std::ofstream(marker_path, std::ios::trunc) << marker;
+    require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }),
+            "the current boot identifier is compared without case ambiguity");
+  }
+  std::ofstream(interrupted / ".ckgit-workspace", std::ios::trunc)
+      << "ckgit-macos-vm-v1\nboot=00000000-0000-4000-8000-000000000000\n";
+  std::filesystem::create_directory(interrupted / "blocked");
+  require(chmod((interrupted / "blocked").c_str(), 0000) == 0, "make VM recovery fixture inaccessible");
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }) &&
+              std::filesystem::exists(interrupted / ".ckgit-workspace"),
+          "failed previous-boot VM cleanup retains its ownership marker");
+  require(chmod((interrupted / "blocked").c_str(), 0700) == 0, "restore VM recovery fixture access");
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    require(!std::filesystem::exists(interrupted), "recognized previous-boot VM workspace is recovered");
+    workspace.removeAfterConfirmedStop();
+  }
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    interrupted = workspace.bundle().parent_path();
+  }
+  const auto stop_proof = interrupted / "vm/.ckgit-vm-stopped";
+  std::ofstream(stop_proof) << "invalid\n";
+  require(chmod(stop_proof.c_str(), 0600) == 0, "protect malformed VM stop proof");
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }) &&
+              std::filesystem::exists(interrupted), "malformed stop proof cannot authorize recovery");
+  std::ofstream(stop_proof) << "ckgit-vm-stopped-v1\n";
+  require(chmod(stop_proof.c_str(), 0600) == 0, "protect VM stop proof");
+  const int active_lock = open((interrupted / "vm/.ckgit-vm-use.lock").c_str(), O_RDWR | O_CLOEXEC);
+  require(active_lock >= 0 && flock(active_lock, LOCK_EX | LOCK_NB) == 0, "hold active VM lock");
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }) &&
+              std::filesystem::exists(interrupted), "stop proof cannot override a live helper lock");
+  close(active_lock);
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    require(!std::filesystem::exists(interrupted), "confirmed same-boot stopped VM is recovered");
+    workspace.removeAfterConfirmedStop();
+  }
+  {
+    ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1);
+    std::ofstream(workspace.bundle().parent_path() / ".ckgit-workspace", std::ios::trunc) << "unknown";
+    require(throws([&] { workspace.removeAfterConfirmedStop(); }), "unrecognized workspace is not deleted");
+  }
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }),
+          "unreconciled workspace prevents another VM image from accumulating");
+  const auto invalid_workspace_marker = std::filesystem::directory_iterator(vm_work)->path() / ".ckgit-workspace";
+  std::filesystem::remove(invalid_workspace_marker);
+  require(mkfifo(invalid_workspace_marker.c_str(), 0600) == 0, "create special workspace marker fixture");
+  require(throws([&] { ckgit::MacosVmWorkspace workspace(vm_base, vm_work, 1); }),
+          "a FIFO workspace marker is rejected without blocking");
+  const auto relay_root = fixture.root / "vm-relays";
+  std::filesystem::create_directory(relay_root);
+  require(chmod(relay_root.c_str(), 0700) == 0, "protect VM relay root");
+  const auto relay = relay_root / (ckgit::generateCiId() + ".relay");
+  std::filesystem::create_directory(relay);
+  require(chmod(relay.c_str(), 0700) == 0, "protect VM relay directory");
+  std::ofstream(relay / ".ckgit-vm-relay") << "ckgit-vm-relay-v1\n";
+  require(chmod((relay / ".ckgit-vm-relay").c_str(), 0600) == 0, "protect VM relay marker");
+  std::filesystem::create_directory(relay / "private-example");
+  std::ofstream(relay / "private-example" / "step.log") << "job log";
+  std::filesystem::create_symlink(vm_base / "Disk.img", relay / "private-example" / "outside-link");
+  std::filesystem::create_directory(relay / "blocked");
+  require(chmod((relay / "blocked").c_str(), 0000) == 0, "make cleanup fixture inaccessible");
+  require(throws([&] { ckgit::reconcileMacosVmRelays(relay_root); }) &&
+              std::filesystem::exists(relay / ".ckgit-vm-relay"),
+          "failed VM relay cleanup retains its ownership marker");
+  require(chmod((relay / "blocked").c_str(), 0700) == 0, "restore cleanup fixture access");
+  ckgit::reconcileMacosVmRelays(relay_root);
+  require(std::filesystem::is_empty(relay_root) && std::filesystem::exists(vm_base / "Disk.img"),
+          "recognized VM relay is recovered without following links");
+  std::filesystem::create_directory(relay);
+  require(chmod(relay.c_str(), 0700) == 0, "protect unmarked relay directory");
+  std::ofstream(relay / "keep") << "unknown data";
+  require(throws([&] { ckgit::reconcileMacosVmRelays(relay_root); }) && std::filesystem::exists(relay / "keep"),
+          "unmarked VM relay data is preserved");
+  std::filesystem::remove(relay / "keep");
+  std::filesystem::create_symlink(vm_base / "Disk.img", relay / ".ckgit-vm-relay");
+  require(throws([&] { ckgit::reconcileMacosVmRelays(relay_root); }) && std::filesystem::exists(vm_base / "Disk.img"),
+          "a linked VM relay marker is rejected");
+  std::filesystem::remove(relay / ".ckgit-vm-relay");
+  require(mkfifo((relay / ".ckgit-vm-relay").c_str(), 0600) == 0, "create special relay marker fixture");
+  require(throws([&] { ckgit::reconcileMacosVmRelays(relay_root); }),
+          "a FIFO relay marker is rejected without blocking");
+  const auto crash_relay_root = fixture.root / "crashed-vm-relays";
+  std::filesystem::create_directory(crash_relay_root);
+  require(chmod(crash_relay_root.c_str(), 0700) == 0, "protect crash-test relay root");
+  ckgit::RunnerConfig relay_config;
+  relay_config.server = "ckgit@example.invalid";
+  relay_config.build_root = crash_relay_root;
+  ckgit::CiRemoteTransport relay_transport(relay_config, {});
+  ckgit::CiRemoteJob relay_job;
+  relay_job.prepared.job.job_id = ckgit::generateCiId();
+  const auto crash_relay = crash_relay_root / (relay_job.prepared.job.job_id + ".relay");
+  const pid_t relay_child = fork();
+  require(relay_child >= 0, "fork VM relay crash fixture");
+  if (relay_child == 0) {
+    try {
+      ckgit::RemoteCiSink sink(relay_transport, relay_job, crash_relay, {}, true);
+      ckgit::CiRunRecord record;
+      sink.stepStarted(record, 0);
+      sink.appendLog(0, "retained after crash");
+      _exit(0);  // Simulate process loss without running sink destructors.
+    } catch (...) { _exit(1); }
+  }
+  int relay_status = 0;
+  require(waitpid(relay_child, &relay_status, 0) == relay_child && WIFEXITED(relay_status) &&
+              WEXITSTATUS(relay_status) == 0 && std::filesystem::exists(crash_relay / ".ckgit-vm-relay"),
+          "interrupted VM sink leaves a recognizable relay");
+  ckgit::reconcileMacosVmRelays(crash_relay_root);
+  require(std::filesystem::is_empty(crash_relay_root), "recognized crashed VM relay is recovered");
+#endif
 }
 
 
@@ -1645,6 +2012,7 @@ void testCiDistributed() {
   testChildDependencyFailureAndCancellation();
   testDirectoryWatchSeesQueuedJob();
   testDirectoryWatchInactiveSleeps();
+  testDependencyAdmissionHeld();
   testLeaseClaimRenewRelease();
   testReaperRequeuesThenGivesUp();
   testRestartAndAbandon();
@@ -1660,6 +2028,7 @@ void testCiDistributed() {
   testClaimDelay();
   testOneRunPerRef();
   testRunnerCommandGrammar();
+  testDependencyPermitWire();
   testProtocolRoundTrips();
   testGatewayRecoversPublication();
   testGatewayDistributedRelease();

@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#ifndef _WIN32
+#include <sys/un.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__APPLE__)
@@ -101,9 +104,23 @@ std::vector<std::string> CiRemoteTransport::sshArguments() const {
                                    "-o", "ServerAliveInterval=15",
                                    "-o", "ServerAliveCountMax=4"};
 #ifndef _WIN32
-  argv.insert(argv.end(), {"-o", "ControlMaster=auto", "-o",
-      "ControlPath=" + quoteSshPath(config_.build_root.parent_path() / ".ssh-control-%C", false),
-      "-o", "ControlPersist=120"});
+  const auto parent = config_.build_root.parent_path();
+  const auto control = parent / ".ssh-control-%C";
+  // OpenSSH expands %C to 40 characters and appends a dot plus a random
+  // 16-character suffix while creating its socket. A path that fits only
+  // after expansion still fails during creation on macOS and other systems.
+  constexpr std::size_t expansion_and_temporary_suffix = 38 + 1 + 16;
+  if (genericPath(control).size() + expansion_and_temporary_suffix < sizeof(sockaddr_un::sun_path)) {
+    auto quoted = quoteSshPath(parent);
+    quoted.pop_back();
+    quoted += "/.ssh-control-%C\"";
+    argv.insert(argv.end(), {"-o", "ControlMaster=auto", "-o", "ControlPath=" + quoted,
+                             "-o", "ControlPersist=120"});
+  } else {
+    // A long user-selected path must still work; do not silently fall back
+    // to a control socket in an unrelated system temporary directory.
+    argv.insert(argv.end(), {"-o", "ControlMaster=no", "-o", "ControlPath=none"});
+  }
 #else
   argv.insert(argv.end(), {"-o", "ControlMaster=no"});
 #endif

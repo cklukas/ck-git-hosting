@@ -414,7 +414,7 @@ std::vector<DocsSiteEntry> parseSiteEntries(const Node& sequence) {
   bool redirecting = false;
   for (const Node& item : sequence.items) {
     requireKind(item, Node::Kind::Mapping, "each site to be a mapping with 'id' and 'title'");
-    rejectUnknownKeys(item, {"id", "title", "description", "config", "ref", "redirect_from_root"});
+    rejectUnknownKeys(item, {"id", "title", "description", "config", "ref", "icon", "redirect_from_root"});
     const Node* id = findEntry(item, "id");
     const Node* title = findEntry(item, "title");
     if (id == nullptr || title == nullptr) malformed("a site needs both 'id' and 'title'", item.line);
@@ -438,6 +438,7 @@ std::vector<DocsSiteEntry> parseSiteEntries(const Node& sequence) {
       entry.ref = scalarOf(*ref, "a site ref to be a scalar");
       if (!isValidSiteRef(entry.ref)) malformed("invalid site ref '" + entry.ref + "'", ref->line);
     }
+    if (const Node* icon = findEntry(item, "icon")) entry.icon = pathOf(*icon, "a site icon");
     if (const Node* redirect = findEntry(item, "redirect_from_root")) {
       const auto value = scalarOf(*redirect, "redirect_from_root to be true or false");
       if (value != "true" && value != "false") malformed("redirect_from_root must be true or false", redirect->line);
@@ -448,6 +449,43 @@ std::vector<DocsSiteEntry> parseSiteEntries(const Node& sequence) {
     entries.push_back(std::move(entry));
   }
   return entries;
+}
+
+DocsSelectorConfig parseSelector(const Node& selector) {
+  requireKind(selector, Node::Kind::Mapping, "site.selector to be a mapping");
+  rejectUnknownKeys(selector, {"icon_size", "links"});
+  DocsSelectorConfig config;
+  if (const Node* icon_size = findEntry(selector, "icon_size")) {
+    const auto text = scalarOf(*icon_size, "site.selector.icon_size to be a number");
+    std::size_t value = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size() || value < kMinimumDocsSelectorIconSize ||
+        value > kMaximumDocsSelectorIconSize) {
+      malformed("site.selector.icon_size must be a number from 12 to 48", icon_size->line);
+    }
+    config.icon_size = value;
+  }
+  if (const Node* links = findEntry(selector, "links")) {
+    requireKind(*links, Node::Kind::Sequence, "site.selector.links to be a list");
+    if (links->items.size() > kMaximumDocsLinks) tooLarge("site.selector has too many links");
+    for (const Node& item : links->items) {
+      requireKind(item, Node::Kind::Mapping, "each site.selector link to be a mapping with 'title' and 'url'");
+      rejectUnknownKeys(item, {"title", "url", "icon"});
+      const Node* title = findEntry(item, "title");
+      const Node* url = findEntry(item, "url");
+      if (title == nullptr || url == nullptr) malformed("a site.selector link needs both 'title' and 'url'", item.line);
+      DocsSelectorLink link;
+      link.title = titleOf(*title, "a site.selector link title");
+      link.url = scalarOf(*url, "a site.selector link url");
+      const auto lowered = lowerAscii(link.url.substr(0, 8));
+      if (!isValidLinkUrl(link.url) || (!lowered.starts_with("http://") && !lowered.starts_with("https://"))) {
+        malformed("site.selector link url '" + link.url + "' must be http(s)", url->line);
+      }
+      if (const Node* icon = findEntry(item, "icon")) link.icon = pathOf(*icon, "a site.selector link icon");
+      config.links.push_back(std::move(link));
+    }
+  }
+  return config;
 }
 
 // A strict ISO 8601 calendar date, YYYY-MM-DD, that exists in the proleptic
@@ -830,7 +868,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
   const Node* site = findEntry(root, "site");
   if (site == nullptr) malformed("the config is missing 'site'", root.line);
   requireKind(*site, Node::Kind::Mapping, "site to be a mapping");
-  rejectUnknownKeys(*site, {"title", "brand", "logo", "favicon", "description", "footer", "links", "stylesheet", "url", "lang"});
+  rejectUnknownKeys(*site, {"title", "brand", "logo", "favicon", "description", "footer", "links", "selector", "stylesheet", "url", "lang"});
   if (const Node* lang = findEntry(*site, "lang")) config.lang = languageOf(*lang, "site.lang");
   if (const Node* url = findEntry(*site, "url")) {
     config.url = scalarOf(*url, "site.url");
@@ -875,6 +913,7 @@ DocsConfig parseDocsConfig(std::string_view yaml) {
       config.links.push_back(std::move(link));
     }
   }
+  if (const Node* selector = findEntry(*site, "selector")) config.selector = parseSelector(*selector);
 
   if (const Node* source = findEntry(root, "source")) config.source = pathOf(*source, "source");
   if (const Node* home = findEntry(root, "home")) {
@@ -2053,7 +2092,8 @@ struct SiteContext {
 };
 
 // The portal's site selector: a native <details> dropdown, so it needs no
-// script, listing every site's home with the current one marked.
+// script, listing every site's home with the current one marked, followed by
+// any configured external destinations.
 // `from_dir` is the page's portal-relative directory.
 std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir,
                                const DocsUiText& ui);
@@ -2571,13 +2611,25 @@ std::string renderShell(const SiteContext& context, const ShellInput& in) {
 
 std::string renderSiteSelector(const DocsPortalModel& portal, std::optional<std::size_t> current, std::string_view from_dir,
                                const DocsUiText& ui) {
-  std::string out = "<details class=\"site-select\"><summary>";
+  const auto icon = [from_dir](std::string_view path) {
+    if (path.empty()) return std::string();
+    return "<img class=\"site-select-icon\" src=\"" + escapeHtml(relativeUrl(from_dir, path)) + "\" alt=\"\" aria-hidden=\"true\">";
+  };
+  std::string out = "<details class=\"site-select\" style=\"--site-select-icon-size:" +
+                    std::to_string(portal.config.selector.icon_size) + "px\"><summary>";
+  if (current) out += icon(portal.sites[*current].entry.icon);
   out += current ? escapeHtml(portal.sites[*current].entry.title) : escapeHtml(ui.sites);
   out += "</summary><nav aria-label=\"" + escapeHtml(ui.documentation_sites) + "\"><ul>";
   for (std::size_t index = 0; index < portal.sites.size(); ++index) {
     const auto& site = portal.sites[index];
-    out += "<li><a href=\"" + escapeHtml(relativeUrl(from_dir, site.entry.id + "/" + site.model.pages[site.model.home].output)) +
-           "\"" + (current == index ? " aria-current=\"true\"" : "") + ">" + escapeHtml(site.entry.title) + "</a></li>";
+    out += "<li><a href=\"" + escapeHtml(relativeUrl(from_dir, site.entry.id + "/" + site.model.pages[site.model.home].output)) + "\"" +
+           (current == index ? " aria-current=\"true\"" : "") + ">" + icon(site.entry.icon) + escapeHtml(site.entry.title) + "</a></li>";
+  }
+  if (!portal.config.selector.links.empty()) {
+    out += "<li class=\"site-select-separator\" role=\"separator\"></li>";
+    for (const auto& link : portal.config.selector.links) {
+      out += "<li><a href=\"" + escapeHtml(link.url) + "\" rel=\"noopener\">" + icon(link.icon) + escapeHtml(link.title) + "</a></li>";
+    }
   }
   return out + "</ul></nav></details>";
 }
@@ -3867,6 +3919,12 @@ void buildDocsPortal(const DocsPortalModel& portal, const fs::path& out_path, co
   if (!portal.config.logo.empty()) shell.logo_output = addPortalAsset(portal.config.logo, "site.logo");
   if (!portal.config.favicon.empty()) shell.favicon_output = addPortalAsset(portal.config.favicon, "site.favicon");
   if (!portal.config.stylesheet.empty()) shell.stylesheet_output = addPortalAsset(portal.config.stylesheet, "site.stylesheet");
+  for (const auto& site : portal.sites) {
+    if (!site.entry.icon.empty()) addPortalAsset(site.entry.icon, "site icon");
+  }
+  for (const auto& link : portal.config.selector.links) {
+    if (!link.icon.empty()) addPortalAsset(link.icon, "site.selector link icon");
+  }
 
   // Every site below its id, its findings prefixed with it.
   std::vector<std::vector<std::string>> site_leads(portal.sites.size());

@@ -330,6 +330,24 @@ void testProjectIndex() {
                "a derived metadata read failure preserves the snapshot without failing its caller");
   std::ofstream(log_path, std::ios::binary | std::ios::trunc) << original_log;
 
+  const std::string dependency_hash(64, 'a');
+  const std::string dependency_lock =
+      "version: 1\nplatform: windows\narchitecture: x64\nabi: x64-windows\ninputs:\n"
+      "  - path: vcpkg.json\n    sha256: " + dependency_hash + "\npackages:\n"
+      "  - name: example\n    version: 1\n    registry: vcpkg\n    sha256: " + dependency_hash +
+      "\n    recipe_sha256: " + dependency_hash + "\n    direct: true\n    needs: []\n";
+  const auto request_id = ckgit::registerCiDependencyRequest(fixture.state, "sample", dependency_lock);
+  index.refreshMetadata("sample");
+  auto dependency_snapshot = requireProject(index, "sample");
+  requireIndex(dependency_snapshot.dependency_requests.size() == 1 &&
+                   dependency_snapshot.dependency_requests[0].lock.sha256 == request_id,
+               "metadata refresh loads dependency requests for the web dashboard");
+  ckgit::decideCiDependency(fixture.state, "sample", request_id, "example", "approve");
+  index.refreshMetadata("sample");
+  dependency_snapshot = requireProject(index, "sample");
+  requireIndex(ckgit::ciDependencyApprovalStatus(dependency_snapshot.dependency_requests[0]) == "approved",
+               "metadata refresh exposes updated review decisions");
+
   // More refs than the display cap must retain the true total count.
   const auto many = fixture.repos / "sample.git" / "refs" / "heads" / "many";
   std::filesystem::create_directories(many);

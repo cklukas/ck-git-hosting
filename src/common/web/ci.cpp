@@ -50,6 +50,48 @@ std::string runnerNote(const CiRunRecord& run) {
 
 std::string renderCiRuns(const ProjectSummary& project) {
   std::string out = "<h1>Continuous integration</h1><p class=\"muted\"><a href=\"/ci/runners\">Runners</a></p>";
+  out += "<section><h2>Dependency requests</h2>"
+         "<p class=\"muted\">Review status only. Approval does not yet provision tools or enforce CI access. "
+         "Dependency decisions are made through the administrator CLI.</p>";
+  if (!project.dependency_error.empty()) out += "<p class=\"notice\">" + htmlEscape(project.dependency_error) + "</p>";
+  else if (project.dependency_requests.empty()) out += "<p>No dependency requests recorded.</p>";
+  for (std::size_t i = 0; i < std::min<std::size_t>(project.dependency_requests.size(), 16); ++i) {
+    const auto& request = project.dependency_requests[i];
+    out += "<h3>Lock <code>" + htmlEscape(request.lock.sha256) + "</code></h3><p>" +
+           htmlEscape(request.lock.platform) + " / " + htmlEscape(request.lock.architecture) + " / " +
+           htmlEscape(request.lock.abi) + " &middot; " + std::string(ciDependencyApprovalStatus(request)) + "</p>";
+    if (!request.commits.empty()) {
+      out += "<p>Requested by commit ";
+      for (std::size_t j = 0; j < request.commits.size(); ++j) {
+        if (j) out += ", ";
+        out += "<code>" + htmlEscape(request.commits[j]) + "</code>";
+      }
+      out += "</p>";
+    }
+    out += "<ul>";
+    for (const auto& input : request.lock.inputs)
+      out += "<li>" + htmlEscape(input.path) + " <code>" + htmlEscape(input.sha256) + "</code></li>";
+    out += "</ul><table><thead><tr><th>Package</th><th>Version</th><th>Registry</th>"
+           "<th>Content SHA-256</th><th>Recipe SHA-256</th><th>Kind</th><th>Requires</th>"
+           "<th>Review</th></tr></thead><tbody>";
+    for (std::size_t j = 0; j < std::min<std::size_t>(request.lock.packages.size(), 128); ++j) {
+      const auto& package = request.lock.packages[j];
+      std::string status = "pending";
+      for (const auto& event : request.history) if (event.package == package.name) status = event.action;
+      std::string needs;
+      for (const auto& name : package.needs) { if (!needs.empty()) needs += ", "; needs += name; }
+      out += "<tr><td>" + htmlEscape(package.name) + "</td><td>" + htmlEscape(package.version) +
+             "</td><td>" + htmlEscape(package.registry) + "</td><td><code>" + htmlEscape(package.sha256) +
+             "</code></td><td><code>" + htmlEscape(package.recipe_sha256) + "</code></td><td>" +
+             (package.direct ? "direct" : "transitive") + "</td><td>" + htmlEscape(needs) + "</td><td>" +
+             htmlEscape(status) + "</td></tr>";
+    }
+    out += "</tbody></table>";
+    if (request.lock.packages.size() > 128) out += "<p>Additional packages are available in the administrator CLI.</p>";
+  }
+  if (project.dependency_requests_truncated || project.dependency_requests.size() > 16)
+    out += "<p>Additional requests are available in the administrator CLI.</p>";
+  out += "<h3>Available dependencies</h3><p>Provisioned dependency inventory is not available yet.</p></section>";
   if (project.ci_runs.empty()) {
     return out +
            "<p class=\"empty\">No CI runs recorded yet. A push to a CI-enabled branch queues a run "

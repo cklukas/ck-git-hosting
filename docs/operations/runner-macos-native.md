@@ -3,10 +3,6 @@ description: "Native macOS CI runner setup and qualification with an exclusive b
 ---
 # Native macOS runner
 
-**Development status:** the privileged lifecycle and recovery qualification has
-not yet completed. Do not register or start this runner for hosted jobs until
-the qualification below passes on the target Mac.
-
 The native backend uses Apple's Seatbelt sandbox and an exclusive non-login
 build account. A root launchd supervisor owns cleanup; the SSH broker runs as
 a different, unprivileged account. It requires no VM. The initial implementation
@@ -30,9 +26,7 @@ Do not use root as the broker, and do not use the generated build account as
 an SSH account. Prefer a dedicated service account over an interactive login.
 
 Build `ckgit-admin`, `ck-ci-runnerd` and `ckgit-macos-native` together. They
-must be in the same directory for setup. Install the `macos-native-runner`
-CMake component to a private prefix, or use the three adjacent build outputs.
-Choose an existing, traversable
+must be in the same directory for setup. Choose an existing, traversable
 parent directory beneath a mounted `/Volumes/S8T/tmp` (preferred) or
 `/Volumes/PRO-BLADE/tmp`. The job work directory must be new or empty. A missing
 volume is an error; setup never falls back to the system disk. Keep the SSH
@@ -92,7 +86,7 @@ Setup performs these actions:
 4. Saves the original configuration as private rollback evidence and writes a
    separate installed `runner.ini`, selecting the authenticated native socket,
    offline execution and the selected work root. The input configuration is
-   not overwritten.
+   not overwritten. A prior optional VM configuration is cleared in this copy.
 5. Installs and starts `org.ckgit.native.<name>` as a root launchd service.
    Installs, but does not start, `org.ckgit.runner.<name>` under the broker account.
 6. Runs restriction, detached-process, fork-burst, rapid parent/child handoff, cancellation, closed-output
@@ -143,7 +137,16 @@ reconciliation succeeds. Do not rerun setup over a partial installation.
 ## Development validation
 
 The unprivileged CTest `macos-native-policy` exercises the actual generated
-policy but does not prove exclusive-UID cleanup. The product setup runs the
-privileged lifecycle and restart qualification described above. That test has
-not yet completed on the target Mac. Do not treat an unprivileged policy test
-as a substitute for privileged qualification.
+policy but does not prove exclusive-UID cleanup. The privileged integration
+script tests the admin route, real account/service installation, and recovery:
+
+```sh
+sudo /bin/sh tests/integration/macos_native.sh \
+  /absolute/path/to/build/bin existing-unprivileged-user \
+  /Volumes/S8T/tmp/unique-native-qualification-task
+```
+
+It creates an isolated test installation, never starts its SSH broker, and
+removes the test account/services after successful reconciliation. Failed
+recovery preserves that isolated state for inspection. Do not treat an
+unprivileged policy test as a substitute for this qualification.

@@ -4,14 +4,14 @@
 operational complexity. The peer owning the platform investigation agrees that
 an exclusive unprivileged UID per concurrent job slot, with an independent
 supervisor, is the preferred next native qualification path. Detached processes
-do not by themselves require a VM. Native hosted Mac CI is not qualified for
-enabling jobs yet.
+do not by themselves require a VM. Neither native nor VM hosted Mac CI is
+qualified for enabling jobs yet.
 
 ## Implementation follow-up
 
 The native supervisor, authenticated client, runner integration and admin
 setup are now implemented. See [native setup and qualification](../docs/operations/runner-macos-native.md).
-The root-only product setup qualification exercises account and launchd lifecycle;
+The root-only integration suite exercises actual account and launchd lifecycle;
 its execution status must be checked separately from the passing unprivileged
 policy test. Setup leaves the hosted broker stopped until qualification succeeds
 and the operator starts it explicitly.

@@ -39,6 +39,8 @@ nav:
       - docs/operations/04-ci-cd.md
       - docs/operations/runner-setup.md
       - docs/operations/runner-windows.md
+      - docs/operations/runner-macos-development.md
+      - docs/operations/runner-macos-native.md
       - docs/operations/ci-runner.md
       - docs/operations/ci-remote-runners.md
       - docs/operations/ci-artifacts-and-cache.md

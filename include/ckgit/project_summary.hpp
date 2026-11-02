@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_dependency_store.hpp"
 #include "ckgit/metadata_store.hpp"
 
 namespace ckgit {
@@ -76,6 +77,9 @@ struct ProjectSummary {
   // Presentation-only: absolute URL of this project's published Pages site on
   // the separate ck-pagesd origin, attached by the daemon when a site exists.
   std::string pages_site_url{};
+  std::vector<CiDependencyRequest> dependency_requests{};
+  std::string dependency_error{};
+  bool dependency_requests_truncated = false;
 };
 
 // Inspects immediate standard bare repositories beneath a validated root. It

@@ -455,7 +455,14 @@ int run(const std::vector<std::string>& args) {
         record.status = ckgit::CiRunStatus::Success;
         require(sink.finish(record).status == ckgit::CiRunStatus::Success, "native sink commits logs and declared outputs");
       }
-      require(std::filesystem::is_empty(root / "relay"), "native sink removes private relay staging");
+      require(!std::filesystem::exists(root / "relay"), "native sink removes its relay staging directory");
+      std::filesystem::create_directory(root / "relay");
+      {
+        ckgit::CiRemoteJob job;
+        job.prepared.job.job_id = "preexisting-relay";
+        ckgit::RemoteCiSink sink(transport, job, root / "relay", nullptr);
+      }
+      require(std::filesystem::is_empty(root / "relay"), "native sink preserves a preexisting relay directory");
       for (const auto* mode : {"waiting-finish", "waiting-drain", "waiting-abandon"}) {
         ckgit::CiRemoteJob job;
         job.prepared.job.job_id = mode;

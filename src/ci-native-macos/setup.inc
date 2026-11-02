@@ -119,7 +119,7 @@ int setup(int argc, char** argv) {
   // Keep the previous configuration as durable rollback evidence, with credentials still private.
   writeNew(state / "runner-before.ini",readFile(config_path,65536));
   runner.build_root = work; runner.allow_network = false; runner.allow_degraded = false;
-  runner.macos_native_socket = socket;
+  runner.macos_vm_base.reset(); runner.macos_vm_work_root.reset(); runner.macos_native_socket = socket;
   const fs::path installed_config = state / "runner.ini";
   writeNew(installed_config,ckgit::renderRunnerConfig(runner),0644);
   // Broker needs traversal to its public configuration, never access to root-only journal/config.

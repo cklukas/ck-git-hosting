@@ -25,8 +25,8 @@ namespace ckgit {
 // outputs, and keeps nothing once a job has ended.
 
 // Runs runner protocol operations over SSH. Every operation is one `ssh` exec
-// of the runner key's forced command; a ControlMaster connection under the
-// build root is shared between them so they cost no new handshake.
+// of the runner key's forced command; when its socket path fits, a
+// ControlMaster connection near the build root avoids repeated handshakes.
 class CiRemoteTransport {
  public:
   CiRemoteTransport(RunnerConfig config, std::filesystem::path config_path, unsigned protocol_version = 1);
@@ -98,7 +98,7 @@ class RemoteCiSource : public CiSourceProvider {
 class RemoteCiSink : public CiResultSink {
  public:
   RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob& job, std::filesystem::path relay_dir,
-               std::function<bool()> stop_requested);
+               std::function<bool()> stop_requested, bool managed_vm_relay = false);
   ~RemoteCiSink() override;
   void runStarted(const CiRunRecord& record) override;
   void stepStarted(const CiRunRecord& record, std::size_t index) override;
@@ -142,6 +142,8 @@ class RemoteCiSink : public CiResultSink {
   const CiRemoteTransport& transport_;
   const CiRemoteJob& job_;
   std::filesystem::path relay_dir_;
+  bool relay_parent_created_ = false;
+  bool managed_vm_relay_ = false;
   std::function<bool()> stop_requested_;
   bool stopping() const { return stop_requested_ && stop_requested_(); }
   CiRemoteTransport::Session session_{};

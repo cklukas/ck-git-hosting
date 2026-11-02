@@ -13,8 +13,30 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Visual C++ redistributable. Keep Debug and Release runtime choices distinct.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-find_package(Threads REQUIRED)
 include(CTest)
+if(APPLE)
+  enable_language(OBJCXX)
+  add_executable(ckgit-macos-vm src/ci-vm-macos/main.mm)
+  set_target_properties(ckgit-macos-vm PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
+  target_compile_options(ckgit-macos-vm PRIVATE -fobjc-arc)
+  target_link_libraries(ckgit-macos-vm PRIVATE "-framework AppKit" "-framework Foundation" "-framework Virtualization")
+  add_custom_command(TARGET ckgit-macos-vm POST_BUILD
+    COMMAND /usr/bin/codesign --force --sign - --entitlements
+      "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/virtualization.entitlements" "$<TARGET_FILE:ckgit-macos-vm>"
+    VERBATIM)
+  if(BUILD_TESTING)
+    add_executable(ckgit-macos-vsock-probe tests/platform/macos_vsock_probe.cpp)
+    add_executable(ckgit-macos-vm-process-test tests/platform/macos_vm_process_test.cpp
+      src/common/macos_vm_process.cpp)
+    target_include_directories(ckgit-macos-vm-process-test PRIVATE include)
+    add_test(NAME macos-vm-process COMMAND ckgit-macos-vm-process-test)
+    add_test(NAME macos-vm-mount-guard COMMAND /bin/sh
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/macos_vm_mount_guard.sh" "$<TARGET_FILE:ckgit-macos-vm>")
+    set_tests_properties(macos-vm-mount-guard PROPERTIES
+      ENVIRONMENT "TMPDIR=${CMAKE_BINARY_DIR}/test-tmp" TIMEOUT 30)
+  endif()
+endif()
+find_package(Threads REQUIRED)
 
 add_library(ckgit_options INTERFACE)
 target_include_directories(ckgit_options INTERFACE include)
@@ -35,7 +57,7 @@ set(PORTABLE_SOURCES
   src/common/client_config.cpp src/common/client_state.cpp src/common/runner_config.cpp
   src/common/ci_control.cpp src/common/server_identity.cpp src/common/ci_runner_protocol.cpp
   src/common/release_control.cpp src/common/display_format.cpp
-  src/common/ci_workflow.cpp src/common/cli_help.cpp src/common/control_rpc.cpp
+  src/common/ci_workflow.cpp src/common/ci_dependency_lock.cpp src/common/ci_vm_protocol.cpp src/common/cli_help.cpp src/common/control_rpc.cpp
   src/common/docs_i18n.cpp src/common/emoji.cpp src/common/hash.cpp
   src/common/tree_file.cpp src/common/temp_directory.cpp src/common/site_file.cpp
   src/common/highlight.cpp src/common/http_request.cpp src/common/http_router.cpp
@@ -98,9 +120,50 @@ if(NOT WIN32)
   if(APPLE)
     add_executable(ckgit-macos-native src/ci-native-macos/main.cpp src/common/macos_native.cpp)
     target_link_libraries(ckgit-macos-native PRIVATE ckgit_process)
-    add_dependencies(ckgit-admin ckgit-macos-native ck-ci-runnerd)
-    install(TARGETS ckgit-admin ck-ci-runnerd ckgit-macos-native
-      RUNTIME DESTINATION bin COMPONENT macos-native-runner)
+    add_executable(ckgit-macos-vm-guest src/ci-vm-guest-macos/main.cpp
+      src/ci-vm-guest-macos/staged_source.cpp src/ci-vm-guest-macos/result_sink.cpp
+      src/ci-vm-guest-macos/tool_environment.cpp)
+    target_link_libraries(ckgit-macos-vm-guest PRIVATE ckgit_host)
+    target_sources(ck-ci-runnerd PRIVATE src/ci-vm-host-macos/run_job.cpp src/ci-vm-host-macos/result_relay.cpp)
+    # Keep the helper adjacent to the administrator and runner executables:
+    # both resolve it from their own installed executable directory.
+    install(TARGETS ckgit-admin ck-ci-runnerd ckgit-macos-vm ckgit-macos-vm-guest
+      RUNTIME DESTINATION bin COMPONENT macos-vm-runner)
+    install(PROGRAMS packaging/macos/install-vm-guest.sh
+      DESTINATION share/ck-git-hosting/macos COMPONENT macos-vm-runner)
+    if(BUILD_TESTING)
+      add_executable(ckgit-macos-vm-guest-test tests/platform/macos_vm_guest_test.cpp)
+      target_link_libraries(ckgit-macos-vm-guest-test PRIVATE ckgit_portable)
+      add_test(NAME macos-vm-guest COMMAND ckgit-macos-vm-guest-test "$<TARGET_FILE:ckgit-macos-vm-guest>")
+      add_executable(ckgit-macos-vm-staged-source-test tests/platform/macos_vm_staged_source_test.cpp
+        src/ci-vm-guest-macos/staged_source.cpp)
+      target_link_libraries(ckgit-macos-vm-staged-source-test PRIVATE ckgit_host)
+      add_test(NAME macos-vm-staged-source COMMAND ckgit-macos-vm-staged-source-test)
+      add_executable(ckgit-macos-vm-tool-environment-test tests/platform/macos_vm_tool_environment_test.cpp
+        src/ci-vm-guest-macos/tool_environment.cpp)
+      target_link_libraries(ckgit-macos-vm-tool-environment-test PRIVATE ckgit_options)
+      add_test(NAME macos-vm-tool-environment COMMAND ckgit-macos-vm-tool-environment-test)
+      add_executable(ckgit-macos-vm-result-relay-test tests/platform/macos_vm_result_relay_test.cpp
+        src/ci-vm-host-macos/result_relay.cpp src/ci-vm-guest-macos/result_sink.cpp)
+      target_link_libraries(ckgit-macos-vm-result-relay-test PRIVATE ckgit_host)
+      add_test(NAME macos-vm-result-relay COMMAND ckgit-macos-vm-result-relay-test)
+      add_executable(ckgit-macos-vm-run-job-test tests/platform/macos_vm_run_job_test.cpp
+        src/ci-vm-host-macos/run_job.cpp src/ci-vm-host-macos/result_relay.cpp src/ci-vm-guest-macos/result_sink.cpp)
+      target_link_libraries(ckgit-macos-vm-run-job-test PRIVATE ckgit_host)
+      add_test(NAME macos-vm-run-job COMMAND ckgit-macos-vm-run-job-test)
+      add_test(NAME macos-vm-startup COMMAND /bin/sh
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/macos_vm_startup.sh" "$<TARGET_FILE:ck-ci-runnerd>" "$<TARGET_FILE:ckgit-admin>")
+      add_test(NAME macos-vm-prepare-share COMMAND /bin/sh
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/macos_vm_prepare_share.sh" "$<TARGET_FILE:ckgit-admin>"
+        "$<TARGET_FILE:ckgit-macos-vm-guest>" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/install-vm-guest.sh")
+      add_executable(ckgit-macos-vm-real-job-test tests/platform/macos_vm_real_job_test.cpp
+        src/ci-vm-host-macos/run_job.cpp src/ci-vm-host-macos/result_relay.cpp)
+      target_link_libraries(ckgit-macos-vm-real-job-test PRIVATE ckgit_host)
+      add_executable(ckgit-macos-vm-guest-fd-probe tests/platform/macos_vm_guest_fd_probe.cpp)
+      set_tests_properties(macos-vm-staged-source macos-vm-result-relay macos-vm-run-job macos-vm-startup macos-vm-prepare-share PROPERTIES
+        ENVIRONMENT "TMPDIR=${CMAKE_BINARY_DIR}/test-tmp" TIMEOUT 60)
+    endif()
+    add_dependencies(ckgit-admin ckgit-macos-native ckgit-macos-vm ckgit-macos-vm-guest ck-ci-runnerd)
     if(BUILD_TESTING)
       add_test(NAME macos-native-policy COMMAND /bin/sh
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/macos_native_policy.sh"
@@ -113,10 +176,25 @@ if(NOT WIN32)
     file(GLOB UNIT_SOURCES CONFIGURE_DEPENDS tests/unit/*.cpp)
     add_executable(ckgit-unit-tests ${UNIT_SOURCES})
     target_link_libraries(ckgit-unit-tests PRIVATE ckgit_host)
+    add_dependencies(ckgit-unit-tests ckgit-admin)
     add_test(NAME unit COMMAND ckgit-unit-tests)
     set_tests_properties(unit PROPERTIES ENVIRONMENT
       "CKGIT_TEST_ROOT=${CMAKE_BINARY_DIR};CKGIT_SOURCE_ROOT=${CMAKE_SOURCE_DIR};TMPDIR=${CMAKE_BINARY_DIR}/test-tmp")
+    add_test(NAME ci-distributed COMMAND ckgit-unit-tests --ci-distributed-only)
+    set_tests_properties(ci-distributed PROPERTIES ENVIRONMENT
+      "CKGIT_TEST_ROOT=${CMAKE_BINARY_DIR};CKGIT_SOURCE_ROOT=${CMAKE_SOURCE_DIR};TMPDIR=${CMAKE_BINARY_DIR}/test-tmp")
+    add_test(NAME ci-dependency COMMAND ckgit-unit-tests --ci-dependency-only)
+    set_tests_properties(ci-dependency PROPERTIES ENVIRONMENT
+      "CKGIT_TEST_ROOT=${CMAKE_BINARY_DIR};CKGIT_SOURCE_ROOT=${CMAKE_SOURCE_DIR};TMPDIR=${CMAKE_BINARY_DIR}/test-tmp" TIMEOUT 60)
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/test-tmp")
+    if(APPLE)
+      add_executable(ckgit-macos-vm-offline-probe tests/platform/macos_vm_offline_probe.cpp)
+      target_link_libraries(ckgit-macos-vm-offline-probe PRIVATE ckgit_host)
+      add_executable(ckgit-macos-vm-disconnect-test tests/platform/macos_vm_disconnect_test.cpp)
+      target_link_libraries(ckgit-macos-vm-disconnect-test PRIVATE ckgit_host)
+      add_executable(ckgit-macos-vm-owner-crash-test tests/platform/macos_vm_owner_crash_test.cpp)
+      target_link_libraries(ckgit-macos-vm-owner-crash-test PRIVATE ckgit_host)
+    endif()
   endif()
 endif()
 
@@ -125,6 +203,12 @@ target_link_libraries(ckgit_docs PUBLIC ckgit_process ckgit_archive)
   file(GLOB MERMAID_SOURCES CONFIGURE_DEPENDS src/ckdocs/mermaid/cdiagram/src/*.cpp
     src/ckdocs/mermaid/cplot/src/*.cpp src/ckdocs/mermaid/libcworks/src/*.cpp)
   add_library(ckdocs_mermaid STATIC ${MERMAID_SOURCES} src/ckdocs/mermaid.cpp)
+  # GCC 14 at -O3 reports maybe-uninitialized diagnostics inside std::variant
+  # moves. Match the Make build's -O2 for this library while retaining all
+  # warning-as-error checks.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(ckdocs_mermaid PRIVATE -O2)
+  endif()
   target_link_libraries(ckdocs_mermaid PUBLIC ckgit_options)
   target_include_directories(ckdocs_mermaid PUBLIC src/ckdocs/mermaid/cdiagram/include
     src/ckdocs/mermaid/cplot/include src/ckdocs/mermaid/libcworks/include)

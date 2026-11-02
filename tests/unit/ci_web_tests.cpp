@@ -293,6 +293,32 @@ void testDistributedJobDetail() {
 }
 
 void testCiWeb() {
+  ckgit::ProjectSummary dependency_project;
+  dependency_project.name = "demo";
+  ckgit::CiDependencyRequest dependency_request;
+  dependency_request.lock.sha256 = std::string(64, 'a');
+  dependency_request.lock.platform = "windows";
+  dependency_request.lock.architecture = "x64";
+  dependency_request.lock.abi = "x64-windows";
+  dependency_request.lock.packages.push_back({"<script>", "1", "registry", std::string(64, 'b'),
+                                               std::string(64, 'c'), true, {}});
+  dependency_project.dependency_requests.push_back(dependency_request);
+  const auto dependency_html = ckgit::renderCiRuns(dependency_project);
+  require(dependency_html.find("Dependency requests") != std::string::npos &&
+              dependency_html.find("&lt;script&gt;") != std::string::npos &&
+              dependency_html.find("<script>") == std::string::npos &&
+              dependency_html.find("<form") == std::string::npos &&
+              dependency_html.find("does not yet provision") != std::string::npos,
+          "dependency reporting is escaped and read-only, without claiming enforcement");
+  dependency_project.dependency_requests_truncated = true;
+  require(ckgit::renderCiRuns(dependency_project).find("Additional requests are available") != std::string::npos,
+          "bounded dependency list reports omitted requests");
+  dependency_project.dependency_requests.clear();
+  dependency_project.dependency_error = "Dependency review records are unavailable or invalid.";
+  const auto invalid_html = ckgit::renderCiRuns(dependency_project);
+  require(invalid_html.find("records are unavailable or invalid") != std::string::npos &&
+              invalid_html.find("No dependency requests recorded") == std::string::npos,
+          "corrupt review state is not presented as an empty request list");
   testDistributedJobDetail();
   testRoutes();
   testRender();

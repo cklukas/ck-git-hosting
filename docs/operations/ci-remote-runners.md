@@ -437,7 +437,9 @@ and restart `ck-ci-runner.service`. A runner's name always counts as a label
 too. `runner list` and the dashboard's Runners page show every runner's
 labels.
 
-Runners registered with the `windows` label never claim unlabelled jobs.
+Runners registered with the `windows` or `macos-vm` label never claim
+unlabelled jobs. Always register a macOS VM runner with the `macos-vm` label;
+labels route work and do not restrict which project may request a runner.
 
 Labels come only from the server's records, never from the runner, so a
 runner cannot take jobs meant for another kind of machine by claiming a label.

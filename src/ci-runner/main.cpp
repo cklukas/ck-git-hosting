@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <charconv>
+#include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdint>
@@ -10,6 +12,7 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -17,8 +20,11 @@
 #include <sstream>
 #include <pwd.h>
 #include <fcntl.h>
-#include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#ifdef __APPLE__
+#include <sys/mount.h>
+#endif
 #include <unistd.h>
 #include <vector>
 
@@ -34,10 +40,36 @@
 #include "ckgit/server_config.hpp"
 #include "ckgit/validation.hpp"
 #include "ckgit/process.hpp"
+#include "ckgit/macos_vm_storage.hpp"
 #include "ckgit/macos_native.hpp"
 #include "ckgit/text.hpp"
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include "ckgit/macos_vm_workspace.hpp"
+#include "../ci-vm-host-macos/run_job.hpp"
+#endif
 
 namespace {
+
+#ifdef __APPLE__
+std::filesystem::path validateVmBuildRoot(const std::filesystem::path& build,
+                                          const std::filesystem::path& base,
+                                          const std::filesystem::path& work) {
+  const auto resolved = std::filesystem::canonical(build);
+  if (resolved != build.lexically_normal()) throw std::runtime_error("VM runner build root contains symlinks");
+  struct stat info {};
+  if (::lstat(resolved.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid())
+    throw std::runtime_error("VM runner build root must be an owned directory");
+  const auto overlaps = [](const std::filesystem::path& a, const std::filesystem::path& b) {
+    auto left = a.begin(); auto right = b.begin();
+    while (left != a.end() && right != b.end() && *left == *right) { ++left; ++right; }
+    return left == a.end() || right == b.end();
+  };
+  if (overlaps(resolved, base.lexically_normal()) || overlaps(resolved, work.lexically_normal()))
+    throw std::runtime_error("VM base, work root and runner build root must be separate");
+  return resolved;
+}
+#endif
 
 volatile std::sig_atomic_t g_stop = 0;
 void onStop(int) { g_stop = 1; }
@@ -48,6 +80,11 @@ int usage(std::ostream& out, int code) {
          "  ck-ci-runnerd serve --remote --config RUNNER.INI [--once]\n"
          "  ck-ci-runnerd register --server USER@HOST --name NAME [--config RUNNER.INI]\n"
          "                         [--home DIR] [--account USER] [--force]\n"
+#ifdef __APPLE__
+         "  ck-ci-runnerd configure-macos-vm --config RUNNER.INI --base DIR --work-root DIR\n"
+         "                                  [--min-free-gib N]\n"
+         "  ck-ci-runnerd status-macos-vm --config RUNNER.INI\n"
+#endif
          "  ck-ci-runnerd gateway --config FILE --runner ID --command 'ckgit-runner 1 ...'\n"
          "  ck-ci-runnerd run --repo DIR --commit ID --project NAME --state-root DIR\n"
          "                    --build-root DIR [--ref REF] [--timeout SECONDS]\n"
@@ -359,35 +396,84 @@ bool emptyDirectory(const std::filesystem::path& directory) {
 // back to the queue. With `once`, exits when the queue is empty.
 int serveRemote(const std::filesystem::path& config_path, bool once) {
   const ckgit::RunnerConfig config = ckgit::loadRunnerConfig(config_path);
+  const bool vm_active = config.macos_vm_base.has_value();
 #ifdef __APPLE__
-  if (!config.macos_native_socket) {
-    std::cerr << "ck-ci-runnerd: configure a native macOS supervisor before running jobs\n";
+  if (!config.macos_native_socket && !vm_active) {
+    std::cerr << "ck-ci-runnerd: configure a native macOS supervisor or a macOS VM before running jobs\n";
     return 1;
   }
   struct BrokerLock { int fd = -1; ~BrokerLock() { if (fd >= 0) ::close(fd); } } broker_lock;
-  ckgit::macNativeReady(*config.macos_native_socket, config.build_root);
-  broker_lock.fd = ::open((config.macos_native_socket->string()+".broker-lock").c_str(), O_RDWR|O_NOFOLLOW|O_CLOEXEC);
-  struct stat lock_info{};
-  if (broker_lock.fd < 0 || ::fstat(broker_lock.fd, &lock_info) != 0 || !S_ISREG(lock_info.st_mode) ||
-      lock_info.st_uid != ::geteuid() || lock_info.st_nlink != 1 || ::flock(broker_lock.fd, LOCK_EX|LOCK_NB) != 0)
-    throw std::runtime_error("native runner is already active or its broker lock is unavailable");
+  std::unique_ptr<ckgit::MacosVmRunnerLock> vm_lock;
+  std::filesystem::path vm_helper;
+  if (config.macos_native_socket) {
+    ckgit::macNativeReady(*config.macos_native_socket, config.build_root);
+    broker_lock.fd = ::open((config.macos_native_socket->string()+".broker-lock").c_str(),O_RDWR|O_NOFOLLOW|O_CLOEXEC);
+    struct stat lock_info{};
+    if (broker_lock.fd < 0 || ::fstat(broker_lock.fd,&lock_info)!=0 || !S_ISREG(lock_info.st_mode) ||
+        lock_info.st_uid!=::geteuid() || lock_info.st_nlink!=1 || ::flock(broker_lock.fd,LOCK_EX|LOCK_NB)!=0)
+      throw std::runtime_error("native runner is already active or its broker lock is unavailable");
+  } else {
+    ckgit::validateMacosVmStorage(*config.macos_vm_base, *config.macos_vm_work_root, config.macos_vm_min_free_gib);
+    validateVmBuildRoot(config.build_root, *config.macos_vm_base, *config.macos_vm_work_root);
+    vm_lock = std::make_unique<ckgit::MacosVmRunnerLock>(*config.macos_vm_work_root);
+    char self[4096]; uint32_t self_size = sizeof(self);
+    if (_NSGetExecutablePath(self, &self_size) != 0) throw std::runtime_error("cannot locate VM runner executable");
+    vm_helper = std::filesystem::canonical(self).parent_path() / "ckgit-macos-vm";
+    struct stat helper_info{};
+    if (::lstat(vm_helper.c_str(), &helper_info) != 0 || !S_ISREG(helper_info.st_mode) ||
+        (helper_info.st_uid != ::geteuid() && helper_info.st_uid != 0) ||
+        (helper_info.st_mode & 0022) != 0 || ::access(vm_helper.c_str(), X_OK) != 0)
+      throw std::runtime_error("the protected Apple VM helper is missing or not executable");
+  }
 #else
   if (config.macos_native_socket) throw std::runtime_error("native macOS supervisor configuration requires macOS");
+  if (vm_active) throw std::runtime_error("macOS VM configuration requires macOS");
 #endif
   ckgit::CiRemoteTransport transport(config, config_path);
   std::signal(SIGTERM, onStop);
   std::signal(SIGINT, onStop);
   std::signal(SIGPIPE, SIG_IGN);
   std::error_code error;
-  std::filesystem::create_directories(config.build_root, error);
-  if (error) throw std::runtime_error("cannot create runner build root");
+  if (!vm_active) {
+    std::filesystem::create_directories(config.build_root, error);
+    if (error) throw std::runtime_error("cannot create runner build root");
+  }
+#ifdef __APPLE__
+  if (vm_active) {
+    const auto build_root = validateVmBuildRoot(config.build_root, *config.macos_vm_base, *config.macos_vm_work_root);
+    broker_lock.fd = ::open(build_root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat build_info{};
+    if (broker_lock.fd < 0 || ::fstat(broker_lock.fd, &build_info) != 0 || build_info.st_uid != ::geteuid() ||
+        ::flock(broker_lock.fd, LOCK_EX | LOCK_NB) != 0)
+      throw std::runtime_error("VM runner build root is not owned or already in use");
+    auto component = build_root.begin();
+    if (component != build_root.end() && *component == "/" && ++component != build_root.end() &&
+        *component == "Volumes" && ++component != build_root.end()) {
+      const auto expected = std::filesystem::path("/Volumes") / *component;
+      struct statfs mount {};
+      if (::fstatfs(broker_lock.fd, &mount) != 0 || std::filesystem::path(mount.f_mntonname) != expected)
+        throw std::runtime_error("the VM runner build volume is not mounted at its expected path");
+    }
+    // Both the VM root and relay root are locked and validated before any
+    // recovery or clone creation. No VM is started during this preflight.
+    ckgit::MacosVmWorkspace preflight(*config.macos_vm_base, *config.macos_vm_work_root, config.macos_vm_min_free_gib);
+    preflight.removeAfterConfirmedStop();
+  }
+#endif
   ::chmod(config.build_root.c_str(), config.macos_native_socket ? 0711 : 0700);
+#ifdef __APPLE__
+  if (vm_active) ckgit::reconcileMacosVmRelays(config.build_root);
+#endif
   // A clean runner: whatever a crash or power loss left behind goes first.
-  if (!emptyDirectory(config.build_root)) {
+  // Recognized VM relays were recovered only after VM workspace preflight;
+  // unknown data is still preserved for operator inspection.
+  const bool clean_at_start = vm_active ? std::filesystem::is_empty(config.build_root, error) && !error
+                                        : emptyDirectory(config.build_root);
+  if (!clean_at_start) {
     std::cerr << "ck-ci-runnerd: cannot empty the build root " << config.build_root << "\n";
     return 1;
   }
-  if (!config.macos_native_socket && !ckgit::ciSandboxAvailable() && !config.allow_degraded) {
+  if (!config.macos_native_socket && !vm_active && !ckgit::ciSandboxAvailable() && !config.allow_degraded) {
     std::cerr << "ck-ci-runnerd: unprivileged namespaces are unavailable on this host; refusing to run jobs "
                  "without the sandbox (set ci_allow_degraded=true to accept that)\n";
     return 1;
@@ -454,18 +540,31 @@ int serveRemote(const std::filesystem::path& config_path, bool once) {
     if (config.identity.has_value()) execution.hidden_paths.push_back(config.identity->parent_path());
     if (config.known_hosts.has_value()) execution.hidden_paths.push_back(config.known_hosts->parent_path());
     ckgit::RemoteCiSource source(transport, run_id, job->token);
-    ckgit::RemoteCiSink sink(transport, *job, config.build_root / (run_id + ".relay"), [] { return g_stop != 0; });
+    ckgit::RemoteCiSink sink(transport, *job, config.build_root / (run_id + ".relay"), [] { return g_stop != 0; }, vm_active);
     try {
       ckgit::CiSandboxReport sandbox;
-      const ckgit::CiRunRecord record = ckgit::executeCiJob(job->prepared, execution, source, sink, &sandbox);
+      ckgit::CiRunRecord record;
+#ifdef __APPLE__
+      if (vm_active) {
+        auto vm_policy = job->policy;
+        vm_policy.timeout_seconds = execution.timeout_seconds;
+        vm_policy.allow_network = false;
+        const ckgit::CiMacosVmOptions options{vm_helper, *config.macos_vm_base, *config.macos_vm_work_root,
+                                            config.build_root, config.macos_vm_min_free_gib};
+        record = ckgit::runCiMacosVmJob(job->prepared, vm_policy, source, sink, options);
+      } else
+#endif
+      record = ckgit::executeCiJob(job->prepared, execution, source, sink, &sandbox);
       std::cout << "ck-ci-runnerd: " << job->prepared.job.project_name << " " << run_id << " "
                 << (sink.abandoned() ? std::string("handed back") : std::string(ckgit::ciRunStatusName(record.status)))
                 << "\n";
     } catch (const std::exception& run_error) {
       std::cerr << "ck-ci-runnerd: run failed for " << run_id << ": " << run_error.what() << "\n";
+      if (vm_active) return 1;  // VM state must be checked before claiming anything else.
     }
 #ifdef __APPLE__
-    // Cleanup is safe only after the supervisor confirms all job UIDs drained.
+    // A lost response may mean the service is still recovering the UID. Never
+    // remove its workspace or accept another job until root confirms ready.
     if (config.macos_native_socket) ckgit::macNativeReady(*config.macos_native_socket, config.build_root);
 #endif
     // Keep nothing: the checkout, sisters, build outputs, packed bundles.
@@ -564,6 +663,37 @@ std::string need(int& index, int argc, char** argv, const std::string& option) {
   return argv[index];
 }
 
+#ifdef __APPLE__
+void writeRunnerConfigAtomically(const std::filesystem::path& path, const std::string& content) {
+  struct stat info {};
+  if (::lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode) || info.st_uid != ::geteuid() || info.st_nlink != 1)
+    throw std::runtime_error("runner configuration must be an owned regular file without hard links");
+  std::string pattern = (path.parent_path() / ".ckgit-runner-config-XXXXXX").string();
+  std::vector<char> temporary(pattern.begin(), pattern.end());
+  temporary.push_back('\0');
+  const int fd = ::mkstemp(temporary.data());
+  if (fd < 0) throw std::runtime_error("cannot create temporary runner configuration");
+  bool published = false;
+  try {
+    std::size_t offset = 0;
+    while (offset < content.size()) {
+      const auto n = ::write(fd, content.data() + offset, content.size() - offset);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) throw std::runtime_error("cannot write runner configuration");
+      offset += static_cast<std::size_t>(n);
+    }
+    if (::fsync(fd) != 0) throw std::runtime_error("cannot sync runner configuration");
+    if (::rename(temporary.data(), path.c_str()) != 0) throw std::runtime_error("cannot publish runner configuration");
+    published = true;
+    ::close(fd);
+  } catch (...) {
+    ::close(fd);
+    if (!published) ::unlink(temporary.data());
+    throw;
+  }
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -575,6 +705,77 @@ int main(int argc, char** argv) {
     const std::string command = argv[1];
     if (command == "-h" || command == "--help") return usage(std::cout, 0);
     if (command == "--version" || command == "-V") { std::cout << ckgit::versionLine("ck-ci-runnerd"); return 0; }
+#ifdef __APPLE__
+    if (command == "status-macos-vm") {
+      if (argc != 4 || std::string_view(argv[2]) != "--config")
+        throw std::runtime_error("status-macos-vm requires --config RUNNER.INI");
+      const auto config = ckgit::loadRunnerConfig(argv[3]);
+      if (!config.macos_vm_base || !config.macos_vm_work_root)
+        throw std::runtime_error("macOS VM storage is not configured");
+      const auto storage = ckgit::inspectMacosVmStorage(*config.macos_vm_base, *config.macos_vm_work_root);
+      const auto disk = std::filesystem::file_size(*config.macos_vm_base / "Disk.img");
+      std::size_t candidates = 0, other = 0;
+      for (const auto& entry : std::filesystem::directory_iterator(*config.macos_vm_work_root)) {
+        const auto name = entry.path().filename().string();
+        const auto status = entry.symlink_status();
+        if (name == ".ckgit-runner.lock" && std::filesystem::is_regular_file(status)) continue;
+        const bool job_name = name.size() == 36 && name.starts_with("job-") &&
+                              name.find_first_not_of("0123456789abcdef", 4) == std::string::npos;
+        if (job_name && std::filesystem::is_directory(status)) ++candidates;
+        else ++other;
+      }
+      constexpr std::uintmax_t gib = 1024ull * 1024 * 1024;
+      const auto reserve = static_cast<std::uintmax_t>(config.macos_vm_min_free_gib) * gib;
+      const bool sufficient = storage.available >= reserve && storage.available - reserve >= storage.image_maximum;
+      std::cout << "Runner: " << config.name << "\nBase: " << config.macos_vm_base->string()
+                << "\nWork root: " << config.macos_vm_work_root->string()
+                << "\nDisk logical maximum: " << disk << " bytes\nBase components logical total: " << storage.image_maximum
+                << " bytes\nBase components allocated (filesystem estimate): " << storage.base_allocated
+                << " bytes\nAvailable: " << storage.available
+                << " bytes (" << storage.available / gib << " GiB)\nFree-space reserve: " << config.macos_vm_min_free_gib
+                << " GiB\nCapacity: " << (sufficient ? "sufficient" : "insufficient")
+                << "\nPolicy: one disposable job VM per work root; no retained pool\n"
+                << "Workspace-like directories: " << candidates << "\nOther entries: " << other
+                << "\nEntries are not proof that a VM is stopped; inspect before cleanup.\n";
+      return sufficient ? 0 : 1;
+    }
+    if (command == "configure-macos-vm") {
+      std::filesystem::path config_path, base, work_root;
+      unsigned min_free_gib = 20;
+      for (int i = 2; i < argc; ++i) {
+        const std::string option = argv[i];
+        if (option == "--config") config_path = need(i, argc, argv, option);
+        else if (option == "--base") base = need(i, argc, argv, option);
+        else if (option == "--work-root") work_root = need(i, argc, argv, option);
+        else if (option == "--min-free-gib") {
+          const auto value = need(i, argc, argv, option);
+          const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), min_free_gib);
+          if (error != std::errc{} || end != value.data() + value.size() || min_free_gib == 0 || min_free_gib > 65536)
+            throw std::runtime_error("--min-free-gib must be a number from 1 to 65536");
+        } else throw std::runtime_error("unknown configure-macos-vm option: " + option);
+      }
+      if (config_path.empty() || base.empty() || work_root.empty())
+        throw std::runtime_error("configure-macos-vm requires --config, --base and --work-root");
+      auto config = ckgit::loadRunnerConfig(config_path);
+      if (config.cache_root) throw std::runtime_error("remove ci_cache_root before configuring a macOS VM runner");
+      if (config.toolchain_root || !config.toolchain_environment.empty() ||
+          config.toolchain_paths != ckgit::RunnerConfig{}.toolchain_paths)
+        throw std::runtime_error("remove Windows ci_toolchain settings before configuring a macOS VM runner; install tools in the guest");
+      if (config.macos_native_socket)
+        throw std::runtime_error("remove ci_macos_native_socket before configuring a macOS VM runner");
+      const auto available = ckgit::validateMacosVmStorage(base, work_root, min_free_gib);
+      validateVmBuildRoot(config.build_root, base, work_root);
+      config.macos_vm_base = base;
+      config.macos_vm_work_root = work_root;
+      config.macos_vm_min_free_gib = min_free_gib;
+      config.allow_network = false;
+      config.allow_degraded = false;
+      writeRunnerConfigAtomically(config_path, ckgit::renderRunnerConfig(config));
+      std::cout << "VM storage configured; " << available / (1024ull * 1024 * 1024) << " GiB available.\n"
+                   "The runner can claim VM jobs when started with serve --remote.\n";
+      return 0;
+    }
+#endif
     if (command == "serve") {
       std::filesystem::path config_path;
       bool once = false;

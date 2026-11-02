@@ -150,7 +150,7 @@ int hello(const ServerConfig& config, const std::string& runner, const CiRunnerC
   if (std::optional<std::string> decoded = hexDecode(command.version_hex, 128)) version = *decoded;
   noteCiRunnerSeen(stateRoot(config), runner, version);
   writeAll(out, "ok\nprotocol=" + std::to_string(command.protocol_version) + "\nrunner=" + runner +
-                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\nexecution_report=1\n");
+                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\nexecution_report=1\ndependency_admission=0\n");
   return 0;
 }
 

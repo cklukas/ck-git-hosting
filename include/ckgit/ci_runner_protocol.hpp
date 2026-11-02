@@ -87,6 +87,25 @@ std::string formatCiClaimResponse(const CiPreparedJob& prepared, const CiLease& 
 // std::nullopt for "none"; throws std::invalid_argument for a malformed answer.
 std::optional<CiRemoteJob> parseCiClaimResponse(std::string_view response);
 
+// Experimental wire representation only. Parsing this object neither issues
+// nor consumes a permit; the disabled gateway has no permit operation yet.
+// The server must atomically record a fresh nonce and consume it once under
+// the lease and approval policy before any future runner can start a job.
+inline constexpr std::uint64_t kMaximumCiDependencyPermitLifetimeSeconds = 120;
+// Recognizes a future explicit protocol-3 offer only; current gateways never
+// advertise it and callers must not infer that this runner implements it.
+bool ciServerAdvertisesDependencyPermitV1(std::string_view hello, unsigned negotiated_protocol);
+struct CiDependencyStartPermit {
+  std::string project, commit, lock_sha256, inventory_sha256;
+  std::string platform, architecture, abi;
+  std::string job_id, lease_sha256, nonce;
+  unsigned attempt = 0;
+  std::uint64_t issued_epoch = 0, expires_epoch = 0;
+};
+std::string formatCiDependencyStartPermit(const CiDependencyStartPermit& permit);
+CiDependencyStartPermit parseCiDependencyStartPermit(std::string_view payload);
+bool ciDependencyStartPermitValidAt(const CiDependencyStartPermit& permit, std::uint64_t now);
+
 // `finish`'s payload: the final record and the outputs the run declared.
 struct CiFinishReport {
   CiRunStatus status = CiRunStatus::Error;

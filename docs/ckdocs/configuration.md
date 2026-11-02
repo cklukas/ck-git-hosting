@@ -23,6 +23,8 @@ line can override two settings for one run: `--source` (the page tree) and
 | `site.description` | string, ≤ 1024 bytes | none | The home page's `<meta name="description">`. |
 | `site.footer` | string, ≤ 1024 bytes | none | Footer text, alongside "Built with ckdocs `<version>`". |
 | `site.links` | list of `{title, url, icon?}` | none | Up to 8 header links; `url` must be `http://`, `https://`, or `mailto:`. Optional `icon: github` displays a circular GitHub icon link; `title` supplies its accessible name and tooltip. Omit `icon` for a text link. |
+| `site.selector.icon_size` | integer, 12–48 | `20` | Portal-only size in CSS pixels for icons in the site selector. |
+| `site.selector.links` | list of `{title, url, icon?}` | none | Portal-only external destinations in the site selector; up to 8, with absolute `http://` or `https://` URLs and optional portal-root-relative image icons. See [Portals](portals.md#the-header-of-a-sites-pages). |
 | `site.stylesheet` | path | none | An extra stylesheet, copied as-is and linked after the built-in one. |
 | `site.lang` | language tag | `en` | The pages' language: `<html lang>`, the [interface text](#interface-text), and right-to-left layout for Arabic, Hebrew, Persian and Urdu. |
 | `site.url` | absolute `http://` or `https://` URL | none | Where the site is published, such as `https://example.github.io/project/`; a missing trailing `/` is added. With it, the build also writes `sitemap.xml`, and `llms.txt` links are absolute. See [sitemap.xml](search.md#sitemapxml). |

@@ -21,10 +21,10 @@ CiExecutionReport parseCiExecutionReport(std::string_view text) {
   if (fields[0] != "1" ||
       (fields[1] != "windows" && fields[1] != "linux" && fields[1] != "macos") ||
       (fields[2] != "x64" && fields[2] != "arm64" && fields[2] != "x86") ||
-      (fields[3] != "lpac" && fields[3] != "linux-namespaces" && fields[3] != "seatbelt" && fields[3] != "none") ||
+      (fields[3] != "lpac" && fields[3] != "hyperv-hcs" && fields[3] != "linux-namespaces" && fields[3] != "seatbelt" && fields[3] != "none") ||
       (fields[4] != "denied" && fields[4] != "loopback-only" && fields[4] != "unrestricted"))
     throw std::invalid_argument("unknown execution report value");
-  if ((fields[3] == "lpac" && fields[1] != "windows") ||
+  if (((fields[3] == "lpac" || fields[3] == "hyperv-hcs") && fields[1] != "windows") ||
       (fields[3] == "linux-namespaces" && fields[1] != "linux") ||
       (fields[3] == "seatbelt" && fields[1] != "macos"))
     throw std::invalid_argument("execution isolation does not match platform");

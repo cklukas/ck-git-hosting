@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -76,6 +77,11 @@ struct CiJobRequest {
   std::string parent_run_id;
   std::string workflow_job;
   std::vector<std::string> needs;  // child run IDs, never names or paths
+  // Reserved for dependency-aware dispatch. A nonempty value is currently
+  // always held in the queue: start permits and inventory verification are
+  // not implemented. Older record readers reject its version rather than
+  // treating it as an ordinary job.
+  std::string dependency_lock_sha256;
 };
 
 struct CiStepResult {
@@ -284,6 +290,12 @@ bool renewCiLease(const std::filesystem::path& state_root, std::string_view job_
 
 // The claimed job and its lease, or std::nullopt when the job is not claimed.
 std::optional<CiClaim> loadCiClaim(const std::filesystem::path& state_root, std::string_view job_id);
+// Run a short transaction while the spool lock protects this exact, unexpired
+// lease against release, requeue or renewal. This does not check dependency
+// approval or inventory. Do not call other spool operations from the callback.
+bool withLiveCiClaim(const std::filesystem::path& state_root, std::string_view job_id,
+                     std::string_view runner, std::string_view token,
+                     const std::function<void(const CiClaim&)>& transaction);
 
 struct CiReapOptions {
   std::uint64_t now_epoch_seconds = 0;  // 0 = the current time

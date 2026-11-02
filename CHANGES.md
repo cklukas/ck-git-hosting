@@ -1,5 +1,46 @@
 # Changes
 
+## 0.10.0 — 2026-11-02
+
+This release combines the accumulated Windows, CI, runner, macOS, and ckdocs
+work since 0.9.0.
+
+### ckdocs: portal site selector links and icons
+
+- Portal site selectors can now include configured external destinations with
+  a title, URL, and optional local icon under `site.selector.links`.
+- Generated portal sites can define their own selector icon with
+  `sites[].icon`; all selector icons use the configurable `site.selector.icon_size`
+  (12–48 CSS pixels), are centered and contain-fitted, and keep a consistent
+  label gap.
+- Selector icons are copied into the generated portal, so the dropdown remains
+  self-contained under URL prefixes and when opened from `file://`.
+
+### CI and runners
+
+- Windows CI now has explicit runner routing, native toolchain staging,
+  restricted LPAC execution, service supervision and recovery checks, artifact
+  upload handling, installer packaging, and documented qualification evidence.
+- Distributed CI gains stronger claim and cancellation handling, job selection,
+  execution reports, remote-runner lifecycle handling, safer artifact and Pages
+  path validation, and reduced build-tool telemetry.
+- The native macOS Seatbelt runner is included as an experimental, non-VM
+  sandbox with an exclusive build identity, supervisor, admin setup flow,
+  cleanup checks, policy tests, and qualification documentation. Privileged
+  lifecycle and crash-recovery qualification is still open; it is not enabled
+  for hosted jobs by default.
+- macOS Virtualization runner scaffolding, offline guest transport, storage
+  checks, and lifecycle tests are included as experimental infrastructure. It
+  is not advertised as a qualified CI execution path.
+
+### Dependency review foundations
+
+- CI dependency-lock parsing, request/review records, provisioned-inventory
+  records, administrative review commands, and protocol design/tests are now
+  present. Jobs carrying dependency requirements remain held because trusted
+  inventory admission and one-use start permits are intentionally not enabled
+  yet.
+
 ## 0.9.0 — 2026-10-27
 
 ### ckdocs: XY charts

@@ -21,6 +21,9 @@ namespace ckgit {
 //   ci_allow_network=false           # optional; may only tighten the server
 //   ci_timeout_seconds=...           # optional; may only tighten the server
 //   ci_allow_degraded=false          # optional; run without a sandbox?
+//   ci_macos_vm_base=...            # macOS: prepared Apple VM base
+//   ci_macos_vm_work_root=...       # macOS: private disposable VM directory
+//   ci_macos_vm_min_free_gib=20     # reserve in addition to one full VM disk
 struct RunnerConfig {
   std::string server;
   std::string name;
@@ -41,8 +44,13 @@ struct RunnerConfig {
   std::optional<std::filesystem::path> toolchain_root;
   std::vector<std::filesystem::path> toolchain_paths{"bin"};
   std::map<std::string, std::string> toolchain_environment;
-  // Authenticated root supervisor for offline native macOS jobs.
+  // Authenticated root supervisor; exclusive job identity, offline Seatbelt execution.
   std::optional<std::filesystem::path> macos_native_socket;
+  // A prepared macOS VM base and a separate disposable-work directory. Both
+  // are operator supplied; the runner must never choose a system-disk fallback.
+  std::optional<std::filesystem::path> macos_vm_base;
+  std::optional<std::filesystem::path> macos_vm_work_root;
+  unsigned macos_vm_min_free_gib = 20;
 };
 
 RunnerConfig loadRunnerConfig(const std::filesystem::path& path);

@@ -22,8 +22,10 @@ sites:
     title: ck-git-hosting
     description: Private Git hosting, sync, continuous integration and Pages for your own server.
     config: docs/ck-git-hosting.yml
+    icon: docs/images/ck-git-hosting.svg
     redirect_from_root: true
   - id: ckdocs
     title: ckdocs
     description: Documentation sites from Markdown — one binary, no dependencies.
     config: docs/ckdocs/ckdocs.yml
+    icon: docs/images/ck-git-hosting.svg

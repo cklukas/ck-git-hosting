@@ -15,16 +15,24 @@ version: 1
 site:
   title: paglets
   description: Mobile agents for Python and C++.
+  selector:
+    icon_size: 20
+    links:
+      - title: Project homepage
+        url: https://example.com/paglets/
+        icon: docs/images/paglets.svg
 home: welcome.md
 sites:
   - id: cpp
     title: C++ edition
     description: The native port, built from this branch.
     config: docs/ckdocs.yml
+    icon: docs/images/cpp.svg
   - id: python
     title: Python edition
     description: The original implementation.
     ref: main
+    icon: docs/images/python.svg
     redirect_from_root: true
 ```
 
@@ -45,7 +53,17 @@ welcome page's language and words.
 | `sites[].description` | string, ≤ 1024 bytes | none | Shown under the title on the welcome page. |
 | `sites[].config` | path | `ckdocs.yml` | The site's own configuration, relative to the site's root. It is an ordinary single-site configuration and must not list `sites` itself. A missing default file means built-in defaults; a missing explicit one is an error. |
 | `sites[].ref` | branch, tag, or commit | none | The site's root is the committed tree of this Git ref instead of the work tree root — see [Sites from other branches](#sites-from-other-branches). |
+| `sites[].icon` | path | none | Optional selector icon, relative to the portal's root. The image is copied into the output and shown before the site's title. |
 | `sites[].redirect_from_root` | `true`/`false` | `false` | At most one site. Writes a redirect page at each of the site's old root-level page paths — see [Redirects](#redirects). |
+
+The portal's selector can also contain destinations that are not built by
+ckdocs. Configure them under `site.selector`; these entries appear after the
+generated sites and are separated from them in the dropdown:
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `site.selector.icon_size` | integer, 12–48 | `20` | Size in CSS pixels for every selector icon. Icons are centered in a fixed square and contain-fit without distortion. |
+| `site.selector.links` | list of `{title, url, icon?}` | none | Up to 8 external destinations. `url` must be an absolute `http://` or `https://` URL. `icon`, when present, is a portal-root-relative image path. |
 
 A site without `ref` and without `config` would read the portal's own
 `ckdocs.yml`, which lists `sites`, so such a site always needs a `config` of
@@ -65,7 +83,17 @@ its own, for example `docs/ckdocs.yml` with `source: docs`.
 
 Every page of a site shows a brand linking to the welcome page, followed by a
 site selector: a small dropdown, built on a native disclosure element so it
-needs no script, that lists every site's home page and marks the current one.
+needs no script. It lists every site's home page, marks the current one, and
+can then list configured external destinations. The current site's optional
+icon also appears in the selector button. External destinations are never
+marked current.
+
+Icons are optional. When present, an icon is shown before its label with a
+small default gap, centered inside the configured `icon_size` square and
+contain-fitted so it is not stretched or cropped. Site-entry icons and
+selector-link icons are copied from the portal root, so the generated portal
+works offline and under any URL prefix. Selector entries affect the header
+dropdown only; they do not add cards to the generated portal welcome page.
 The site's own `site.title` stays in the page title and the sidebar, and its
 tabs, search, and site index cover only that site.
 

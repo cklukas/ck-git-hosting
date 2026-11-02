@@ -219,6 +219,7 @@ bool validJobMembership(std::string_view id, std::string_view parent, std::strin
 
 bool validDependencies(const CiJobRequest& job) {
   if (!validJobMembership(job.job_id, job.parent_run_id, job.workflow_job) ||
+      (!job.dependency_lock_sha256.empty() && !isValidSha256Hex(job.dependency_lock_sha256)) ||
       job.needs.size() > kMaximumCiJobs || (job.parent_run_id.empty() && !job.needs.empty())) return false;
   std::set<std::string> seen;
   for (const auto& id : job.needs) {
@@ -251,7 +252,7 @@ std::vector<std::string> parseDependencies(std::string_view text) {
 // Version 5 adds distributed parent membership and dependency IDs.
 // Earlier spool records remain readable; their cancellation policy defaults on.
 std::string serializeJob(const CiJobRequest& job) {
-  return "schema_version=5\n"
+  return std::string(job.dependency_lock_sha256.empty() ? "schema_version=5\n" : "schema_version=6\n") +
          "job_id=" + job.job_id + "\n"
          "project=" + job.project_name + "\n"
          "ref_hex=" + hexEncode(job.ref) + "\n"
@@ -263,16 +264,18 @@ std::string serializeJob(const CiJobRequest& job) {
          "auto_cancel=" + (job.auto_cancel ? "true\n" : "false\n") +
          "parent_run_id=" + job.parent_run_id + "\n" +
          "workflow_job=" + job.workflow_job + "\n" +
-         "needs=" + dependencyList(job.needs) + "\n";
+         "needs=" + dependencyList(job.needs) + "\n" +
+         (job.dependency_lock_sha256.empty() ? std::string() : "dependency_lock_sha256=" + job.dependency_lock_sha256 + "\n");
 }
 
 CiJobRequest parseJob(std::string_view content) {
   const std::vector<std::string_view> lines = frame(content);
-  const bool v5 = !lines.empty() && lines[0] == "schema_version=5";
+  const bool v6 = !lines.empty() && lines[0] == "schema_version=6";
+  const bool v5 = v6 || (!lines.empty() && lines[0] == "schema_version=5");
   const bool v4 = v5 || (!lines.empty() && lines[0] == "schema_version=4");
   const bool v3 = v4 || (!lines.empty() && lines[0] == "schema_version=3");
   const bool v2 = v3 || (!lines.empty() && lines[0] == "schema_version=2");
-  if (!((v5 && lines.size() == 13) || (!v5 && v4 && lines.size() == 10) || (!v4 && v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
+  if (!((v6 && lines.size() == 14) || (!v6 && v5 && lines.size() == 13) || (!v5 && v4 && lines.size() == 10) || (!v4 && v3 && lines.size() == 9) || (!v3 && v2 && lines.size() == 8) ||
         (lines.size() == 7 && lines[0] == "schema_version=1"))) {
     fail("a CI job record has the wrong shape");
   }
@@ -302,6 +305,10 @@ CiJobRequest parseJob(std::string_view content) {
     job.parent_run_id = std::string(expectField(lines[10], "parent_run_id="));
     job.workflow_job = std::string(expectField(lines[11], "workflow_job="));
     job.needs = parseDependencies(expectField(lines[12], "needs="));
+  }
+  if (v6) {
+    job.dependency_lock_sha256 = std::string(expectField(lines[13], "dependency_lock_sha256="));
+    if (!isValidSha256Hex(job.dependency_lock_sha256)) fail("invalid dependency lock identity");
   }
   if (!validDependencies(job) || !isValidCiId(job.job_id) || !isValidProjectName(job.project_name) ||
       !isValidClientId(job.client_id) || !isValidObjectId(job.commit_id)) {
@@ -838,10 +845,14 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
     // cannot be read here goes through the claim below, which sets it aside.
     {
       if (std::optional<CiJobRequest> queued = readJobAt(spool_fd, name)) {
-        if (!queued->parent_run_id.empty() && isCiCancelRequested(root, queued->project_name, queued->job_id)) {
+        if ((!queued->parent_run_id.empty() || !queued->dependency_lock_sha256.empty()) &&
+            isCiCancelRequested(root, queued->project_name, queued->job_id)) {
           cancelQueuedJob(root, spool_fd, *queued, "cancelled before it started");
           continue;
         }
+        // No current runner protocol supplies a verified inventory and a
+        // revocation-aware start permit. Never lease these jobs to any runner.
+        if (!queued->dependency_lock_sha256.empty()) continue;
         bool waiting = false;
         bool failed_dependency = false;
         for (const auto& dependency : queued->needs) {
@@ -958,6 +969,32 @@ std::optional<CiClaim> loadCiClaim(const std::filesystem::path& state_root, std:
   } catch (const std::exception&) {
     return std::nullopt;
   }
+}
+
+bool withLiveCiClaim(const std::filesystem::path& state_root, std::string_view job_id,
+                     std::string_view runner, std::string_view token,
+                     const std::function<void(const CiClaim&)>& transaction) {
+  if (!isValidCiId(job_id) || !isValidClientId(runner) || !isValidLeaseToken(token) || !transaction) return false;
+  const auto root = validatedMetadataRoot(state_root);
+  Descriptor root_fd(openDir(root));
+  bool missing = false;
+  Descriptor ci_fd(openDirAt(root_fd, "ci", &missing));
+  if (missing) return false;
+  Descriptor spool_fd(openDirAt(ci_fd, "spool", &missing));
+  if (missing) return false;
+  lockExclusive(spool_fd);
+  Descriptor working_fd(openDirAt(ci_fd, "working", &missing));
+  if (missing) return false;
+  Descriptor leases_fd(openDirAt(ci_fd, "leases", &missing));
+  if (missing) return false;
+  const std::string id(job_id);
+  auto job = readJobAt(working_fd, id + ".ini");
+  auto lease = readLeaseAt(leases_fd, id);
+  if (!job || !lease || job->job_id != id || lease->runner != runner || lease->token != token ||
+      lease->expires_epoch_seconds <= currentEpoch()) return false;
+  const CiClaim claim{std::move(*job), std::move(*lease)};
+  transaction(claim);
+  return true;
 }
 
 CiReapResult reapCiLeases(const std::filesystem::path& state_root, const CiReapOptions& options) {

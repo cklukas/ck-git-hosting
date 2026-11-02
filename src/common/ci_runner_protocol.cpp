@@ -93,6 +93,66 @@ std::optional<std::string> fromHexOrDash(std::string_view token, std::size_t cap
   return hexDecode(token, cap);
 }
 
+bool ciServerAdvertisesDependencyPermitV1(std::string_view hello, unsigned negotiated_protocol) {
+  if (negotiated_protocol != 3 || hello.size() > 4096) return false;
+  try {
+    const auto items = splitLines(hello);
+    if (items.size() < 3 || items[0] != "ok" || items[1] != "protocol=3") return false;
+    unsigned found = 0;
+    for (std::size_t i = 2; i < items.size(); ++i) {
+      const auto line = items[i];
+      if (line == "ok" || line.starts_with("protocol=")) return false;
+      if (line.starts_with("dependency_admission=")) {
+        if (line != "dependency_admission=permit-v1") return false;
+        ++found;
+      }
+    }
+    return found == 1;
+  } catch (const std::exception&) { return false; }
+}
+
+CiDependencyStartPermit parseCiDependencyStartPermit(std::string_view payload) {
+  if (payload.empty() || payload.size() > 4096) throw std::invalid_argument("invalid dependency permit size");
+  const auto items = splitLines(payload);
+  if (items.size() != 14 || items[0] != "dependency-permit-v1")
+    throw std::invalid_argument("invalid dependency permit version or shape");
+  CiDependencyStartPermit p;
+  p.project = field(items[1], "project="); p.commit = field(items[2], "commit=");
+  p.lock_sha256 = field(items[3], "lock_sha256="); p.inventory_sha256 = field(items[4], "inventory_sha256=");
+  p.platform = field(items[5], "platform="); p.architecture = field(items[6], "architecture=");
+  p.abi = field(items[7], "abi="); p.job_id = field(items[8], "job_id=");
+  p.lease_sha256 = field(items[9], "lease_sha256="); p.nonce = field(items[10], "nonce=");
+  const auto attempt = canonicalNumber(field(items[11], "attempt="));
+  const auto issued = canonicalNumber(field(items[12], "issued="));
+  const auto expires = canonicalNumber(field(items[13], "expires="));
+  if (!isValidProjectName(p.project) || !isValidObjectId(p.commit) || !isValidSha256Hex(p.lock_sha256) ||
+      !isValidSha256Hex(p.inventory_sha256) || !isValidSha256Hex(p.lease_sha256) || !isLeaseToken(p.nonce) ||
+      (p.platform != "windows" && p.platform != "macos" && p.platform != "linux") ||
+      (p.architecture != "x64" && p.architecture != "arm64") || !isValidCiLabel(p.abi) || !isValidCiId(p.job_id) ||
+      !attempt || *attempt == 0 || *attempt > 1000 || !issued || !expires || *issued == 0 ||
+      *expires <= *issued || *expires - *issued > kMaximumCiDependencyPermitLifetimeSeconds)
+    throw std::invalid_argument("invalid dependency permit field or lifetime");
+  p.attempt = static_cast<unsigned>(*attempt); p.issued_epoch = *issued; p.expires_epoch = *expires;
+  return p;
+}
+
+std::string formatCiDependencyStartPermit(const CiDependencyStartPermit& p) {
+  const auto payload = "dependency-permit-v1\nproject=" + p.project + "\ncommit=" + p.commit +
+      "\nlock_sha256=" + p.lock_sha256 + "\ninventory_sha256=" + p.inventory_sha256 +
+      "\nplatform=" + p.platform + "\narchitecture=" + p.architecture + "\nabi=" + p.abi +
+      "\njob_id=" + p.job_id + "\nlease_sha256=" + p.lease_sha256 + "\nnonce=" + p.nonce +
+      "\nattempt=" + std::to_string(p.attempt) + "\nissued=" + std::to_string(p.issued_epoch) +
+      "\nexpires=" + std::to_string(p.expires_epoch) + "\n";
+  (void)parseCiDependencyStartPermit(payload);
+  return payload;
+}
+
+bool ciDependencyStartPermitValidAt(const CiDependencyStartPermit& permit, std::uint64_t now) {
+  try { (void)formatCiDependencyStartPermit(permit); }
+  catch (const std::exception&) { return false; }
+  return now >= permit.issued_epoch && now < permit.expires_epoch;
+}
+
 std::optional<CiRunnerCommand> parseCiRunnerCommand(std::string_view command, std::string* reason) {
   if (reason != nullptr) reason->clear();
   if (command.empty() || command.size() > 1024) {

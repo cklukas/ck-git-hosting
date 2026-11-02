@@ -223,8 +223,8 @@ for `ci_claim_delay_ms` to a free remote runner first (see
 ### Choose a runner: `runs_on`
 
 `runs_on:` sends the workflow's runs only to a runner that carries every
-label it names. Without it, POSIX runners remain eligible; a runner registered
-with the `windows` label skips unlabelled work.
+label it names. Without it, compatible legacy runners remain eligible; runners
+registered with the `windows` or `macos-vm` label skip unlabelled work.
 
 ```yaml
 version: 1

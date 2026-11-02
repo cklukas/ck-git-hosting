@@ -1,0 +1,281 @@
+{
+  "date": "2026-11-02",
+  "scope": "Exploratory Apple VM and native Seatbelt tests; neither backend is qualified for hosted CI.",
+  "host": {
+    "os": "macOS 27.2",
+    "build": "26B123",
+    "architecture": "arm64"
+  },
+  "native": {
+    "project": "Orthomap",
+    "commit": "5e6b0e8488dc17d131fa0794d8f21b3603ed16e8",
+    "configuration": "Release, SwiftUI, diagnostic deny-default Seatbelt, Swift -disable-sandbox for nested compiler sandbox only",
+    "build_start_utc": "2026-11-01T23:57:37Z",
+    "build_end_utc": "2026-11-01T23:59:51Z",
+    "build_seconds": 134,
+    "test_start_utc": "2026-11-02T00:01:31Z",
+    "test_end_utc": "2026-11-02T00:01:46Z",
+    "tests": "19/19 passed with a clean environment and an allow-signal-to-children rule",
+    "outside_signal_probe": "A task-owned unrelated process remained alive; the sandboxed signal was denied.",
+    "detached_process_probe": "setsid was allowed; a separate detached exec still could not read a test file outside the permitted directory.",
+    "limitations": "Process-group cleanup does not contain detached descendants. The diagnostic profile allows broad Homebrew paths and is not a production policy."
+  },
+  "vm": {
+    "backend": "Apple Virtualization framework",
+    "restore": "Apple UniversalMac_27.2_26B123_Restore.ipsw, 25595669503 bytes; removed after the guest booted and shut down",
+    "base": "One stopped temporary base on PRO-BLADE; 128 GiB sparse logical disk, approximately 35 GiB allocated after Xcode installation",
+    "guest": "macOS 27.2 booted; a guest-owned APFS PRO-BLADE volume and tmp directory were created inside its virtual disk.",
+    "vsock": "A fixed-message Virtio socket probe passed in both directions. Setup networking was enabled, so this did not verify an offline guest.",
+    "probe_binary_sha256": "85f51b55604a1be0aa211c1a6962b0f3b70b3a745baa72e094e9622d15d6a5d5",
+    "offline_probe": "A disposable VM with no virtual network device booted and completed a guest interface check and bidirectional Virtio fixed-message probe using a temporary system launch daemon. The helper confirmed shutdown and removed the clone. Two earlier user-agent attempts timed out; the first had an extra argument and the second did not connect. The test daemon and guest probe were removed from the base after the successful run.",
+    "real_job_probe": "A disposable offline VM staged a synthetic project, ran a shell workflow and relayed a tar artifact; the extracted result.txt contained vm-build (SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366). Guest binary SHA-256 e3326a57dae7a49903236353bb7e3fb703b1c8736ae815d017c92fb8d1d551ff. The helper confirmed shutdown, the clone was removed, and the test daemon and files were removed from the base. This was not an Xcode build, live server job, or test of later concurrent runner source changes.",
+    "guest_installer_probe": "The setup VM mounted an explicit read-only share; the installer created a root-owned launch daemon and guest executable. A subsequent disposable offline clone booted that installed service and passed the same synthetic job and artifact test. The diagnostic guest installation, its work root, and the disposable clone were removed after the test.",
+    "current_build_probe": "Guest binary SHA-256 389560a7dadfddf0f3f80fff727aa3234511badc4dc4aadeff83083236e141f5 is installed in the single temporary base. An offline disposable clone passed a synthetic shell job, a job-process check for inherited AF_VSOCK descriptors, operator tool-environment precedence, and an artifact test. Artifact content SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366. The test-only environment binding, clone and test files were removed; the guest service remains installed in the single stopped base. This was not a live server or Xcode build.",
+    "xcode": "Apple Xcode 27.2 build 27B52 copied into the guest; codesign --verify --strict passed and xcodebuild and Info.plist hashes matched the host. xcodebuild -license status and -checkFirstLaunchStatus returned 69: the Apple license has not been accepted. No Xcode compilation was attempted.",
+    "gateway_probe": "The current remote runner claimed a synthetic queued job through the real gateway using a local SSH stand-in, negotiated protocol 2, checked out the commit, ran it in an offline disposable VM, and returned its log and verified artifact. The VM clone and VM work root were removed. This did not use a network SSH server or Xcode.",
+    "network_gateway_probe": "An isolated synthetic demo project and gateway on rpi4 were accessed over real SSH through the existing klukas account and a command wrapper, not a production restricted runner key. Protocol 2 claimed commit ec8cf41e3f9248de50a0f63e000f08b6b3c48944, the offline VM job succeeded, the remote step log contained vm-ssh-remote-ok, and the artifact contained vm-network-artifact (archive SHA-256 583970b4ed0c1179144b691b1e4a5f422042e130ea7b4aad7250bb6b0268a0ed). The relay directory was empty and only the persistent lock remained in the VM work root. No production project or queue was modified; no Xcode build was attempted.",
+    "cancellation_probe": "The opt-in real VM test ran an offline step that emitted a readiness marker and then slept for 120 seconds. On receiving the marker, the host requested cancellation; the guest reported Cancelled, the helper confirmed shutdown, and the clone and empty test directories were removed. The run finished in 21.79 seconds including VM boot. The test binary was built in Debug at 2026-11-02 01:37:56\u201301:37:58 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.66 seconds, within the prior comparable 1.50\u20132.40 second incremental-build range); real-job test source SHA-256 b172accc034d2d54f31bc07b2645cae8425e6782aad0326019a3cffc14105c7a. This is a cancellation test, not a forced-helper or host-crash test.",
+    "terminal_publication_probe": "A guest terminal report is now provisional until confirmed helper shutdown and workspace cleanup. The relay, startup and job-orchestration tests passed, including a mock helper that reports success and then fails shutdown: no terminal result was published and the workspace remained. An actual offline VM cancellation also passed with the revised flow in 14.22 seconds and removed its test clone. The Debug runner and three test executables were incrementally rebuilt 2026-11-02 01:39:11\u201301:39:13 UTC at /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 2.78 seconds; a prior comparable multi-target incremental build was 3.32 seconds. run_job.cpp SHA-256 6c869f5d548855e1a65d847cc5453175312cb2aa31721414b039819437dc0aae; result_relay.cpp SHA-256 0b3de24cedee83c41da04a71797bd650d75502a980854479bc35612a7951cddf.",
+    "post_shutdown_regression": "A real offline VM job and artifact passed after terminal publication was moved behind shutdown; artifact content SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366, elapsed 12.52 seconds, temporary clone and test data removed. A separate mock-helper test then used SIGKILL during shutdown: no terminal result was published, the one workspace was retained, and a same-boot restart refused to create another. It used a fake image and helper, not a real forced termination of Apple Virtualization. The Debug test target was rebuilt 01:40:30\u201301:40:31 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.45 seconds; prior comparable helper-only range 1.50\u20132.40 seconds, with the single source compile and link confirmed). Test source SHA-256 a1661f3bd5695908c0f00d00dc1fe5646f130c1d2d54b39f14fbdd11e29d88ac.",
+    "post_shutdown_gateway_probe": "The updated remote runner claimed a synthetic default-branch job from the real protocol-2 gateway through the existing local SSH stand-in, ran an offline Apple VM, and finalized success after its helper stopped and its clone was removed. The recorded log contained vm-remote-ok and the returned tar contained vm-artifact, archive SHA-256 dcd2968af20a618346fd6fb454201f7945ca08940cbc7f87031c773fa716c931. Relay output was empty; only the persistent runner lock remained in the VM work root and it was removed after the test. A preceding non-default-branch test was skipped by existing project policy. This is not a networked restricted-key or Xcode test.",
+    "restricted_key_gateway_probe": "An isolated unprivileged sshd and project on rpi4 used an ephemeral Ed25519 runner key and the forced-command authorized-key line generated by the installed ckgit-admin. A shell command was denied; the real remote runner then negotiated protocol 2, checked out commit 02bdd73e637c9141a1e2480f7c9c92ef2821594d, ran an offline VM job and recorded success. Its log contained vm-restricted-key-ok and its artifact contained vm-key-artifact (archive SHA-256 ccf0b07c2f766ff7431b2841e02de69a9a397287d687e9bc8240da1768004899). The VM clone was removed. The isolated sshd and server fixture were stopped and removed; production SSH keys, registry and queue were not modified. The test exposed an overlong SSH ControlPath on macOS, fixed by disabling multiplexing when OpenSSH's expanded socket path cannot fit. Debug runner and unit-test binaries were incrementally rebuilt 01:43:12\u201301:43:14 UTC (2.14 seconds; prior multi-target baseline 3.32 seconds) at /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build; transport source SHA-256 82c5943965793c5a66efb2e94332a0ed9ac28bfb80a96e00bf4c6b8e3abc23a6. This did not validate Xcode.",
+    "transport_regression": "The ci-distributed, macos-vm-run-job and macos-vm-startup CTests passed after the ControlPath fix (3.38 seconds). The full unit suite then passed in 78.37 seconds using a temporary Git index only for ls-files on the actual source repository, so the two untracked runner guides were visible without changing the shared index or the tests' independent fixture indexes. The initial unscoped full-suite attempts failed because the guides were untracked and then because an alternate index leaked into fixture repositories. The scoped wrapper and temporary index were removed. Literal percent signs and overlong paths have targeted coverage.",
+    "macos_install_component": "The macos-vm-runner CMake component was installed to a temporary S8T prefix. All four installed binaries and the guest script matched the build/source bytes; the helper's code signature and virtualization entitlement verified, and the installed admin invoked the adjacent helper to validate the existing stopped base. The temporary prefix was removed. The Debug ckgit-admin target was updated 01:46:58\u201301:46:59 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (0.71 seconds; incremental output showed only two relinks and CMake regeneration). CMakeLists.txt SHA-256 ea29e164fd5455f85a20a9a595ea2a1ec79711eea2e6ccc24625f41f819896c4. At that time the build directory's CMakeCache identified its configuration as Debug; earlier incorrect Release labels in this record have been corrected.",
+    "release_build_and_vm_probe": "The same build directory was subsequently reconfigured as Release and rebuilt 01:47:30\u201301:48:17 UTC on 2026-11-02. The configuration change rebuilt 235 targets in 47.13 seconds; no same-project comparable clean Release baseline was available. Source hashes recorded before the build included CMakeLists.txt ea29e164fd5455f85a20a9a595ea2a1ec79711eea2e6ccc24625f41f819896c4, runner e04a35e7071efb11c9c63bcd2a3b4c44155eb67fcd38687239ed576b5243cbbe, VM host job 6c869f5d548855e1a65d847cc5453175312cb2aa31721414b039819437dc0aae, helper e82ac87e2a37511b08b9ba316ea6cb2dcdfda5ec614208796318c6627a92ed20, and guest f9dcdec1539cbedd71299efb7ca8ce1869e5b412c146960fb077245598f6128c. Release admin, runner, helper and guest SHA-256 were respectively 69f4ca842fc615640378c8bba94af85e5d69014da9fa3d4322182959bed9aecc, c58ae5e95fa28e581742396cceba4f03c70dfd64d09734c42adcc7d9a56e612d, 6ce3c0ef3b58c831caabe0c657e3b0768d42c10cc3d5f8aeb1cfb4cdb16427f3 and 56d1da70a10407759f17b5ace6e47b43a47afbdf42625256ad9a454ab45b8aae. The Release component installed to a temporary prefix, matched built binaries, passed code-signature and installed-admin validation, and was removed. Release relay, orchestration and startup CTests passed. A real offline VM job using the Release host helper and test binary passed in 15.78 seconds with artifact content SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366; its clone and test data were removed. The base still contained the previously installed Debug guest; the new Release guest was built and packaged but not installed or tested in the VM.",
+    "release_guest_probe": "The stopped base was subsequently opened in setup mode with a read-only share. The guest service was stopped and the Release guest installed as root:wheel mode 0755; its SHA-256 matched 56d1da70a10407759f17b5ace6e47b43a47afbdf42625256ad9a454ab45b8aae and the existing launchd plist passed lint. The setup VM was stopped, and a disposable offline clone ran a real job using the Release host and Release guest; the job and artifact passed in 12.31 seconds, with artifact content SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366. The clone and setup share were removed; one stopped base remains. The Xcode license was not changed or accepted.",
+    "release_timeout_probe": "A real offline VM with the Release host and guest ran a 120-second sleep with a two-second per-step budget. The guest reported Timeout with its step marked timed out, the host confirmed VM shutdown and removed the clone; total elapsed time including VM boot was 18.13 seconds. Temporary work and relay roots were removed. The Release test target was incrementally rebuilt 01:51:15\u201301:51:16 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.09 seconds, one source compilation and link; previous comparable single-source test build 1.66 seconds in Debug). Test source SHA-256 f02c90b6357c6db9db53386803b21ecd6e896a48cd23a468d4b9c83979150bd5. This is not a real forced-helper or host-crash test.",
+    "guest_upgrade_documentation": "Documented the manual guest update procedure exercised for the Release guest and made the admin validate command discoverable in help. Release ckgit-admin and ckdocs were built 01:52:22\u201301:52:49 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (26.70 seconds, including the first Release compilation of 71 ckdocs/Mermaid targets; no comparable clean Release ckdocs baseline). Admin help listed validate. ckdocs check passed for the complete two-site portal, 72 pages, using a temporary Git index for the untracked guides; temporary files were removed. An initial check using only the hosting site's config produced 13 expected cross-site-link warnings and was superseded by the full portal check. Admin source SHA-256 0827c2c18717d03f14deb1a719a55d83f313432c788c35a30bdfc4bee2cb79a1; guide SHA-256 29f2e2d8fe5753cfba8e8966ce17ab0716148fbea3dd6e9bac670ed54f6f30e4. The documented update is manual; there is no automatic guest upgrade command.",
+    "linux_transport_syntax": "On rpi4, GCC 14.2 accepted the exact shared ci_remote_transport.cpp (SHA-256 82c5943965793c5a66efb2e94332a0ed9ac28bfb80a96e00bf4c6b8e3abc23a6) with C++20 and -Wall -Wextra -Wpedantic -Werror -fsyntax-only, 01:53:31\u201301:53:37 UTC, 6.224 seconds. No same-project Linux syntax-check baseline was available; this produced no executable and does not establish Linux runtime behavior. The unique remote task directory was removed.",
+    "release_regression_suite": "The Release unit and VM test targets were built 01:54:03\u201301:54:20 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, compiling 41 targets in 17.45 seconds; no prior comparable Release test-target rebuild baseline was available. CMakeLists.txt SHA-256 ea29e164fd5455f85a20a9a595ea2a1ec79711eea2e6ccc24625f41f819896c4, distributed test source 4642270c23cc12ebd3e1b8a93bb764ded8aeebf99d0d6a1568af26e9406dffac, guest source f9dcdec1539cbedd71299efb7ca8ce1869e5b412c146960fb077245598f6128c. Eight focused tests for process, guest, staged source, tool environment, relay, job, startup and distributed CI passed in 10.58 seconds. The complete Release unit suite passed in 59.29 seconds using a source-only scoped temporary Git index to expose the untracked documentation; the wrapper and index were removed. The earlier complete Debug suite took 78.37 seconds and is not a same-configuration baseline.",
+    "helper_mount_guard": "The VM helper now validates mount identity for paths under /Volumes before install, setup, run or validate; a stale mount cannot silently become a system-disk workspace. Release helper rebuilt 01:56:25\u201301:56:26 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 1.87 seconds; prior comparable single-source helper build 1.03 seconds, both compile/link outputs inspected. Helper source SHA-256 f41d0924bc4f1abb4ff82da9f279a284d0b54996d64ff848881a026c620b053f. Existing PRO-BLADE VM validation succeeded; a /Volumes/Macintosh HD symlink resolving to the root mount was rejected before any VM operation. Startup and mock-job CTests passed; a real offline Release VM timeout job also passed in 14.33 seconds and its clone and test directories were removed. No volume was intentionally unmounted; real unmount-during-operation recovery remains unqualified.",
+    "mount_guard_regression": "The new macos-vm-mount-guard CTest passed for a nonexistent /Volumes entry and for a task-owned symlink resolving off S8T; it created no VM and removed its task directory. VM startup and mock-job CTests passed alongside it. CMake regenerated the Release build 01:57:32\u201301:57:33 UTC (0.46 seconds, no compilation needed). CMakeLists.txt SHA-256 95d2b31dae0c3c78b8987278a372a934a2d53e4e7c5660ef19f07374724dfa99; test script SHA-256 83e382a579f1e1079847225e33c278a30a11d9d98ae736cc353aff8e0124e839. This does not simulate unplugging a live volume.",
+    "release_lease_loss_probe": "A real offline Release guest ran a sleeping step while the host test sink simulated a lost lease after a readiness log. The runner aborted without publishing a terminal result, the helper stopped cleanly, and the clone and temporary test roots were removed; elapsed including VM boot was 17.42 seconds. The Release test target was rebuilt 01:58:05\u201301:58:07 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 2.02 seconds versus 1.09 seconds for its prior one-source Release rebuild; output confirmed a single source compilation and link, with 1.25 seconds combined user/system CPU. Test source SHA-256 8cfea8f2e638766eb6b8acdc3c0959abba6505f7b3bfbc52ab60945f9f3d5baa. Lease loss was simulated by the test sink rather than induced on a real server.",
+    "gateway_lease_loss_probe": "A real Release runner and offline Apple VM claimed a synthetic sleeping job through the isolated protocol-2 gateway and local SSH stand-in. Removing that fixture's exact lease after its readiness log caused the real gateway to report lease loss; the runner aborted without publishing success and the VM stopped and its clone was removed. The first run revealed an empty owned relay parent left behind, which would prevent VM runner restart. RemoteCiSink was fixed to remove a parent it created only when empty, while preserving a preexisting parent; the process CTest passed and the real gateway/VM experiment then passed with an empty relay root and no clone. The server's test run remained running, as expected after losing the lease; no terminal result was claimed. The isolated fixture ref was restored and test run, lease data and VM root were removed. Release runner and gateway test targets were incrementally built 02:00:06\u201302:00:08 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 2.18 seconds, with 12 compile/link actions; no equivalent Release baseline was available. ci_remote.cpp SHA-256 fa346a3c2cd7bd3e9f8df44cd7421440cad5a89bb5e24e024ae5e76b6937572e; process test SHA-256 ee14e61f9aa929b26f699b2cc44f7112de23cd3e32890e41185b49d61d4cf5ce. This was not a network or physical server-disconnect test.",
+    "ssh_reconnect_probe": "A Release runner used a restricted ephemeral key to claim a synthetic job from an isolated sshd and gateway on rpi4, and ran it in a disposable offline Release VM. After the server received reconnect-ready, the test terminated the exact SSH stream process and blocked new test SSH connections for five seconds, then allowed them again. The runner reconnected and the same attempt succeeded; the server log contained reconnect-ready and reconnect-completed, and the artifact contained reconnect-artifact (tar SHA-256 717a014360e6f3ac6ca5bd81111ec42f0d9abfb1c108d8f75af652438f979377). The VM clone, relay root, isolated sshd, key and fixtures were removed. This simulates a brief SSH transport outage; it does not establish behavior for a physical host crash or an outage long enough for lease expiry.",
+    "expired_lease_requeue_probe": "An isolated protocol-2 gateway and local SSH stand-in used a 10-second lease and a synthetic sleeping job in a real offline Release VM. The test stopped the exact gateway stream process and blocked reconnects for 15 seconds; an isolated disabled-runner claim invoked the real gateway reaper. The server recorded the job Pending at attempt 2 and removed the old lease. After reconnect was allowed, the original runner reported a cancelled VM channel, published no terminal success, stopped the VM, and left its relay root empty. The fixture ref, runner enabled state, server config and SSH shim were restored, and the isolated run, queue entry and VM test root were removed. This simulated a transport outage; it did not stop the physical main host.",
+    "apple_crash_teardown_guidance": "Apple Developer Technical Support states that the system cleans up a guest after its host app fails, but gives no cleanup timeline and no public successor-process API to verify that guest cleanup has completed: https://developer.apple.com/forums/thread/850709 . The runner's current-boot quarantine therefore cannot safely infer VM termination solely from helper exit. Its automatic recognized-workspace recovery is after a host boot; a nonempty relay build root may still require separate operator inspection. No physical host crash or reboot was tested.",
+    "marked_relay_recovery": "The VM runner marks newly created private relay directories and, only after VM workspace preflight and under its build-root lock, recovers recognized relays through descriptor-relative no-follow cleanup. Unmarked or invalid entries block startup and remain untouched. Unit tests covered an interrupted sink process, owned-marker recovery, symlink preservation and unknown data; the startup integration test covered an actual recognized relay, a missing build root and rejection of unknown data. A normal isolated gateway/VM job succeeded; a second real VM gateway job showed the marker present, then revoked the lease and verified no terminal success, an empty relay root and no clone. The fixture was restored. The focused process, VM startup, VM job and distributed tests passed; the full Release unit suite passed in 61.65 seconds (prior comparable run 56.42 seconds) with a temporary source-only Git index. Release targets were incrementally built 02:08:43\u201302:08:50 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (6.74 seconds, 16 compile/link actions). ci_remote.cpp SHA-256 eff5a5b0c29e96fcfa59c6323ad1b1c1d64e8f3afd2da31a8f1fb0d9d3197f2b, macos_vm_workspace.cpp a8bc92cfa70f0bfdff8a30e12d0c7935a38c564acf9f7e24e2e2b6a943eda3b0, runner main 3db7ee32b9fe74c5650a95e9fb58ae858a945d1375f72929382e6bf2bed99b48, distributed tests f49e85e6576a0833f3a9f5d18dcd0fcc223324dc387b5b31e43a298c68a505c1, startup script 4de5e6dfb310b90387ef1136904d5da99393855d4fc718469995bd46caff9a91. No actual host crash or reboot was performed.",
+    "cleanup_marker_order": "VM workspace and relay cleanup now preserves the ownership marker until all other entries are removed and the directory is synced, then removes and syncs the marker before removing the directory. Tests forced an inaccessible nested directory during both previous-boot workspace and relay recovery, verified the marker remained on failure, restored access and successfully retried. Focused Release distributed, mount-guard, startup and mock-job tests passed. A real offline Release VM timeout job passed in 13.71 seconds and its clone was removed. Release targets rebuilt 02:13:56\u201302:14:02 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 6.03 seconds with eight compile/link actions; no matching Release baseline was available. macos_vm_workspace.cpp SHA-256 29cd5431fa41bdd9a0354b23a231a4ed1c1e0a092793cc6054fc49aca044ee8e; distributed tests SHA-256 e856d6ecebc81ff0f0bf3137b8561d3a9b02e92b1d49cb313fd1335d1ed69ed3. This simulates cleanup failure, not a host power loss.",
+    "partial_creation_cleanup": "The creation-failure cleanup path now also retains the workspace marker until all other entries are removed and synced, validating any marker before unlinking it. Release targets rebuilt 02:15:14\u201302:15:15 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.29 seconds, one source compilation and five links); the focused VM job, startup and distributed tests passed in 4.08 seconds. macos_vm_workspace.cpp SHA-256 72d6071798f23bec43a6407a5a2ec6581fa846b56bd7df796569d0c75242b6b4. The creation-failure-plus-cleanup-failure combination was not directly induced; the earlier inaccessible-directory tests cover the shared marker-preserving deletion routine.",
+    "special_marker_guard": "Recovery opens workspace, relay and runner-lock markers nonblocking and checks file type before reading. FIFO workspace and relay marker fixtures were rejected without hanging; focused Release distributed, VM startup and VM job tests passed in 4.49 seconds. Release runner and test targets rebuilt 02:16:05\u201302:16:11 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (5.46 seconds, two source compilations and four links; prior comparable multi-target Release build 6.03 seconds). macos_vm_workspace.cpp SHA-256 b952c88973411bbe8d61ce13d3f12e8436de6ea1d1ceced461413afa18503853 and ci_distributed_tests.cpp SHA-256 703ead380aafc6bc441b0c40770ee478b1cdf3a50f0b331b4ee48fa0f82068a6.",
+    "special_image_guard": "VM storage validation and clone setup now open image components nonblocking before verifying they are regular files. A FIFO substituted for HardwareModel was rejected without blocking; focused Release distributed, VM startup and VM job tests passed in 3.65 seconds. Release runner and tests rebuilt 02:16:42\u201302:16:48 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (5.42 seconds, three source compilations and four links; prior comparable multi-target Release build 5.46 seconds). macos_vm_storage.cpp SHA-256 f4b5df02d7441ac3e95e7bdd3860780c683c331e112b7ba0ec1c8664cb4d9af6, macos_vm_workspace.cpp SHA-256 27a15fa29343f3cf1999796cf3bc768bb71a707fd79fffb54be3e8a00fcfdc9a and ci_distributed_tests.cpp SHA-256 e1237fb856f03ed9a5f38688b9769c1bd6ec55d68a543f67a589357a0a727fd5.",
+    "release_job_isolation_probe": "A real offline Release VM job verified its staged input, could not see a specific host-only sentinel, could not create a file in the host exchange, inherited no AF_VSOCK descriptor, and observed no active non-loopback IPv4 or IPv6 interface via getifaddrs. It returned the expected artifact (content SHA-256 963594b7f0442375169e7852f218f05dcacd1236dc7e0150d5e79b2f95448366), completed in 12.90 seconds and removed the clone and task data. Two earlier probe attempts failed because route -n get default returned success, which was an invalid test assumption; it was replaced by the interface check used in the earlier offline diagnostic. These checks do not prove absence of all possible host access or all network paths. The Release test and guest probe were rebuilt 02:19:08\u201302:19:09 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.26 seconds, two compilations and links; no comparable two-target Release baseline). Real-job test source SHA-256 232e7adfe2f8739ee5cd7a2a9de6951f80c812df25d9e255c2296499f42fe8f2; guest probe source SHA-256 99b04534da21d384366fc995c592c14aca0bf6ce69bd23bfc61c2a01378989ba.",
+    "project_source_vm_probe": "An isolated temporary Git index and fixture repository captured a selected working-tree snapshot of ck-git-hosting source and dependencies without changing the project's index, branch or GitHub. Snapshot commit 223a7a032329f5ce94bdee028930d314302dd1a0 contained a test-only workflow. The Release remote runner used the local SSH stand-in to claim it, checked out and staged the source, ran an offline VM job, and returned a source-hash artifact. The artifact matched the host bytes for src/ci-runner/main.cpp (3db7ee32b9fe74c5650a95e9fb58ae858a945d1375f72929382e6bf2bed99b48) and src/common/macos_vm_workspace.cpp (27a15fa29343f3cf1999796cf3bc768bb71a707fd79fffb54be3e8a00fcfdc9a). The test fixture ref was restored and the test run, index, clone and VM work root were removed; test fixture Git objects remain in its existing S8T temporary repository. This was source validation, not a compiler or installer build. The Release gateway/admin targets were relinked 02:20:34 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (0.25 seconds, four links; output inspected).",
+    "orthomap_openmvs_input": "The separately supplied /Volumes/S8T/tmp/orthomap-git-publish-20261101/OpenMVS_macOS_arm64.zip had SHA-256 3d4c616c97031b1ab6e2eecb0ddd5614fb99513c0782a32c9350602faf38799b and listed InterfaceCOLMAP and DensifyPointCloud. The archive was not installed, executed, or treated as dependency approval; its provenance and guest compatibility were not independently established by this check.",
+    "dependency_fail_closed_regression": "The design notes were corrected to describe the current experimental VM channel without implying that CLI dependency approvals are enforced. Release workflow tests explicitly reject unimplemented job toolchain and top-level dependency fields; the full Release unit suite passed in 60.23 seconds (previous comparable 61.65 seconds) using a scoped temporary index for untracked documentation, which was removed. The unit test target rebuilt 02:22:45\u201302:22:46 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, 1.80 seconds with one compilation and link; no comparable Release workflow-test-only baseline was recorded. ci_workflow_tests.cpp SHA-256 6d3fdf8ac73458008ec347b7d962205cebb3091719969b0f31bcb0dc67c3a73c and design document SHA-256 7603d7b538b5dd8df5cb7f4b0269d363f5b295b2ce92a710a5a1a96085bd662a. Existing manually installed tools are not governed by those unimplemented workflow fields.",
+    "exact_dependency_review_check": "ckgit-admin ci dependencies check reads a lock and its hashed inputs from the specified exact commit, looks up the exact project/digest review record without a listing limit, and reports whether that commit was requested and every package currently approved. It returns nonzero for missing, pending, rejected or revoked review and explicitly states that the result is a snapshot, not provisioning or CI authorization. The Release ci-dependency CTest passed CLI scenarios for unrequested, pending, approved, revoked and a different unrequested commit with the same lock; store tests also covered invalid digests and tampered locks. The full Release unit suite passed in 56.24 seconds before the additional different-commit case, which passed the focused test. The Release unit/admin targets rebuilt 02:27:06\u201302:27:10 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (3.78 seconds, two test compilations and link, plus CMake regeneration); prior comparable two-test build baseline was not recorded. ci_dependency_commit_tests.cpp SHA-256 5bda82ffec5151ee71bc4946a00033c7396761e9292c7ab84bccda2dbaf7a0c0, test_main.cpp 15baa43468ee9b5bd64a15561d2f7c53309b30cb3e45295f0f3f89cbd8c4b1c7, CMakeLists.txt 99adaa49655a13865a0a3a2d1c140a43b20d53f58763198fdb126cbf43fc9cfa. Provisioning, inventory verification and dispatch-time enforcement remain unimplemented.",
+    "exact_dependency_commit_scope": "The focused Release ci-dependency test was strengthened to reapprove the original lock before checking a different, unrequested commit with identical lock bytes; the second commit remained not-requested. The test passed in 1.91 seconds. Its one-source Release rebuild ran 02:27:30\u201302:27:31 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build in 1.37 seconds; source SHA-256 e2b593321042c079306306a91e7d2ee7c6bc7498bd3ec7350962c0972020e6ca. This remains a point-in-time review check, not an authorization gate.",
+    "macos_vm_status": "The read-only ckgit-admin runner macos-vm status --config command reports validated base/work paths, logical component size, free space, configured reserve, sufficient/insufficient capacity, the one-disposable-VM policy and counts of workspace-like and other entries. It makes no claim that a counted VM has stopped. Its startup integration test verified normal status, preservation/reporting of unknown data and nonzero insufficient-capacity output with available bytes; VM startup, distributed and dependency CTests passed in 6.17 seconds. Against the stopped prepared PRO-BLADE base, status reported a 137438953472-byte logical disk, 137472532836-byte logical component total, 1032138035200 bytes available, a 20 GiB reserve, sufficient capacity and zero work-root entries. The unique empty status fixture was removed. Release runner/admin/unit targets rebuilt 02:29:43\u201302:29:50 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (6.93 seconds, four source compilations and five links; no matching baseline recorded). runner main SHA-256 8245c0eb1e18af5c31968329a194a8f8047b46f7eb9cd4f88cb0f8fe68987d2e, macos_vm_storage.cpp 60444aeb8854fa786eea18ac2f8412705375c36bd9fd8a4177b6c5689f402e96, startup test 1f57606f0671b9bd6f574ff4df5f994ff9c3a2668adaf3db0e29886fbed54c89.",
+    "post_relay_fix_release_unit": "The full Release unit suite passed again in 56.42 seconds after the RemoteCiSink relay-parent cleanup change, compared with the previous 59.29-second Release run. It used a source-only temporary Git index for the untracked documentation, which was removed afterward. The Release unit target was incrementally rebuilt 02:06:18\u201302:06:23 UTC in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build, taking 4.77 seconds with one distributed-test compilation and link; the 4.57 seconds user CPU and build output were inspected. Relevant hashes: ci_remote.cpp fa346a3c2cd7bd3e9f8df44cd7421440cad5a89bb5e24e024ae5e76b6937572e, ci_remote.hpp 682dd1a52a12d7d1dc1fbba83ad181ad0f7eae6e1a91558f56c2599d95e36982, ci_distributed_tests.cpp 4642270c23cc12ebd3e1b8a93bb764ded8aeebf99d0d6a1568af26e9406dffac.",
+    "preconnection_disconnect_probe": "A disposable offline Apple VM started without a guest service. Closing the parent broker channel before any guest connection caused the helper to stop the VM and exit successfully; the clone was then removed. This does not establish recovery after SIGKILL or a host crash.",
+    "base_lock_probe": "On 2026-11-02, the integrated Debug helper and offline probe were incrementally rebuilt in /Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build (1.89 seconds; prior comparable helper-only builds 1.50\u20132.40 seconds). A shared lock on the real base caused setup to reject it; an exclusive lock caused workspace cloning to reject it without creating a clone. macos-vm-process, macos-vm-run-job and macos-vm-startup tests passed. The base was not booted or modified during these lock probes.",
+    "limitations": "The VM job executor, offline end-to-end transport, resource limits and crash cleanup are not qualified. The temporary guest probe agent was removed and the VM stopped.",
+    "same_boot_recovery_2026_11_02": {
+      "build": {
+        "start": 1793586926.796213,
+        "end": 1793586928.6461802,
+        "elapsed": 1.8499672412872314,
+        "configuration": "Release incremental",
+        "baseline": "12-target incremental 6.75 seconds; helper and owner test 1.17 seconds",
+        "source_sha256": {
+          "src/ci-vm-macos/main.mm": "6027a7d4fc590fd66c32e0c08c357f1859ddd7fe00f81eabc5a0c310f8460591",
+          "src/common/macos_vm_workspace.cpp": "c3ab76706f0d16cba6f9c06c3965ab2e297b3250cf21f7637fd31ccc1f057a4c",
+          "tests/platform/macos_vm_owner_crash_test.cpp": "e8685748af0aa16d0a6349bfe2c3eec083bbda5f3551b67d03900d5c605bc87d",
+          "tests/unit/ci_distributed_tests.cpp": "99d75cf3f571e3c8187af59919ae0db4d5b24b4b0130914de04613cfe792fa58",
+          "CMakeLists.txt": "31965f2d6b659837347470457827005d2774a8817ea5a9b51d9c3409e6875104"
+        },
+        "source_stable": true,
+        "exit": 0,
+        "output_dir": "/Volumes/S8T/tmp/ckgit-vm-integrated.Ko9BS8/build/bin"
+      },
+      "helper_sha256": "af1a64194e072aa49001b04be022fed89feccbb3fbc697cda90170a935b210e3",
+      "guest_sha256": "56d1da70a10407759f17b5ace6e47b43a47afbdf42625256ad9a454ab45b8aae",
+      "tests": [
+        "Real Apple Virtualization guest connected; killed surrogate runner, surviving helper stopped guest, current-boot clone recovered and removed",
+        "Real guest stopped after pre-connection channel loss; clone removed",
+        "Real offline guest job timed out; VM stopped and clone removed",
+        "CTest macos-vm-process, macos-vm-mount-guard, macos-vm-run-job, macos-vm-startup and ci-distributed passed"
+      ],
+      "limits": "No forced helper termination, host crash or full Xcode build qualification; surrogate runner kill is not helper kill."
+    },
+    "remote_gateway_after_startup_changes": {
+      "run_id": "00001793587225392720-fb5f273a",
+      "commit": "329b40e604e72adac14d90def9c01332b01b604f",
+      "status": "success",
+      "evidence": "isolated fixture gateway, real Apple VM guest; step log vm-remote-ok and returned tar artifact out/result.txt=vm-artifact; relay empty; disposable clone removed; no helper running",
+      "runner_sha256": "26717c78df38fb33e1f6d957d63e12e31497eb7118a521254813a1577e178be2",
+      "helper_sha256": "af1a64194e072aa49001b04be022fed89feccbb3fbc697cda90170a935b210e3",
+      "guest_sha256": "56d1da70a10407759f17b5ace6e47b43a47afbdf42625256ad9a454ab45b8aae",
+      "scope": "fake SSH gateway transport; shell fixture, not an Xcode compilation or production server registration"
+    },
+    "release_regression_after_prepare_share": {
+      "result": "13/13 passed in 67.11 seconds",
+      "scope": [
+        "macos-vm-process",
+        "macos-vm-mount-guard",
+        "macos-vm-guest",
+        "macos-vm-staged-source",
+        "macos-vm-tool-environment",
+        "macos-vm-result-relay",
+        "macos-vm-run-job",
+        "macos-vm-startup",
+        "macos-vm-prepare-share",
+        "macos-native-policy",
+        "unit",
+        "ci-distributed",
+        "ci-dependency"
+      ],
+      "admin_sha256": "92b99182236dcd4a9227b407734578f7ef82df546a645a17e8974c1a9315b186",
+      "runner_sha256": "26717c78df38fb33e1f6d957d63e12e31497eb7118a521254813a1577e178be2",
+      "helper_sha256": "af1a64194e072aa49001b04be022fed89feccbb3fbc697cda90170a935b210e3",
+      "limitations": "Does not replace an Xcode compile, forced helper termination or host-crash test."
+    },
+    "boot_cancellation": {
+      "result": "Real offline Apple VM started, cancellation after source checkout while waiting for guest handshake; helper confirmed stop, cancelled result recorded, disposable clone and test roots removed",
+      "test_sha256": "bb5da5bb69430c3144162270cc0d8ec2b59e265b9ce0f0d4bcb029237eedc635",
+      "host_source_sha256": "477b6a4dbfdff49ee9f27bd186956ae0d2ae030de904671481c951aa648f7a25",
+      "unit": "macos-vm-run-job covers simulated helper boot cancellation, pre-start cancellation, checkout cancellation and lease loss; macos-vm-startup and ci-distributed also passed",
+      "scope": "No host crash, forced helper termination or Xcode compilation."
+    },
+    "early_signal_deferral": {
+      "result": "Release process, VM-job and startup tests passed; real Apple helper immediately cancelled after spawn returned a cancelled result and removed the clone; a separate real offline VM job completed and returned its artifact after this change",
+      "sources": {
+        "src/common/macos_vm_process.cpp": "8a4adbd2bddfd722af0821c5f04bfe7d8d4719adf6a114e2d1a62bc18fc07616",
+        "src/ci-vm-macos/main.mm": "cbf0921a64718ad8d059bf9dc282d5b0dea78a4c0ebd70569c4c78c774a0e73d",
+        "tests/platform/macos_vm_process_test.cpp": "e6de469a7fd2ba3b06204d1f1471277d91f15db7a42505bbe05483892a36ed7c",
+        "tests/platform/macos_vm_real_job_test.cpp": "188448de3d415fe5d6806268bcbf7bafe3fe11239a486684decc4d4a72b6ef03"
+      },
+      "scope": "Immediate cancellation qualification does not test SIGKILL of the helper or host crash."
+    },
+    "final_ack_lease_and_cancel": {
+      "result": "Release result-relay tests cover lease loss and cancellation observed in final acknowledgement; runner/job/startup/distributed tests passed; real offline VM cancellation and clone cleanup passed",
+      "sources": {
+        "src/ci-vm-host-macos/result_relay.cpp": "1041e6b19fac45173f58312eb1b93ca50dfe3c33360c82e43834cf572c29fa5e",
+        "tests/platform/macos_vm_result_relay_test.cpp": "961ab2da0387ac4d045ebb7d6b7e769593517f439938a53891ad4dac0711374d"
+      },
+      "scope": "The real VM cancellation test covers cancellation during execution, not the precisely synchronized final-ack race; that race uses a socket-pair test."
+    },
+    "shutdown_lease_heartbeat": {
+      "result": "Release process, result relay, VM job, startup and distributed tests passed. Mock helper marks shutdown and test confirms lease loss detected after stop prevents finish while clone is cleaned. An isolated gateway job 00001793587795977329-4dfa51da ran in real Apple VM, returned vm-artifact, and removed clone and relay.",
+      "sources": {
+        "src/common/macos_vm_process.cpp": "7aeeff33c3f8f749e6d8e34bf43a106545ab8e682eac0b886e8e3ca1c020bcfe",
+        "include/ckgit/macos_vm_process.hpp": "af092b271b3be372209088748324ca58df6e41814944e2144d45dbbc3ba40ce9",
+        "src/ci-vm-host-macos/run_job.cpp": "ed101818f50ca7d917393604f2c3bb64fe4a8fb0e4e5f8ce25df8fa8dac17e95",
+        "tests/platform/macos_vm_run_job_test.cpp": "01dccfef5cbf671a1d7713304589a7b4de0c9165a3d3dabeb2e4c47279134dbc"
+      },
+      "scope": "Gateway used local SSH stand-in; lease loss at shutdown was simulated, not injected into the real VM gateway job."
+    },
+    "cleanup_lease_progress": {
+      "result": "Release VM job, startup and distributed tests passed. Callback coverage verifies cleanup progress and simulated heartbeat failure still removes the workspace without publishing a result. A real offline Apple VM cancellation stopped and cleaned its clone.",
+      "sources": {
+        "src/common/macos_vm_workspace.cpp": "282a279945d778006229084f1096166f8c041a53e67f98953375f7c901e37268",
+        "include/ckgit/macos_vm_workspace.hpp": "e6b36af1b7e1ab0725ee83bd19d8a32e72e9a82661745560611f20588092bba9",
+        "src/ci-vm-host-macos/run_job.cpp": "7ef6e987e98f2c01c626924dd7e87738d24de08698f6d48b721c9e6ad9699a0f",
+        "tests/unit/ci_distributed_tests.cpp": "75ad65feacf20c42ab8e79fe4caf557265f83aaba18ba67caf4c0bb4c32e3823",
+        "tests/platform/macos_vm_run_job_test.cpp": "0e9452cf5777362ab7657b9b638683f72530dea3d8186b0eadf5d1ee888bebb3"
+      },
+      "scope": "Heartbeat failure and lease loss were simulated; real VM test did not inject network failure during file deletion."
+    },
+    "interrupted_cleanup_order": {
+      "result": "Release tests verify a deliberately interrupted bulk cleanup retains the stop marker and lock and is recovered on same boot; real VM runner-surrogate SIGKILL after guest connected and real VM job cancellation both stopped guest and removed clones.",
+      "sources": {
+        "src/common/macos_vm_workspace.cpp": "e4a4fa6f778c878f872720de54f18957234ab5d32661cc70ce828e2e03975b98",
+        "tests/unit/ci_distributed_tests.cpp": "e3c7dc6dcf0dcaf1b9cc680e0a79fa3948cded9624318131369074b2b52132cb"
+      },
+      "scope": "Cleanup interruption was injected in a test callback, not by killing a production runner; final marker-removal window and host/helper SIGKILL remain conservative quarantine."
+    },
+    "unlabelled_routing": {
+      "result": "Release ci-distributed test verifies macos-vm labelled or named runner skips unlabelled legacy job and claims explicit macos-vm,arm64 work; Linux legacy and Windows routing checks passed; VM startup and run-job tests passed.",
+      "sources": {
+        "src/common/validation.cpp": "5d6195bf5861acc4698148123edef236ec9e797ad63526cd266f292a566edd71",
+        "include/ckgit/validation.hpp": "03de4cb72151eeb43bb95c751ffb1f807336f1fb4acdf83eb23230a958ae2ce1",
+        "tests/unit/ci_distributed_tests.cpp": "ba007be82f7a042c4db7d88ed92f7f37f878d0641b47cac92e24025afe404e02"
+      },
+      "scope": "Server-side source change has not been deployed; labels are routing, not project authorization. Runners must be registered with macos-vm to receive this safeguard."
+    },
+    "label_routing_real_gateway": {
+      "result": "Isolated local SSH stand-in gateway with runner labels macos-vm,arm64: first serve --once left the unlabelled job unclaimed; an explicitly targeted commit bf7b5e636201939e75fa0bf6ec64f6417da3e75c ran in a real Apple VM as job 00001793588201510744-d7ee6f08 with success and artifact vm-artifact. Runner clone and relay empty; test repository ref and labels restored, spool empty.",
+      "test_harness_note": "The combined test script exited nonzero because it incorrectly expected the earlier pending job to remain in the spool after the newer push; the server auto-cancelled it as superseded. Both routing observations were independently verified, as were cleanup and fixture restoration.",
+      "gateway_sha256": "35164ebf6ee6c5cd8d7318b86eeae3e87624ed9df2d6c988ef65f4a3812a0c1d",
+      "scope": "Local gateway SSH stand-in, not production deployment or project authorization."
+    },
+    "label_routing_real_gateway_corrected": {
+      "result": "Exit 0: isolated gateway with macos-vm,arm64 labels left a non-auto-cancelled unlabelled job queued, ran explicitly targeted job 00001793588302559452-31afa298 in real Apple VM and returned vm-artifact; original queued job remained present until explicitly cancelled. Fixture ref and labels restored; work root and relay cleaned.",
+      "test_script_sha256": "788a278fff35573813d94746ccf0f8f066c5d4da6498cd0bda0215c55b781dc9",
+      "scope": "Existing isolated fixture used to avoid accumulating a second Git checkout; repository test script passed shell syntax validation but was not itself invoked in a new fixture."
+    },
+    "routing_script_actual_execution": {
+      "result": "Opt-in tests/integration/macos_vm_remote_e2e.sh exited 0 against actual Apple VM; unlabelled job skipped, explicitly labelled job returned artifact, pending fixture job cancelled and drained, VM clone and temporary VM work root removed.",
+      "script_sha256": "640d79d5e217ad34a14a83dc10b3d08ea138e1b39f43d320fccefe46eb5ad1c8",
+      "fixture": "/Volumes/S8T/tmp/ckgit-vm-routing-e2e.SgGg7q/fixture (316 KiB, retained for ongoing VM-runner validation; contains no VM image)",
+      "scope": "Local SSH stand-in; production server unchanged."
+    },
+    "rpi_installed_compat_real_ssh": {
+      "result": "Current Release Mac runner negotiated protocol 2 over actual SSH with an isolated gateway on rpi4 using its installed 0.8.2+g412455684e70 binaries; explicitly labelled job 00001793588461830647-6db42e54 succeeded in real offline Apple VM and remote artifact content real-ssh-vm-artifact verified. Remote isolated fixture, local config and VM work root removed; relay empty.",
+      "runner_sha256": "8970dd1379dc8d488428e8ef93a1bfef14e5c8e2bdb9f585fa8f9a6b42648687",
+      "helper_sha256": "42fd95b53bd5495261a9e5feee03104a32fad87540d928d54fc2f090c1598490",
+      "scope": "Existing klukas SSH account plus isolated command wrapper; not forced-command restricted-key validation, not proof of macos-vm unlabelled routing on older server, no production queue or service changed."
+    },
+    "rpi_production_server_update": {
+      "deployment": {
+        "start": "2026-11-02T03:48:32.483252+00:00",
+        "candidate": {
+          "package": "packages/ck-git-hosting_0.9.0~20261102.0303.d828953a_arm64.deb",
+          "package_sha256": "94017c96c7c2c576f07edac7428f7ef1ff932a5b9e4b83c9c44a4d257d388ff1",
+          "version": "0.9.0~20261102.0303.d828953a",
+          "source_archive_sha256": "d828953ae62c4602c8d4d074994b1f42f619fcd3d85271cba2004ceb6283139a",
+          "cmake_override_sha256": "aed09ed0e37e42287812fc7593c2ad8b5d6fc4df3d2262d289d267a9147afd4e",
+          "binaries": {
+            "ckgit-admin": "f6d27a6f435c7007bdbf9cb05a50631bdcb5650f6f1450b9e154a3594dbb4c7c",
+            "ck-git-hostingd": "05d4a09cbf102e76588e7b909ae81eb072304df876ba5662b66f5c52b976397e",
+            "ck-git-shell": "8d85f8d522ef9d350e8ff71cb24958138ef40f0e8f1c68c85e92ed3723f1decf",
+            "ck-ci-runnerd": "30d24e53050c39105c9d22cb54bc978e38d518931ca05f1e2aae17e11488eac0",
+            "ck-pagesd": "7e1bf2bb717924f8760dde0aad2829bc6d1292eed9e934730bc736433dfc5278"
+          },
+          "hook_sha256": "b6f3b23fa0a428ad2cfd477fddd8de15cd21f01f2d3f6d53351ba3e1fbb512e0"
+        },
+        "config_before": "42093e88e58e676d23fa9d86960cac66ae76d1a2d4debeb8aeea0f8fee28c441",
+        "keys_before": "c03068dc1e5bab0f9482290cbe987d9e2c930ed16110c53d831674046a30259e",
+        "success": true,
+        "installation_attempted": true,
+        "backup_sha256": "50d6c49da967f4d2328d77016990abcbb458151220bdfc4081750534e8e13d7b",
+        "backup_bytes": 875796480,
+        "end": "2026-11-02T03:49:38.378621+00:00",
+        "config_after": "42093e88e58e676d23fa9d86960cac66ae76d1a2d4debeb8aeea0f8fee28c441",
+        "keys_after": "c03068dc1e5bab0f9482290cbe987d9e2c930ed16110c53d831674046a30259e"
+      },
+      "source_snapshot": {
+        "files": 561,
+        "archive_sha256": "d828953ae62c4602c8d4d074994b1f42f619fcd3d85271cba2004ceb6283139a",
+        "archive_size": 15032320,
+        "head": "1f46455b702bc955a2eab63824afe2e062fb04a4",
+        "staged_overrides": {
+          "CMakeLists.txt": {
+            "sha256": "aed09ed0e37e42287812fc7593c2ad8b5d6fc4df3d2262d289d267a9147afd4e",
+            "reason": "GNU ckdocs renderer matches Makefile O2 while retaining -Werror"
+          },
+          "tests/unit/ci_distributed_tests.cpp": {
+            "sha256": "874f3448b53efe111b0092933f63d3a0a6a63cf2e8bf02430eafeee7f9372b0f",
+            "reason": "set VM base directory and component permissions independently of process umask"
+          }
+        },
+        "candidate_ssh_test": {
+          "result": "pass",
+          "server_version": "0.9.0+source",
+          "job_id": "00001793590986009669-d0fa7d81",
+          "evidence": "Isolated rpi4 candidate gateway over real SSH: macos-vm labelled runner skipped an unlabelled job, claimed explicitly targeted job, real Apple VM returned candidate-ssh-vm-artifact, clone and remote/local fixture removed.",
+          "scope": "Existing klukas SSH account plus command wrapper, not production state."
+        }
+      },
+      "checks": "Queue, working jobs and leases empty under spool lock; full Release unit suite, distributed CI (service and group-writable umasks), CI dependency tests, real SSH candidate gateway with real Apple VM, package binary comparison, exact rollback package comparison, service/runtime/dashboard/sshd and config/key preservation passed.",
+      "limits": "Does not establish Xcode build or forced helper/host crash recovery."
+    },
+    "guest_service_current_and_xcode_status": {
+      "guest_sha256": "af196a4ba200debb3bc2b3f1d8302088afbe0448ecf44fdd1680588a714c2ad2",
+      "previous_guest_sha256": "56d1da70a10407759f17b5ace6e47b43a47afbdf42625256ad9a454ab45b8aae",
+      "runner_sha256": "8970dd1379dc8d488428e8ef93a1bfef14e5c8e2bdb9f585fa8f9a6b42648687",
+      "result": "Updated stopped base guest service via read-only setup share, preserving plist; verified root:wheel 0755 and exact binary SHA-256. Stopped setup VM, then real isolated gateway job 00001793591610403084-d41c2e20 completed in a disposable clone and returned guest-current artifact. xcodebuild -checkFirstLaunchStatus returned nonzero (CKGIT_XCODE_NOT_READY); no license was accepted or changed. Clone and setup share removed.",
+      "scope": "Status check alone does not identify every remaining first-launch requirement. Earlier -license status returned 69 and identified unaccepted license; no full Xcode compilation."
+    }
+  }
+}

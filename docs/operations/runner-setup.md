@@ -1,5 +1,5 @@
 ---
-description: "Install, connect and verify Linux and Windows CI runners with a ck-git-hosting main host."
+description: "Install, connect and verify Linux, Windows and experimental macOS CI runners with a ck-git-hosting main host."
 ---
 # Install and connect CI runners
 
@@ -23,6 +23,9 @@ Choose the instructions for your runner:
   including MSVC tool staging, an ordinary-user console runner and an optional
   Windows service.
 - **Debian or Raspberry Pi OS:** [Set up a Linux runner](#set-up-a-linux-runner).
+- **macOS:** [Apple VM runner setup](runner-macos-development.md) or
+  [native Seatbelt runner setup](runner-macos-native.md). Both are under
+  qualification; check each guide's current status before using it for hosted jobs.
 
 ## Set up a Linux runner
 

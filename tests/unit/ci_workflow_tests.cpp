@@ -175,6 +175,12 @@ void testRejections() {
   require(rejected(""), "empty file");
   require(rejected("jobs:\n  - name: a\n    steps:\n      - run: [x]\n"), "missing version");
   require(rejected("version: 3\njobs:\n  - name: a\n    steps:\n      - run: [x]\n"), "wrong version");
+  require(rejected("version: 2\njobs:\n  - name: mac\n    runs_on: [macos-vm, arm64]\n"
+                   "    toolchain: { profile: orthomap, lock_sha256: abc }\n    steps:\n      - run: [x]\n"),
+          "unimplemented toolchain approval cannot be silently ignored");
+  require(rejected("version: 2\ndependencies: [OpenMVS]\njobs:\n  - name: mac\n"
+                   "    runs_on: [macos-vm, arm64]\n    steps:\n      - run: [x]\n"),
+          "unimplemented dependency requests cannot be silently ignored");
   require(rejected("version: 1\n"), "missing jobs");
   require(rejected("version: 1\njobs: []\n"), "empty jobs");
   require(rejected("version: 1\njobs:\n  - steps:\n      - run: [x]\n"), "job without a name");

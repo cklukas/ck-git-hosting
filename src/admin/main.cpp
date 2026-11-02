@@ -2,25 +2,31 @@
 // SPDX-License-Identifier: MIT
 
 #include <chrono>
+#include <cerrno>
 #include <ctime>
 #include <exception>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <fcntl.h>
 #include <iomanip>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <sys/stat.h>
 #include <vector>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#include <sys/mount.h>
 #endif
 
 #include "ckgit/authorized_keys.hpp"
 #include "ckgit/ci_store.hpp"
+#include "ckgit/ci_dependency_store.hpp"
+#include "ckgit/ci_dependency_commit.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/pages_store.hpp"
 #include "ckgit/install_layout.hpp"
@@ -54,12 +60,20 @@ void usage(std::ostream& output) {
          << "  ckgit-admin ci runs NAME (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin ci log NAME RUN [STEP] [--follow] (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin ci cancel NAME RUN (--config FILE | --state-root ROOT)\n"
+         << "  ckgit-admin ci dependencies (request|check|register|list|approve|reject|revoke) PROJECT [ARGS] (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin runner add NAME --public-key FILE (--config FILE | --state-root ROOT) [--shell PATH]\n"
          << "                     [--labels LABEL[,LABEL...]]\n"
          << "  ckgit-admin runner labels NAME LABEL[,LABEL...]|- (--config FILE | --state-root ROOT)\n"
          << "  ckgit-admin runner (list | enable NAME | disable NAME | remove NAME) (--config FILE | --state-root ROOT)\n"
 #ifdef __APPLE__
          << "  ckgit-admin runner macos-native setup --config RUNNER.INI --broker-user USER --work-root DIR [--toolchain DIR] [--dry-run]\n"
+         << "  ckgit-admin runner macos-vm restore-info\n"
+         << "  ckgit-admin runner macos-vm install RESTORE-IPSW NEW-BASE DISK-GIB\n"
+         << "  ckgit-admin runner macos-vm prepare-share NEW-DIRECTORY\n"
+         << "  ckgit-admin runner macos-vm setup VM-BUNDLE [--provision-password-file FILE] [--setup-share DIR]\n"
+         << "  ckgit-admin runner macos-vm validate VM-BUNDLE EXCHANGE-DIRECTORY\n"
+         << "  ckgit-admin runner macos-vm status --config RUNNER.INI\n"
+         << "  ckgit-admin runner macos-vm configure --config RUNNER.INI --base DIR --work-root DIR [--min-free-gib N]\n"
 #endif
          << "\n"
          << "ROOT OPTIONS: --config FILE or --repo-root ROOT --state-root ROOT;\n"
@@ -570,6 +584,72 @@ std::string ageText(std::uint64_t then) {
 }
 
 // ckgit-admin runner ...: the main host's registry of remote CI runners.
+#ifdef __APPLE__
+void prepareMacosVmShare(const std::filesystem::path& bin, const std::filesystem::path& destination) {
+  namespace fs = std::filesystem;
+  if (!destination.is_absolute() || destination != destination.lexically_normal() || destination == destination.root_path())
+    throw std::runtime_error("setup share must be a new absolute directory without relative components");
+  const auto parent = destination.parent_path();
+  if (fs::canonical(parent) != parent) throw std::runtime_error("setup share parent may not contain symlinks");
+  auto it = parent.begin();
+  if (it != parent.end() && *it == "/" && ++it != parent.end() && *it == "Volumes" && ++it != parent.end()) {
+    const auto expected = fs::path("/Volumes") / *it;
+    struct statfs mount {};
+    if (::statfs(parent.c_str(), &mount) != 0 || fs::path(mount.f_mntonname) != expected)
+      throw std::runtime_error("the selected setup-share volume is not mounted at its expected path");
+  }
+  const fs::path sources[] = {bin / "ckgit-macos-vm-guest",
+                              bin.parent_path() / "share/ck-git-hosting/macos/install-vm-guest.sh"};
+  const char* names[] = {"ckgit-macos-vm-guest", "install-vm-guest.sh"};
+  int inputs[] = {-1, -1};
+  int dir = -1;
+  bool created = false;
+  try {
+    for (int i = 0; i < 2; ++i) {
+      inputs[i] = ::open(sources[i].c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+      struct stat st {};
+      if (inputs[i] < 0 || ::fstat(inputs[i], &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 ||
+          (st.st_uid != 0 && st.st_uid != ::geteuid()) || (st.st_mode & 0022) || st.st_size <= 0 ||
+          st.st_size > 128 * 1024 * 1024)
+        throw std::runtime_error("installed guest and setup script must be protected regular files; install the macos-vm-runner component first");
+    }
+    if (::mkdir(destination.c_str(), 0700) != 0) throw std::runtime_error("cannot create new setup-share directory");
+    created = true;
+    dir = ::open(destination.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) throw std::runtime_error("cannot open new setup-share directory");
+    for (int i = 0; i < 2; ++i) {
+      int out = ::openat(dir, names[i], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0700);
+      if (out < 0) throw std::runtime_error("cannot create setup-share file");
+      try {
+        char buffer[65536];
+        for (;;) {
+          const auto n = ::read(inputs[i], buffer, sizeof(buffer));
+          if (n < 0 && errno == EINTR) continue;
+          if (n < 0) throw std::runtime_error("cannot read installed guest file");
+          if (n == 0) break;
+          for (ssize_t offset = 0; offset < n;) {
+            const auto written = ::write(out, buffer + offset, static_cast<std::size_t>(n - offset));
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) throw std::runtime_error("cannot write setup-share file");
+            offset += written;
+          }
+        }
+        if (::fsync(out) != 0) throw std::runtime_error("cannot sync setup-share file");
+        ::close(out); out = -1;
+      } catch (...) { if (out >= 0) ::close(out); throw; }
+    }
+    if (::fsync(dir) != 0) throw std::runtime_error("cannot sync setup-share directory");
+    ::close(dir); dir = -1;
+    for (int& fd : inputs) { ::close(fd); fd = -1; }
+  } catch (...) {
+    for (int fd : inputs) if (fd >= 0) ::close(fd);
+    if (dir >= 0) { for (const char* name : names) ::unlinkat(dir, name, 0); ::close(dir); }
+    if (created) ::rmdir(destination.c_str());
+    throw;
+  }
+  std::cout << "Prepared setup-share contents in " << destination << "; the VM mounts the share read-only.\n";
+}
+#endif
 int runnerCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
@@ -578,7 +658,30 @@ int runnerCommand(int argc, char* argv[]) {
     char self[4096]; uint32_t size = sizeof(self);
     if (_NSGetExecutablePath(self, &size) != 0) throw std::runtime_error("cannot locate admin executable");
     std::vector<std::string> command{(std::filesystem::canonical(self).parent_path() / "ckgit-macos-native").string()};
-    for (int i = 3; i < argc; ++i) command.emplace_back(argv[i]);
+    for (int i=3; i<argc; ++i) command.emplace_back(argv[i]);
+    return ckgit::execProcess(command);
+  }
+  if (action == "macos-vm") {
+    if (argc < 4) { usage(std::cerr); return kUsage; }
+    const std::string subcommand = argv[3];
+    if (subcommand != "restore-info" && subcommand != "install" && subcommand != "prepare-share" && subcommand != "setup" && subcommand != "configure" && subcommand != "validate" && subcommand != "status") {
+      std::cerr << "ckgit-admin: macos-vm action must be restore-info, install, prepare-share, setup, configure, validate, or status\n";
+      return kUsage;
+    }
+    char self[4096];
+    uint32_t size = sizeof(self);
+    if (_NSGetExecutablePath(self, &size) != 0) throw std::runtime_error("cannot locate ckgit-admin executable");
+    const auto directory = std::filesystem::canonical(self).parent_path();
+    if (subcommand == "prepare-share") {
+      if (argc != 5) throw std::runtime_error("prepare-share requires one new absolute directory");
+      prepareMacosVmShare(directory, argv[4]);
+      return 0;
+    }
+    const bool runner_action = subcommand == "configure" || subcommand == "status";
+    std::vector<std::string> command{(directory / (runner_action ? "ck-ci-runnerd" : "ckgit-macos-vm")).string(),
+                                     subcommand == "configure" ? "configure-macos-vm" :
+                                     subcommand == "status" ? "status-macos-vm" : subcommand};
+    for (int i = 4; i < argc; ++i) command.emplace_back(argv[i]);
     return ckgit::execProcess(command);
   }
 #endif
@@ -749,9 +852,118 @@ int runnerCommand(int argc, char* argv[]) {
   return 0;
 }
 
+int ciDependencyCommand(int argc, char* argv[]) {
+  if (argc < 5) { usage(std::cerr); return kUsage; }
+  const std::string action = argv[3];
+  if (action != "request" && action != "check" && action != "register" && action != "list" && action != "approve" && action != "reject" && action != "revoke") {
+    std::cerr << "ckgit-admin: invalid dependency action\n";
+    return kUsage;
+  }
+  std::optional<std::filesystem::path> config;
+  std::optional<std::filesystem::path> control_socket;
+  std::filesystem::path state_root;
+  std::filesystem::path repo_root;
+  std::vector<std::string> args;
+  for (int i = 4; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if ((arg == "--config" || arg == "--state-root") && i + 1 < argc) {
+      if (arg == "--config") config = argv[++i];
+      else state_root = argv[++i];
+    } else if (!arg.empty() && arg.front() != '-') args.push_back(arg);
+    else { std::cerr << "ckgit-admin: invalid dependency option\n"; return kUsage; }
+  }
+  const std::size_t expected = action == "list" ? 1 : action == "register" ? 2 : 3;
+  if (args.size() != expected || (config && !state_root.empty())) {
+    std::cerr << "ckgit-admin: dependency arguments: list PROJECT; request|check PROJECT COMMIT LOCKPATH; register PROJECT LOCKFILE; "
+                 "approve|reject|revoke PROJECT LOCK_SHA256 PACKAGE\n";
+    return kUsage;
+  }
+  if (config) {
+    const auto server = ckgit::loadServerConfig(*config);
+    state_root = server.state_root.value_or(std::filesystem::path{});
+    repo_root = server.repo_root;
+    if (!server.control_socket.empty()) control_socket = server.control_socket;
+  }
+  if (state_root.empty()) { std::cerr << "ckgit-admin: dependency review requires a state root\n"; return kUsage; }
+  if (action == "request" || action == "check") {
+    if (repo_root.empty() || !ckgit::isValidProjectName(args[0]) || !ckgit::isValidObjectId(args[1]) ||
+        !ckgit::isSafeRelativePath(args[2]))
+      throw std::runtime_error("dependency request/check requires --config, a project, an exact commit and a safe lock path");
+    const auto repository = repo_root / (args[0] + ".git");
+    const auto committed = ckgit::readCiDependencyCommitLock(repository, args[1], args[2]);
+    if (action == "request") {
+      std::cout << "Requested " << ckgit::registerCiDependencyRequest(state_root, args[0], committed.bytes, args[1])
+                << " from commit " << args[1] << "\n";
+    } else {
+      const auto reviewed = ckgit::getCiDependencyRequest(state_root, args[0], committed.lock.sha256);
+      const bool requested = reviewed && std::find(reviewed->commits.begin(), reviewed->commits.end(), args[1]) != reviewed->commits.end();
+      const auto status = requested ? ckgit::ciDependencyApprovalStatus(*reviewed) : std::string_view("not-requested");
+      std::cout << "Lock " << committed.lock.sha256 << " for commit " << args[1] << ": " << status << "\n"
+                   "Review snapshot only: no provisioning or CI enforcement is enabled yet.\n";
+      return status == "approved" ? 0 : 1;
+    }
+  } else if (action == "register") {
+    const int fd = ::open(args[1].c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) throw std::runtime_error("cannot open dependency lock");
+    struct Close { int fd; ~Close() { ::close(fd); } } close{fd};
+    struct stat st {};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > 256 * 1024)
+      throw std::runtime_error("dependency lock must be a bounded regular file");
+    std::string bytes(static_cast<std::size_t>(st.st_size), '\0');
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+      const auto n = ::read(fd, bytes.data() + offset, bytes.size() - offset);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) throw std::runtime_error("cannot read dependency lock");
+      offset += static_cast<std::size_t>(n);
+    }
+    std::cout << "Registered " << ckgit::registerCiDependencyRequest(state_root, args[0], bytes) << "\n";
+  } else if (action == "list") {
+    for (const auto& request : ckgit::listCiDependencyRequests(state_root, args[0])) {
+      std::cout << request.lock.sha256 << " " << ckgit::ciDependencyApprovalStatus(request) << " "
+                << request.lock.platform << "/" << request.lock.architecture << " " << request.lock.abi << "\n";
+      for (const auto& commit : request.commits) std::cout << "  commit " << commit << "\n";
+      for (const auto& input : request.lock.inputs)
+        std::cout << "  input " << input.path << " sha256=" << input.sha256 << "\n";
+      for (const auto& package : request.lock.packages) {
+        std::string status = "pending";
+        for (const auto& decision : request.history) if (decision.package == package.name) status = decision.action;
+        std::cout << "  " << package.name << " " << package.version << " registry=" << package.registry
+                  << " sha256=" << package.sha256 << " recipe_sha256=" << package.recipe_sha256
+                  << " " << (package.direct ? "direct" : "transitive") << " review=" << status << " needs=";
+        for (std::size_t i = 0; i < package.needs.size(); ++i)
+          std::cout << (i ? "," : "") << package.needs[i];
+        std::cout << "\n";
+      }
+    }
+  } else {
+    const auto requests = ckgit::listCiDependencyRequests(state_root, args[0]);
+    const auto found = std::find_if(requests.begin(), requests.end(), [&](const auto& r) { return r.lock.sha256 == args[1]; });
+    if (found == requests.end()) throw std::runtime_error("dependency request not found");
+    const auto package = std::find_if(found->lock.packages.begin(), found->lock.packages.end(),
+                                      [&](const auto& p) { return p.name == args[2]; });
+    if (package == found->lock.packages.end()) throw std::runtime_error("dependency package not found");
+    std::cout << action << " " << package->name << " " << package->version << " registry=" << package->registry
+              << " sha256=" << package->sha256 << " recipe_sha256=" << package->recipe_sha256
+              << " target=" << found->lock.platform << "/" << found->lock.architecture << "/" << found->lock.abi
+              << " lock=" << found->lock.sha256 << "\n";
+    ckgit::decideCiDependency(state_root, args[0], args[1], args[2], action);
+  }
+  if (action != "list" && control_socket) {
+    try {
+      ckgit::forwardControlRpc(*control_socket, "admin", "refresh", {args[0]}, nullptr, std::chrono::seconds(2));
+    } catch (const std::exception&) {
+      // The periodic index sweep will pick up the changed review records.
+    }
+  }
+  std::cout << "Review records only: no provisioning or CI enforcement is enabled yet.\n";
+  return 0;
+}
+
 int ciCommand(int argc, char* argv[]) {
   if (argc < 3) { usage(std::cerr); return kUsage; }
   const std::string action = argv[2];
+  if (action == "dependencies") return ciDependencyCommand(argc, argv);
   if (action != "enable" && action != "disable" && action != "status" && action != "runs" &&
       action != "log" && action != "cancel") {
     std::cerr << "ckgit-admin: ci action must be enable, disable, status, runs, log, or cancel\n";

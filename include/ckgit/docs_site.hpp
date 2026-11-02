@@ -35,6 +35,8 @@ inline constexpr std::size_t kMaximumDocsTextBytes = 1024;  // description, foot
 inline constexpr std::size_t kMaximumDocsUrlBytes = 1024;
 inline constexpr std::size_t kMaximumDocsSites = 8;
 inline constexpr std::size_t kMaximumDocsSiteIdBytes = 32;
+inline constexpr std::size_t kMinimumDocsSelectorIconSize = 12;
+inline constexpr std::size_t kMaximumDocsSelectorIconSize = 48;
 inline constexpr std::size_t kMaximumDocsLocales = 16;
 inline constexpr std::size_t kMaximumDocsPageTags = 32;      // tags (and keywords) on one page
 inline constexpr std::size_t kMaximumDocsTagBytes = 64;
@@ -45,6 +47,17 @@ struct DocsLink {
   std::string title;
   std::string url;  // http(s) or mailto
   std::string icon = {};  // optional built-in icon: github; title remains the accessible name
+};
+
+struct DocsSelectorLink {
+  std::string title;
+  std::string url;   // absolute http(s) URL
+  std::string icon;  // optional portal-root-relative image asset
+};
+
+struct DocsSelectorConfig {
+  std::size_t icon_size = 20;  // CSS pixels; applies to every selector icon
+  std::vector<DocsSelectorLink> links;
 };
 
 // One `nav:` entry as configured: a page (`page` set; `title` optional and
@@ -74,6 +87,7 @@ struct DocsNavEntry {
 //       description: The native port # optional, shown on the welcome page
 //       config: docs/ckdocs.yml      # optional, default ckdocs.yml, site-root-relative
 //       ref: main                    # optional: the site's root is this Git ref's tree
+//       icon: docs/images/cpp.svg    # optional selector icon, portal-root-relative
 //       redirect_from_root: true     # optional, at most one site
 struct DocsSiteEntry {
   std::string id;
@@ -81,6 +95,7 @@ struct DocsSiteEntry {
   std::string description;
   std::string config;  // relative to the site's root; empty = ckdocs.yml
   std::string ref;     // a branch, tag, or commit; empty = the work tree root itself
+  std::string icon;    // relative to the portal's root; empty = no selector icon
   bool redirect_from_root = false;
 };
 
@@ -128,6 +143,7 @@ struct DocsConfig {
   std::string description;
   std::string footer;
   std::vector<DocsLink> links;  // header links
+  DocsSelectorConfig selector; // portal site-selector appearance and external links
   std::string stylesheet;       // an extra stylesheet, copied as-is
   std::string source;           // the page tree; empty = `docs/` when present, else the root
   std::string home;             // the home page; empty = the source's README.md/index.md, else README.md at the root

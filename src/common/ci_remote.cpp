@@ -10,6 +10,10 @@
 #include <fstream>
 #include <stdexcept>
 #include <thread>
+#ifdef __APPLE__
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include "ckgit/ci_results.hpp"
 #include "ckgit/hash.hpp"
 #include "ckgit/process.hpp"
@@ -55,18 +59,46 @@ void RemoteCiSource::checkout(const CiCheckoutRequest& request, const std::files
 // --- remote sink ---------------------------------------------------------------
 
 RemoteCiSink::RemoteCiSink(const CiRemoteTransport& transport, const CiRemoteJob& job,
-                           std::filesystem::path relay_dir, std::function<bool()> stop_requested)
-    : transport_(transport), job_(job), relay_dir_(std::move(relay_dir)), stop_requested_(std::move(stop_requested)) {
+                           std::filesystem::path relay_dir, std::function<bool()> stop_requested, bool managed_vm_relay)
+    : transport_(transport), job_(job), relay_dir_(std::move(relay_dir)), managed_vm_relay_(managed_vm_relay),
+      stop_requested_(std::move(stop_requested)) {
   std::error_code error;
-  std::filesystem::create_directories(relay_dir_, error);
+  relay_parent_created_ = std::filesystem::create_directories(relay_dir_, error);
   if (error) throw std::runtime_error("could not create runner relay directory");
-  relay_dir_ = createTempDirectory(relay_dir_, "private-");
+  try {
+#ifdef __APPLE__
+    if (managed_vm_relay_) {
+      if (!relay_parent_created_) throw std::runtime_error("VM relay directory already exists");
+      std::filesystem::permissions(relay_dir_, std::filesystem::perms::owner_all,
+                                   std::filesystem::perm_options::replace, error);
+      if (error) throw std::runtime_error("could not protect VM relay directory");
+      const auto marker = relay_dir_ / ".ckgit-vm-relay";
+      const int fd = ::open(marker.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+      constexpr std::string_view content = "ckgit-vm-relay-v1\n";
+      if (fd < 0) throw std::runtime_error("could not create VM relay marker");
+      const bool ok = ::write(fd, content.data(), content.size()) == static_cast<ssize_t>(content.size()) && ::fsync(fd) == 0;
+      ::close(fd);
+      if (!ok) throw std::runtime_error("could not persist VM relay marker");
+    }
+#else
+    if (managed_vm_relay_) throw std::runtime_error("managed VM relay requires macOS");
+#endif
+    relay_dir_ = createTempDirectory(relay_dir_, "private-");
+  } catch (...) {
+    if (relay_parent_created_) {
+      if (managed_vm_relay_) std::filesystem::remove(relay_dir_ / ".ckgit-vm-relay", error);
+      std::filesystem::remove(relay_dir_, error);
+    }
+    throw;
+  }
 }
 
 RemoteCiSink::~RemoteCiSink() {
   disconnect();
   std::error_code error;
   std::filesystem::remove_all(relay_dir_, error);
+  if (!error && managed_vm_relay_) std::filesystem::remove(relay_dir_.parent_path() / ".ckgit-vm-relay", error);
+  if (relay_parent_created_) std::filesystem::remove(relay_dir_.parent_path(), error);
 }
 
 std::filesystem::path RemoteCiSink::relayPath(std::size_t index) const {
