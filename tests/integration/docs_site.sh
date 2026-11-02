@@ -120,9 +120,9 @@ for tab in Guide Diagrams Reference; do
 done
 
 # The site selector leads between both manuals; each carries its own logo.
-grep -qF '<a href="../ckdocs/index.html">ckdocs</a>' "$site/hosting/index.html" ||
+grep -qF '<a href="../ckdocs/index.html"><img class="site-select-icon" src="../docs/images/ck-git-hosting.svg" alt="" aria-hidden="true">ckdocs</a>' "$site/hosting/index.html" ||
   { echo "the ck-git-hosting site does not offer the ckdocs manual" >&2; exit 1; }
-grep -qF '<a href="../hosting/index.html">ck-git-hosting</a>' "$site/ckdocs/index.html" ||
+grep -qF '<a href="../hosting/index.html"><img class="site-select-icon" src="../docs/images/ck-git-hosting.svg" alt="" aria-hidden="true">ck-git-hosting</a>' "$site/ckdocs/index.html" ||
   { echo "the ckdocs manual does not offer the ck-git-hosting site" >&2; exit 1; }
 grep -qF '<img src="../docs/images/ck-git-hosting.svg" alt="">' "$site/hosting/index.html" ||
   { echo "the ck-git-hosting site is missing its logo" >&2; exit 1; }
