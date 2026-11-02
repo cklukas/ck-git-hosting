@@ -1,0 +1,71 @@
+{
+  "status": "passed",
+  "scope": "Empty offline HCS VM lifetime primitive only; not a CI backend or hosted build",
+  "host": "workstation",
+  "source_sha256": "0aa1c06cc9392b3aca527fcec81ef796f7613f6332d71e6c6c90452fd93fef8c",
+  "binary_sha256": "569de1c0637bbed76a22bd4e1246da6bdbd1c78e0318bccb3ce2422b57ea07b0",
+  "binary": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime\\hcs-lifetime.exe",
+  "build_started_utc": "2026-11-02T04:26:35.2054688Z",
+  "build_finished_utc": "2026-11-02T04:26:47.8471024Z",
+  "build_elapsed_seconds": 12.656648899999999,
+  "build_duration_baseline": "First successful build, no comparable duration baseline",
+  "test": {
+    "pid": 87216,
+    "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime\\hcs-lifetime.exe",
+    "arguments": " ",
+    "exit_code": 0,
+    "started_at_utc": "2026-11-02T04:27:20.7577830Z",
+    "finished_at_utc": "2026-11-02T04:27:30.1656010Z",
+    "elapsed_seconds": 9.4184945,
+    "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime\\lifecycle.log.stdout",
+    "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime\\lifecycle.log.stderr",
+    "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime\\lifecycle.log"
+  },
+  "verified": [
+    "HCS attested TerminateOnLastHandleClosed=true after startup",
+    "Unique empty VM removed after normal close",
+    "Unique empty VM removed after forced owner process termination"
+  ],
+  "not_qualified": [
+    "Windows guest boot",
+    "Guest job and descendant lifetime",
+    "VM input/output isolation and budgets",
+    "Clean image reset and crash recovery",
+    "Real SSH gateway and downloadable app artifact"
+  ],
+  "standalone_cmake_ctest": {
+    "build": {
+      "run": {
+        "pid": 87080,
+        "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+        "arguments": "--build \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\" --parallel 1",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T04:36:14.6357547Z",
+        "finished_at_utc": "2026-11-02T04:36:16.1275806Z",
+        "elapsed_seconds": 1.4966517,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\build.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\build.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\build.log"
+      },
+      "resource_compiler": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\sdk\\bin\\10.0.26100.0\\x64\\rc.exe",
+      "output": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\ckgit-windows-vm-lifetime.exe",
+      "baseline": "First successful CMake link; compilation retained from preceding failed link. No comparable successful incremental baseline",
+      "output_sha256": "E1C05E8C256AA3D4241F1C54F0B4A623DBCCE4D26B98D5DC876D68C474904BB0",
+      "cmake_source_sha256": "CCD035F349320074153AFB5C1D1B9281DBDBF5574684B7E9C3C9F81E3343D607",
+      "source_sha256": "0AA1C06CC9392B3ACA527FCEC81EF796F7613F6332D71E6C6C90452FD93FEF8C"
+    },
+    "test": {
+      "pid": 70652,
+      "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\ctest.exe",
+      "arguments": "--test-dir \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\" --output-on-failure --output-junit \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\junit.xml\"",
+      "exit_code": 0,
+      "started_at_utc": "2026-11-02T04:36:16.3137895Z",
+      "finished_at_utc": "2026-11-02T04:36:23.7335230Z",
+      "elapsed_seconds": 7.420560099999999,
+      "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\lifecycle.log.stdout",
+      "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\lifecycle.log.stderr",
+      "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-lifetime-cmake\\lifecycle.log"
+    },
+    "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"(empty)\"\n\ttests=\"1\"\n\tfailures=\"0\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"\"\n\ttime=\"4\"\n\ttimestamp=\"2026-11-02T05:36:18\"\n\t>\n\t<testcase name=\"windows-vm-lifetime\" classname=\"windows-vm-lifetime\" time=\"4.62258\" status=\"run\">\n\t\t<properties/>\n\t\t<system-out>Started empty offline HCS VM 2A910CBB-0C6E-4414-B1E2-2186650B750F policy {\"Id\":\"2A910CBB-0C6E-4414-B1E2-2186650B750F\",\"SystemType\":\"VirtualMachine\",\"Owner\":\"ckgit-windows-vm-lifetime-probe\",\"RuntimeId\":\"2a910cbb-0c6e-4414-b1e2-2186650b750f\",\"State\":\"Running\",\"TerminateOnLastHandleClosed\":true}\nConfirmed removed 2A910CBB-0C6E-4414-B1E2-2186650B750F\nConfirmed removed 174E5D94-6B3C-4C4A-BA3C-E9D6B0F53F25\nPASS: normal close and forced owner death remove unique empty offline VMs\n</system-out>\n\t</testcase>\n</testsuite>\n"
+  }
+}
