@@ -15,7 +15,16 @@ esac
 test_root=$(mktemp -d "$test_root_parent/ckb.XXXXXX")
 server_pid=''
 cleanup() {
+  test_exit=$?
   stop_process "$server_pid" || true
+  if [ "$test_exit" -ne 0 ]; then
+    echo "bulk publish integration failed (exit $test_exit); fixture diagnostics:" >&2
+    for log in "$test_root"/server.log "$test_root"/*.log; do
+      [ -f "$log" ] || continue
+      echo "--- $log ---" >&2
+      tail -80 "$log" >&2
+    done
+  fi
   rm -rf "$test_root"
 }
 trap cleanup EXIT HUP INT TERM
