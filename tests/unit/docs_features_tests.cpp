@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "ckgit/docs_site.hpp"
+#include "ckgit/docs_theme.hpp"
 
 namespace {
 
@@ -27,6 +28,13 @@ bool contains(std::string_view text, std::string_view part) { return text.find(p
 
 bool anyContains(const std::vector<std::string>& lines, std::string_view part) {
   return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) { return contains(line, part); });
+}
+
+void checkResponsiveHomeLayout() {
+  require(contains(ckgit::kDocsStyles,
+                   "@media(max-width:800px){.home-hero{grid-template-columns:minmax(0,1fr);gap:1.5rem}.home-image img{max-height:18rem}"),
+          "narrow home layout keeps the hero image after the copy in document order");
+  require(!contains(ckgit::kDocsStyles, ".home-image{grid-row:1}"), "narrow home layout must not move the hero image above the copy");
 }
 
 void write(const fs::path& path, const std::string& content) {
@@ -457,6 +465,7 @@ void testTreeConfinement() {
 }  // namespace
 
 void testDocsFeatures() {
+  checkResponsiveHomeLayout();
   testConfig();
   testFrontMatter();
   testBuild();
