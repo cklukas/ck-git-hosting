@@ -5,6 +5,7 @@
 #include "host_connection.hpp"
 #include "ckgit/private_file_windows.hpp"
 #include "ckgit/path_utf8.hpp"
+#include "ckgit/windows.hpp"
 #include <windows.h>
 #include <fstream>
 #include <iostream>
@@ -40,9 +41,16 @@ int initialize(const fs::path& os,const fs::path& work,const fs::path& sdk,const
 }
 int wmain(int argc,wchar_t** argv){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;try{
  if(argc==2 && std::wstring(argv[1])==L"--preflight"){ckgit::HcsCiVm::preflight();std::cout<<"HCS diskless startup, kill-on-owner-close attestation and confirmed stop passed\n";return 0;}
+ if(argc==3 && std::wstring(argv[1])==L"--absence-check"){
+  if(!ckgit::HcsCiVm::confirmedAbsent(ckgit::wideToUtf8(argv[2])))throw std::runtime_error("exact HCS instance still present");
+  std::cout<<"Exact HCS instance is absent; no owning VM handle opened\n";return 0;
+ }
+ if(argc==3 && std::wstring(argv[1])==L"--recover"){
+  ckgit::WindowsVmImages::recover(fs::path(argv[2]));std::cout<<"Dedicated owner records validated, exact VM absence confirmed and disposable storage recovered\n";return 0;
+ }
  if(argc==4 && std::wstring(argv[1])==L"--storage-check"){
   fs::path parent=argv[3];ckgit::WindowsVmImages::recover(parent);ckgit::WindowsVmImages images(argv[2]);auto disks=images.createWorkspace(parent);ckgit::WindowsVmImages::cleanup(disks.os_disk.parent_path(),disks.id);std::cout<<"Image hashes, deny-write locks, differencing disks and absence-checked cleanup passed\n";return 0;
  }
  if(argc==6 && std::wstring(argv[1])==L"--initialize-base")return initialize(argv[2],argv[3],argv[4],argv[5]);
- std::cerr<<"Use --preflight, --storage-check PROFILE WORKROOT, or --initialize-base OS WORK SDK ACCEPTANCE.\n";return 2;
+ std::cerr<<"Use --preflight, --absence-check GUID, --recover WORKROOT, --storage-check PROFILE WORKROOT, or --initialize-base OS WORK SDK ACCEPTANCE.\n";return 2;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

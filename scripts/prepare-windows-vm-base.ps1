@@ -46,6 +46,9 @@ try {
  $partition|Format-Volume -FileSystem NTFS -NewFileSystemLabel 'CKGIT_OS' -Confirm:$false|Out-Null
  $partition|Add-PartitionAccessPath -AccessPath $os
  Expand-WindowsImage -ImagePath $wim -Index 1 -ApplyPath $os -CheckIntegrity -ScratchDirectory $Scratch -LogPath (Join-Path $Destination 'apply.log')|Out-Null
+ . (Join-Path $PSScriptRoot 'windows-vm-image-policy.ps1')
+ $buildPolicy=Set-CkGitOfflineWindowsBuildPolicy -OsRoot $os -Scratch $Scratch
+ $buildPolicy|ConvertTo-Json -Depth 4|Set-Content (Join-Path $Destination 'build-policy.json')
  # Explicit /s points only to the new disk's EFI volume and prevents host
  # NVRAM registration. Failure must not fall back to a host system partition.
  $info=New-Object Diagnostics.ProcessStartInfo

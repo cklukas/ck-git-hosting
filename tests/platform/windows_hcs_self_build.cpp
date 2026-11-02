@@ -33,7 +33,7 @@ class Source : public ckgit::CiSourceProvider {
 };
 class Sink : public ckgit::CiResultSink {
  public:
-  explicit Sink(fs::path path) : root(std::move(path)) { fs::create_directories(root); }
+  explicit Sink(fs::path path, fs::path cancel = {}) : root(std::move(path)), cancel_file(std::move(cancel)) { fs::create_directories(root); }
   void runStarted(const ckgit::CiRunRecord&) override { std::cout << "Self-build started\n"; }
   void stepStarted(const ckgit::CiRunRecord&, std::size_t index) override {
     log.open(root / ("step-" + std::to_string(index) + ".log"), std::ios::binary);
@@ -47,7 +47,7 @@ class Sink : public ckgit::CiResultSink {
   void stepFinished(const ckgit::CiRunRecord&, std::size_t) override { log.close(); }
   void heartbeat(const ckgit::CiRunRecord&) override {}
   void progress(const ckgit::CiRunRecord&) override {}
-  bool cancelRequested() override { return false; }
+  bool cancelRequested() override { return !cancel_file.empty() && fs::exists(cancel_file); }
   bool leaseLost() override { return false; }
   ckgit::CiArtifactRecord putArtifact(const ckgit::CiArtifact& artifact, const fs::path& bundle,
       const std::string& note, bool) override {
@@ -69,12 +69,20 @@ class Sink : public ckgit::CiResultSink {
   }
  private:
   fs::path root;
+  fs::path cancel_file;
   std::ofstream log;
 };
 int wmain(int argc, wchar_t** argv) {
   std::cout << std::unitbuf;
   try {
-    if (argc != 5) throw std::runtime_error("usage: self-build RUNNER.INI SOURCE OUTPUT COMMIT");
+    if (argc != 5 && argc != 7) throw std::runtime_error("usage: self-build RUNNER.INI SOURCE OUTPUT COMMIT [--cancel-file PATH]");
+    fs::path cancel_file;
+    if (argc == 7) {
+      if (std::wstring(argv[5]) != L"--cancel-file") throw std::runtime_error("unknown qualification option");
+      cancel_file = fs::path(argv[6]);
+      if (!cancel_file.is_absolute() || cancel_file.root_name() != L"V:" || fs::exists(cancel_file))
+        throw std::runtime_error("select an absent absolute V: cancellation marker");
+    }
     const auto config = ckgit::loadRunnerConfig(fs::path(argv[1]));
     if(config.windows_backend!="hyperv-hcs" || !config.windows_vm_profile)throw std::runtime_error("explicit HCS profile is required");
     if (fs::exists(fs::path(argv[3]))) throw std::runtime_error("qualification output already exists");
@@ -105,7 +113,7 @@ int wmain(int argc, wchar_t** argv) {
     options.artifact_max_bytes = static_cast<std::size_t>(2) << 30;
     options.keep_scratch=false; // No guest disk survives an ordinary result.
     Source source{fs::path(argv[2])};
-    Sink sink{fs::path(argv[3])};
+    Sink sink{fs::path(argv[3]), cancel_file};
     const auto record = ckgit::executeWindowsHcsJob(prepared, options, images, source, sink);
     return record.status == ckgit::CiRunStatus::Success ? 0 : 1;
   } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

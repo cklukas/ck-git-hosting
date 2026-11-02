@@ -16,16 +16,16 @@ std::uint64_t epoch(){return static_cast<std::uint64_t>(std::chrono::duration_ca
 // All guest-supplied execution metadata is replaced by host-owned values.
 // A guest completion remains provisional; this adapter never calls finish.
 class ReportingSink final:public CiResultSink {
- CiResultSink& sink_;std::string runner_;CiExecutionReport report_;std::uint64_t started_epoch_;bool started_=false;
+ CiResultSink& sink_;std::string runner_;CiExecutionReport report_;std::uint64_t started_epoch_;std::function<void()> check_budget_;bool started_=false;
  CiRunRecord trusted(CiRunRecord r)const{r.runner=runner_;r.execution=report_;r.started_epoch_seconds=started_epoch_;r.heartbeat_epoch_seconds=epoch();return r;}
  public:
- ReportingSink(CiResultSink& sink,std::string runner,CiExecutionReport report,std::uint64_t started):sink_(sink),runner_(std::move(runner)),report_(std::move(report)),started_epoch_(started){}
+ ReportingSink(CiResultSink& sink,std::string runner,CiExecutionReport report,std::uint64_t started,std::function<void()> check_budget):sink_(sink),runner_(std::move(runner)),report_(std::move(report)),started_epoch_(started),check_budget_(std::move(check_budget)){}
  void runStarted(const CiRunRecord& r)override{if(!started_){sink_.runStarted(trusted(r));started_=true;}}
  void stepStarted(const CiRunRecord& r,std::size_t n)override{sink_.stepStarted(trusted(r),n);}
  void appendLog(std::size_t n,std::string_view b)override{sink_.appendLog(n,b);}
  void stepFinished(const CiRunRecord& r,std::size_t n)override{sink_.stepFinished(trusted(r),n);}
- void heartbeat(const CiRunRecord& r)override{sink_.heartbeat(trusted(r));}
- void tick()override{sink_.tick();}
+ void heartbeat(const CiRunRecord& r)override{check_budget_();sink_.heartbeat(trusted(r));}
+ void tick()override{check_budget_();sink_.tick();}
  void progress(const CiRunRecord& r)override{sink_.progress(trusted(r));}
  bool cancelRequested()override{return sink_.cancelRequested();}
  bool leaseLost()override{return sink_.leaseLost();}
@@ -41,10 +41,15 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
  CiRunRecord record;record.run_id=prepared.job.job_id;record.parent_run_id=prepared.job.parent_run_id;record.workflow_job=prepared.job.workflow_job;record.project_name=prepared.job.project_name;record.ref=prepared.job.ref;record.commit_id=prepared.job.commit_id;record.attempt=prepared.job.attempt;record.runner=options.runner;record.status=CiRunStatus::Running;record.started_epoch_seconds=epoch();
  const CiExecutionReport execution{"windows","x64","hyperv-hcs","denied",static_cast<std::uint64_t>(disks.memory_mb)*1024*1024,0,options.timeout_seconds};
  std::string phase="source preparation";
- const auto host_started=record.started_epoch_seconds;record.execution=execution;ReportingSink reporting(sink,options.runner,execution,host_started);std::unique_ptr<HcsCiVm> vm;
+ // The host owns the wall clock. A compromised guest may keep emitting valid
+ // heartbeats or ignore cancellation, so guest-side step timeouts are insufficient.
+ const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(options.timeout_seconds);
+ bool timed_out=false,tearing_down=false;
+ const auto check_budget=[&]{if(!tearing_down && std::chrono::steady_clock::now()>=deadline){timed_out=true;throw std::runtime_error("host VM job wall deadline exceeded");}};
+ const auto host_started=record.started_epoch_seconds;record.execution=execution;ReportingSink reporting(sink,options.runner,execution,host_started,check_budget);std::unique_ptr<HcsCiVm> vm;
  auto heartbeat=std::chrono::steady_clock::now();
  const auto pulse=[&]{sink.tick();auto now=std::chrono::steady_clock::now();if(now-heartbeat>=std::chrono::seconds(1)){reporting.heartbeat(record);heartbeat=now;}};
- const auto keep=[&]{pulse();return !sink.leaseLost() && !sink.cancelRequested();};
+ const auto keep=[&]{check_budget();pulse();return !sink.leaseLost() && !sink.cancelRequested();};
  try{
   reporting.runStarted(record);
   if(!keep())throw std::runtime_error("VM job cancelled before setup");
@@ -61,7 +66,9 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
   WindowsVmConnection connection(vm->runtimeId(),std::chrono::minutes(10),keep);CiVmChannel channel(connection.socket());CiRemotePolicy policy;policy.timeout_seconds=options.timeout_seconds;policy.max_log_bytes=options.max_log_bytes;policy.artifact_max_bytes=options.artifact_max_bytes;policy.allow_network=false;
   phase="assignment handshake";ciVmHostHandshake(channel,prepared,policy,std::chrono::minutes(2),keep);phase="source transfer";sendWindowsVmSources(channel,prepared,archives,keep);
   phase="job execution/results";record=relayCiVmResults(channel,prepared,policy,reporting,relay);record.runner=options.runner;record.execution=execution;
- }catch(const std::exception& e){record.status=sink.cancelRequested()?CiRunStatus::Cancelled:CiRunStatus::Error;record.detail=(phase+": "+e.what()).substr(0,200);}
+ }catch(const std::exception& e){record.status=sink.cancelRequested()?CiRunStatus::Cancelled:timed_out?CiRunStatus::Timeout:CiRunStatus::Error;record.detail=(phase+": "+e.what()).substr(0,200);}
+ tearing_down=true;
+ if(timed_out && !sink.cancelRequested()){record.status=CiRunStatus::Timeout;record.detail="host VM job wall deadline exceeded";}
  // Cancellation or lease expiry cannot interrupt teardown. A failed absence
  // check preserves disks and escapes to the daemon's fatal refusal path.
  if(vm && !vm->stop([&]{pulse();return true;}))throw std::runtime_error("HCS shutdown unconfirmed; workspace retained, runner must stop");
