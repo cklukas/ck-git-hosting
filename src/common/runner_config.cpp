@@ -99,6 +99,19 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
       config.macos_vm_work_root = absolute(value);
     } else if (key == "ci_macos_vm_min_free_gib") {
       config.macos_vm_min_free_gib = integer(value, 1, 65536);
+    } else if (key == "ci_windows_backend") {
+#ifdef _WIN32
+      if (value != "lpac" && value != "hyperv-hcs") configError(path, number, "unsupported Windows isolation backend");
+      config.windows_backend = value;
+#else
+      configError(path, number, "Windows isolation backend on another platform");
+#endif
+    } else if (key == "ci_windows_vm_profile") {
+#ifdef _WIN32
+      config.windows_vm_profile = absolute(value);
+#else
+      configError(path, number, "Windows VM profile on another platform");
+#endif
     } else if (key == "ci_toolchain_root") {
       config.toolchain_root = absolute(value);
     } else if (key == "ci_toolchain_paths") {
@@ -132,7 +145,7 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
     } else if (key == "ci_allow_degraded") {
       config.allow_degraded = boolean(value);
 #ifdef _WIN32
-      if (config.allow_degraded) configError(path, number, "Windows jobs require AppContainer isolation");
+      if (config.allow_degraded) configError(path, number, "Windows jobs require isolation");
 #endif
     } else {
       configError(path, number, "unknown field");
@@ -155,6 +168,12 @@ RunnerConfig loadRunnerConfig(const std::filesystem::path& path) {
                                config.toolchain_paths != RunnerConfig{}.toolchain_paths)) {
     throw std::runtime_error("macOS VM jobs use tools installed in the guest; remove Windows ci_toolchain settings");
   }
+#ifdef _WIN32
+  if (config.windows_backend == "hyperv-hcs" && (!config.windows_vm_profile || config.allow_network || config.cache_root))
+    throw std::runtime_error("HCS requires an explicit approved VM profile, ci_allow_network=false and no shared cache");
+  if (config.windows_backend == "lpac" && config.windows_vm_profile)
+    throw std::runtime_error("Windows VM profile requires explicit hyperv-hcs backend");
+#endif
 #ifndef _WIN32
   for (const std::filesystem::path* used : {&config.build_root, &config.ssh_program}) {
     if (!isShellSafe(used->string())) throw std::runtime_error("runner paths may use only [A-Za-z0-9/._-]");
@@ -174,6 +193,8 @@ std::string renderRunnerConfig(const RunnerConfig& config) {
   if (!config.allow_network) out += "ci_allow_network=false\n";
   if (config.timeout_seconds) out += "ci_timeout_seconds=" + std::to_string(*config.timeout_seconds) + "\n";
   if (config.allow_degraded) out += "ci_allow_degraded=true\n";
+  if (config.windows_backend != "lpac") out += "ci_windows_backend=" + config.windows_backend + "\n";
+  if (config.windows_vm_profile) out += "ci_windows_vm_profile=" + pathText(*config.windows_vm_profile) + "\n";
   if (config.toolchain_root) out += "ci_toolchain_root=" + pathText(*config.toolchain_root) + "\n";
   if (config.macos_native_socket) out += "ci_macos_native_socket=" + pathText(*config.macos_native_socket) + "\n";
   if (config.macos_vm_base) out += "ci_macos_vm_base=" + pathText(*config.macos_vm_base) + "\n";

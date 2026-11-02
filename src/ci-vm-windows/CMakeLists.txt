@@ -1,0 +1,33 @@
+add_library(ckgit_windows_vm_protocol STATIC
+  ../common/ci_vm_channel_windows.cpp source_transfer.cpp
+  ../ci-vm-host-macos/result_relay.cpp ../ci-vm-guest-macos/result_sink.cpp)
+target_link_libraries(ckgit_windows_vm_protocol PUBLIC ckgit_remote ckgit_archive ws2_32)
+if(BUILD_TESTING)
+  add_executable(ckgit-windows-vm-channel-test ../../tests/platform/windows_vm_channel_test.cpp)
+  target_link_libraries(ckgit-windows-vm-channel-test PRIVATE ckgit_windows_vm_protocol)
+  add_test(NAME windows-vm-channel COMMAND ckgit-windows-vm-channel-test)
+  set_tests_properties(windows-vm-channel PROPERTIES TIMEOUT 30)
+endif()
+if(BUILD_TESTING)
+  add_executable(ckgit-windows-vm-relay-test ../../tests/platform/windows_vm_result_relay_test.cpp)
+  target_link_libraries(ckgit-windows-vm-relay-test PRIVATE ckgit_windows_vm_protocol)
+  add_test(NAME windows-vm-relay COMMAND ckgit-windows-vm-relay-test)
+  set_tests_properties(windows-vm-relay PROPERTIES TIMEOUT 60)
+endif()
+add_library(ckgit_windows_vm STATIC hcs_vm.cpp host_connection.cpp storage.cpp executor.cpp)
+target_link_libraries(ckgit_windows_vm PUBLIC ckgit_windows_vm_protocol computecore virtdisk ole32 advapi32)
+add_executable(ckgit-windows-vm-guest guest_main.cpp guest_executor.cpp)
+target_link_libraries(ckgit-windows-vm-guest PRIVATE ckgit_windows_vm_protocol ole32 advapi32)
+
+add_executable(ckgit-windows-vm-host-check host_check.cpp)
+target_link_libraries(ckgit-windows-vm-host-check PRIVATE ckgit_windows_vm)
+if(BUILD_TESTING)
+  add_executable(ckgit-windows-vm-config-test ../../tests/platform/windows_vm_config_test.cpp)
+  target_link_libraries(ckgit-windows-vm-config-test PRIVATE ckgit_windows_vm)
+  add_test(NAME windows-vm-config COMMAND ckgit-windows-vm-config-test)
+  set_tests_properties(windows-vm-config PROPERTIES TIMEOUT 15)
+endif()
+
+# Explicit operator-only qualification; never an ordinary CTest.
+add_executable(ckgit-windows-hcs-self-build ../../tests/platform/windows_hcs_self_build.cpp)
+target_link_libraries(ckgit-windows-hcs-self-build PRIVATE ckgit_windows_vm)

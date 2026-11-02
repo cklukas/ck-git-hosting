@@ -219,6 +219,7 @@ CiVmFrame CiVmChannel::receive(std::chrono::milliseconds timeout, const std::fun
     }
   } catch (...) { failed_ = true; throw; }
 }
+#endif
 void ciVmHostHandshake(CiVmChannel& channel, const CiPreparedJob& assignment, const CiRemotePolicy& policy,
                        std::chrono::milliseconds timeout, const std::function<bool()>& should_continue) {
   try {
@@ -237,5 +238,4 @@ CiVmAssignment ciVmGuestHandshake(CiVmChannel& channel, std::chrono::millisecond
     return parseCiVmAssignment(assignment.payload);
   } catch (...) { channel.invalidate(); throw; }
 }
-#endif
 }

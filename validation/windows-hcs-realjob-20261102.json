@@ -1,0 +1,86 @@
+{
+  "status": "passed",
+  "scope": "Local production HCS executor real process containment/service checks; not hosted CI or full app artifact acceptance",
+  "checks": {
+    "service": {
+      "service_state": "Stopped",
+      "service_sid": "S-1-5-80-2245237880-3662919500-867164384-3030823722-2635433945",
+      "started_utc": "2026-11-02T17:13:19.1198350Z",
+      "error": "",
+      "scope": "Actual dedicated nonadministrator virtual service account: HCS image hashes, private socket registration, diskless VM startup/attestation/teardown; deny-only fake SSH endpoint, no server or hosted job",
+      "finished_utc": "2026-11-02T17:18:52.3064869Z",
+      "status": "passed",
+      "restored_service_path": "\"V:\\Programs\\ck-git-runner\\ck-ci-runnerd.exe\" service --config \"V:\\ProgramData\\ckgit-runner\\orthomap-windows\\runner.ini\" --log \"V:\\ProgramData\\ckgit-runner\\orthomap-windows\\logs\\service.log\" --service-name orthomap-ci-runner",
+      "runner_sha256": "499f0011b0da2c0266735d7e0636f659071042b01b8a222dd269abb6347ddb06"
+    },
+    "cancel": {
+      "scope": "Actual guest job cancellation, confirmed VM absence and disposable disk cleanup before terminal record",
+      "status": "passed",
+      "result": {
+        "pid": 83712,
+        "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-hcs-self-build.exe",
+        "arguments": "\"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\runner.ini\" \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-hcs-lifecycle-source\" \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\results\" 1111111111111111111111111111111111111111 --cancel-file \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\cancel\"",
+        "exit_code": 1,
+        "started_at_utc": "2026-11-02T17:29:44.6255086Z",
+        "finished_at_utc": "2026-11-02T17:35:30.8898778Z",
+        "elapsed_seconds": 346.2646875,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\controller.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\controller.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-cancel-r1\\controller.log"
+      },
+      "terminal": "status=cancelled\r\ndetail=cancelled during guest step\r\ncommit=1111111111111111111111111111111111111111\r\n",
+      "fixture_sha256": "4af851872d78fb29dc7015bfb7c212e6ad37b87c6b88a4b431122a90e7bee677"
+    },
+    "timeout": {
+      "scope": "Host-owned deadline while real guest job runs, then confirmed VM absence and disk cleanup before terminal record",
+      "fixture_sha256": "4af851872d78fb29dc7015bfb7c212e6ad37b87c6b88a4b431122a90e7bee677",
+      "guest_marker_seen": true,
+      "result": {
+        "pid": 99252,
+        "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-hcs-self-build.exe",
+        "arguments": "\"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-timeout-r1\\runner.ini\" \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-hcs-lifecycle-source\" \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-timeout-r1\\results\" 1111111111111111111111111111111111111111",
+        "exit_code": 1,
+        "started_at_utc": "2026-11-02T17:36:41.8283485Z",
+        "finished_at_utc": "2026-11-02T17:44:21.0564654Z",
+        "elapsed_seconds": 459.228522,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-timeout-r1\\controller.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-timeout-r1\\controller.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-timeout-r1\\controller.log"
+      },
+      "status": "passed",
+      "terminal": "status=timeout\r\ndetail=host VM job wall deadline exceeded\r\ncommit=1111111111111111111111111111111111111111\r\n"
+    },
+    "ownerdeath": {
+      "fixture_sha256": "4af851872d78fb29dc7015bfb7c212e6ad37b87c6b88a4b431122a90e7bee677",
+      "owner_pid": 98784,
+      "completed_utc": "2026-11-02T17:53:34.0437000Z",
+      "status": "passed",
+      "scope": "Forced death of exact HCS owning controller during real guest process. No observer ownership handle opened. Exact VM absent, journal-validated recovery removed disposable disks, no false terminal success.",
+      "absence": {
+        "pid": 96264,
+        "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-host-check.exe",
+        "arguments": "--absence-check f9675cbe-ed8e-47c5-bc40-237d2ff52534",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T17:53:33.7556962Z",
+        "finished_at_utc": "2026-11-02T17:53:33.9562041Z",
+        "elapsed_seconds": 0.208663,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\absence.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\absence.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\absence.log"
+      },
+      "vm_id": "f9675cbe-ed8e-47c5-bc40-237d2ff52534",
+      "recovery": {
+        "pid": 95076,
+        "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-host-check.exe",
+        "arguments": "--recover \"V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\jobs\"",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T17:53:33.9780170Z",
+        "finished_at_utc": "2026-11-02T17:53:34.0376812Z",
+        "elapsed_seconds": 0.061553199999999995,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\recovery.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\recovery.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\hcs-realjob-ownerdeath-r1\\recovery.log"
+      }
+    }
+  }
+}

@@ -88,13 +88,17 @@ class CiVmFrameDecoder {
   bool failed_ = false;
 };
 
-#ifndef _WIN32
+#ifdef _WIN32
+using CiVmSocket = std::uintptr_t;
+#else
+using CiVmSocket = int;
+#endif
 // A single-caller, non-owning socket channel. Timeouts, cancellation, malformed
 // input and disconnects poison the channel; its owner must close the socket.
 // A caller still enforces the message state machine and cumulative budgets.
 class CiVmChannel {
  public:
-  explicit CiVmChannel(int socket_fd);
+  explicit CiVmChannel(CiVmSocket socket_fd);
   void send(CiVmFrameType type, std::string_view payload, std::chrono::milliseconds timeout,
             const std::function<bool()>& should_continue = {});
   CiVmFrame receive(std::chrono::milliseconds timeout, const std::function<bool()>& should_continue = {});
@@ -102,7 +106,7 @@ class CiVmChannel {
   void invalidate() { failed_ = true; }
 
  private:
-  int fd_;
+  CiVmSocket fd_;
   bool failed_ = false;
   CiVmFrameDecoder decoder_;
 };
@@ -112,5 +116,4 @@ void ciVmHostHandshake(CiVmChannel& channel, const CiPreparedJob& assignment, co
                        std::chrono::milliseconds timeout, const std::function<bool()>& should_continue = {});
 CiVmAssignment ciVmGuestHandshake(CiVmChannel& channel, std::chrono::milliseconds timeout,
                                    const std::function<bool()>& should_continue = {});
-#endif
 }

@@ -1,0 +1,72 @@
+{
+  "status": "passed",
+  "scope": "Native Windows VM channel/source/result protocol tests over local loopback; not Hyper-V socket or actual guest/CI qualification",
+  "source_base": "c4e23910432f5b3654899ae90d6e91dca3637ac3",
+  "source_archive_sha256": "8279757f108c91a7d8bb6dbc80ce6af459c19676a0560c19e80db7cabcb5a4ba",
+  "source_manifest_sha256": "978daec321be80e6fad31673a9b63cb1313ea2e10124dbbfa94df602755c247a",
+  "target": "Release/MSVC Windows VM protocol tests",
+  "started_utc": "2026-11-02T05:10:00.3805756Z",
+  "finished_utc": "2026-11-02T05:22:59.0538788Z",
+  "elapsed_seconds": 778.6733032,
+  "steps": [
+    {
+      "pid": 95048,
+      "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+      "arguments": "-E tar xf \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-source-r1.tar\"",
+      "exit_code": 0,
+      "started_at_utc": "2026-11-02T05:10:00.4212202Z",
+      "finished_at_utc": "2026-11-02T05:10:01.0420373Z",
+      "elapsed_seconds": 0.6251221,
+      "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\extract.log.stdout",
+      "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\extract.log.stderr",
+      "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\extract.log"
+    },
+    {
+      "pid": 63788,
+      "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+      "arguments": "-S \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-source-r1\" -B \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \"-DCMAKE_MAKE_PROGRAM=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/ninja/ninja.exe\" \"-DCMAKE_C_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/vs/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\" \"-DCMAKE_CXX_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/vs/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\" \"-DCMAKE_RC_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/sdk/bin/10.0.26100.0/x64/rc.exe\" \"-DCMAKE_MT=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/sdk/bin/10.0.26100.0/x64/mt.exe\" -DCKGIT_BUILD_VERSION=0.9.0+windows-vm-protocol-wip",
+      "exit_code": 0,
+      "started_at_utc": "2026-11-02T05:10:01.0949964Z",
+      "finished_at_utc": "2026-11-02T05:20:22.5801621Z",
+      "elapsed_seconds": 621.4870642999999,
+      "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\configure.log.stdout",
+      "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\configure.log.stderr",
+      "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\configure.log"
+    },
+    {
+      "pid": 94052,
+      "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+      "arguments": "--build \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" --target ckgit-windows-vm-channel-test ckgit-windows-vm-relay-test --parallel 4",
+      "exit_code": 0,
+      "started_at_utc": "2026-11-02T05:20:22.6206781Z",
+      "finished_at_utc": "2026-11-02T05:22:42.8338871Z",
+      "elapsed_seconds": 140.2132863,
+      "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\build.log.stdout",
+      "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\build.log.stderr",
+      "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\build.log"
+    },
+    {
+      "pid": 82436,
+      "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\ctest.exe",
+      "arguments": "--test-dir \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" -R \"^windows-vm-(channel|relay)$\" --output-on-failure --output-junit \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\junit.xml\"",
+      "exit_code": 0,
+      "started_at_utc": "2026-11-02T05:22:57.6449935Z",
+      "finished_at_utc": "2026-11-02T05:22:59.0183345Z",
+      "elapsed_seconds": 1.3721284,
+      "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\tests.log.stdout",
+      "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\tests.log.stderr",
+      "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\tests.log"
+    }
+  ],
+  "outputs": [
+    {
+      "sha256": "b2ac8448c336d7e06cc9e342934f6f160f4ded7753c6970ae2e21d073a81b6ea",
+      "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-channel-test.exe"
+    },
+    {
+      "sha256": "d47aa50a4c97c059096045dce8b75ac776bb17b6a86561ae4b5603166460ad85",
+      "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-relay-test.exe"
+    }
+  ],
+  "junit": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"Win32-ninja\"\n\ttests=\"2\"\n\tfailures=\"0\"\n\tdisabled=\"0\"\n\tskipped=\"0\"\n\thostname=\"WORKSTATION\"\n\ttime=\"1\"\n\ttimestamp=\"2026-11-02T06:22:57\"\n\t>\n\t<testcase name=\"windows-vm-channel\" classname=\"windows-vm-channel\" time=\"0.646267\" status=\"run\">\n\t\t<properties/>\n\t\t<system-out>PASS: restricted handshake, binary framing, EOF/timeout/cancellation, ordinal source archives\n</system-out>\n\t</testcase>\n\t<testcase name=\"windows-vm-relay\" classname=\"windows-vm-relay\" time=\"0.265457\" status=\"run\">\n\t\t<properties/>\n\t\t<system-out>VM result relay passed\n</system-out>\n\t</testcase>\n</testsuite>\n"
+}

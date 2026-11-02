@@ -1,0 +1,232 @@
+// Copyright (c) 2026 C. Klukas. All rights reserved.
+// SPDX-License-Identifier: MIT
+#include "../../src/ci-vm-guest-macos/result_sink.hpp"
+#include "../../src/ci-vm-host-macos/result_relay.hpp"
+#include <cstdlib>
+#include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include "windows_vm_socket_pair.hpp"
+#include "ckgit/temp_directory.hpp"
+#include <thread>
+
+#include <vector>
+
+namespace fs = std::filesystem;
+namespace {
+void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+struct Sink : ckgit::CiResultSink {
+  std::string log, artifact, pages;
+  bool finished = false;
+  bool cancel_on_log = false, cancelled = false, slow_upload = false;
+  bool fail_upload = false, cancel_after_upload = false;
+  std::atomic<bool> upload_started{false};
+  std::atomic<bool> cancel_on_tick{false}, lose_on_tick{false}, lost{false};
+  void runStarted(const ckgit::CiRunRecord&) override {}
+  void stepStarted(const ckgit::CiRunRecord&, std::size_t) override {}
+  void appendLog(std::size_t, std::string_view value) override { log += value; if (cancel_on_log) cancelled = true; }
+  void stepFinished(const ckgit::CiRunRecord&, std::size_t) override {}
+  void heartbeat(const ckgit::CiRunRecord&) override {}
+  void tick() override { if (cancel_on_tick.exchange(false)) cancelled = true; if (lose_on_tick.exchange(false)) lost = true; }
+  void progress(const ckgit::CiRunRecord&) override {}
+  bool cancelRequested() override { return cancelled; }
+  bool leaseLost() override { return lost.load(); }
+  ckgit::CiArtifactRecord putArtifact(const ckgit::CiArtifact& declared, const fs::path& file,
+                                       const std::string& note, bool) override {
+    upload_started = true;
+    if (slow_upload) std::this_thread::sleep_for(std::chrono::seconds(31));
+    std::ifstream input(file); artifact.assign(std::istreambuf_iterator<char>(input), {});
+    ckgit::CiArtifactRecord result; result.name = declared.name;
+    result.note = fail_upload ? "network failed" : note;
+    if (cancel_after_upload) cancelled = true;
+    return result;
+  }
+  void putPagesSite(const fs::path& path) override {
+    std::ifstream input(path / "index.html"); pages.assign(std::istreambuf_iterator<char>(input), {});
+  }
+  ckgit::CiRunRecord finish(ckgit::CiRunRecord record) override { finished = true; return record; }
+};
+}
+int main() {
+  const char* tmp = std::getenv("TMPDIR"); if (!tmp) return 1;
+  VmTestWinsock winsock;
+  if(fs::path(tmp).root_name()!=L"V:")throw std::runtime_error("Select private V: TMPDIR");
+  const fs::path root=ckgit::createTempDirectory(tmp,"windows-vm-relay-");
+  struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path, e); } } cleanup{root};
+  SOCKET pair[2]; if (vmTestSocketPair(pair) != 0) return 1;
+  try {
+    ckgit::CiPreparedJob job;
+    job.job.job_id = "00000000000000000001-abcdabcd";
+    job.job.project_name = "project"; job.job.commit_id = std::string(40, 'a');
+    ckgit::CiJob build; build.name = "build"; build.steps.push_back({});
+    build.artifact = ckgit::CiArtifact{"output", {"build"}, 7}; job.workflow.jobs.push_back(build);
+    job.workflow.pages_path = "site"; job.is_default_branch = true;
+    ckgit::CiRemotePolicy policy; ckgit::CiVmChannel host(pair[0]), guest(pair[1]); Sink stored;
+    stored.slow_upload = true;
+    std::exception_ptr host_error;
+    std::jthread server([&] {
+      try { (void)ckgit::relayCiVmResults(host, job, policy, stored, root); }
+      catch (...) { host_error = std::current_exception(); shutdown(pair[0], SD_BOTH); }
+    });
+    ckgit::CiVmGuestSink relay(guest, job, policy, root);
+    ckgit::CiRunRecord record; record.started_epoch_seconds = 1;
+    relay.runStarted(record); relay.stepStarted(record, 0); relay.appendLog(0, "hello");
+    record.steps.push_back({"build", 0, false, false}); relay.stepFinished(record, 0);
+    std::ofstream(root / "bundle") << "data";
+    const auto output_start = std::chrono::steady_clock::now();
+    relay.putArtifact(*job.workflow.jobs[0].artifact, root / "bundle", {}, false);
+    fs::create_directory(root / "site"); std::ofstream(root / "site/index.html") << "page";
+    relay.putPagesSite(root / "site");
+    record.status = ckgit::CiRunStatus::Success; relay.finish(record);
+    require(std::chrono::steady_clock::now() - output_start < std::chrono::seconds(10),
+            "guest output and final ACK waited for the 31-second host upload");
+    server.join();
+    require(stored.upload_started, "deferred host upload did not run"); if (host_error) std::rethrow_exception(host_error);
+    require(stored.log == "hello" && stored.artifact == "data" && stored.pages == "page" && !stored.finished,
+            "VM result relay lost data");
+    for (const auto& entry : fs::directory_iterator(root))
+      require(entry.path().filename().string().rfind("vm-staged-", 0) != 0, "staged output was not cleaned");
+    closesocket(pair[0]); closesocket(pair[1]);
+    // Outputs of an earlier successful job must still be published if a later
+    // job fails; deferring transfer must not discard that established result.
+    SOCKET failure_pair[2]; require(vmTestSocketPair(failure_pair) == 0, "cannot create later-failure pair");
+    ckgit::CiVmChannel failure_host(failure_pair[0]), failure_guest(failure_pair[1]);
+    auto multi = job;
+    multi.workflow.pages_path.reset();
+    ckgit::CiJob later; later.name = "later"; later.steps.push_back({}); multi.workflow.jobs.push_back(later);
+    Sink failure_sink; std::exception_ptr failure_error; ckgit::CiRunRecord failed_result;
+    std::jthread failure_server([&] {
+      try { failed_result = ckgit::relayCiVmResults(failure_host, multi, policy, failure_sink, root); }
+      catch (...) { failure_error = std::current_exception(); shutdown(failure_pair[0], SD_BOTH); }
+    });
+    ckgit::CiVmGuestSink failure_relay(failure_guest, multi, policy, root);
+    ckgit::CiRunRecord failure_record; failure_record.started_epoch_seconds = 1;
+    failure_relay.runStarted(failure_record); failure_relay.stepStarted(failure_record, 0);
+    failure_record.steps.push_back({"build", 0, false, false}); failure_relay.stepFinished(failure_record, 0);
+    failure_relay.putArtifact(*multi.workflow.jobs[0].artifact, root / "bundle", {}, false);
+    failure_relay.stepStarted(failure_record, 1);
+    failure_record.steps.push_back({"later", 1, false, false}); failure_relay.stepFinished(failure_record, 1);
+    failure_record.status = ckgit::CiRunStatus::Failure; failure_relay.finish(failure_record);
+    failure_server.join(); if (failure_error) std::rethrow_exception(failure_error);
+    require(failed_result.status == ckgit::CiRunStatus::Failure && failure_sink.artifact == "data",
+            "later failure discarded an earlier successful artifact");
+    closesocket(failure_pair[0]); closesocket(failure_pair[1]);
+    for (const bool cancel : {false, true}) {
+      SOCKET upload_pair[2]; require(vmTestSocketPair(upload_pair) == 0, "cannot create upload failure pair");
+      ckgit::CiVmChannel upload_host(upload_pair[0]), upload_guest(upload_pair[1]);
+      auto upload_job = job; upload_job.workflow.pages_path.reset();
+      Sink upload_sink; upload_sink.fail_upload = !cancel; upload_sink.cancel_after_upload = cancel;
+      ckgit::CiRunRecord upload_result; std::exception_ptr upload_error;
+      std::jthread upload_server([&] {
+        try { upload_result = ckgit::relayCiVmResults(upload_host, upload_job, policy, upload_sink, root); }
+        catch (...) { upload_error = std::current_exception(); shutdown(upload_pair[0], SD_BOTH); }
+      });
+      ckgit::CiVmGuestSink upload_relay(upload_guest, upload_job, policy, root);
+      ckgit::CiRunRecord upload_record; upload_record.started_epoch_seconds = 1;
+      upload_relay.runStarted(upload_record); upload_relay.stepStarted(upload_record, 0);
+      upload_record.steps.push_back({"build", 0, false, false}); upload_relay.stepFinished(upload_record, 0);
+      upload_relay.putArtifact(*upload_job.workflow.jobs[0].artifact, root / "bundle", {}, false);
+      upload_record.status = ckgit::CiRunStatus::Success; upload_relay.finish(upload_record);
+      upload_server.join(); if (upload_error) std::rethrow_exception(upload_error);
+      require(upload_result.status == (cancel ? ckgit::CiRunStatus::Cancelled : ckgit::CiRunStatus::Error),
+              "deferred upload failure or cancellation was reported as success");
+      closesocket(upload_pair[0]); closesocket(upload_pair[1]);
+    }
+    SOCKET hostile_pair[2]; require(vmTestSocketPair(hostile_pair) == 0, "cannot create hostile pair");
+    ckgit::CiVmChannel strict_host(hostile_pair[0]), hostile(hostile_pair[1]);
+    policy.max_log_bytes = 2; Sink restricted; bool rejected = false;
+    std::jthread strict_server([&] {
+      try { (void)ckgit::relayCiVmResults(strict_host, job, policy, restricted, root); }
+      catch (...) { rejected = true; shutdown(hostile_pair[0], SD_BOTH); }
+    });
+    const auto timeout = std::chrono::seconds(3);
+    hostile.send(ckgit::CiVmFrameType::Event, "started 1", timeout); (void)hostile.receive(timeout);
+    hostile.send(ckgit::CiVmFrameType::Event, "step-start 0", timeout); (void)hostile.receive(timeout);
+    hostile.send(ckgit::CiVmFrameType::Event, "log 0", timeout);
+    hostile.send(ckgit::CiVmFrameType::Chunk, "big", timeout);
+    strict_server.join();
+    require(rejected && strict_host.failed() && restricted.log.empty(), "oversized guest log was not rejected");
+    closesocket(hostile_pair[0]); closesocket(hostile_pair[1]);
+    SOCKET cancel_pair[2]; require(vmTestSocketPair(cancel_pair) == 0, "cannot create cancel pair");
+    ckgit::CiVmChannel cancel_host(cancel_pair[0]), cancel_guest(cancel_pair[1]);
+    Sink cancelled_sink; cancelled_sink.cancel_on_log = true; std::exception_ptr cancel_error;
+    std::jthread cancel_server([&] {
+      try { (void)ckgit::relayCiVmResults(cancel_host, job, policy, cancelled_sink, root); }
+      catch (...) { cancel_error = std::current_exception(); shutdown(cancel_pair[0], SD_BOTH); }
+    });
+    ckgit::CiVmGuestSink cancel_relay(cancel_guest, job, policy, root);
+    ckgit::CiRunRecord cancelled_record; cancelled_record.started_epoch_seconds = 1;
+    cancel_relay.runStarted(cancelled_record); cancel_relay.stepStarted(cancelled_record, 0);
+    cancel_relay.appendLog(0, "ok");
+    require(cancel_relay.cancelRequested(), "guest did not receive host cancellation");
+    cancelled_record.steps.push_back({"build", 143, false, false});
+    cancel_relay.stepFinished(cancelled_record, 0);
+    cancelled_record.status = ckgit::CiRunStatus::Cancelled; cancel_relay.finish(cancelled_record);
+    cancel_server.join(); if (cancel_error) std::rethrow_exception(cancel_error);
+    require(!cancelled_sink.finished, "VM result was committed before shutdown");
+    closesocket(cancel_pair[0]); closesocket(cancel_pair[1]);
+    SOCKET ignored_pair[2]; require(vmTestSocketPair(ignored_pair) == 0, "cannot create ignored-cancel pair");
+    ckgit::CiVmChannel ignored_host(ignored_pair[0]), ignored_guest(ignored_pair[1]);
+    Sink ignored_sink; ignored_sink.cancel_on_log = true; bool ignored_rejected = false;
+    std::jthread ignored_server([&] {
+      try { (void)ckgit::relayCiVmResults(ignored_host, job, policy, ignored_sink, root); }
+      catch (...) { ignored_rejected = true; shutdown(ignored_pair[0], SD_BOTH); }
+    });
+    ignored_guest.send(ckgit::CiVmFrameType::Event, "started 1", timeout); (void)ignored_guest.receive(timeout);
+    ignored_guest.send(ckgit::CiVmFrameType::Event, "step-start 0", timeout); (void)ignored_guest.receive(timeout);
+    ignored_guest.send(ckgit::CiVmFrameType::Event, "log 0", timeout);
+    ignored_guest.send(ckgit::CiVmFrameType::Chunk, "ok", timeout);
+    require(ignored_guest.receive(timeout).type == ckgit::CiVmFrameType::Cancel, "host did not send cancellation");
+    ignored_guest.send(ckgit::CiVmFrameType::Event, "step-end 0 0 0 0 6275696c64", timeout);
+    (void)ignored_guest.receive(timeout);
+    ckgit::CiFinishReport ignored_report; ignored_report.status = ckgit::CiRunStatus::Success;
+    ignored_report.started_epoch_seconds = 1; ignored_report.steps.push_back({"build", 0, false, false});
+    ignored_guest.send(ckgit::CiVmFrameType::Done, ckgit::formatCiFinishReport(ignored_report), timeout);
+    ignored_server.join();
+    require(ignored_rejected && ignored_host.failed() && !ignored_sink.finished,
+            "host accepted success after sending cancellation");
+    closesocket(ignored_pair[0]); closesocket(ignored_pair[1]);
+    // The state can change in the final acknowledgement's tick, after the
+    // terminal frame was received but before it is returned to the runner.
+    for (bool lose : {false, true}) {
+      SOCKET last_pair[2]; require(vmTestSocketPair(last_pair) == 0, "cannot create final-event pair");
+      ckgit::CiVmChannel last_host(last_pair[0]), last_guest(last_pair[1]);
+      Sink last_sink; bool last_rejected = false; ckgit::CiRunRecord last_result;
+      std::jthread last_server([&] {
+        try { last_result = ckgit::relayCiVmResults(last_host, job, policy, last_sink, root); }
+        catch (...) { last_rejected = true; shutdown(last_pair[0], SD_BOTH); }
+      });
+      last_guest.send(ckgit::CiVmFrameType::Event, "started 1", timeout); (void)last_guest.receive(timeout);
+      last_guest.send(ckgit::CiVmFrameType::Event, "step-start 0", timeout); (void)last_guest.receive(timeout);
+      last_guest.send(ckgit::CiVmFrameType::Event, "step-end 0 0 0 0 6275696c64", timeout); (void)last_guest.receive(timeout);
+      if (lose) last_sink.lose_on_tick = true; else last_sink.cancel_on_tick = true;
+      ckgit::CiFinishReport report; report.status = ckgit::CiRunStatus::Success;
+      report.started_epoch_seconds = 1; report.steps.push_back({"build", 0, false, false});
+      last_guest.send(ckgit::CiVmFrameType::Done, ckgit::formatCiFinishReport(report), timeout);
+      const auto response = last_guest.receive(timeout);
+      last_server.join();
+      if (lose) require(response.type == ckgit::CiVmFrameType::Error && last_rejected && !last_sink.finished,
+                        "lease loss during final acknowledgement returned a result");
+      else require(response.type == ckgit::CiVmFrameType::Cancel && !last_rejected &&
+                   last_result.status == ckgit::CiRunStatus::Cancelled && !last_sink.finished,
+                   "late cancellation was reported as success");
+      closesocket(last_pair[0]); closesocket(last_pair[1]);
+    }
+    SOCKET early_pair[2]; require(vmTestSocketPair(early_pair) == 0, "cannot create early-artifact pair");
+    ckgit::CiVmChannel early_host(early_pair[0]), early_guest(early_pair[1]);
+    Sink early_sink; bool early_rejected = false;
+    std::jthread early_server([&] {
+      try { (void)ckgit::relayCiVmResults(early_host, job, policy, early_sink, root); }
+      catch (...) { early_rejected = true; shutdown(early_pair[0], SD_BOTH); }
+    });
+    early_guest.send(ckgit::CiVmFrameType::Event, "started 1", timeout); (void)early_guest.receive(timeout);
+    early_guest.send(ckgit::CiVmFrameType::Event, "artifact 0 1 -", timeout);
+    early_server.join();
+    require(early_rejected && early_host.failed() && early_sink.artifact.empty() && !early_sink.finished,
+            "host accepted an artifact before its job ran");
+    closesocket(early_pair[0]); closesocket(early_pair[1]);
+    std::cout << "VM result relay passed\n"; return 0;
+  } catch (const std::exception& e) { closesocket(pair[0]); closesocket(pair[1]); std::cerr << e.what() << '\n'; return 1; }
+}

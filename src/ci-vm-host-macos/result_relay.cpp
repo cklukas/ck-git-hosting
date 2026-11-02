@@ -56,6 +56,19 @@ CiRunRecord relayCiVmResults(CiVmChannel& channel, const CiPreparedJob& assignme
   record.status = CiRunStatus::Running;
   CiVmOutputGuard limits(assignment, policy);
   std::vector<CiDeclaredOutput> outputs;
+  // Only the host owns this private directory; guest bytes never name paths.
+  const auto stage = createTempDirectory(relay_root, "vm-staged-");
+  struct StageCleanup {
+    std::filesystem::path path;
+    ~StageCleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+  } cleanup{stage};
+  struct PendingOutput {
+    bool pages = false;
+    CiArtifact artifact;
+    std::filesystem::path file;
+    std::string note;
+  };
+  std::vector<PendingOutput> pending;
   std::vector<std::string> step_names;
   for (const auto& job : assignment.workflow.jobs)
     for (const auto& step : job.steps) step_names.push_back(step.name.empty() ? job.name : step.name);
@@ -111,6 +124,48 @@ CiRunRecord relayCiVmResults(CiVmChannel& channel, const CiPreparedJob& assignme
           record.status = CiRunStatus::Cancelled;
           record.detail = "cancelled before the VM result was committed";
         }
+        // Finish the guest protocol before potentially slow SSH uploads. The
+        // result remains provisional until these uploads and VM teardown pass.
+        for (const auto& output : pending) {
+          sink.tick();
+          if (sink.leaseLost()) throw std::runtime_error("VM job lease lost before output upload");
+          if (sink.cancelRequested()) {
+            record.status = CiRunStatus::Cancelled;
+            record.detail = "cancelled before the VM result was committed";
+            break;
+          }
+          if (!output.pages) {
+            const auto stored = sink.putArtifact(output.artifact, output.file, output.note, assignment.is_release);
+            if (output.note.empty() && !stored.note.empty()) {
+              if (record.status == CiRunStatus::Success) record.status = CiRunStatus::Error;
+              record.detail = ("artifact upload failed: " + stored.note).substr(0, kMaximumCiDetailBytes);
+            }
+          } else {
+            const auto site = stage / "site";
+            constexpr std::uint64_t max_archive = static_cast<std::uint64_t>(kMaximumPagesSiteBytes) + (1ull << 30);
+            TarExtractOptions options;
+            options.max_archive_bytes = max_archive;
+            options.max_bytes = kMaximumPagesSiteBytes;
+            options.max_file_bytes = kMaximumPagesSiteBytes;
+            options.max_entries = kMaximumPagesEntries + 1;
+            options.skip_non_regular = true;
+            options.should_continue = [&] { return keep() && !sink.cancelRequested(); };
+            extractRegularTreeTar(output.file, site, options);
+            if (sink.leaseLost()) throw std::runtime_error("VM job lease lost before Pages upload");
+            if (sink.cancelRequested()) {
+              record.status = CiRunStatus::Cancelled;
+              record.detail = "cancelled before the VM result was committed";
+              break;
+            }
+            sink.putPagesSite(site);
+          }
+          if (sink.leaseLost()) throw std::runtime_error("VM job lease lost during output upload");
+          if (sink.cancelRequested()) {
+            record.status = CiRunStatus::Cancelled;
+            record.detail = "cancelled before the VM result was committed";
+            break;
+          }
+        }
         return record;
       }
       if (frame.type != CiVmFrameType::Event) throw std::invalid_argument("unexpected VM result frame");
@@ -152,34 +207,27 @@ CiRunRecord relayCiVmResults(CiVmChannel& channel, const CiPreparedJob& assignme
         if (record.steps.empty() || record.steps.size() < required || record.steps.back().exit_code != 0 || record.steps.back().timed_out)
           throw std::invalid_argument("VM artifact before successful job steps");
         if (!note.empty() && size != 0) throw std::invalid_argument("VM artifact note with data");
+        std::filesystem::path file;
         if (note.empty()) {
-          const auto temp = createTempDirectory(relay_root, "vm-output-");
-          const auto file = temp / "bundle.tar";
-          try {
-            std::ofstream stream(file, std::ios::binary | std::ios::trunc);
-            if (!stream) throw std::runtime_error("cannot create VM output file");
-            std::uint64_t remaining = size;
-            while (remaining) {
-              const auto chunk = receive();
-              if (chunk.type != CiVmFrameType::Chunk || chunk.payload.empty()) throw std::invalid_argument("invalid VM artifact chunk");
-              limits.artifactChunk(chunk.payload.size());
-              remaining -= chunk.payload.size();
-              stream.write(chunk.payload.data(), static_cast<std::streamsize>(chunk.payload.size()));
-              if (!stream) throw std::runtime_error("cannot write VM output file");
-            }
-            const auto done = receive();
-            if (done.type != CiVmFrameType::Done || !done.payload.empty()) throw std::invalid_argument("invalid VM artifact end");
-            stream.close();
-            if (!stream) throw std::runtime_error("cannot close VM output file");
-            limits.endArtifact();
-            sink.putArtifact(artifact, file, note, assignment.is_release);
-            std::filesystem::remove(file); std::filesystem::remove(temp);
-          } catch (...) {
-            std::error_code error; std::filesystem::remove(file, error); std::filesystem::remove(temp, error); throw;
+          file = stage / ("artifact-" + std::to_string(pending.size()) + ".tar");
+          std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+          if (!stream) throw std::runtime_error("cannot create VM output file");
+          std::uint64_t remaining = size;
+          while (remaining) {
+            const auto chunk = receive();
+            if (chunk.type != CiVmFrameType::Chunk || chunk.payload.empty()) throw std::invalid_argument("invalid VM artifact chunk");
+            limits.artifactChunk(chunk.payload.size());
+            remaining -= chunk.payload.size();
+            stream.write(chunk.payload.data(), static_cast<std::streamsize>(chunk.payload.size()));
+            if (!stream) throw std::runtime_error("cannot write VM output file");
           }
-        } else {
-          limits.endArtifact(); sink.putArtifact(artifact, {}, note, assignment.is_release);
+          const auto done = receive();
+          if (done.type != CiVmFrameType::Done || !done.payload.empty()) throw std::invalid_argument("invalid VM artifact end");
+          stream.close();
+          if (!stream) throw std::runtime_error("cannot close VM output file");
         }
+        limits.endArtifact();
+        pending.push_back({false, artifact, std::move(file), note});
         outputs.push_back({artifact.name, assignment.is_release, artifact.retention_days, note}); ack();
       } else if (part[0] == "pages" && part.size() == 2 && started && !active_step && !pages &&
                  assignment.is_default_branch && !assignment.is_release && assignment.workflow.pages_path &&
@@ -188,38 +236,23 @@ CiRunRecord relayCiVmResults(CiVmChannel& channel, const CiPreparedJob& assignme
         const auto size = number<std::uint64_t>(part[1]);
         constexpr std::uint64_t max_archive = static_cast<std::uint64_t>(kMaximumPagesSiteBytes) + (1ull << 30);
         if (size > max_archive) throw std::invalid_argument("VM Pages archive too large");
-        const auto temp = createTempDirectory(relay_root, "vm-pages-");
-        const auto file = temp / "site.tar";
-        const auto site = temp / "site";
-        try {
-          std::ofstream stream(file, std::ios::binary | std::ios::trunc);
-          if (!stream) throw std::runtime_error("cannot create VM Pages archive");
-          auto remaining = size;
-          while (remaining) {
-            const auto chunk = receive();
-            if (chunk.type != CiVmFrameType::Chunk || chunk.payload.empty() || chunk.payload.size() > remaining)
-              throw std::invalid_argument("invalid VM Pages chunk");
-            stream.write(chunk.payload.data(), static_cast<std::streamsize>(chunk.payload.size()));
-            if (!stream) throw std::runtime_error("cannot write VM Pages archive");
-            remaining -= chunk.payload.size();
-          }
-          const auto done = receive();
-          if (done.type != CiVmFrameType::Done || !done.payload.empty()) throw std::invalid_argument("invalid VM Pages end");
-          stream.close();
-          if (!stream) throw std::runtime_error("cannot close VM Pages archive");
-          TarExtractOptions options;
-          options.max_archive_bytes = max_archive;
-          options.max_bytes = kMaximumPagesSiteBytes;
-          options.max_file_bytes = kMaximumPagesSiteBytes;
-          options.max_entries = kMaximumPagesEntries + 1;
-          options.skip_non_regular = true;
-          options.should_continue = keep;
-          extractRegularTreeTar(file, site, options);
-          sink.putPagesSite(site);
-          std::filesystem::remove_all(temp);
-        } catch (...) {
-          std::error_code error; std::filesystem::remove_all(temp, error); throw;
+        const auto file = stage / "pages.tar";
+        std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+        if (!stream) throw std::runtime_error("cannot create VM Pages archive");
+        auto remaining = size;
+        while (remaining) {
+          const auto chunk = receive();
+          if (chunk.type != CiVmFrameType::Chunk || chunk.payload.empty() || chunk.payload.size() > remaining)
+            throw std::invalid_argument("invalid VM Pages chunk");
+          stream.write(chunk.payload.data(), static_cast<std::streamsize>(chunk.payload.size()));
+          if (!stream) throw std::runtime_error("cannot write VM Pages archive");
+          remaining -= chunk.payload.size();
         }
+        const auto done = receive();
+        if (done.type != CiVmFrameType::Done || !done.payload.empty()) throw std::invalid_argument("invalid VM Pages end");
+        stream.close();
+        if (!stream) throw std::runtime_error("cannot close VM Pages archive");
+        pending.push_back({true, {}, file, {}});
         pages = true; ack();
       } else throw std::invalid_argument("unexpected or out-of-order VM event");
     }

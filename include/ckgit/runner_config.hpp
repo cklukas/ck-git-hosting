@@ -41,6 +41,8 @@ struct RunnerConfig {
   std::optional<unsigned> timeout_seconds;
   bool allow_degraded = false;
   // Windows: operator-prepared tool tree, copied read-only into each LPAC job.
+  std::string windows_backend = "lpac";
+  std::optional<std::filesystem::path> windows_vm_profile;
   std::optional<std::filesystem::path> toolchain_root;
   std::vector<std::filesystem::path> toolchain_paths{"bin"};
   std::map<std::string, std::string> toolchain_environment;
