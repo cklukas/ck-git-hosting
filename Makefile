@@ -22,6 +22,9 @@ BUILD_TEST_ROOT := $(firstword $(foreach root,$(BUILD_ROOT_ABS),$(if $(filter $(
 ifeq ($(BUILD_TEST_ROOT),)
 $(error BUILD_DIR must be beneath $(if $(word 2,$(BUILD_ROOT_ABS)),one of )$(BUILD_ROOT_ABS))
 endif
+# Tests locate helper executables below CKGIT_TEST_ROOT/bin. Keep that root at
+# the actual build directory; BUILD_ROOT is only the approved parent volume.
+BUILD_TEST_ROOT := $(BUILD_DIR_ABS)
 
 CXX ?= c++
 CPPFLAGS := -D_GNU_SOURCE -Iinclude
@@ -62,6 +65,10 @@ CKGIT_BUILD_VERSION ?= $(CKGIT_RELEASE_VERSION)$(if $(CKGIT_GIT_VERSION),+g$(CKG
 COMMON_SOURCES := \
 	src/archive/tar.cpp \
 	src/common/authorized_keys.cpp \
+	src/common/ci_dependency_commit.cpp \
+	src/common/ci_dependency_lock.cpp \
+	src/common/ci_dependency_store.cpp \
+	src/common/ci_provisioned_inventory.cpp \
 	src/common/ci_control.cpp \
 	src/common/ci_remote.cpp \
 	src/common/ci_remote_transport.cpp \
@@ -72,6 +79,8 @@ COMMON_SOURCES := \
 	src/common/ci_checkout.cpp \
 	src/common/ci_runner_protocol.cpp \
 	src/common/ci_store.cpp \
+	src/common/ci_vm_protocol.cpp \
+	src/common/ci_vm_source.cpp \
 	src/common/ci_workflow.cpp \
 	src/common/cli_help.cpp \
 	src/common/client_config.cpp \
@@ -95,6 +104,10 @@ COMMON_SOURCES := \
 	src/common/emoji.cpp \
 	src/common/markdown.cpp \
 	src/common/math.cpp \
+	src/common/macos_native.cpp \
+	src/common/macos_vm_process.cpp \
+	src/common/macos_vm_storage.cpp \
+	src/common/macos_vm_workspace.cpp \
 	src/common/project_index.cpp \
 	src/common/web/layout.cpp \
 	src/common/web/tree.cpp \
@@ -148,6 +161,10 @@ DISPATCHER_SOURCES := src/ssh-dispatcher/main.cpp
 RECEIVE_HOOK_SOURCES := src/receive-hook/main.cpp
 SERVER_SOURCES := src/server/main.cpp
 CI_RUNNER_SOURCES := src/ci-runner/main.cpp
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+CI_RUNNER_SOURCES += src/ci-vm-host-macos/run_job.cpp src/ci-vm-host-macos/result_relay.cpp
+endif
 PAGES_SERVER_SOURCES := src/pages-server/main.cpp
 CKDOCS_SOURCES := src/ckdocs/main.cpp src/ckdocs/mermaid.cpp
 MERMAID_ROOT := src/ckdocs/mermaid
@@ -157,7 +174,7 @@ MERMAID_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR_ABS)/obj/%.o,$(MERMAID_SOURCES))
 MERMAID_TEST_SOURCES := $(wildcard tests/mermaid/*.cpp)
 MERMAID_TEST_BIN := $(BUILD_DIR_ABS)/bin/ckdocs-mermaid-tests
 $(MERMAID_OBJECTS): CPPFLAGS += $(MERMAID_CPPFLAGS)
-TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_distributed_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/math_tests.cpp tests/unit/markdown_features_tests.cpp tests/unit/emoji_tests.cpp tests/unit/docs_i18n_tests.cpp tests/unit/docs_site_tests.cpp tests/unit/docs_features_tests.cpp
+TEST_SOURCES := tests/unit/test_main.cpp tests/unit/project_index_tests.cpp tests/unit/router_markdown_tests.cpp tests/unit/deletion_tests.cpp tests/unit/dashboard_tests.cpp tests/unit/bulk_publish_tests.cpp tests/unit/cli_help_tests.cpp tests/unit/client_management_tests.cpp tests/unit/setup_tests.cpp tests/unit/recovery_tests.cpp tests/unit/ci_workflow_tests.cpp tests/unit/ci_dependency_lock_tests.cpp tests/unit/ci_dependency_store_tests.cpp tests/unit/ci_dependency_commit_tests.cpp tests/unit/ci_provisioned_inventory_tests.cpp tests/unit/ci_vm_protocol_tests.cpp tests/unit/ci_store_tests.cpp tests/unit/ci_control_tests.cpp tests/unit/ci_runner_tests.cpp tests/unit/ci_distributed_tests.cpp tests/unit/ci_web_tests.cpp tests/unit/pages_store_tests.cpp tests/unit/yaml_subset_tests.cpp tests/unit/highlight_tests.cpp tests/unit/math_tests.cpp tests/unit/markdown_features_tests.cpp tests/unit/emoji_tests.cpp tests/unit/docs_i18n_tests.cpp tests/unit/docs_site_tests.cpp tests/unit/docs_features_tests.cpp
 
 CKGIT := $(BUILD_DIR_ABS)/bin/ckgit
 CKGIT_ADMIN := $(BUILD_DIR_ABS)/bin/ckgit-admin
