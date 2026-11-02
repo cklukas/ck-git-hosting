@@ -11,8 +11,14 @@ The dedicated Windows HCS runner completed hosted Orthomap CI child
 `hyperv-hcs`, network denied, 8 GiB memory and a 7,200-second timeout. The
 stored 203,754,496-byte tar artifact had SHA-256
 `2224b88d8d894e0fa5b6a8210fc2acb62e6442b34a210749faace7c4b38733f6`.
-This records the hosted job result; separate download and VM absence checks
-were in progress when recorded.
+The artifact was downloaded through the ordinary CLI and independently verified:
+its ZIP SHA-256 was `f83dbce239a090e24469b92e9c34489daccc768f1714b0735a1adb70dc53ecb0`.
+All 18 tests passed; the archive contained 943 files and 18 demo photos. Nine
+source checkpoints matched Git commit `fa92e665`, with canonicalization of
+Windows CRLF, and the build performed 69 fresh core actions plus WinUI
+compilation and linking. After the job, the exact HCS VM
+`f0a6744f-2245-49d0-a955-a3de89f78ee9` was confirmed absent without opening an
+owning VM handle, and its job workspace was empty.
 
 Combined-source builds and tests were isolated from the running services:
 
