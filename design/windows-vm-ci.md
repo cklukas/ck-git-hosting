@@ -1,10 +1,11 @@
 # Windows VM CI backend investigation
 
-Status: the offline HCS broker/guest/storage implementation compiles with MSVC
-in this isolated branch. Source/result framing and configuration tests pass;
-the diskless lifetime primitive is qualified. The first real Windows guest is
-being initialized. No runner is registered or advertised and no hosted
-Orthomap artifact exists.
+Status (2 November 2026): a dedicated offline HCS runner completed a hosted
+Orthomap Windows build and produced an artifact. Native Windows channel,
+configuration, result-relay and process tests passed, including a 31-second
+output upload and VM cancellation/owner-death qualification. The standard
+Windows runner installer does not yet provision a VM image or install the HCS
+guest and preflight utilities; this remains an operator-prepared backend.
 
 ## Why another Windows boundary is needed
 
@@ -108,9 +109,8 @@ A matching human license acceptance record is mandatory. The guest also
 requires the machine Visual Studio `OptIn=0` policy before it can accept a job.
 No project code or host credential is sent during initialization.
 
-None of those local checks substitutes for actual offline Orthomap WinUI job,
-forced owner death/cancellation, clean subsequent job, service-account HCS
-qualification, hosted protocol execution and downloaded app verification.
+These local checks do not by themselves qualify a runner: validate the actual
+workload, service account, result download and recovery on the target machine.
 
 ## Boot and diagnostic progress (2 November 2026)
 

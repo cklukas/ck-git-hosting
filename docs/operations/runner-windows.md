@@ -9,6 +9,15 @@ AppContainer (LPAC). Job networking is denied. The main host retains the logs
 and artifacts. See [Install and connect CI runners](runner-setup.md) for the
 roles of the main host and runners, including Linux installation.
 
+The default backend is LPAC. An additional offline Hyper-V/HCS backend can run
+workloads that need a full Windows guest, such as WinUI builds. It is currently
+operator-prepared: the standard runner installer does **not** provision its VM
+images or include the guest and HCS preflight tools. For its isolation model,
+required configuration and operator prerequisites, see the
+[Windows VM backend design](https://github.com/cklukas/ck-git-hosting/blob/master/design/windows-vm-ci.md#operator-selection-and-admission).
+Do not select it until the images and guest service have been prepared and
+qualified on that host.
+
 ## Before you start
 
 The runner does not require a particular compiler or build system. Stage only
