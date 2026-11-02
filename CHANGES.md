@@ -1,5 +1,22 @@
 # Changes
 
+## 0.10.1 — 2026-11-02
+
+This patch release makes the accumulated CI and integration fixes portable
+across the supported build paths while retaining the complete 0.10.0 feature
+set, including the ckdocs portal selector links and the experimental native
+macOS sandbox.
+
+### CI portability and integration
+
+- Make-based release builds now include all dependency-review, VM, native
+  macOS, and Darwin VM-host sources and tests.
+- macOS VM protocol fixtures use portable thread primitives and the required
+  private filesystem permissions.
+- macOS remote runners honor explicit `ci_allow_degraded=true`; VM storage
+  preflight is applied only when VM execution is selected.
+- Bulk-publish integration failures now emit fixture diagnostics in CI.
+
 ## 0.10.0 — 2026-11-02
 
 This release combines the accumulated Windows, CI, runner, macOS, and ckdocs
