@@ -16,10 +16,10 @@ std::uint64_t epoch(){return static_cast<std::uint64_t>(std::chrono::duration_ca
 // All guest-supplied execution metadata is replaced by host-owned values.
 // A guest completion remains provisional; this adapter never calls finish.
 class ReportingSink final:public CiResultSink {
- CiResultSink& sink_;std::string runner_;CiExecutionReport report_;bool started_=false;
- CiRunRecord trusted(CiRunRecord r)const{r.runner=runner_;r.execution=report_;return r;}
+ CiResultSink& sink_;std::string runner_;CiExecutionReport report_;std::uint64_t started_epoch_;bool started_=false;
+ CiRunRecord trusted(CiRunRecord r)const{r.runner=runner_;r.execution=report_;r.started_epoch_seconds=started_epoch_;r.heartbeat_epoch_seconds=epoch();return r;}
  public:
- ReportingSink(CiResultSink& sink,std::string runner,CiExecutionReport report):sink_(sink),runner_(std::move(runner)),report_(std::move(report)){}
+ ReportingSink(CiResultSink& sink,std::string runner,CiExecutionReport report,std::uint64_t started):sink_(sink),runner_(std::move(runner)),report_(std::move(report)),started_epoch_(started){}
  void runStarted(const CiRunRecord& r)override{if(!started_){sink_.runStarted(trusted(r));started_=true;}}
  void stepStarted(const CiRunRecord& r,std::size_t n)override{sink_.stepStarted(trusted(r),n);}
  void appendLog(std::size_t n,std::string_view b)override{sink_.appendLog(n,b);}
@@ -40,7 +40,7 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
  auto disks=images.createWorkspace(options.build_root);const auto root=disks.os_disk.parent_path();
  CiRunRecord record;record.run_id=prepared.job.job_id;record.parent_run_id=prepared.job.parent_run_id;record.workflow_job=prepared.job.workflow_job;record.project_name=prepared.job.project_name;record.ref=prepared.job.ref;record.commit_id=prepared.job.commit_id;record.attempt=prepared.job.attempt;record.runner=options.runner;record.status=CiRunStatus::Running;record.started_epoch_seconds=epoch();
  const CiExecutionReport execution{"windows","x64","hyperv-hcs","denied",static_cast<std::uint64_t>(disks.memory_mb)*1024*1024,0,options.timeout_seconds};
- record.execution=execution;ReportingSink reporting(sink,options.runner,execution);std::unique_ptr<HcsCiVm> vm;
+ const auto host_started=record.started_epoch_seconds;record.execution=execution;ReportingSink reporting(sink,options.runner,execution,host_started);std::unique_ptr<HcsCiVm> vm;
  auto heartbeat=std::chrono::steady_clock::now();
  const auto pulse=[&]{sink.tick();auto now=std::chrono::steady_clock::now();if(now-heartbeat>=std::chrono::seconds(1)){reporting.heartbeat(record);heartbeat=now;}};
  const auto keep=[&]{pulse();return !sink.leaseLost() && !sink.cancelRequested();};
@@ -65,7 +65,7 @@ CiRunRecord executeWindowsHcsJob(const CiPreparedJob& prepared,const CiExecution
  // check preserves disks and escapes to the daemon's fatal refusal path.
  if(vm && !vm->stop([&]{pulse();return true;}))throw std::runtime_error("HCS shutdown unconfirmed; workspace retained, runner must stop");
  vm.reset();WindowsVmImages::cleanup(root,disks.id);
- record.finished_epoch_seconds=record.heartbeat_epoch_seconds=epoch();
+ record.started_epoch_seconds=host_started;record.finished_epoch_seconds=record.heartbeat_epoch_seconds=epoch();
  if(sink.leaseLost())throw std::runtime_error("HCS job lease lost; VM stopped and no terminal result written");
  return sink.finish(record);
 }

@@ -1,0 +1,112 @@
+{
+  "status": "incomplete",
+  "scope": "Local Windows HCS backend development, not hosted CI or full WinUI artifact qualification",
+  "verified_build": {
+    "source_manifest_sha256": "632d6fcf61ee36b6bb77a789872a65556473410f770f141bb6014aa1e1106660",
+    "outputs": [
+      {
+        "sha256": "c61229d42d977856b3d5a64883c0553db1cebafbd76615e33486507fbe00d34d",
+        "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-host-check.exe"
+      },
+      {
+        "sha256": "c0a62a8f48c2be8460a0b349ee0e88396bad2376e0145da8afc88e39c0f507f4",
+        "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ck-ci-runnerd.exe"
+      },
+      {
+        "sha256": "5950632d4d99f16f762eef7ce86a2e1c525f006e22faee31d3a25f72da317f62",
+        "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-guest.exe"
+      },
+      {
+        "sha256": "310859bfb58409b831a62dad8645127dce62d0c66b74fa07463af48b8149c491",
+        "path": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-hcs-self-build.exe"
+      }
+    ],
+    "baseline": "Prior clean ckgit executor/launcher build with MSVC14.44 took 429.687s; targets differ. Verify compiled inputs/cache hits rather than infer freshness from duration.",
+    "base_commit": "7d6d1308e0dccc7697cb83b34f0055db86128ee4",
+    "source_archive_sha256": "31d4f619e56798fca61e8d6d8c53c366546351dde5da5e579e146c607bc41503",
+    "started_utc": "2026-11-02T15:00:01.7148877Z",
+    "elapsed_seconds": 87.3641038,
+    "scope": "Guest mount diagnostic, clean integration-service shutdown and operator build fixture; protocol/config tests; not full CI qualification",
+    "target": "Release/MSVC Windows VM protocol tests",
+    "finished_utc": "2026-11-02T15:01:29.0789915Z",
+    "status": "passed",
+    "steps": [
+      {
+        "pid": 97792,
+        "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+        "arguments": "-E tar xf \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-source-r17-overlay.tar\"",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T15:00:01.7528008Z",
+        "finished_at_utc": "2026-11-02T15:00:03.8076490Z",
+        "elapsed_seconds": 2.0601696,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-extract.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-extract.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-extract.log"
+      },
+      {
+        "pid": 96228,
+        "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+        "arguments": "-S \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-source-r1\" -B \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \"-DCMAKE_MAKE_PROGRAM=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/ninja/ninja.exe\" \"-DCMAKE_C_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/vs/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\" \"-DCMAKE_CXX_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/vs/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\" \"-DCMAKE_RC_COMPILER=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/sdk/bin/10.0.26100.0/x64/rc.exe\" \"-DCMAKE_MT=V:/ProgramData/ckgit-runner/orthomap-toolchain-20261102/sdk/bin/10.0.26100.0/x64/mt.exe\" -DCKGIT_BUILD_VERSION=0.9.0+windows-vm-protocol-wip",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T15:00:03.8611192Z",
+        "finished_at_utc": "2026-11-02T15:00:19.2772946Z",
+        "elapsed_seconds": 15.4154205,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-configure.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-configure.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-configure.log"
+      },
+      {
+        "pid": 95760,
+        "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\cmake.exe",
+        "arguments": "--build \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" --target ck-ci-runnerd ckgit-windows-vm-host-check ckgit-windows-vm-guest ckgit-windows-hcs-self-build ckgit-windows-vm-config-test --parallel 4",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T15:00:19.3784665Z",
+        "finished_at_utc": "2026-11-02T15:01:09.3011554Z",
+        "elapsed_seconds": 49.9221195,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-build.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-build.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-build.log"
+      },
+      {
+        "pid": 97180,
+        "executable": "V:\\ProgramData\\ckgit-runner\\orthomap-toolchain-20261102\\cmake\\bin\\ctest.exe",
+        "arguments": "--test-dir \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\" -R \"^windows-vm-(channel|relay|config)$\" --output-on-failure --output-junit \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-junit.xml\"",
+        "exit_code": 0,
+        "started_at_utc": "2026-11-02T15:01:21.4483807Z",
+        "finished_at_utc": "2026-11-02T15:01:29.0619034Z",
+        "elapsed_seconds": 7.6141708999999995,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-tests.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-tests.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\r17-tests.log"
+      }
+    ]
+  },
+  "actual_guest_ipc": {
+    "run": {
+      "scope": "Actual fresh HCS VM with documented file-style socket access mask and synthetic console, no host GPU or shares",
+      "result": {
+        "pid": 68616,
+        "executable": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-vm-native-r1\\bin\\ckgit-windows-vm-host-check.exe",
+        "arguments": "--initialize-base \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-base-offline-r2\\os.vhdx\" \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-base-offline-r2\\work-template.vhdx\" \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-sdk-vhd\\toolchain.vhdx\" \"V:\\tmp\\orthomap-ci-enable-20261102\\windows-license-acceptance.json\"",
+        "exit_code": 1,
+        "started_at_utc": "2026-11-02T08:16:31.3138026Z",
+        "finished_at_utc": "2026-11-02T08:20:32.7622219Z",
+        "elapsed_seconds": 241.4579574,
+        "stdout_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-base-offline-r2\\first-boot-r16.log.stdout",
+        "stderr_log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-base-offline-r2\\first-boot-r16.log.stderr",
+        "log": "V:\\tmp\\orthomap-ci-enable-20261102\\windows-base-offline-r2\\first-boot-r16.log"
+      },
+      "guest_identity_record_sha256": "5bbb6fd76a3c7867ee4ac71eb2923a674062fa6ada334cbed10da29d8da33819",
+      "host_sha256": "d3f3d0ee101faa0c58317d6ad48f9b8a843c6fc8c8dcf87972bda4f8a3011fca"
+    },
+    "result": "Host connected to exact guest Hyper-V service; received bounded initialization Error frame: cannot mount guest disk role",
+    "no_job_or_credentials_sent": true
+  },
+  "pending": [
+    "Resolve guest development disk mount",
+    "Confirm clean guest shutdown",
+    "Run full WinUI build and portable tests in disposable guest",
+    "Qualify teardown and service identity",
+    "Register runner, trigger hosted build and verify downloaded artifact"
+  ]
+}

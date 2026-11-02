@@ -27,3 +27,7 @@ if(BUILD_TESTING)
   add_test(NAME windows-vm-config COMMAND ckgit-windows-vm-config-test)
   set_tests_properties(windows-vm-config PROPERTIES TIMEOUT 15)
 endif()
+
+# Explicit operator-only qualification; never an ordinary CTest.
+add_executable(ckgit-windows-hcs-self-build ../../tests/platform/windows_hcs_self_build.cpp)
+target_link_libraries(ckgit-windows-hcs-self-build PRIVATE ckgit_windows_vm)

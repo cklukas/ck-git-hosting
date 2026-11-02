@@ -111,3 +111,28 @@ No project code or host credential is sent during initialization.
 None of those local checks substitutes for actual offline Orthomap WinUI job,
 forced owner death/cancellation, clean subsequent job, service-account HCS
 qualification, hosted protocol execution and downloaded app verification.
+
+## Boot and diagnostic progress (2 November 2026)
+
+The dedicated Hyper-V socket application is registered by the explicit operator
+script `scripts/register-windows-vm-socket.ps1`; the broker checks that exact
+service GUID and ownership before claims. Socket descriptors use file rights
+and grant host connections only to the owning broker SID. Guest binding uses
+`HV_GUID_PARENT`. Readiness checks report bounded pre-job errors over this
+channel instead of silently failing before the host can connect.
+
+The R16 offline initialization reached the actual guest service and returned
+`cannot mount guest disk role`; no source, job or credential was sent. R17 adds
+the exact mount path and Win32 code, host-owned result timestamps, synthetic
+console diagnostics and explicit integration-service shutdown/time sync. The
+MSVC build compiled four changed C++ inputs plus the operator qualification
+fixture, and all three channel/relay/config tests passed. R17 actual guest
+readiness and clean shutdown are still unqualified.
+
+Only initialization may retain a failed pre-job development disk for trusted
+operator diagnostics after VM absence is confirmed. A subsequent initialization
+recovers that exact owned workspace. Ordinary job disks are never mounted by
+the host after execution and are removed only after confirmed VM absence.
+
+`ckgit-windows-hcs-self-build` is an explicit operator-only full-workflow fixture;
+it is not registered as a CTest and its existence is not full-job validation.

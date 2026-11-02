@@ -8,6 +8,7 @@ namespace ckgit {
 // Owns Winsock and one non-inheritable, nonblocking Hyper-V socket.
 class WindowsVmConnection {
  public:
+ static void preflight();
  explicit WindowsVmConnection(const std::string& runtime_id,
   std::chrono::milliseconds timeout,const std::function<bool()>& keep={});
  ~WindowsVmConnection();

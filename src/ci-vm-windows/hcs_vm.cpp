@@ -45,14 +45,14 @@ std::string normalized(std::string value){std::transform(value.begin(),value.end
 void ordinaryFile(const fs::path& path){if(!path.is_absolute())throw std::runtime_error("HCS disks require absolute paths");for(auto p=path;!p.empty();p=p.parent_path()) {auto attributes=GetFileAttributesW(p.c_str());if(attributes==INVALID_FILE_ATTRIBUTES || (attributes&FILE_ATTRIBUTE_REPARSE_POINT))throw std::runtime_error("missing or redirected HCS disk path");if(p==p.root_path())break;}if(!fs::is_regular_file(path) || path.extension()!=L".vhdx")throw std::runtime_error("HCS requires ordinary VHDX files");}
 bool gone(std::string_view id,const std::function<bool()>& keep){const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(30);const auto query=utf8ToWide("{\"Ids\":["+json(id)+"]}");for(;;){Operation op;auto document=op.finish(HcsEnumerateComputeSystems(query.c_str(),op.value),keep);if(normalized(wideToUtf8(document)).find(normalized(std::string(id)))==std::string::npos)return true;if(keep && !keep())return false;if(std::chrono::steady_clock::now()>=end)return false;std::this_thread::sleep_for(std::chrono::milliseconds(100));}}
 std::string configuration(const HcsCiVmOptions* options){
- const std::string allowed="D:P(A;;GA;;;"+sid()+")";
+ const std::string allowed="D:P(A;;FA;;;"+sid()+")";
  const std::string boot=options?",\"BootThis\":{\"DeviceType\":\"ScsiDrive\",\"DevicePath\":\"a937f420-75b6-4eaa-9ae0-99a0e56f88ad\",\"DiskNumber\":0}":"";
- std::string value="{\"SchemaVersion\":{\"Major\":2,\"Minor\":3},\"Owner\":\"ckgit-windows-ci\",\"ShouldTerminateOnLastHandleClosed\":true,\"VirtualMachine\":{\"StopOnReset\":true,\"Chipset\":{\"Uefi\":{\"StopOnBootFailure\":false"+boot+"}},\"ComputeTopology\":{\"Memory\":{\"SizeInMB\":"+std::to_string(options?options->memory_mb:256)+",\"AllowOvercommit\":false},\"Processor\":{\"Count\":"+std::to_string(options?options->processors:1)+"}}";
+ std::string value="{\"SchemaVersion\":{\"Major\":2,\"Minor\":5},\"Owner\":\"ckgit-windows-ci\",\"ShouldTerminateOnLastHandleClosed\":true,\"VirtualMachine\":{\"StopOnReset\":true,\"Chipset\":{\"Uefi\":{\"StopOnBootFailure\":false"+boot+"}},\"ComputeTopology\":{\"Memory\":{\"SizeInMB\":"+std::to_string(options?options->memory_mb:256)+",\"AllowOvercommit\":false},\"Processor\":{\"Count\":"+std::to_string(options?options->processors:1)+"}}";
  if(options){
   if(options->memory_mb<1024 || options->memory_mb>32768 || !options->processors || options->processors>16)throw std::runtime_error("HCS resources outside supported operator limits");
   std::array<fs::path,3> paths{options->os_disk,options->work_disk,options->tools_disk};for(const auto& path:paths)ordinaryFile(path);
   if(fs::equivalent(paths[0],paths[1]) || fs::equivalent(paths[0],paths[2]) || fs::equivalent(paths[1],paths[2]))throw std::runtime_error("CI VM disk roles overlap");
-  value+=",\"Devices\":{\"Scsi\":{\"a937f420-75b6-4eaa-9ae0-99a0e56f88ad\":{\"Attachments\":{";
+  value+=",\"Services\":{\"Shutdown\":{},\"Timesync\":{},\"Heartbeat\":{}},\"Devices\":{\"VideoMonitor\":{\"HorizontalResolution\":1280,\"VerticalResolution\":720},\"Scsi\":{\"a937f420-75b6-4eaa-9ae0-99a0e56f88ad\":{\"Attachments\":{";
   for(std::size_t i=0;i<paths.size();++i){if(i)value+=',';value+=json(std::to_string(i))+":{\"Type\":\"VirtualDisk\",\"Path\":"+json(pathToUtf8(paths[i]))+",\"ReadOnly\":"+(i==2?"true":"false")+"}";}
   value+="}}},\"HvSocket\":{\"HvSocketConfig\":{\"DefaultBindSecurityDescriptor\":\"D:P\",\"DefaultConnectSecurityDescriptor\":\"D:P\",\"ServiceTable\":{"+json(kWindowsVmServiceGuid)+":{\"BindSecurityDescriptor\":\"D:P\",\"ConnectSecurityDescriptor\":"+json(allowed)+",\"AllowWildcardBinds\":false}}}}}";
  }
@@ -67,7 +67,7 @@ struct HcsCiVm::State {
   if(options){if(!validId(options->id))throw std::runtime_error("broker must supply a journaled fresh VM GUID");id=options->id;}
   auto config=utf8ToWide(configuration(options));auto identity=utf8ToWide(id);
   {Operation op;op.finish(HcsCreateComputeSystem(identity.c_str(),config.c_str(),op.value,nullptr,&system),keep);}
-  {Operation op;op.finish(HcsStartComputeSystem(system,op.value,nullptr),keep);}
+  {Operation op;op.finish(HcsStartComputeSystem(system,op.value,nullptr),keep,std::chrono::seconds(options?120:30));}
   Operation query;auto properties=query.finish(HcsGetComputeSystemProperties(system,query.value,L"{\"PropertyTypes\":[\"TerminateOnLastHandleClosed\"]}"),keep);
   if(!std::regex_search(properties,std::wregex(L"\"TerminateOnLastHandleClosed\"\\s*:\\s*true")))throw std::runtime_error("HCS did not attest kill-on-owner-close");
   runtime=field(properties,L"RuntimeId");GUID parsed{};if(FAILED(CLSIDFromString(utf8ToWide("{"+runtime+"}").c_str(),&parsed)))throw std::runtime_error("invalid HCS runtime identity");
@@ -92,7 +92,7 @@ HcsCiVm::~HcsCiVm(){if(state_){try{state_->stop();}catch(...){}}}
 const std::string& HcsCiVm::id()const{return state_->id;}
 const std::string& HcsCiVm::runtimeId()const{return state_->runtime;}
 bool HcsCiVm::running()const{if(!state_->system)return false;try{Operation query;auto properties=query.finish(HcsGetComputeSystemProperties(state_->system,query.value,nullptr));return field(properties,L"State")=="Running";}catch(...){return false;}}
-bool HcsCiVm::shutdownClean(){if(state_->confirmed)return true;if(!state_->system)return false;try{Operation op;op.finish(HcsShutDownComputeSystem(state_->system,op.value,nullptr),{},std::chrono::seconds(120));if(!gone(state_->id,{}))return false;HcsCloseComputeSystem(state_->system);state_->system=nullptr;state_->confirmed=true;return true;}catch(...){return false;}}
+bool HcsCiVm::shutdownClean(){if(state_->confirmed)return true;if(!state_->system)return false;try{Operation op;op.finish(HcsShutDownComputeSystem(state_->system,op.value,LR"({"Mechanism":"IntegrationService","Type":"Shutdown","Force":false,"Reason":"Initialize offline CI base"})"),{},std::chrono::seconds(120));if(!gone(state_->id,{}))return false;HcsCloseComputeSystem(state_->system);state_->system=nullptr;state_->confirmed=true;return true;}catch(...){return false;}}
 bool HcsCiVm::stop(const std::function<bool()>& keep){return state_->stop(keep);}
 std::string HcsCiVm::freshId(){return guid();}
 bool HcsCiVm::confirmedAbsent(const std::string& id){if(!validId(id))throw std::runtime_error("invalid recovery VM identity");return gone(id,{});}

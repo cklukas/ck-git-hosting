@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 #include "ckgit/ci_remote.hpp"
 #include "../ci-vm-windows/executor.hpp"
+#include "../ci-vm-windows/host_connection.hpp"
 #include "ckgit/windows_ci_executor.hpp"
 #include "ckgit/windows_sandbox.hpp"
 #include "ckgit/windows.hpp"
@@ -84,6 +85,7 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
   // Verify the required broker privileges before claiming a lease. Profiles
   // are disposable; there is no fallback to an unrestricted process.
   if (hcs) {
+    ckgit::WindowsVmConnection::preflight();
     fs::create_directories(vm_jobs);ordinaryDirectory(vm_jobs);
     ckgit::WindowsVmImages::recover(vm_jobs);
     images = std::make_unique<ckgit::WindowsVmImages>(*config.windows_vm_profile, [] { return !stop_requested.load(); });
@@ -346,7 +348,7 @@ int superviseServiceWorker() {
   if (ResumeThread(child.thread) == static_cast<DWORD>(-1)) throw std::runtime_error("cannot start service worker");
   std::cout << "Service worker pid=" << info.dwProcessId << '\n';
   bool running = false, stopping = false;
-  auto deadline = std::chrono::steady_clock::now() + (config.windows_backend == "hyperv-hcs" ? std::chrono::seconds(1200) : std::chrono::seconds(60));
+  auto deadline = std::chrono::steady_clock::now() + (config.windows_backend == "hyperv-hcs" ? std::chrono::seconds(3600) : std::chrono::seconds(60));
   auto startup_pulse = std::chrono::steady_clock::now();
   for (;;) {
     const auto exited = WaitForSingleObject(child.process, 50);

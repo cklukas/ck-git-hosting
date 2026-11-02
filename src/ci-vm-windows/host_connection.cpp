@@ -14,12 +14,18 @@ struct WindowsVmConnection::State {
  bool winsock=false;SOCKET socket=INVALID_SOCKET;
  ~State(){if(socket!=INVALID_SOCKET)closesocket(socket);if(winsock)WSACleanup();}
 };
+void WindowsVmConnection::preflight(){
+ const auto path=L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization\\GuestCommunicationServices\\8f22bd55-d776-43ea-bd82-93b2ee39f6da";
+ wchar_t name[128]{},owner[128]{};DWORD bytes=sizeof(name);
+ if(RegGetValueW(HKEY_LOCAL_MACHINE,path,L"ElementName",RRF_RT_REG_SZ,nullptr,name,&bytes)!=ERROR_SUCCESS || std::wstring(name)!=L"ck-git offline CI")throw std::runtime_error("operator must register the dedicated ck-git Hyper-V socket application");
+ bytes=sizeof(owner);if(RegGetValueW(HKEY_LOCAL_MACHINE,path,L"Owner",RRF_RT_REG_SZ,nullptr,owner,&bytes)!=ERROR_SUCCESS || std::wstring(owner)!=L"ckgit-windows-ci")throw std::runtime_error("Hyper-V socket service GUID ownership differs");
+}
 WindowsVmConnection::WindowsVmConnection(const std::string& runtime,
  std::chrono::milliseconds timeout,const std::function<bool()>& keep):state_(std::make_unique<State>()){
- WSADATA data{};if(WSAStartup(MAKEWORD(2,2),&data))throw std::runtime_error("host WSAStartup failed");state_->winsock=true;
+ preflight();WSADATA data{};if(WSAStartup(MAKEWORD(2,2),&data))throw std::runtime_error("host WSAStartup failed");state_->winsock=true;
  SOCKADDR_HV address{};address.Family=AF_HYPERV;
  if(FAILED(CLSIDFromString(utf8ToWide("{"+runtime+"}").c_str(),&address.VmId)) || FAILED(CLSIDFromString(utf8ToWide("{"+std::string(kWindowsVmServiceGuid)+"}").c_str(),&address.ServiceId)))throw std::runtime_error("invalid private VM endpoint identity");
- const auto end=std::chrono::steady_clock::now()+timeout;
+ int last_error=0;const auto end=std::chrono::steady_clock::now()+timeout;
  while(std::chrono::steady_clock::now()<end){
   if(keep && !keep())throw std::runtime_error("private VM connection cancelled");
   state_->socket=WSASocketW(AF_HYPERV,SOCK_STREAM,HV_PROTOCOL_RAW,nullptr,0,WSA_FLAG_NO_HANDLE_INHERIT);
@@ -36,11 +42,11 @@ WindowsVmConnection::WindowsVmConnection(const std::string& runtime,
     if(!error)return;break;
    }
   }
-  closesocket(state_->socket);state_->socket=INVALID_SOCKET;
-  if(error!=WSAECONNREFUSED && error!=WSAETIMEDOUT && error!=WSAEHOSTUNREACH && error!=WSAENETUNREACH)throw std::runtime_error("Hyper-V connection rejected: "+std::to_string(error));
+  last_error=error;closesocket(state_->socket);state_->socket=INVALID_SOCKET;
+  if(error!=WSAEADDRNOTAVAIL && error!=WSAEACCES && error!=WSAECONNREFUSED && error!=WSAETIMEDOUT && error!=WSAEHOSTUNREACH && error!=WSAENETUNREACH)throw std::runtime_error("Hyper-V connection rejected: "+std::to_string(error));
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
  }
- throw std::runtime_error("private VM service did not become ready before deadline");
+ throw std::runtime_error("private VM service did not become ready before deadline; last socket error "+std::to_string(last_error));
 }
 WindowsVmConnection::~WindowsVmConnection()=default;
 CiVmSocket WindowsVmConnection::socket()const{return static_cast<CiVmSocket>(state_->socket);}
