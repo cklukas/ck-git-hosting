@@ -23,7 +23,10 @@ namespace ckgit {
 // grouped into tabs, and where each lands in the output. Rendering (WP5)
 // builds on this without touching the disk here; loadDocsSite only reads.
 
-inline constexpr std::size_t kMaximumDocsPages = 4096;
+// A documentation site may retain a large searchable reference catalogue
+// outside its short top-level navigation. Keep an explicit ceiling so source
+// discovery and rendering remain bounded, while accommodating that catalogue.
+inline constexpr std::size_t kMaximumDocsPages = 8192;
 inline constexpr std::size_t kMaximumDocsNavDepth = 4;     // tab = 1, groups below it
 inline constexpr std::size_t kMaximumDocsNavEntries = 4096;
 inline constexpr std::size_t kMaximumDocsLinks = 8;

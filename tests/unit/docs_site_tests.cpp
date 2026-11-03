@@ -413,6 +413,22 @@ void testEdges() {
           "a directory that would be a depth-4 group is listed flat inside its parent, in its place");
 }
 
+void testPageCeiling() {
+  Scratch scratch;
+  const auto root = scratch.root / "repo";
+  for (std::size_t index = 0; index < ckgit::kMaximumDocsPages; ++index) {
+    write(root / "docs" / ("page-" + std::to_string(index) + ".md"), "# Page\n");
+  }
+  const auto accepted = ckgit::loadDocsSite(root, ckgit::DocsConfig{}, nullptr);
+  require(accepted.pages.size() == ckgit::kMaximumDocsPages,
+          "the documented page ceiling is accepted exactly");
+
+  write(root / "docs" / "one-too-many.md", "# One too many\n");
+  const auto error = loadError(root, ckgit::DocsConfig{});
+  require(contains(error, "more than " + std::to_string(ckgit::kMaximumDocsPages) + " pages"),
+          "one page above the documented ceiling is rejected");
+}
+
 // The repository this test suite belongs to, when the build points at it.
 void testThisRepository() {
   const char* configured = std::getenv("CKGIT_SOURCE_ROOT");
@@ -1525,6 +1541,7 @@ void testDocsSite() {
   testFrontMatter();
   testDiscovery();
   testEdges();
+  testPageCeiling();
   testBuild();
   testFindingsAndLeftOutPages();
   testListings();

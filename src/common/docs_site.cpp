@@ -1386,7 +1386,9 @@ DocsSiteModel loadTree(const fs::path& root, const DocsConfig& config, std::vect
   if (selected.empty() && original == nullptr) {
     siteError("no Markdown pages found under '" + (model.source.empty() ? std::string(".") : model.source) + "'");
   }
-  if (selected.size() > kMaximumDocsPages) siteError("the site has more than 4096 pages");
+  if (selected.size() > kMaximumDocsPages) {
+    siteError("the site has more than " + std::to_string(kMaximumDocsPages) + " pages");
+  }
   if (home.empty() && original == nullptr) home = selected.front();
 
   // Each page's metadata and output path.
