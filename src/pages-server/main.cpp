@@ -104,6 +104,10 @@ void handle(int fd, const std::filesystem::path& pages_root) {
     sendError(fd, 400, "Bad Request", false);
     return;
   }
+  if (request->method == ckgit::HttpMethod::kPost) {
+    sendError(fd, 405, "Method Not Allowed", false);
+    return;
+  }
   const bool head_only = request->method == ckgit::HttpMethod::kHead;
 
   std::string_view target = request->target;
@@ -191,6 +195,7 @@ int serve(const std::filesystem::path& config_path) {
   action.sa_handler = onStop;
   ::sigaction(SIGTERM, &action, nullptr);
   ::sigaction(SIGINT, &action, nullptr);
+  std::signal(SIGPIPE, SIG_IGN);
 
   unsigned short bound_port = port;
   sockaddr_in bound{};

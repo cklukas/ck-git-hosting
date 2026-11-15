@@ -87,6 +87,7 @@ void requestStop(int) {
 }
 
 void installSignalHandlers() {
+  std::signal(SIGPIPE, SIG_IGN);
   struct sigaction action {};
   action.sa_handler = requestStop;
   sigemptyset(&action.sa_mask);

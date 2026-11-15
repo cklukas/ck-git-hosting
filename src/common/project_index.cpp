@@ -757,6 +757,11 @@ class ProjectIndex::Impl {
       if (const auto found = records_.find(name); found != records_.end()) {
         summary.checkouts = found->second.checkouts;
         summary.events = found->second.events;
+        summary.ci_runs = found->second.ci_runs;
+        summary.dependency_requests = found->second.dependency_requests;
+        summary.dependency_requests_truncated = found->second.dependency_requests_truncated;
+        summary.dependency_error = found->second.dependency_error;
+        summary.releases = found->second.releases;
       }
     }
     records_[name] = std::move(summary);

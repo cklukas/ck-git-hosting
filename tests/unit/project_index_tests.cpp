@@ -164,7 +164,7 @@ void testRefreshPriority() {
       "  fi\nfi\nexec " << shellQuote(real_git) << " \"$@\"\n";
   requireIndex(chmod((bin / "git").c_str(), 0700) == 0, "could not enable fixture Git wrapper");
   const PathOverride path(bin);
-  ckgit::ProjectIndex index(fixture.repos);
+  ckgit::ProjectIndex index(fixture.repos, fixture.state);
   index.refresh("priority-z");
   index.start();
   const auto startup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -196,12 +196,24 @@ void testRefreshPriority() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   const bool paused = std::filesystem::exists(entered);
+  const std::string race_hash(64, 'b');
+  const std::string race_lock =
+      "version: 1\nplatform: windows\narchitecture: x64\nabi: x64-windows\ninputs:\n"
+      "  - path: vcpkg.json\n    sha256: " + race_hash + "\npackages:\n"
+      "  - name: race-pkg\n    version: 1\n    registry: vcpkg\n    sha256: " + race_hash +
+      "\n    recipe_sha256: " + race_hash + "\n    direct: true\n    needs: []\n";
+  const auto race_request_id = ckgit::registerCiDependencyRequest(fixture.state, "priority-a", race_lock);
+  index.refreshMetadata("priority-a");
   index.refresh("priority-z");
   // Always release and join before assertions, including failure paths.
   std::ofstream(release).close();
   sweeper.join();
   if (sweep_error) std::rethrow_exception(sweep_error);
   requireIndex(paused, "sweep reached its deterministic enqueue point");
+  const auto priority_a = requireProject(index, "priority-a");
+  requireIndex(priority_a.dependency_requests.size() == 1 &&
+                   priority_a.dependency_requests[0].lock.sha256 == race_request_id,
+               "concurrent metadata refresh during rebuild preserves non-checkout metadata");
   std::ifstream sweep_log(log);
   std::string second;
   std::getline(sweep_log, first);

@@ -503,6 +503,10 @@ bool handleServeConnection(net::Socket fd, const fs::path& site, LiveState* live
     sendServeError(fd, 400, "Bad Request", false);
     return false;
   }
+  if (request->method == ckgit::HttpMethod::kPost) {
+    sendServeError(fd, 405, "Method Not Allowed", false);
+    return false;
+  }
   const bool head_only = request->method == ckgit::HttpMethod::kHead;
   std::string_view target = request->target;
   const auto query = target.find_first_of("?#");

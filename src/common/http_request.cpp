@@ -60,17 +60,21 @@ bool isSafeTarget(std::string_view target) {
            return character >= 0x21 && character <= 0x7e && character != '\\' &&
                   character != '#' && character != '?';
          }) && (target.find('%') == std::string_view::npos ||
-                 parseHttpRoute(target).kind != RouteKind::kNotFound);
+                 parseHttpRoute(target).kind != RouteKind::kNotFound ||
+                 decodePathSegment(target).has_value());
 }
 
 }  // namespace
 
 std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
-  if (request.size() < 4 || request.size() > kMaximumRequestBytes ||
-      request.substr(request.size() - 4) != "\r\n\r\n" ||
-      request.find("\r\n\r\n") != request.size() - 4) {
+  if (request.size() < 4 || request.size() > kMaximumRequestBytes) {
     return std::nullopt;
   }
+  const std::size_t header_end = request.find("\r\n\r\n");
+  if (header_end == std::string_view::npos) {
+    return std::nullopt;
+  }
+  request = request.substr(0, header_end + 4);
   for (std::size_t index = 0; index < request.size(); ++index) {
     const unsigned char character = request[index];
     if (character == '\r') {

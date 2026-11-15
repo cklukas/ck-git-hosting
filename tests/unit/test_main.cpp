@@ -297,6 +297,17 @@ void testHttpRequestParser() {
   const auto stripped_fragment = ckgit::parseReadOnlyHttpRequest("GET /by-name#frag HTTP/1.1\r\nHost: example.test\r\n\r\n");
   expect(stripped_fragment.has_value() && stripped_fragment->target == "/by-name",
          "a #fragment is stripped and the path still routes");
+  const auto encoded_pages = ckgit::parseReadOnlyHttpRequest(
+      "GET /demo/tags/%C3%BCbersicht%201.html HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  expect(encoded_pages.has_value() && encoded_pages->target == "/demo/tags/%C3%BCbersicht%201.html",
+         "canonical percent-encoded static site paths are accepted for ck-pagesd and ckdocs serve");
+  expect(!ckgit::parseReadOnlyHttpRequest("GET /demo/tags/%2Fevil.html HTTP/1.1\r\nHost: example.test\r\n\r\n").has_value() &&
+             !ckgit::parseReadOnlyHttpRequest("GET /demo/tags/%41.html HTTP/1.1\r\nHost: example.test\r\n\r\n").has_value(),
+         "encoded slashes and noncanonical escapes in static site paths are rejected");
+  const auto overread = ckgit::parseReadOnlyHttpRequest(
+      "GET / HTTP/1.1\r\nHost: example.test\r\n\r\nGET /second HTTP/1.1\r\nHost: example.test\r\n\r\n");
+  expect(overread.has_value() && overread->target == "/",
+         "socket chunk reads past the first header block still parse the first request");
 }
 
 void testCheckoutMetadata() {
