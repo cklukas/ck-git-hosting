@@ -18,10 +18,12 @@ struct DashboardResponse {
   // policy; the log-follow page sets a scoped policy that additionally permits
   // its nonce'd inline script and a same-origin EventSource connection.
   std::string csp;
+  std::string etag;
 };
 DashboardResponse renderDashboard(const Route& route, const ProjectSummary& project,
                                    const std::filesystem::path& repository,
-                                   std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25));
+                                   std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25),
+                                   std::string_view if_none_match = {});
 DashboardResponse renderDashboardError(const Route& route, const ProjectSummary& project,
                                         int status, const std::string& message);
 std::vector<std::string> renderGraphRows(const std::vector<WebCommit>& commits);

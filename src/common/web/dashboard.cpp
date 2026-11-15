@@ -101,19 +101,46 @@ std::pair<std::size_t, std::size_t> parseHunkStart(std::string_view line) {
   if (plus != std::string_view::npos) new_start = parseNum(line.substr(plus + 1));
   return {old_start, new_start};
 }
+bool etagMatches(std::string_view header, std::string_view etag) {
+  if (header.empty() || etag.empty()) return false;
+  std::size_t pos = 0;
+  while (pos < header.size()) {
+    const auto comma = header.find(',', pos);
+    auto token = header.substr(pos, comma == std::string_view::npos ? std::string_view::npos : comma - pos);
+    while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);
+    while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) token.remove_suffix(1);
+    if (token == "*" || token == etag) return true;
+    if (comma == std::string_view::npos) break;
+    pos = comma + 1;
+  }
+  return false;
+}
 std::string renderDiff(const ProcessResult& diff) {
   std::string out;
   if (diff.output_truncated) out += "<p class=\"notice\">Diff truncated at 512 KiB.</p>";
-  out += "<div class=\"diff-wrap\"><table class=\"diff\"><tbody>";
+  out += "<input class=\"diff-split\" id=\"diff-split\" type=\"checkbox\"><label class=\"diff-split-label\" for=\"diff-split\">Side-by-side diff</label>"
+         "<div class=\"diff-wrap\"><table class=\"diff\"><tbody>";
   auto text = std::string_view(diff.output);
   if (diff.output_truncated) { auto newline = text.rfind('\n'); text = text.substr(0, newline == std::string_view::npos ? 0 : newline + 1); }
   std::size_t file_index = 0, old_line = 0, new_line = 0;
   bool in_hunk = false;
+  enum class GroupState { Normal, DeltaRemove, DeltaAdd };
+  GroupState group = GroupState::Normal;
+  auto setGroup = [&](GroupState next) {
+    if (group == next) return;
+    if (next == GroupState::Normal) {
+      out += "</tbody><tbody>";
+    } else if (group == GroupState::Normal || (group == GroupState::DeltaAdd && next == GroupState::DeltaRemove)) {
+      out += "</tbody><tbody class=\"diff-delta\">";
+    }
+    group = next;
+  };
   Language lang = Language::None;
   while (!text.empty()) {
     auto end = text.find('\n'); if (end == std::string_view::npos) end = text.size();
     const auto line = text.substr(0, end);
     if (line.starts_with("diff --git ")) {
+      setGroup(GroupState::Normal);
       in_hunk = false;
       old_line = 0;
       new_line = 0;
@@ -122,6 +149,7 @@ std::string renderDiff(const ProcessResult& diff) {
       out += "<tr class=\"diff-file-header\" id=\"diff-file-" + std::to_string(file_index++) +
              "\"><td class=\"diff-num\" colspan=\"2\"></td><td class=\"diff-code\">" + escapePre(line) + "</td></tr>";
     } else if (line.starts_with("@@")) {
+      setGroup(GroupState::Normal);
       const auto [o, n] = parseHunkStart(line);
       old_line = o;
       new_line = n;
@@ -131,18 +159,22 @@ std::string renderDiff(const ProcessResult& diff) {
       std::string old_col, new_col, code_cell;
       const char* kind = "context";
       if (in_hunk && line.starts_with("+")) {
+        setGroup(GroupState::DeltaAdd);
         kind = "add";
         new_col = std::to_string(new_line++);
         code_cell = "+" + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
       } else if (in_hunk && line.starts_with("-")) {
+        setGroup(GroupState::DeltaRemove);
         kind = "remove";
         old_col = std::to_string(old_line++);
         code_cell = "-" + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
       } else if (in_hunk && line.starts_with(" ")) {
+        setGroup(GroupState::Normal);
         old_col = std::to_string(old_line++);
         new_col = std::to_string(new_line++);
         code_cell = " " + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
       } else {
+        setGroup(GroupState::Normal);
         kind = line.starts_with("+") ? "add" : line.starts_with("-") ? "remove" : "context";
         code_cell = escapePre(line);
       }
@@ -199,7 +231,8 @@ std::string latestLink(const ProjectSummary& project, const std::string& ref) {
 }
 }  // namespace
 DashboardResponse renderDashboard(const Route& route, const ProjectSummary& project,
-                                   const std::filesystem::path& repository, std::chrono::steady_clock::time_point deadline) {
+                                   const std::filesystem::path& repository, std::chrono::steady_clock::time_point deadline,
+                                   std::string_view if_none_match) {
   DashboardResponse response;
   if (route.kind == RouteKind::kCiRuns) {
     PageContext ci_context{{}, {}, "ci", {}, 0, 0};
@@ -225,12 +258,20 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
   const auto resolved = indexed_calendar ? ResolvedRef{project.head_id, route.ref, false} : repo.resolve(route.ref);
   const auto& id = resolved.id;
   const auto& ref = resolved.name;
+  const bool immutable_ref = isObjectId(route.ref);
   PageContext context{ref, id, sectionForRoute(route), route.path, route.year, route.month};
   if (route.kind == RouteKind::kRaw) {
     const auto e = repo.entry(id, route.path);
-    response.body = repo.blob(e, kMaximumRawBytes);
     response.raw = true; response.content_type = rawContentType(route.path);
     response.filename = e.name;
+    if (immutable_ref) {
+      response.etag = "\"raw-" + e.id + "-" + std::to_string(e.size) + "\"";
+      if (etagMatches(if_none_match, response.etag)) {
+        response.status = 304;
+        return response;
+      }
+    }
+    response.body = repo.blob(e, kMaximumRawBytes);
     return response;
   }
   if (route.kind == RouteKind::kOverview) {
@@ -264,6 +305,14 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
         response.body = pageLayout(project.name, "<p>" + link(response.location, "Open directory") + "</p>", &project, &context);
         return response;
       }
+      if (immutable_ref) {
+        response.etag = std::string("\"") + (route.kind == RouteKind::kSource ? "source-" : "blob-") +
+            id.substr(0, 16) + "-" + entry.id + "-" + project.head_id.substr(0, 12) + "\"";
+        if (etagMatches(if_none_match, response.etag)) {
+          response.status = 304;
+          return response;
+        }
+      }
     }
     const auto directory = is_tree ? route.path : parentPath(route.path);
     body += "<div class=\"toolbar\">" + refPicker(project, ref, context.section, route.path) +
@@ -293,6 +342,13 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
     body += "<div class=\"pagination\">" + link(sourceUrl(project.name, context.section, ref), "Newest") +
         (page.has_more ? link(sourceUrl(project.name, context.section, ref) + "/before/" + page.commits.back().id, "Older →") : "<span>End of history</span>") + "</div>";
   } else if (route.kind == RouteKind::kCommit) {
+    if (immutable_ref) {
+      response.etag = "\"commit-" + id + "-" + project.head_id.substr(0, 12) + "\"";
+      if (etagMatches(if_none_match, response.etag)) {
+        response.status = 304;
+        return response;
+      }
+    }
     const auto c = repo.commit(id);
     body += "<h1>" + htmlEscape(c.subject) + "</h1><p class=\"ref-context\">" + htmlEscape(refLabel(ref)) + "</p><p><code class=\"full-object-id\">" + htmlEscape(id) + "</code> · " +
         link(sourceUrl(project.name, "tree", id), "Browse files") + "</p><dl><dt>Author</dt><dd>" + htmlEscape(c.author) +

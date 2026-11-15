@@ -266,15 +266,29 @@ void testDashboard() {
                            "<span class=\"hl-n\">42</span>; }</span>") != std::string::npos,
           "C++ sources are highlighted in the file view, inside the line structure");
   require(highlighted.find("Commit history") != std::string::npos, "file preview includes commit history action");
-  const auto initial_commit_page = page("commit/" + initial).body;
+  const auto initial_commit_resp = page("commit/" + initial);
+  const auto& initial_commit_page = initial_commit_resp.body;
   require(initial_commit_page.find("class=\"diff-file-header\" id=\"diff-file-0\"") != std::string::npos &&
           initial_commit_page.find("<td class=\"diff-num\"></td><td class=\"diff-num\">1</td>") != std::string::npos &&
-          initial_commit_page.find("<span class=\"hl-a\">enabled</span>") != std::string::npos,
-          "commit diff renders file header, line number columns, and syntax-highlighted code");
+          initial_commit_page.find("<span class=\"hl-a\">enabled</span>") != std::string::npos &&
+          initial_commit_page.find("id=\"diff-split\"") != std::string::npos &&
+          initial_commit_page.find("class=\"diff-delta\"") != std::string::npos,
+          "commit diff renders file header, line number columns, side-by-side toggle, delta blocks, and syntax-highlighted code");
+  require(!initial_commit_resp.etag.empty(), "immutable commit route carries an ETag");
+  const auto commit_304 = ckgit::renderDashboard(ckgit::parseHttpRoute("/project/demo/commit/" + initial), *project,
+                                                 repos / "demo.git", std::chrono::steady_clock::now() + std::chrono::seconds(25),
+                                                 initial_commit_resp.etag);
+  require(commit_304.status == 304 && commit_304.body.empty(), "matching commit ETag returns 304 Not Modified without rendering body");
   auto svg = page("blob/" + resolved.id + ":diagram.svg").body;
   require(svg.find("<img src=") != std::string::npos && svg.find("RAW_ONLY") == std::string::npos, "SVG isolated as image");
   auto raw = page("raw/" + resolved.id + ":diagram.svg");
-  require(raw.raw && raw.content_type == "image/svg+xml" && raw.body.find("RAW_ONLY") != std::string::npos, "raw exact SVG bytes");
+  require(raw.raw && raw.content_type == "image/svg+xml" && raw.body.find("RAW_ONLY") != std::string::npos && !raw.etag.empty(),
+          "raw exact SVG bytes and immutable ETag");
+  const auto raw_304 = ckgit::renderDashboard(ckgit::parseHttpRoute("/project/demo/raw/" + resolved.id + ":diagram.svg"), *project,
+                                              repos / "demo.git", std::chrono::steady_clock::now() + std::chrono::seconds(25),
+                                              raw.etag);
+  require(raw_304.status == 304 && raw_304.body.empty() && raw_304.raw, "matching raw ETag returns 304 Not Modified without reading blob");
+  require(page("blob/heads/main:README.md").etag.empty(), "mutable branch route does not emit an immutable object ETag");
   require(page("blob/" + resolved.id + ":large.png").body.find("<img ") == std::string::npos, "large image never embedded");
   require(page("blob/" + resolved.id + ":large.txt").body.find("512 KiB") != std::string::npos, "bounded text preview");
   require(page("blob/" + resolved.id + ":binary.dat").body.find("Binary file") != std::string::npos, "NUL after 8KiB remains binary");
