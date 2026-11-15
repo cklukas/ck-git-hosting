@@ -592,6 +592,42 @@ void testLabelRouting() {
           "label lists parse and match");
 }
 
+void testIsolationClaimRouting() {
+  Fixture fixture;
+  auto job = sampleJob(ckgit::generateCiId());
+  job.runs_on = {"windows", "lpac"};
+  ckgit::enqueueCiJob(fixture.state, job);
+  ckgit::CiClaimOptions options;
+  options.runner = "windows-worker";
+  options.protocol_version = 2;
+  options.labels = {"windows", "lpac"};
+  require(!ckgit::claimCiJob(fixture.state, options), "legacy runner cannot claim reserved isolation");
+  options.isolation = "hyperv-hcs";
+  require(!ckgit::claimCiJob(fixture.state, options), "mislabelled VM cannot claim LPAC jobs");
+  options.isolation = "lpac";
+  const auto accepted = ckgit::claimCiJob(fixture.state, options);
+  require(accepted && accepted->job.job_id == job.job_id, "matching LPAC runner claims job");
+  require(ckgit::abandonCiJob(fixture.state, job.job_id, accepted->lease.token, options.runner), "fixture requeued");
+  options.labels = {"windows", "hyperv-hcs"};
+  require(!ckgit::claimCiJob(fixture.state, options), "LPAC runner with VM label cannot claim");
+  options.labels = {"windows", "lpac", "hyperv-hcs"};
+  require(!ckgit::claimCiJob(fixture.state, options), "contradictory labels cannot claim");
+  auto vm = sampleJob(ckgit::generateCiId(), "refs/heads/vm");
+  vm.runs_on = {"windows", "hyperv-hcs"};
+  ckgit::enqueueCiJob(fixture.state, vm);
+  options.labels = {"windows", "hyperv-hcs"};
+  options.isolation = "hyperv-hcs";
+  const auto vm_claim = ckgit::claimCiJob(fixture.state, options);
+  require(vm_claim && vm_claim->job.job_id == vm.job_id, "matching HCS runner claims VM job, not LPAC job");
+  require(!ckgit::ciIsolationLabelsMatch("lpac", {}, "hyperv-hcs"), "reserved runner name is checked");
+  require(!ckgit::ciIsolationLabelsMatch({}, {"lpac", "hyperv-hcs"}, "lpac"), "contradictory job labels fail");
+  const auto lpac = ckgit::parseCiRunnerCommand("ckgit-runner 2 claim 0 lpac");
+  require(lpac && lpac->isolation == "lpac" && ckgit::formatCiRunnerCommand(*lpac) == "ckgit-runner 2 claim 0 lpac",
+          "checked claim round trips");
+  require(!ckgit::parseCiRunnerCommand("ckgit-runner 1 claim 0 lpac") &&
+          !ckgit::parseCiRunnerCommand("ckgit-runner 2 claim 0 unsafe"), "unsupported isolation claim rejected");
+}
+
 // R1: a job queued by an earlier build (schema 1, no attempt line) still runs.
 void testVersionOneJobStillClaims() {
   Fixture fixture;
@@ -1195,6 +1231,37 @@ std::string gateway(const ckgit::ServerConfig& config, const std::string& runner
   return std::string((std::istreambuf_iterator<char>(read)), std::istreambuf_iterator<char>());
 }
 
+void testGatewayIsolationRegistration() {
+  Fixture fixture;
+  const auto commit = hostProject(fixture,
+      "version: 1\nruns_on: [windows, lpac]\njobs:\n  - name: build\n    steps:\n      - run: [true]\n");
+  ckgit::ServerConfig config;
+  config.repo_root = fixture.root / "repos";
+  config.state_root = fixture.state;
+  ckgit::CiRunnerRecord record;
+  record.name = "worker";
+  record.labels = {"windows", "lpac"};
+  ckgit::writeCiRunnerRecord(fixture.state, record);
+  auto job = sampleJob(ckgit::generateCiId());
+  job.runs_on = {"windows", "lpac"};
+  job.commit_id = commit;
+  ckgit::enqueueCiJob(fixture.state, job);
+  int code = 0;
+  require(gateway(config, "worker", "ckgit-runner 2 claim 0 hyperv-hcs", "", fixture, &code).find("error ") == 0 && code != 0,
+          "gateway rejects backend contradicting registered labels");
+  require(!ckgit::loadCiClaim(fixture.state, job.job_id), "mismatch must not create a lease");
+  require(gateway(config, "worker", "ckgit-runner 2 claim 0", "", fixture, &code).find("error ") == 0 && code != 0,
+          "legacy runner cannot claim with a reserved isolation label");
+  require(!ckgit::loadCiClaim(fixture.state, job.job_id), "legacy claim must not create a lease");
+  const auto hello = gateway(config, "worker", "ckgit-runner 2 hello 31", "", fixture);
+  require(hello.find("\nisolation_claim=1\n") != std::string::npos, "gateway advertises checked claims");
+  const auto accepted = ckgit::parseCiClaimResponse(
+      gateway(config, "worker", "ckgit-runner 2 claim 0 lpac", "", fixture, &code));
+  require(code == 0 && accepted && accepted->prepared.job.job_id == job.job_id &&
+          accepted->prepared.workflow.runs_on == std::vector<std::string>({"lpac", "windows"}),
+          "matching checked claim carries the requested sandbox through the gateway");
+}
+
 void testProtocolVersionIsolation() {
   Fixture fixture;
   ckgit::ServerConfig config;
@@ -1470,8 +1537,11 @@ void testRunnerNegotiation() {
   ckgit::CiRemoteTransport transport(config, fixture.root / "runner.ini");
   require(transport.negotiate("31") && transport.protocolVersion() == 2, "new gateway negotiates v2");
   require(!transport.supportsExecutionReport(), "v2 alone does not imply execution report support");
+  require(!transport.supportsIsolationClaim(), "old gateway must not enable checked claims");
   gateway("'ckgit-runner 2 hello '* ) printf 'ok\\nprotocol=2\\nexecution_report=1\\n';;\n");
   require(transport.negotiate("31") && transport.supportsExecutionReport(), "execution report capability negotiated");
+  gateway("'ckgit-runner 2 hello '* ) printf 'ok\\nprotocol=2\\nisolation_claim=1\\n';;\n");
+  require(transport.negotiate("31") && transport.supportsIsolationClaim(), "checked claim capability negotiated");
   ckgit::CiRunnerCommand command;
   command.op = ckgit::CiRunnerOp::kClaim;
   require(transport.run(command, {}, std::chrono::seconds(2)).output == "ckgit-runner 2 claim 0\n",
@@ -2018,6 +2088,7 @@ void testCiDistributed() {
   testRestartAndAbandon();
   testReleaseNeedsTheLease();
   testLabelRouting();
+  testIsolationClaimRouting();
   testVersionOneJobStillClaims();
   testStagedUploadResume();
   testCommitVerifiesStagedOutputs();
@@ -2032,6 +2103,7 @@ void testCiDistributed() {
   testProtocolRoundTrips();
   testGatewayRecoversPublication();
   testGatewayDistributedRelease();
+  testGatewayIsolationRegistration();
   testProtocolVersionIsolation();
   testGatewayRun();
   testGatewayFinishesSkippedJobs();

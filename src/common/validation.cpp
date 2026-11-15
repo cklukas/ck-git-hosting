@@ -178,6 +178,15 @@ std::string formatCiLabelList(const std::vector<std::string>& labels) {
   return text;
 }
 
+bool ciIsolationLabelsMatch(std::string_view name, const std::vector<std::string>& labels,
+                            std::string_view backend) {
+  const auto has = [&](std::string_view label) {
+    return name == label || std::find(labels.begin(), labels.end(), label) != labels.end();
+  };
+  return (!has("lpac") || backend == "lpac") &&
+         (!has("hyperv-hcs") || backend == "hyperv-hcs");
+}
+
 bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
                      const std::vector<std::string>& runs_on) {
   // Unlabelled legacy workflows assume the original POSIX execution environment.

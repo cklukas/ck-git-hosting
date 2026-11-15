@@ -150,7 +150,7 @@ int hello(const ServerConfig& config, const std::string& runner, const CiRunnerC
   if (std::optional<std::string> decoded = hexDecode(command.version_hex, 128)) version = *decoded;
   noteCiRunnerSeen(stateRoot(config), runner, version);
   writeAll(out, "ok\nprotocol=" + std::to_string(command.protocol_version) + "\nrunner=" + runner +
-                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\nexecution_report=1\ndependency_admission=0\n");
+                    "\nserver_version_hex=" + hexEncode(buildVersion()) + "\nexecution_report=1\ndependency_admission=0\nisolation_claim=1\n");
   return 0;
 }
 
@@ -185,6 +185,9 @@ int claim(const ServerConfig& config, const std::string& runner, const CiRunnerC
     const bool enabled = !registered.has_value() || registered->enabled;
     // Its labels come from the server's registry, never from the runner.
     options.labels = registered.has_value() ? registered->labels : std::vector<std::string>{};
+    options.isolation = command.isolation;
+    if (!ciIsolationLabelsMatch(runner, options.labels, options.isolation))
+      return refuse(out, "runner isolation does not match its registered labels");
     try {
       if (enabled) claimed = claimCiJob(state, options);
     } catch (const std::exception& error) {

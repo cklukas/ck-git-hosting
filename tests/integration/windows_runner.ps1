@@ -22,8 +22,12 @@ try {
     if ($LASTEXITCODE) { throw 'Runner version failed' }
     & $Runner check --config $config
     if ($LASTEXITCODE) { throw 'Runner broker check failed' }
-    & $Runner serve --remote --config $config --once
-    if ($LASTEXITCODE) { throw 'Runner did not negotiate and drain empty queue' }
+    $oldRequireClaim=$env:CKGIT_TEST_REQUIRE_LPAC_CLAIM
+    try {
+        $env:CKGIT_TEST_REQUIRE_LPAC_CLAIM='1'
+        & $Runner serve --remote --config $config --once
+        if ($LASTEXITCODE) { throw 'Runner did not negotiate and send an LPAC-checked claim' }
+    } finally { $env:CKGIT_TEST_REQUIRE_LPAC_CLAIM=$oldRequireClaim }
     if (@(Get-ChildItem "$fixture\build" -Directory).Count) { throw 'Runner left a session workspace' }
     $oldLegacy=$env:CKGIT_TEST_LEGACY_RUNNER_SERVER
     try {
@@ -36,12 +40,32 @@ try {
         $process = [Diagnostics.Process]::Start($start)
         $errorText = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
-        if ($process.ExitCode -eq 0 -or $errorText -notmatch 'requires runner protocol 2') {
+        if ($process.ExitCode -eq 0 -or $errorText -notmatch 'requires server isolation-checked claims') {
             throw 'Windows runner accepted a legacy-only server'
         }
         $process.Dispose()
     } finally { $env:CKGIT_TEST_LEGACY_RUNNER_SERVER=$oldLegacy }
     if (@(Get-ChildItem "$fixture\build" -Directory).Count) { throw 'Rejected server left a session workspace' }
+    foreach ($case in @(
+        @{ variable='CKGIT_TEST_UNCHECKED_RUNNER_SERVER'; expected='requires server isolation-checked claims' },
+        @{ variable='CKGIT_TEST_ISOLATION_MISMATCH'; expected='conflicts with server runner labels' }
+    )) {
+        [Environment]::SetEnvironmentVariable($case.variable, '1', 'Process')
+        try {
+            $start = New-Object Diagnostics.ProcessStartInfo
+            $start.FileName = $Runner
+            $start.Arguments = 'serve --remote --once --config "' + $config + '"'
+            $start.UseShellExecute = $false
+            $start.RedirectStandardError = $true
+            $process = [Diagnostics.Process]::Start($start)
+            $errorText = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            if ($process.ExitCode -eq 0 -or $errorText -notmatch $case.expected) {
+                throw "Runner failed to refuse $($case.variable)"
+            }
+            $process.Dispose()
+        } finally { [Environment]::SetEnvironmentVariable($case.variable, $null, 'Process') }
+    }
     $lock = [IO.File]::Open("$fixture\build\runner.lock", 'Open', 'ReadWrite', 'None')
     try {
         $start = New-Object Diagnostics.ProcessStartInfo

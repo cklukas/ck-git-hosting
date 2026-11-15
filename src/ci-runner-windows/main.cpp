@@ -9,6 +9,7 @@
 #include "ckgit/path_utf8.hpp"
 #include "ckgit/cli_help.hpp"
 #include "ckgit/text.hpp"
+#include "ckgit/validation.hpp"
 #include <windows.h>
 #include <sddl.h>
 #include <algorithm>
@@ -112,18 +113,21 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
   while (!stop_requested) {
     if (!negotiated) {
       negotiated = transport.negotiate(ckgit::hexEncode(ckgit::buildVersion()), [] { return !stop_requested.load(); });
-      if (negotiated && transport.protocolVersion() < 2)
-        throw std::runtime_error("Windows runner requires runner protocol 2 and explicit platform routing; upgrade the server");
+      if (negotiated && (transport.protocolVersion() < 2 || !transport.supportsIsolationClaim()))
+        throw std::runtime_error("Windows runner requires server isolation-checked claims; upgrade the server first");
       if (negotiated) std::cout << "Connected to " << config.server << " as " << config.name
           << " (protocol " << transport.protocolVersion() << ")\n";
     }
     ckgit::CiRunnerCommand claim;
     claim.op = ckgit::CiRunnerOp::kClaim;
+    claim.isolation = hcs ? "hyperv-hcs" : "lpac";
     // Bound shutdown latency while idle, without requiring a second thread to
     // terminate a request while it owns the shared transport.
     claim.wait_seconds = once ? 0 : std::min(config.claim_wait_seconds, 5u);
     const auto answer = negotiated ? transport.run(claim, {}, std::chrono::seconds(claim.wait_seconds + 30), [] { return !stop_requested.load(); })
                                    : ckgit::CiRemoteTransport::Result{};
+    if (answer.output == "error runner isolation does not match its registered labels\n")
+      throw std::runtime_error("configured Windows isolation conflicts with server runner labels; correct the registration");
     std::optional<ckgit::CiRemoteJob> job;
     bool good = answer.exit_code == 0;
     if (good) try { job = ckgit::parseCiClaimResponse(answer.output); }
@@ -138,6 +142,14 @@ int serve(const fs::path& config_path, bool once, bool check_only, const std::fu
     }
     failures = 0;
     if (!job) { if (once) return 0; continue; }
+    if (!ckgit::ciIsolationLabelsMatch({}, job->prepared.workflow.runs_on, claim.isolation)) {
+      ckgit::CiRunnerCommand abandon;
+      abandon.op = ckgit::CiRunnerOp::kAbandon;
+      abandon.job_id = job->prepared.job.job_id;
+      abandon.token = job->token;
+      (void)transport.run(abandon, {}, std::chrono::seconds(2));
+      throw std::runtime_error("claimed job requires a different Windows isolation backend");
+    }
     const auto& id = job->prepared.job.job_id;
     std::cout << "Claimed " << job->prepared.job.project_name << ' ' << id << '\n';
     ckgit::CiExecutionOptions execution;

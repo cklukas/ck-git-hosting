@@ -80,6 +80,7 @@ CiRemoteTransport::CiRemoteTransport(RunnerConfig config, std::filesystem::path 
 
 bool CiRemoteTransport::negotiate(std::string_view version_hex, const std::function<bool()>& should_continue) {
   execution_report_ = false;
+  isolation_claim_ = false;
   for (unsigned version = kCiRunnerProtocolVersion; version > 0; --version) {
     CiRemoteTransport candidate(config_, config_path_, version);
     CiRunnerCommand hello;
@@ -91,6 +92,7 @@ bool CiRemoteTransport::negotiate(std::string_view version_hex, const std::funct
     if (answer.exit_code == 0 && !answer.timed_out && answer.output.rfind(expected, 0) == 0) {
       protocol_version_ = version;
       execution_report_ = answer.output.find("\nexecution_report=1\n") != std::string::npos;
+      isolation_claim_ = version >= 2 && answer.output.find("\nisolation_claim=1\n") != std::string::npos;
       return true;
     }
   }

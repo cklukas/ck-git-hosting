@@ -442,6 +442,16 @@ that job from the original workflow. Legacy workflows carry empty assignment
 fields. Version-1 claims exclude distributed children, and version-1 requests
 cannot operate on a child lease even when they supply its token.
 
+An updated gateway advertises `isolation_claim=1` in `hello`. Windows runners
+require that capability and send `ckgit-runner 2 claim <wait-seconds> <backend>`,
+where backend is `lpac` or `hyperv-hcs`. Before claiming, the gateway checks
+the backend against the authenticated runner's server-owned reserved labels;
+the scheduler also requires a matching backend for any job requesting either
+label. A legacy claim carries no backend and cannot claim with or satisfy a
+reserved isolation label. Other version-1 and version-2 operations are
+unchanged. See [Windows isolation labels](../operations/ci-remote-runners.md#require-a-windows-isolation-backend)
+for deployment order and the trusted-runner boundary.
+
 Push processing creates distributed graphs, and the gateway prepares one
 assigned child and collects the parent results at completion. Claim polling
 also retries interrupted parent publication. A separately installed Windows runner has also completed the Linux-to-Windows

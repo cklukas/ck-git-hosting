@@ -50,5 +50,9 @@ std::string formatCiLabelList(const std::vector<std::string>& labels);
 // explicitly labelled job.
 bool ciRunnerMatches(std::string_view name, const std::vector<std::string>& labels,
                      const std::vector<std::string>& runs_on);
+// Reserved Windows isolation labels must agree with the authenticated runner's
+// declared backend; an empty backend cannot satisfy either isolation label.
+bool ciIsolationLabelsMatch(std::string_view name, const std::vector<std::string>& labels,
+                            std::string_view backend);
 
 }  // namespace ckgit

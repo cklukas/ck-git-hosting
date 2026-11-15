@@ -48,6 +48,7 @@ struct CiRunnerCommand {
   CiRunnerOp op = CiRunnerOp::kHello;
   std::string version_hex;  // hello
   unsigned wait_seconds = 0;  // claim
+  std::string isolation;  // claim: empty (legacy), lpac, or hyperv-hcs
   std::string job_id;
   std::string token;
   std::string project;  // upload-pack

@@ -444,6 +444,55 @@ labels route work and do not restrict which project may request a runner.
 Labels come only from the server's records, never from the runner, so a
 runner cannot take jobs meant for another kind of machine by claiming a label.
 
+### Require a Windows isolation backend
+
+`lpac` and `hyperv-hcs` are reserved isolation labels. Configure an LPAC
+runner and an HCS runner separately, and register each with its matching label:
+
+```sh
+sudo -u ckgit ckgit-admin runner labels windows-lpac windows,x64,lpac --config /etc/ck-git-hosting/server.ini
+sudo -u ckgit ckgit-admin runner labels windows-vm windows,x64,hyperv-hcs --config /etc/ck-git-hosting/server.ini
+```
+
+The command **replaces** the complete label list. LPAC is the Windows runner's
+default; set `ci_windows_backend=hyperv-hcs` and an operator-prepared
+`ci_windows_vm_profile` for HCS. See [Windows runner setup](runner-windows.md)
+and [the HCS backend prerequisites](https://github.com/cklukas/ck-git-hosting/blob/master/design/windows-vm-ci.md#operator-selection-and-admission).
+
+A version-2 workflow can request a backend explicitly:
+
+```yaml
+version: 2
+jobs:
+  - name: windows-lpac
+    runs_on: [windows, x64, lpac]
+    steps:
+      - run: [cmake.exe, --build, build]
+  - name: windows-vm
+    runs_on: [windows, x64, hyperv-hcs]
+    steps:
+      - run: [cmake.exe, --build, build]
+```
+
+Before a lease is issued, the server compares these labels (including the
+runner name) to the backend the Windows runner reports from its configuration.
+A mismatch or both reserved labels refuses the claim; a legacy runner cannot
+claim with a reserved isolation label. A job requiring a reserved label stays
+queued until a matching, updated runner is available. The runner also verifies
+the selected job before execution. A generic job requesting only `windows`
+does not select either backend. Other labels such as `windows-vm` are routing
+labels and do not provide this check. The check trusts the authenticated
+runner and its configured sandbox; it is not remote attestation of a hostile
+runner. The normal LPAC and HCS startup checks still run.
+
+**Upgrade the main host before upgrading Windows runners.** The new Windows
+runner refuses to claim from a server that does not advertise checked claims.
+After updating the server, update Windows runners before adding reserved
+labels; an older runner with one of these labels is refused until updated or
+the label is removed. A server that has not been upgraded cannot enforce the
+new guarantee for older runners. Neither label starts a VM or changes the
+runner's configured backend.
+
 ## Security
 
 - **A separate key class.** A runner key's forced command carries

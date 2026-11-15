@@ -242,6 +242,12 @@ labels` (see [Labels](ci-remote-runners.md#labels)). Every runner's name
 also counts as a label, so `runs_on: linux-builder` picks that one runner and
 `runs_on: primary` the server's own.
 
+For Windows jobs that require a particular sandbox, use the reserved `lpac`
+or `hyperv-hcs` label as well as the platform labels. These labels are checked
+against the runner's configured backend before a lease is issued; see
+[Require a Windows isolation backend](ci-remote-runners.md#require-a-windows-isolation-backend)
+for registration, compatibility and upgrade requirements.
+
 The labels are read from the pushed commit's workflow when the push queues
 the run. Until a runner with all of them is free, the run stays pending, and
 its detail line says which labels it waits for. Other runners skip it and

@@ -200,11 +200,15 @@ std::optional<CiRunnerCommand> parseCiRunnerCommand(std::string_view command, st
     parsed.op = CiRunnerOp::kHello;
     ok = hexDecode(tokens[3], 128).has_value();
     parsed.version_hex = std::string(tokens[3]);
-  } else if (op == "claim" && arguments == 1) {
+  } else if (op == "claim" && (arguments == 1 || (arguments == 2 && parsed.protocol_version == 2))) {
     parsed.op = CiRunnerOp::kClaim;
     const auto wait = canonicalNumber(tokens[3]);
     ok = wait.has_value() && *wait <= kMaximumCiClaimWaitSeconds;
     if (ok) parsed.wait_seconds = static_cast<unsigned>(*wait);
+    if (arguments == 2) {
+      parsed.isolation = std::string(tokens[4]);
+      ok = ok && (parsed.isolation == "lpac" || parsed.isolation == "hyperv-hcs");
+    }
   } else if (op == "upload-pack" && arguments == 3) {
     parsed.op = CiRunnerOp::kUploadPack;
     ok = jobAndToken(3) && isValidProjectName(tokens[5]);
@@ -243,7 +247,12 @@ std::string formatCiRunnerCommand(const CiRunnerCommand& command) {
   std::string line = "ckgit-runner " + std::to_string(command.protocol_version) + " ";
   switch (command.op) {
     case CiRunnerOp::kHello: return line + "hello " + command.version_hex;
-    case CiRunnerOp::kClaim: return line + "claim " + std::to_string(command.wait_seconds);
+    case CiRunnerOp::kClaim:
+      if (!command.isolation.empty() && (command.protocol_version != 2 ||
+          (command.isolation != "lpac" && command.isolation != "hyperv-hcs")))
+        throw std::invalid_argument("unsupported claim isolation");
+      return line + "claim " + std::to_string(command.wait_seconds) +
+             (command.isolation.empty() ? "" : " " + command.isolation);
     case CiRunnerOp::kUploadPack:
       return line + "upload-pack " + command.job_id + " " + command.token + " " + command.project;
     case CiRunnerOp::kStream: return line + "stream " + command.job_id + " " + command.token;

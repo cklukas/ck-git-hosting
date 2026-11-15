@@ -796,6 +796,8 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
                                   std::optional<std::chrono::milliseconds>* retry_in) {
   if (retry_in != nullptr) retry_in->reset();
   if (!isValidClientId(options.runner) || options.lease_seconds == 0) fail("invalid CI claim options");
+  if ((!options.isolation.empty() && options.isolation != "lpac" && options.isolation != "hyperv-hcs") ||
+      !ciIsolationLabelsMatch(options.runner, options.labels, options.isolation)) return std::nullopt;
   const std::filesystem::path root = validatedMetadataRoot(state_root);
   Descriptor root_fd(openDir(root));
   bool missing = false;
@@ -868,6 +870,7 @@ std::optional<CiClaim> claimCiJob(const std::filesystem::path& state_root, const
           continue;
         }
         if (waiting) continue;
+        if (!ciIsolationLabelsMatch({}, queued->runs_on, options.isolation)) continue;
         if (!ciRunnerMatches(options.runner, options.labels, queued->runs_on)) continue;  // another runner's job
         if (!queued->parent_run_id.empty() && options.protocol_version < 2) continue;
         if (options.one_per_ref) {

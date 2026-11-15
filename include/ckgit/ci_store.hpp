@@ -294,6 +294,9 @@ struct CiClaimOptions {
   // The claiming runner's labels besides its name: a job whose `runs_on`
   // asks for a label the runner lacks stays queued for another runner.
   std::vector<std::string> labels;
+  // Empty for legacy and non-Windows claimants. Reserved isolation labels
+  // are only claimable by a runner declaring the matching backend.
+  std::string isolation;
 };
 
 // Claims the oldest eligible queued job and records a fresh lease for

@@ -35,6 +35,7 @@ class CiRemoteTransport {
   bool negotiate(std::string_view version_hex, const std::function<bool()>& should_continue = {});
   unsigned protocolVersion() const { return protocol_version_; }
   bool supportsExecutionReport() const { return execution_report_; }
+  bool supportsIsolationClaim() const { return isolation_claim_; }
 
   struct Result {
     int exit_code = -1;
@@ -67,6 +68,7 @@ class CiRemoteTransport {
   std::filesystem::path config_path_;
   unsigned protocol_version_ = 1;
   bool execution_report_ = false;
+  bool isolation_claim_ = false;
 };
 
 // `ck-ci-runnerd ssh-shim`: what GIT_SSH_COMMAND runs. Git calls it as

@@ -175,8 +175,19 @@ int run(const std::vector<std::string>& args) {
       if (command->op == ckgit::CiRunnerOp::kHello) {
         if (std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER") && command->protocol_version > 1) return 1;
         std::cout << "ok\nprotocol=" << command->protocol_version << "\n";
-        if (!std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER")) std::cout << "execution_report=1\n";
+        if (!std::getenv("CKGIT_TEST_LEGACY_RUNNER_SERVER")) {
+          std::cout << "execution_report=1\n";
+          if (!std::getenv("CKGIT_TEST_UNCHECKED_RUNNER_SERVER")) std::cout << "isolation_claim=1\n";
+        }
       } else if (command->op == ckgit::CiRunnerOp::kClaim) {
+        if (std::getenv("CKGIT_TEST_REQUIRE_LPAC_CLAIM") && command->isolation != "lpac") {
+          std::cerr << "runner did not declare LPAC in its claim\n";
+          return 1;
+        }
+        if (std::getenv("CKGIT_TEST_ISOLATION_MISMATCH")) {
+          std::cout << "error runner isolation does not match its registered labels\n";
+          return 1;
+        }
         std::cout << "none\n";
       } else if (command->op == ckgit::CiRunnerOp::kStream || command->op == ckgit::CiRunnerOp::kPut) {
         if (command->op == ckgit::CiRunnerOp::kStream) std::cout << "ready\n" << std::flush;
