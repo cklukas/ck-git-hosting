@@ -22,8 +22,13 @@ done
 
 browser=${CKGIT_DOCS_BROWSER:-}
 if [ -z "$browser" ]; then
-  for candidate in google-chrome-stable google-chrome chromium chromium-browser; do
-    if command -v "$candidate" >/dev/null 2>&1; then
+  for candidate in google-chrome-stable google-chrome chromium chromium-browser \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+    if [ -x "$candidate" ]; then
+      browser=$candidate
+      break
+    elif command -v "$candidate" >/dev/null 2>&1; then
       browser=$(command -v "$candidate")
       break
     fi
@@ -36,12 +41,15 @@ fi
 
 case "$(uname -s)" in
   Darwin)
-    # The development Mac's project scratch must stay on the mounted blade.
-    [ -d /Volumes/PRO-BLADE/tmp ] && mount | grep -q '^/dev/.* on /Volumes/PRO-BLADE ' || {
-      echo "The /Volumes/PRO-BLADE temporary volume is not mounted." >&2
+    # Prefer /Volumes/S8T/tmp on the development Mac; fall back to /Volumes/PRO-BLADE/tmp.
+    if [ -d /Volumes/S8T/tmp ] && mount | grep -q '^/dev/.* on /Volumes/S8T '; then
+      temporary_parent=/Volumes/S8T/tmp
+    elif [ -d /Volumes/PRO-BLADE/tmp ] && mount | grep -q '^/dev/.* on /Volumes/PRO-BLADE '; then
+      temporary_parent=/Volumes/PRO-BLADE/tmp
+    else
+      echo "Neither /Volumes/S8T/tmp nor /Volumes/PRO-BLADE/tmp is mounted." >&2
       exit 1
-    }
-    temporary_parent=/Volumes/PRO-BLADE/tmp
+    fi
     ;;
   *)
     temporary_parent=${TMPDIR:-/tmp}
@@ -269,6 +277,7 @@ command = [
     browser, "--headless", "--no-sandbox", "--disable-gpu",
     "--disable-dev-shm-usage", "--disable-background-networking",
     "--disable-extensions", "--no-first-run", "--hide-scrollbars",
+    "--password-store=basic", "--use-mock-keychain",
     "--force-device-scale-factor=1", f"--window-size=1440,{height}",
     "--virtual-time-budget=1500", f"--user-data-dir={profile}",
     f"--screenshot={target}", url,
@@ -290,7 +299,7 @@ with open(log_path, "wb") as log:
             except subprocess.TimeoutExpired:
                 continue
         raise SystemExit(f"Browser capture timed out after 45 seconds: {url}")
-if result:
+if result and not (os.path.isfile(target) and os.stat(target).st_size >= 4096):
     raise SystemExit(f"Browser capture failed with exit {result}: {url}")
 PY
     cat "$fixture/chrome-$name.log" >&2
