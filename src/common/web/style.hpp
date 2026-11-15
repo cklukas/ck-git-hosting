@@ -91,5 +91,11 @@ a.ci-status:hover{text-decoration:none;border-color:var(--accent)}
 #ci-follow-btn:hover{background:var(--tint);border-color:var(--accent)}
 @media(prefers-color-scheme:dark){.ci-running{color:#7db8ee}.ci-success{color:#79c58a}.ci-failure{color:#f19aa0}.ci-timeout,.ci-error,.ci-interrupted{color:#e7b765}.ci-cancelled{color:#aab3bf}}
 @media(max-width:700px){.project-ci{grid-row:5;grid-column:1/-1;font-size:.85rem}.project-ci:before{content:'Last CI: ';color:var(--muted)}}
+.file-actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.diff{border:1px solid var(--line);border-radius:.4rem;background:var(--panel)}
+.diff td{border-bottom:0;line-height:1.45}
+.diff .diff-num{width:1%;min-width:2.8em;padding:0 .5rem;text-align:right;color:var(--muted);user-select:none;border-right:1px solid var(--line);font-size:.82em}
+.diff .diff-code{padding:0 .65rem}
+.diff .diff-file-header td{background:var(--tint);font-weight:600;padding:.35rem .65rem;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 )CSS";
 }  // namespace ckgit

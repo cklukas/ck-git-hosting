@@ -116,12 +116,26 @@ nav.page-tags a,.tag-list a{display:inline-block;padding:.1rem .6rem;border:1px 
 .tag-list{list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:.6rem 1rem}.tag-count{color:var(--muted);font-size:.85rem}.tagged-pages li{margin:.4rem 0}
 [dir=rtl] nav.links,[dir=rtl] .search{margin-left:0;margin-right:auto}[dir=rtl] aside li ul,[dir=rtl] .nav-group>ul{padding-left:0;padding-right:.8rem}[dir=rtl] .tab-menu>ul{left:auto;right:0}[dir=rtl] blockquote,[dir=rtl] .alert{border-left:0;border-right:4px solid var(--alert,var(--line));padding-left:1rem;padding-right:1rem}[dir=rtl] nav.pager .next{margin-left:0;margin-right:auto;text-align:left}[dir=rtl] .lang-select ul,[dir=rtl] .search-results{right:auto;left:0}
 @media(max-width:700px){.lang-select ul{right:auto;left:0}}
-@media print{header.site,.site-select,.lang-select,.theme-picker,aside.sidebar,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
+@media print{header.site,.site-select,.lang-select,.theme-picker,aside.sidebar,nav.outline,nav.pager,footer.site,.nav-toggle,.skip-link{display:none}.page{display:block;padding:0}}
 .home-feature-icon{display:block;font-size:1.6rem;line-height:1;margin-bottom:.6rem}a.home-feature{display:block;color:var(--text);border:1px solid transparent}a.home-feature:hover{border-color:var(--accent);text-decoration:none}
+)CSS" R"CSS(.search-result.is-active{background:var(--tint);outline:2px solid var(--accent);outline-offset:-2px}
+.search-result mark{background:var(--tint);color:var(--accent);padding:0 .15em;border-radius:.2rem;font-weight:600}
+.outline a{display:block;padding:.24rem .55rem;border-radius:.3rem;color:var(--muted);font-size:.86rem;text-decoration:none}
+.outline a:hover{color:var(--text);background:var(--tint);text-decoration:none}
+.outline a.is-active{color:var(--accent);background:var(--tint);font-weight:600}
+article :is(h2,h3,h4)[id]{position:relative}
+article a.heading-anchor{margin-left:.35rem;color:var(--muted);text-decoration:none;font-weight:400;opacity:0;transition:opacity .12s ease}
+article :is(h2,h3,h4)[id]:hover a.heading-anchor,article a.heading-anchor:focus-visible{opacity:1}
+@media(min-width:1180px){.page.has-outline{grid-template-columns:minmax(220px,16rem) minmax(0,1fr) minmax(190px,14rem);gap:2.25rem}.page.has-outline>.outline{position:sticky;top:1rem;align-self:start;max-height:calc(100vh - 2rem);overflow:auto;padding-left:.9rem;border-left:1px solid var(--line);font-size:.86rem}.page.has-outline>.outline .side-title:first-child{margin-top:0}.page.has-outline>.outline ul{list-style:none;margin:0;padding:0}.page.has-outline>.outline li ul{padding-left:.75rem}}
+.diagram-toolbar{display:flex;align-items:center;justify-content:flex-end;gap:.35rem;margin-bottom:.5rem}
+.diagram-zoom-btn{font:inherit;font-size:.8rem;color:var(--text);background:var(--tint);border:1px solid var(--line);border-radius:.4rem;padding:.25rem .55rem;cursor:pointer}
+.diagram-zoom-btn:hover{border-color:var(--accent);color:var(--accent)}
+.diagram-toolbar .diagram-close{margin:0}
 )CSS";
 
 // Progressive enhancement: native disclosure menus need no script; these
-// controls add persisted colour choice and a keyboard-accessible diagram dialog.
+// controls add persisted colour choice, 3-column outline docking + scrollspy,
+// heading anchor links, and a zoomable keyboard-accessible diagram dialog.
 inline constexpr std::string_view kDocsUiScript = R"JS(
 (function(){
   var root=document.documentElement,picker=document.querySelector('.theme-picker'),buttons=document.querySelectorAll('[data-theme-choice]');
@@ -146,14 +160,54 @@ inline constexpr std::string_view kDocsUiScript = R"JS(
   if(['system','light','dark'].indexOf(choice)<0)choice='system';
   theme(choice);
   if(picker){picker.hidden=false;buttons.forEach(function(button){button.onclick=function(){choice=button.getAttribute('data-theme-choice');theme(choice);picker.open=false;picker.querySelector('summary').focus();try{localStorage.setItem('ckdocs-theme',choice);}catch(e){}};});}
+  var page=document.querySelector('.page:not(.no-sidebar):not(.landing)'),sidebar=page?page.querySelector('aside.sidebar'):null,outline=sidebar?sidebar.querySelector('nav.outline'):null;
+  if(page&&sidebar&&outline&&window.matchMedia){
+    var mq=window.matchMedia('(min-width:1180px)');
+    function syncOutline(){
+      if(mq.matches){if(outline.parentNode!==page){page.appendChild(outline);page.classList.add('has-outline');}}
+      else{if(outline.parentNode!==sidebar){sidebar.appendChild(outline);page.classList.remove('has-outline');}}
+    }
+    syncOutline();
+    if(mq.addEventListener)mq.addEventListener('change',syncOutline);
+  }
+  if(outline){
+    var links=[].slice.call(outline.querySelectorAll('a')),targets=[];
+    links.forEach(function(a){
+      var h=a.getAttribute('href');
+      if(h&&h.charAt(0)==='#'){var el=document.getElementById(h.slice(1));if(el)targets.push({link:a,el:el});}
+    });
+    if(targets.length){
+      function spy(){
+        var active=targets[0];
+        for(var i=0;i<targets.length;i++){if(targets[i].el.getBoundingClientRect().top<=96)active=targets[i];else break;}
+        targets.forEach(function(t){t.link.classList.toggle('is-active',t===active);});
+      }
+      window.addEventListener('scroll',spy,{passive:true});
+      spy();
+    }
+  }
+  document.querySelectorAll('article h2[id],article h3[id],article h4[id]').forEach(function(h){
+    if(h.querySelector('.heading-anchor'))return;
+    var a=document.createElement('a');a.className='heading-anchor';a.setAttribute('href','#'+h.id);a.setAttribute('aria-label',h.textContent||'Permalink');a.textContent='#';
+    h.appendChild(a);
+  });
   document.querySelectorAll('figure.mermaid').forEach(function(figure){
     var picture=figure.querySelector('picture');if(!picture||!window.HTMLDialogElement)return;
     var body=document.body,expandLabel=body.getAttribute('data-diagram-expand')||'Expand diagram',closeLabel=body.getAttribute('data-diagram-close')||'Close diagram';
     var expand=document.createElement('button');expand.type='button';expand.className='icon-button diagram-expand';expand.setAttribute('aria-label',expandLabel);expand.title=expandLabel;expand.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m0-5 7 7m6-7h5v5m0-5-7 7M3 16v5h5m-5 0 7-7m11 2v5h-5m5 0-7-7"/></svg>';
     expand.onclick=function(){
       var dialog=document.createElement('dialog');dialog.className='diagram-dialog';dialog.setAttribute('aria-label',expandLabel);
+      var bar=document.createElement('div');bar.className='diagram-toolbar';
+      var clone=picture.cloneNode(true),img=clone.querySelector('img'),scale=100;
+      function applyZoom(next){scale=Math.max(50,Math.min(300,next));resetBtn.textContent=scale+'%';if(img){img.style.width=scale+'%';img.style.height='auto';}}
+      var outBtn=document.createElement('button');outBtn.type='button';outBtn.className='diagram-zoom-btn';outBtn.textContent='−';outBtn.onclick=function(){applyZoom(scale-25);};
+      var resetBtn=document.createElement('button');resetBtn.type='button';resetBtn.className='diagram-zoom-btn';resetBtn.textContent='100%';resetBtn.onclick=function(){applyZoom(100);};
+      var inBtn=document.createElement('button');inBtn.type='button';inBtn.className='diagram-zoom-btn';inBtn.textContent='+';inBtn.onclick=function(){applyZoom(scale+25);};
       var close=document.createElement('button');close.type='button';close.className='icon-button diagram-close';close.setAttribute('aria-label',closeLabel);close.title=closeLabel;close.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
-      close.onclick=function(){dialog.close();};dialog.appendChild(close);dialog.appendChild(picture.cloneNode(true));document.body.appendChild(dialog);
+      close.onclick=function(){dialog.close();};
+      bar.appendChild(outBtn);bar.appendChild(resetBtn);bar.appendChild(inBtn);bar.appendChild(close);
+      dialog.appendChild(bar);dialog.appendChild(clone);document.body.appendChild(dialog);
+      clone.addEventListener('wheel',function(e){if(e.ctrlKey||e.metaKey){e.preventDefault();applyZoom(scale+(e.deltaY<0?25:-25));}},{passive:false});
       dialog.addEventListener('close',function(){dialog.remove();expand.focus();},{once:true});dialog.showModal();close.focus();
     };figure.querySelector('.diagram-tools').appendChild(expand);
   });
@@ -162,13 +216,10 @@ inline constexpr std::string_view kDocsUiScript = R"JS(
 
 // The opt-in search box's own behaviour (site.search / `search: true`):
 // fetches the generated search-index.json lazily (on first focus or
-// keystroke, not on page load), filters it client-side, and lists matches
-// linking straight to their page and section; a page whose title,
-// description or tags match is listed first. Inline, dependency-free, and
-// needs no nonce -- ckdocs pages carry no CSP that would require one. The
-// input itself starts `hidden`; this script is the only thing that reveals
-// it, so a visitor with scripting disabled never sees a non-functional box
-// (the page's own <noscript> link to the site index covers them instead).
+// keystroke, not on page load), filters it client-side by whitespace-separated
+// tokens, highlights matched substrings with <mark>, supports ArrowUp/ArrowDown/
+// Enter keyboard navigation, and lists matches linking straight to their page
+// and section; a page whose title, description or tags match is listed first.
 inline constexpr std::string_view kDocsSearchScript = R"JS(
 (function(){
   var input=document.getElementById('ckdocs-search');
@@ -186,48 +237,87 @@ inline constexpr std::string_view kDocsSearchScript = R"JS(
   });
   var root=input.getAttribute('data-index').replace('search-index.json','');
   var results=document.getElementById('ckdocs-search-results');
-  var data=null,loading=null;
+  var data=null,loading=null,activeIdx=-1;
   function load(){
     if(data||loading)return loading;
     loading=fetch(input.getAttribute('data-index')).then(function(r){return r.json()})
       .then(function(j){data=j.pages||[]})['catch'](function(){data=[]});
     return loading;
   }
-  function clear(){results.textContent='';results.hidden=true}
-  function add(href,text,summary){
+  function clear(){results.textContent='';results.hidden=true;activeIdx=-1;}
+  function highlight(node,text,tokens){
+    if(!text||!tokens.length){node.textContent=text||'';return;}
+    var lower=text.toLowerCase(),pos=0;
+    while(pos<text.length){
+      var bestAt=-1,bestLen=0;
+      for(var t=0;t<tokens.length;t++){
+        var tok=tokens[t];if(!tok)continue;
+        var at=lower.indexOf(tok,pos);
+        if(at!==-1&&(bestAt===-1||at<bestAt||(at===bestAt&&tok.length>bestLen))){bestAt=at;bestLen=tok.length;}
+      }
+      if(bestAt===-1){node.appendChild(document.createTextNode(text.slice(pos)));break;}
+      if(bestAt>pos)node.appendChild(document.createTextNode(text.slice(pos,bestAt)));
+      var m=document.createElement('mark');m.textContent=text.slice(bestAt,bestAt+bestLen);node.appendChild(m);
+      pos=bestAt+bestLen;
+    }
+  }
+  function add(href,text,summary,tokens){
     var link=document.createElement('a');
     link.className='search-result';
     link.href=root+href;
     var title=document.createElement('b');
-    title.textContent=text;
+    highlight(title,text,tokens);
     var excerpt=document.createElement('span');
-    excerpt.textContent=summary;
+    highlight(excerpt,summary,tokens);
     link.appendChild(title);
     link.appendChild(excerpt);
     results.appendChild(link);
   }
+  function matchesAll(haystack,tokens){
+    var lower=haystack.toLowerCase();
+    for(var i=0;i<tokens.length;i++){if(lower.indexOf(tokens[i])===-1)return false;}
+    return true;
+  }
+  function setActive(next){
+    var items=results.querySelectorAll('.search-result');
+    if(!items.length){activeIdx=-1;return;}
+    activeIdx=(next+items.length)%items.length;
+    for(var i=0;i<items.length;i++){items[i].classList.toggle('is-active',i===activeIdx);}
+    if(items[activeIdx].scrollIntoView)items[activeIdx].scrollIntoView({block:'nearest'});
+  }
   function render(query){
     clear();
     if(input.hidden||!query||!data)return;
-    var q=query.toLowerCase(),shown=0;
+    var tokens=query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    if(!tokens.length)return;
+    var shown=0;
     for(var i=0;i<data.length&&shown<20;i++){
       var page=data[i],sections=page.sections||[],desc=page.description||'',tags=(page.tags||[]).join(', ');
-      var whole=(desc||tags)&&(page.title+' '+desc+' '+tags).toLowerCase().indexOf(q)!==-1;
-      if(whole){add(page.url,page.title,desc||tags);shown++}
+      var whole=(desc||tags)&&matchesAll(page.title+' '+desc+' '+tags,tokens);
+      if(whole){add(page.url,page.title,desc||tags,tokens);shown++}
       for(var j=0;j<sections.length&&shown<20;j++){
         var s=sections[j];
         if(whole&&!s.heading)continue;
-        if((s.heading+' '+s.excerpt).toLowerCase().indexOf(q)===-1)continue;
-        add(page.url+(s.anchor?'#'+s.anchor:''),s.heading?page.title+' – '+s.heading:page.title,s.excerpt||desc);
+        if(!matchesAll(page.title+' '+s.heading+' '+s.excerpt,tokens))continue;
+        add(page.url+(s.anchor?'#'+s.anchor:''),s.heading?page.title+' – '+s.heading:page.title,s.excerpt||desc,tokens);
         shown++;
       }
     }
     results.hidden=shown===0;
+    if(shown>0)setActive(0);
   }
   input.addEventListener('focus',load);
   input.addEventListener('input',function(){
     var query=input.value;
     load().then(function(){render(query)});
+  });
+  input.addEventListener('keydown',function(e){
+    if(results.hidden)return;
+    var items=results.querySelectorAll('.search-result');
+    if(!items.length)return;
+    if(e.key==='ArrowDown'){e.preventDefault();setActive(activeIdx+1);}
+    else if(e.key==='ArrowUp'){e.preventDefault();setActive(activeIdx<=0?items.length-1:activeIdx-1);}
+    else if(e.key==='Enter'&&activeIdx>=0&&items[activeIdx]){e.preventDefault();window.location.href=items[activeIdx].href;}
   });
   document.addEventListener('click',function(e){
     if(!form.contains(e.target)&&!input.hidden)close(false);

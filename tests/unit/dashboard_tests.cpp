@@ -265,6 +265,12 @@ void testDashboard() {
   require(highlighted.find("<span class=\"line-text\"><span class=\"hl-k\">int</span> <span class=\"hl-f\">engine</span>() { <span class=\"hl-k\">return</span> "
                            "<span class=\"hl-n\">42</span>; }</span>") != std::string::npos,
           "C++ sources are highlighted in the file view, inside the line structure");
+  require(highlighted.find("Commit history") != std::string::npos, "file preview includes commit history action");
+  const auto initial_commit_page = page("commit/" + initial).body;
+  require(initial_commit_page.find("class=\"diff-file-header\" id=\"diff-file-0\"") != std::string::npos &&
+          initial_commit_page.find("<td class=\"diff-num\"></td><td class=\"diff-num\">1</td>") != std::string::npos &&
+          initial_commit_page.find("<span class=\"hl-a\">enabled</span>") != std::string::npos,
+          "commit diff renders file header, line number columns, and syntax-highlighted code");
   auto svg = page("blob/" + resolved.id + ":diagram.svg").body;
   require(svg.find("<img src=") != std::string::npos && svg.find("RAW_ONLY") == std::string::npos, "SVG isolated as image");
   auto raw = page("raw/" + resolved.id + ":diagram.svg");

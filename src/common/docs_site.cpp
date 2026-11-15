@@ -3802,12 +3802,16 @@ std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& 
   out += kMarkdownStyles;
   out += "</style>";
   if (!shell.stylesheet_output.empty()) out += "<link rel=\"stylesheet\" href=\"" + escapeHtml(relativeUrl("", shell.stylesheet_output)) + "\">";
-  out += "</head><body><a class=\"skip-link\" href=\"#main-content\">" + escapeHtml(ui.skip_to_content) + "</a>";
+  const bool has_code = intro.find("<pre") != std::string::npos;
+  out += "</head><body data-copy-label=\"" + escapeHtml(ui.copy_code) + "\" data-copied-label=\"" + escapeHtml(ui.copied) +
+         "\" data-diagram-expand=\"" + escapeHtml(ui.diagram_expand) + "\" data-diagram-close=\"" + escapeHtml(ui.diagram_close) + "\">"
+         "<a class=\"skip-link\" href=\"#main-content\">" + escapeHtml(ui.skip_to_content) + "</a>";
   out += "<header class=\"site\"><a class=\"brand\" href=\"index.html\">";
   if (!shell.logo_output.empty()) out += "<img src=\"" + escapeHtml(relativeUrl("", shell.logo_output)) + "\" alt=\"\">";
   out += escapeHtml(config.brand.empty() ? config.title : config.brand) + "</a>";
   out += renderSiteSelector(portal, std::nullopt, "", ui);
   out += renderHeaderLinks(config.links, ui);
+  out += renderThemePicker(ui);
   out += "</header><div class=\"page portal\"><main id=\"main-content\"><article><h1>" + escapeHtml(config.title) + "</h1>";
   if (!config.description.empty()) out += "<p class=\"portal-description\">" + escapeHtml(config.description) + "</p>";
   out += intro;
@@ -3822,7 +3826,10 @@ std::string renderWelcomePage(const DocsPortalModel& portal, const PortalShell& 
   if (!config.footer.empty()) out += "<span>" + escapeHtml(config.footer) + "</span>";
   out += "<span>" + escapeHtml(fillDocsUiText(ui.built_with, {{"generator", "ckdocs " + version}})) + "</span>";
   if (config.llms) out += "<a href=\"index.html.md\" title=\"" + escapeHtml(ui.markdown_version) + "\">Markdown</a>";
-  return out + "</footer></body></html>";
+  out += "</footer><script>";
+  out += kDocsUiScript;
+  if (has_code) out += kDocsCodeScript;
+  return out + "</script></body></html>";
 }
 
 }  // namespace

@@ -59,7 +59,8 @@ std::string filePreview(WebRepository& repo, const ProjectSummary& p, const std:
   const auto raw = sourceUrl(p.name, "raw", id, path);
   const auto content_type = rawContentType(path);
   out += " · " + htmlEscape(e.mode == "120000" ? "symlink (target is never followed)" : content_type) + "</p>";
-  if (e.size <= kMaximumRawBytes) out += "<p>" + link(raw, "Download raw file") + "</p>";
+  if (e.size <= kMaximumRawBytes)
+    out += "<p class=\"file-actions\">" + link(raw, "Download raw file") + " · " + link(sourceUrl(p.name, "commits", ref), "Commit history") + "</p>";
   else out += "<p class=\"notice\">File exceeds the 16 MiB download limit. Use Git to retrieve it.</p>";
   if (e.mode != "120000" && isImageType(content_type)) {
     if (e.size <= kMaximumInlineImageBytes)
@@ -84,20 +85,70 @@ std::string filePreview(WebRepository& repo, const ProjectSummary& p, const std:
   } else out += "<p class=\"notice\">File exceeds the 512 KiB text preview limit.</p>";
   return out;
 }
+std::pair<std::size_t, std::size_t> parseHunkStart(std::string_view line) {
+  std::size_t old_start = 1, new_start = 1;
+  const auto minus = line.find('-');
+  const auto plus = line.find('+', minus == std::string_view::npos ? 0 : minus);
+  auto parseNum = [](std::string_view s) -> std::size_t {
+    std::size_t v = 0;
+    for (char c : s) {
+      if (c < '0' || c > '9') break;
+      v = v * 10 + static_cast<std::size_t>(c - '0');
+    }
+    return v;
+  };
+  if (minus != std::string_view::npos) old_start = parseNum(line.substr(minus + 1));
+  if (plus != std::string_view::npos) new_start = parseNum(line.substr(plus + 1));
+  return {old_start, new_start};
+}
 std::string renderDiff(const ProcessResult& diff) {
   std::string out;
   if (diff.output_truncated) out += "<p class=\"notice\">Diff truncated at 512 KiB.</p>";
   out += "<div class=\"diff-wrap\"><table class=\"diff\"><tbody>";
   auto text = std::string_view(diff.output);
   if (diff.output_truncated) { auto newline = text.rfind('\n'); text = text.substr(0, newline == std::string_view::npos ? 0 : newline + 1); }
-  std::size_t file_index = 0;
+  std::size_t file_index = 0, old_line = 0, new_line = 0;
+  bool in_hunk = false;
+  Language lang = Language::None;
   while (!text.empty()) {
     auto end = text.find('\n'); if (end == std::string_view::npos) end = text.size();
     const auto line = text.substr(0, end);
-    const bool file_header = line.starts_with("diff --git ");
-    const auto kind = line.starts_with("+") ? "add" : line.starts_with("-") ? "remove" : line.starts_with("@@") ? "hunk" : "context";
-    out += "<tr class=\"" + std::string(kind) + "\"" +
-        (file_header ? " id=\"diff-file-" + std::to_string(file_index++) + "\"" : "") + "><td>" + escapePre(line) + "</td></tr>";
+    if (line.starts_with("diff --git ")) {
+      in_hunk = false;
+      old_line = 0;
+      new_line = 0;
+      const auto b_pos = line.rfind(" b/");
+      lang = b_pos != std::string_view::npos ? detectLanguage(std::string(line.substr(b_pos + 3)), "") : Language::None;
+      out += "<tr class=\"diff-file-header\" id=\"diff-file-" + std::to_string(file_index++) +
+             "\"><td class=\"diff-num\" colspan=\"2\"></td><td class=\"diff-code\">" + escapePre(line) + "</td></tr>";
+    } else if (line.starts_with("@@")) {
+      const auto [o, n] = parseHunkStart(line);
+      old_line = o;
+      new_line = n;
+      in_hunk = true;
+      out += "<tr class=\"hunk\"><td class=\"diff-num\">…</td><td class=\"diff-num\">…</td><td class=\"diff-code\">" + escapePre(line) + "</td></tr>";
+    } else {
+      std::string old_col, new_col, code_cell;
+      const char* kind = "context";
+      if (in_hunk && line.starts_with("+")) {
+        kind = "add";
+        new_col = std::to_string(new_line++);
+        code_cell = "+" + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
+      } else if (in_hunk && line.starts_with("-")) {
+        kind = "remove";
+        old_col = std::to_string(old_line++);
+        code_cell = "-" + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
+      } else if (in_hunk && line.starts_with(" ")) {
+        old_col = std::to_string(old_line++);
+        new_col = std::to_string(new_line++);
+        code_cell = " " + (lang != Language::None ? highlightHtml(line.substr(1), lang) : escapePre(line.substr(1)));
+      } else {
+        kind = line.starts_with("+") ? "add" : line.starts_with("-") ? "remove" : "context";
+        code_cell = escapePre(line);
+      }
+      out += "<tr class=\"" + std::string(kind) + "\"><td class=\"diff-num\">" + old_col + "</td><td class=\"diff-num\">" + new_col +
+             "</td><td class=\"diff-code\">" + code_cell + "</td></tr>";
+    }
     bounded(out);
     text.remove_prefix(std::min(end + 1, text.size()));
   }

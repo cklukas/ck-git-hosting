@@ -1342,6 +1342,8 @@ void testPortalBuild() {
           "a card per site");
   require(!contains(welcome, "class=\"tabs\"") && !contains(welcome, "<aside") && !contains(welcome, "ckdocs-search"),
           "no tabs, sidebar or search on the welcome page");
+  require(contains(welcome, "class=\"theme-picker\"") && contains(welcome, "ckdocs-theme"),
+          "the welcome page includes the theme picker and theme bootstrap script");
 
   require(contains(python_guide, "rel=\"describedby\" href=\"../llms.txt\"") &&
               contains(api, "rel=\"alternate\" type=\"text/markdown\" href=\"api.html.md\"") &&
