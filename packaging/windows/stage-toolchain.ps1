@@ -65,10 +65,13 @@ try {
         }
         Write-Output "Verified staged $($tree[1])"
     }
-    [IO.File]::WriteAllLines((Join-Path $stage 'toolchain.sha256'), $manifest, (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllLines((Join-Path $stage 'toolchain-omissions.txt'), $omissions, (New-Object Text.UTF8Encoding($false)))
+    $manifest.Add((Get-FileHash -LiteralPath (Join-Path $stage 'toolchain-omissions.txt') -Algorithm SHA256).Hash.ToLowerInvariant() + '  toolchain-omissions.txt')
+    $manifest.Sort([StringComparer]::Ordinal)
+    [IO.File]::WriteAllLines((Join-Path $stage 'toolchain.sha256'), $manifest, (New-Object Text.UTF8Encoding($false)))
+    $manifestHash=(Get-FileHash -LiteralPath (Join-Path $stage 'toolchain.sha256') -Algorithm SHA256).Hash.ToLowerInvariant()
     $end = [DateTime]::UtcNow
-    @{start=$start.ToString('o');end=$end.ToString('o');seconds=($end-$start).TotalSeconds;files=$manifest.Count;sdk=$SdkVersion} |
+    @{start=$start.ToString('o');end=$end.ToString('o');seconds=($end-$start).TotalSeconds;files=$manifest.Count;sdk=$SdkVersion;manifest_sha256=$manifestHash} |
         ConvertTo-Json | Set-Content (Join-Path $stage 'toolchain-build.json')
     New-Item -ItemType Directory -Path (Split-Path $Destination) -Force | Out-Null
     Move-Item -LiteralPath $stage -Destination $Destination

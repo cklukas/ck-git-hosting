@@ -68,6 +68,16 @@ Source: "{#BinaryDir}\ckdocs.exe"; DestDir: "{app}"; Components: ckdocs; Flags: 
 #if Product == "ck-git-runner"
 Source: "{#BinaryDir}\ck-ci-runnerd.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\ckgit-job-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\ckgit-windows-vm-guest.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\ckgit-windows-vm-host-check.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "stage-toolchain.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "build-lpac-ninja.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\prepare-windows-vm-base.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\prepare-windows-vm-toolchain.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\register-windows-vm-socket.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\windows-vm-image-policy.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\windows-vm-unattend.xml.template"; DestDir: "{app}\hcs"; Flags: ignoreversion
+Source: "..\..\scripts\setup-windows-hcs.ps1"; DestDir: "{app}\hcs"; Flags: ignoreversion
 Source: "runner.ini.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "register-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 #elif Product == "ckdocs"

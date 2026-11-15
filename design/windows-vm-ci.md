@@ -3,9 +3,9 @@
 Status (2 November 2026): a dedicated offline HCS runner completed a hosted
 Orthomap Windows build and produced an artifact. Native Windows channel,
 configuration, result-relay and process tests passed, including a 31-second
-output upload and VM cancellation/owner-death qualification. The standard
-Windows runner installer does not yet provision a VM image or install the HCS
-guest and preflight utilities; this remains an operator-prepared backend.
+output upload and VM cancellation/owner-death qualification. The standard Windows runner installer includes the guest, preflight utility and
+operator-run image preparation scripts. Image preparation remains an explicit
+administrator action; see the Windows runner setup guide.
 
 ## Why another Windows boundary is needed
 
@@ -45,7 +45,7 @@ V: and set TEMP/TMP/TMPDIR before configuring, building and running CTest. The
 probe enforces that qualification location. Its source and build records must
 be verified before execution. Do not reuse the GUI VM or recovery VM.
 
-## Implemented topology, still requiring actual guest/job qualification
+## Implemented topology
 
 - An operator-selected, sealed Windows base without host credentials; all OS,
   tool and development disk paths configurable. Workstation paths stay on V:.

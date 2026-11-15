@@ -160,6 +160,17 @@ try {
         if ($Product -eq 'ck-git-runner' -and (Get-FileHash (Join-Path $directory 'ckgit-job-launcher.exe')).Hash -ne (Get-FileHash $LauncherBinary).Hash) {
             throw 'Bundled job launcher differs from the verified build'
         }
+        if ($Product -eq 'ck-git-runner') {
+            foreach ($name in @('ckgit-windows-vm-guest.exe','ckgit-windows-vm-host-check.exe')) {
+                $original=Join-Path (Split-Path -Parent $Binary) $name
+                if (!(Test-Path -LiteralPath $original) -or (Get-FileHash (Join-Path $directory $name)).Hash -ne (Get-FileHash $original).Hash) {
+                    throw "Installed HCS tool differs from verified binary: $name"
+                }
+            }
+            foreach ($name in @('stage-toolchain.ps1','build-lpac-ninja.ps1','setup-windows-hcs.ps1','prepare-windows-vm-base.ps1','prepare-windows-vm-toolchain.ps1','register-windows-vm-socket.ps1','windows-vm-image-policy.ps1','windows-vm-unattend.xml.template')) {
+                if (!(Test-Path -LiteralPath (Join-Path $directory "hcs\$name") -PathType Leaf)) { throw "Installed HCS setup file missing: $name" }
+            }
+        }
         if ($attempt -eq 0) { Set-Content (Join-Path $directory 'user-data.txt') 'preserve me' }
         elseif ((Get-Content (Join-Path $directory 'user-data.txt')) -ne 'preserve me') { throw 'Reinstall changed user data' }
     }

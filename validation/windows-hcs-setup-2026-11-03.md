@@ -1,0 +1,10 @@
+# Windows HCS setup validation, 2026-11-03
+
+Tested on the Windows workstation with task-owned files under `V:\tmp\ckgit-hcs-setup-f4a7`; no production runner or images were changed.
+
+- Windows Release binaries built successfully. The final host-check incremental build ran 23:36:45–23:36:54 UTC on 2026-11-02; `host_check.cpp` SHA-256 `6b1d57be515c82eaccb8eaeeaab801996bd25ed65c665866e53d777c8d4bbb34`, host-check executable SHA-256 `6850c3d4cbfd7644d42a7ebc8eb59fd0608c70ced6352a28390b6c2603263f89`.
+- Windows setup script validation and synthetic toolchain inventory checks passed. A separately identified Inno fixture passed current-user install, reinstall and uninstall, including guest, preflight and setup-script payload checks. The test process had an administrator token; a standard-user token was not tested. Fixture installer SHA-256 `cfd85ddc4ceafe6fc3cd01bace6096d4eda8e29c2e6426bbf8241436b4d1b611`; it is not a release installer.
+- A user-approved, temporary Windows Enterprise Evaluation image passed offline expansion after fixing partition-access-path cleanup. Its SDK image matched the previously approved inventory. HCS preflight passed the diskless startup, owner-close isolation and confirmed-stop checks.
+- First boot exposed a Windows setup reboot race. The original host check failed closed; Windows setup logs showed first-phase completion and shutdown. After updating and rebuilding the host check, the same test image was resumed: the guest reported readiness over its private socket, shut down cleanly, and its HCS instance and disposable work disk were confirmed absent. The automatic reboot retry added to the host check has not been exercised in a fresh uninterrupted provisioning run.
+- A separately constructed profile from the resulting test images passed image hash, deny-write lock, differencing disk and absence-checked cleanup validation. This does not prove an uninterrupted `Complete` run writes its final profile successfully.
+- Both test HCS IDs were checked absent and all temporary VM disks were detached and removed. No release or deployment was performed.

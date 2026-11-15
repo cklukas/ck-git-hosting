@@ -65,8 +65,13 @@ try {
  $license=Join-Path $os 'Windows\System32\en-US\Licenses\Eval\EnterpriseEval\license.rtf'
  if(!(Test-Path $license -PathType Leaf)){throw 'Expected evaluation license absent from selected image'}
  if(Test-Path $license){Copy-Item $license (Join-Path $Destination 'windows-evaluation-license.rtf');$licenseHash=(Get-FileHash $license).Hash.ToLowerInvariant()}
- $efi|Remove-PartitionAccessPath -AccessPath $esp
- $partition|Remove-PartitionAccessPath -AccessPath $os
+ # DISM and boot-file creation can refresh the storage provider's partition
+ # objects or remove a temporary mount themselves. Re-query the actual paths
+ # instead of asking Windows to remove an access path that is already gone.
+ foreach($entry in @(@{number=$efi.PartitionNumber;path=$esp},@{number=$partition.PartitionNumber;path=$os})) {
+  $current=Get-Partition -DiskNumber $disk.Number -PartitionNumber $entry.number
+  if(@($current.AccessPaths) -contains $entry.path){$current|Remove-PartitionAccessPath -AccessPath $entry.path -ErrorAction Stop}
+ }
  Dismount-VHD -Path $vhd;$diskMounted=$false
  $status='expanded-unbooted-awaiting-license-and-guest-agent'
 } catch {$failure=$_.Exception.Message;throw} finally {

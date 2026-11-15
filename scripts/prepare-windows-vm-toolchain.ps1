@@ -6,17 +6,41 @@ param(
  [Parameter(Mandatory=$true)][string]$Source,
  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$InventorySha256,
  [Parameter(Mandatory=$true)][string]$Destination,
- [Parameter(Mandatory=$true)][string]$Scratch
+ [Parameter(Mandatory=$true)][string]$Scratch,
+ [string]$GuestSettings
 )
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 if(!(Test-Path V:\ -PathType Container)){throw 'Development drive V: unavailable'}
-foreach($path in @($Source,$Destination,$Scratch)) {
+$selectedPaths=@($Source,$Destination,$Scratch)
+if($GuestSettings){$selectedPaths+= $GuestSettings}
+foreach($path in $selectedPaths) {
  if(![IO.Path]::IsPathRooted($path) -or [IO.Path]::GetPathRoot($path) -ne 'V:\'){throw 'Select explicit V: source, destination and scratch paths'}
  $parent=$path
  while($parent -and !(Test-Path -LiteralPath $parent)){$parent=[IO.Path]::GetDirectoryName($parent)}
  while($parent){if((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Redirected preparation path'};$parent=[IO.Path]::GetDirectoryName($parent)}
 }
 if(!(Test-Path -LiteralPath $Source -PathType Container) -or !(Test-Path -LiteralPath $Scratch -PathType Container)){throw 'Source and private scratch must exist'}
+$guestLines=$null
+if($GuestSettings){
+ if(!(Test-Path -LiteralPath $GuestSettings -PathType Leaf)){throw 'Guest settings file is missing'}
+ $guestLines=New-Object System.Collections.Generic.List[string]
+ $guestLines.AddRange([string[]]@('schema_version=1','server=ckgit@example.invalid','name=offline-vm-guest','ci_build_root=V:/tmp/ckgit-vm-job','ci_toolchain_root=V:/tools/approved','ci_allow_network=false','ci_allow_degraded=false'))
+ $seen=@{}; $hasPaths=$false
+ foreach($line in [IO.File]::ReadAllLines([IO.Path]::GetFullPath($GuestSettings))){
+  if(!$line -or $line.StartsWith('#')){continue}
+  if($line -notmatch '^(ci_toolchain_paths|ci_toolchain_env\.[A-Z_][A-Z0-9_]*)=([^\x00-\x1f\x7f]*)$'){throw 'Guest settings may contain only ci_toolchain_paths and uppercase ci_toolchain_env assignments'}
+  $key=$Matches[1]; if($seen.ContainsKey($key)){throw 'Duplicate guest toolchain setting'}; $seen[$key]=$true
+  if($key -eq 'ci_toolchain_paths'){
+   $hasPaths=$true; $paths=$Matches[2].Split(';')
+   if($paths.Count -gt 32){throw 'Too many guest tool directories'}
+   foreach($relative in $paths){
+    if(!$relative -or $relative.Contains('\') -or $relative.Contains(':') -or $relative.StartsWith('/') -or @($relative.Split('/') | Where-Object {$_ -eq '..' -or $_ -eq ''}).Count){throw 'Guest tool directories must be relative slash-separated paths'}
+   }
+  }
+  $guestLines.Add($line)
+ }
+ if(!$hasPaths){throw 'Guest settings must explicitly select ci_toolchain_paths'}
+}
 if(Test-Path -LiteralPath $Destination){throw 'Use a new destination; refusing to mix VM disk generations'}
 $env:TEMP=$Scratch;$env:TMP=$Scratch;$env:TMPDIR=$Scratch
 $env:VSCMD_SKIP_SENDTELEMETRY='1';$env:DOTNET_CLI_TELEMETRY_OPTOUT='1';$env:VCPKG_DISABLE_METRICS='1'
@@ -73,6 +97,7 @@ public static class VmSdkCopy {
 '@
  $copied=[VmSdkCopy]::Copy([IO.Path]::GetFullPath($Source),$approved)
  if($copied -ne $InventorySha256){throw ('Copied SDK inventory differs: '+$copied)}
+ if($guestLines){[IO.File]::WriteAllLines((Join-Path $mount 'guest-toolchain.ini'),$guestLines,(New-Object Text.UTF8Encoding($false)))}
  $partition|Remove-PartitionAccessPath -AccessPath $mount
  Dismount-VHD -Path $vhd;$mounted=$false
  $diskHash=(Get-FileHash $vhd -Algorithm SHA256).Hash.ToLowerInvariant()

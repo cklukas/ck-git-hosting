@@ -10,13 +10,114 @@ and artifacts. See [Install and connect CI runners](runner-setup.md) for the
 roles of the main host and runners, including Linux installation.
 
 The default backend is LPAC. An additional offline Hyper-V/HCS backend can run
-workloads that need a full Windows guest, such as WinUI builds. It is currently
-operator-prepared: the standard runner installer does **not** provision its VM
-images or include the guest and HCS preflight tools. For its isolation model,
-required configuration and operator prerequisites, see the
-[Windows VM backend design](https://github.com/cklukas/ck-git-hosting/blob/master/design/windows-vm-ci.md#operator-selection-and-admission).
-Do not select it until the images and guest service have been prepared and
-qualified on that host.
+workloads that need a full Windows guest, such as WinUI builds. The runner
+installer includes the HCS guest, preflight tool and setup scripts. Installing
+them does not create a VM: an administrator explicitly provisions an image as
+explained in [Set up an HCS VM runner](#set-up-an-hcs-vm-runner).
+
+To require LPAC or HCS for a job, use the reserved isolation labels described
+in [Require a Windows isolation backend](ci-remote-runners.md#require-a-windows-isolation-backend).
+Upgrade the main host first so it can verify the runner's backend before
+issuing a lease.
+
+## Set up an HCS VM runner
+
+HCS is an opt-in backend. The installer supports a current-user installation
+without elevation; **creating and initializing the VM needs an elevated
+administrator PowerShell**, Hyper-V/HCS and the Hyper-V PowerShell module. The
+current HCS backend requires its image, workspace, source ISO and scratch paths
+on `V:`. Select a permanent image destination with sufficient space and a
+separate existing private scratch folder. The supplied scripts refuse to reuse
+an existing destination. The current image expansion is restricted to Windows
+x64 Enterprise Evaluation at index 1; the first-boot tool currently accepts only
+its previously qualified license SHA-256, so other Windows images are not yet
+supported by this setup.
+
+The SDK disk must contain an operator-reviewed toolchain and a credential-free
+`guest-toolchain.ini`. First create a separate `guest-settings.ini` containing
+**only** `ci_toolchain_paths` and uppercase `ci_toolchain_env.NAME` lines. These
+settings are visible to jobs: do not put secrets in them. Paths are relative to
+the staged toolchain; use `${TOOLS}` for paths in environment values. The
+following is illustrative: adapt it to the actual staged MSVC, SDK and build
+tool directories.
+
+```ini
+ci_toolchain_paths=cmake/bin;ninja;msvc/bin/Hostx64/x64;sdk/bin/x64
+ci_toolchain_env.INCLUDE=${TOOLS}/msvc/include;${TOOLS}/sdk/include/ucrt;${TOOLS}/sdk/include/shared;${TOOLS}/sdk/include/um
+ci_toolchain_env.LIB=${TOOLS}/msvc/lib/x64;${TOOLS}/sdk/lib/ucrt/x64;${TOOLS}/sdk/lib/um/x64
+```
+
+In an elevated PowerShell, set the paths to your own inputs. `$inventory` is
+the SHA-256 of the staged toolchain's `toolchain.sha256`, and `$isoHash` is the
+SHA-256 of the Windows ISO you have independently obtained and reviewed:
+
+```powershell
+$hcs = 'V:\Programs\ck-git-runner\hcs'  # installed HCS scripts
+$scratch = 'V:\tmp\hcs-setup'             # create a private directory first
+$toolchain = 'V:\development\runner-toolchain'
+$inventory = (Get-FileHash "$toolchain\toolchain.sha256" -Algorithm SHA256).Hash.ToLowerInvariant()
+& "$hcs\prepare-windows-vm-toolchain.ps1" -Source $toolchain `
+  -InventorySha256 $inventory -Destination 'V:\development\hcs-sdk' `
+  -Scratch $scratch -GuestSettings 'V:\development\guest-settings.ini'
+& "$hcs\setup-windows-hcs.ps1" -Phase Prepare `
+  -Iso 'V:\downloads\windows-enterprise-eval.iso' -IsoSha256 '<64 lowercase hex digits>' `
+  -Destination 'V:\development\hcs-base' -Scratch $scratch
+```
+
+`Prepare` expands the selected image without booting it or accepting a license.
+Read the displayed `windows-evaluation-license.rtf` and verify its displayed
+SHA-256. Only after you have accepted that exact license, run:
+
+```powershell
+& "$hcs\setup-windows-hcs.ps1" -Phase Complete `
+  -Destination 'V:\development\hcs-base' -Scratch $scratch `
+  -SdkDisk 'V:\development\hcs-sdk\toolchain.vhdx' `
+  -AcceptedLicenseSha256 '<the 64 lowercase hex digits you reviewed>' `
+  -MemoryMB 8192 -Processors 4 -WorkDiskGiB 120 -MinimumFreeGiB 20
+```
+
+`Complete` verifies the SDK disk and guest tools, registers the dedicated
+Hyper-V socket, installs the guest service into the **new offline image**,
+creates an empty work disk, performs the first boot and storage preflight, and
+writes `images.ini` only after those checks succeed. `WorkDiskGiB` is the
+maximum size of the dynamically allocated work template, and `MinimumFreeGiB`
+is the free-space reserve checked before creating it. The OS expansion script
+also requires 160 GiB free before preparation. The command does not register or
+start a CI runner. A failed or interrupted preparation is retained for
+inspection; choose a new destination for another attempt. Do not point the
+command at an existing user VM or a disk used by another runner.
+
+Protect the image directory and grant the dedicated runner account read access
+to all three disks and the profile, plus the HCS permissions required by your
+host. For a dedicated Windows service created using `register-service.ps1`,
+the tested configuration grants its virtual service SID membership in the
+local **Hyper-V Administrators** group. From elevated PowerShell, after creating
+the service, substitute its actual name:
+
+```powershell
+$serviceSid = (New-Object Security.Principal.NTAccount('NT SERVICE\ckgit-hcs')).Translate([Security.Principal.SecurityIdentifier])
+Add-LocalGroupMember -SID 'S-1-5-32-578' -Member $serviceSid.Value
+```
+
+This is a powerful host permission; grant it only to the dedicated trusted
+runner account. Separately grant that account read access to the image/profile
+locations and read/write access to its private build and log directories. Do
+not make the image files writable by CI jobs. Set these fields in that runner's
+`runner.ini`:
+
+```ini
+ci_windows_backend=hyperv-hcs
+ci_windows_vm_profile=V:/development/hcs-base/images.ini
+ci_allow_network=false
+```
+
+Remove `ci_cache_root`; HCS jobs use disposable work disks and cannot use the
+shared host cache. Register and label that runner `windows,x64,hyperv-hcs` on
+the main host as described in [Require a Windows isolation backend](ci-remote-runners.md#require-a-windows-isolation-backend).
+Run the installed `ck-ci-runnerd.exe check --config <runner.ini>` under the
+same account before starting it. A job selects this backend with
+`runs_on: [windows, x64, hyperv-hcs]`. The work disk is cleaned after confirmed
+VM shutdown; immutable base and SDK images remain for later jobs.
 
 ## Before you start
 
@@ -114,14 +215,13 @@ runner. The two labels above match `runs_on: [windows, x64]`.
 
 ## 3. Stage build tools on Windows
 
-The provisioning scripts live in the [repository's `packaging/windows` directory](https://github.com/cklukas/ck-git-hosting/tree/master/packaging/windows),
-not in the runner installer. Obtain that directory from the same project version
-as the runner. Install the required vendor tools first and obtain the upstream
-Ninja 1.13.2 source archive. From PowerShell, replace every placeholder below
-with an existing absolute path and set `$scripts` to that directory:
+The runner installer includes the provisioning scripts in its `hcs` directory.
+Install the required vendor tools first and obtain the upstream Ninja 1.13.2
+source archive. From PowerShell, replace every placeholder below with an
+existing absolute path and set `$scripts` to that installed directory:
 
 ```powershell
-$scripts = 'C:\ci-example\dev\ck-git-hosting\packaging\windows'
+$scripts = 'C:\ci-example\Programs\ck-git-runner\hcs'
 $temp = 'C:\ci-example\tmp\runner-toolchain-setup'
 New-Item -ItemType Directory -Force $temp | Out-Null
 $env:TEMP = $temp; $env:TMP = $temp; $env:TMPDIR = $temp

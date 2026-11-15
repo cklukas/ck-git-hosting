@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <fstream>
 #include <iostream>
+#include <thread>
 namespace fs=std::filesystem;
 namespace {
 struct Lock{HANDLE value=INVALID_HANDLE_VALUE;explicit Lock(const fs::path& p){value=CreateFileW(p.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);if(value==INVALID_HANDLE_VALUE)throw std::runtime_error("image initialization already active");}~Lock(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}};
@@ -29,7 +30,19 @@ int initialize(const fs::path& os,const fs::path& work,const fs::path& sdk,const
    if(hello.type==ckgit::CiVmFrameType::Error)throw std::runtime_error("guest initialization: "+hello.payload.substr(0,200));
    if(hello.type!=ckgit::CiVmFrameType::Hello || hello.payload!="ckgit-vm-guest-v1")throw std::runtime_error("unexpected offline guest readiness greeting");
    ready=true;std::cout<<"Guest service ready over exact private Hyper-V socket; no job or credentials sent\n";
-  }catch(const std::exception& e){failure=e.what();retry=!vm || !vm->running();std::cout<<"First boot phase: "<<failure<<'\n';}
+  }catch(const std::exception& e){
+   failure=e.what();retry=!vm || !vm->running();
+   // Windows setup can stop the guest service while it is rebooting between
+   // installation phases. The service reports the incomplete image state
+   // before HCS reports the VM stopped. Wait for the real shutdown; never
+   // admit an incomplete image or retry a VM that remains running.
+   if(!retry && vm && failure=="guest initialization: Windows setup has not reached IMAGE_STATE_COMPLETE"){
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(2);
+    while(vm->running() && std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    retry=!vm->running();
+   }
+   std::cout<<"First boot phase: "<<failure<<'\n';
+  }
   if(ready && !vm->shutdownClean()){ready=false;std::cout<<"Clean guest shutdown unconfirmed; base is not admitted\n";}
   if(vm && !vm->stop())throw std::runtime_error("base initialization shutdown unconfirmed");vm.reset();
   if(!ready && !retry){if(!ckgit::HcsCiVm::confirmedAbsent(options.id))throw std::runtime_error("startup stop unconfirmed");std::cout<<"Confirmed VM absent; retained pre-job startup diagnostics workspace "<<ckgit::pathToUtf8(root)<<'\n';throw std::runtime_error(failure.empty()?"clean base shutdown not confirmed":failure);}

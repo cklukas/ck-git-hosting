@@ -259,6 +259,11 @@ if(BUILD_TESTING)
   add_test(NAME mermaid COMMAND ckdocs-mermaid-tests)
   set_tests_properties(mermaid PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   if(WIN32)
+    add_test(NAME windows-hcs-setup COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+      -File "${CMAKE_SOURCE_DIR}/tests/integration/windows_hcs_setup.ps1"
+      -ScriptsDir "${CMAKE_SOURCE_DIR}/scripts" -PackagingDir "${CMAKE_SOURCE_DIR}/packaging/windows"
+      -TestRoot "${CMAKE_BINARY_DIR}/test-tmp")
+    set_tests_properties(windows-hcs-setup PROPERTIES TIMEOUT 30)
     add_test(NAME docs-windows COMMAND powershell -NoProfile -ExecutionPolicy Bypass
       -File "${CMAKE_SOURCE_DIR}/tests/integration/docs_site.ps1"
       -Ckdocs "$<TARGET_FILE:ckdocs>" -TestRoot "${CMAKE_BINARY_DIR}/test-tmp")
@@ -267,7 +272,12 @@ if(BUILD_TESTING)
 endif()
 
 if(WIN32)
-  install(TARGETS ckgit ckdocs ck-ci-runnerd ckgit-job-launcher RUNTIME DESTINATION bin)
+  install(TARGETS ckgit ckdocs ck-ci-runnerd ckgit-job-launcher
+    ckgit-windows-vm-guest ckgit-windows-vm-host-check RUNTIME DESTINATION bin)
+  install(FILES scripts/prepare-windows-vm-base.ps1 scripts/prepare-windows-vm-toolchain.ps1
+    scripts/register-windows-vm-socket.ps1 scripts/windows-vm-image-policy.ps1
+    scripts/windows-vm-unattend.xml.template scripts/setup-windows-hcs.ps1
+    packaging/windows/stage-toolchain.ps1 packaging/windows/build-lpac-ninja.ps1 DESTINATION hcs)
   install(FILES LICENSE DESTINATION .)
   install(FILES third_party/libarchive/COPYING third_party/libarchive/SOURCE-NOTICES.txt DESTINATION licenses/libarchive)
   set(CPACK_GENERATOR ZIP)
