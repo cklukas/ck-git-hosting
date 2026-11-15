@@ -211,14 +211,16 @@ std::string WebRepository::asOf(const std::string& id, const std::string& date) 
   // merged later must not become the project's historic tree.
   return trim(git({"rev-list", "--first-parent", "-1", "--before=" + date + "T23:59:59Z", id, "--"}, 4096).output);
 }
-ProcessResult WebRepository::diff(const std::string& id, bool stat) const {
-  auto c = commit(id);
+ProcessResult WebRepository::diff(const WebCommit& c, bool stat) const {
   std::vector<std::string> args{"diff-tree", "--root", "--no-commit-id", "-r", "--no-ext-diff", "--no-textconv", "--no-color"};
   if (stat) { args.push_back("--stat"); args.push_back("--stat-width=100"); }
   else args.push_back("-p");
   if (!c.parents.empty()) args.push_back(c.parents.front());
-  args.push_back(id); args.push_back("--");
+  args.push_back(c.id); args.push_back("--");
   return git(std::move(args), stat ? 128 * 1024 : kMaximumDiffBytes, false, !stat);
+}
+ProcessResult WebRepository::diff(const std::string& id, bool stat) const {
+  return diff(commit(id), stat);
 }
 std::string rawContentType(const std::string& path) {
   const auto dot = path.rfind('.'); auto extension = dot == std::string::npos ? "" : lower(path.substr(dot));

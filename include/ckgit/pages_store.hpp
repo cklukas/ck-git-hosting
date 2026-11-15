@@ -4,7 +4,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,6 +40,13 @@ struct PageFile {
   std::string content_type;
 };
 
+// Metadata for a resolved page without loading its bytes into memory.
+struct PageFileMeta {
+  std::uintmax_t size = 0;
+  std::string content_type;
+  std::string etag;
+};
+
 // Copies `source` (a directory in the build scratch) into
 // <pages_root>/<project>/versions/<run_id>, makes it the current site, and prunes
 // versions beyond `keep_versions` (never the current one). Symlinks and special
@@ -56,6 +65,22 @@ std::optional<PageFile> readCurrentPage(const std::filesystem::path& pages_root,
                                         std::string_view project, std::string_view path,
                                         std::size_t cap);
 
+// Inspects a request path "<rel...>" in <project>'s current site without reading
+// its file contents into memory. Returns size, content_type, and a deterministic
+// ETag derived from the immutable published version id and byte size.
+std::optional<PageFileMeta> inspectCurrentPage(const std::filesystem::path& pages_root,
+                                               std::string_view project, std::string_view path,
+                                               std::uintmax_t cap);
+
+// Streams a request path "<rel...>" from <project>'s current site in bounded
+// 64 KiB chunks. `begin` is called once with the validated PageFileMeta before
+// any `chunk` callbacks; returning false from `begin` or `chunk` stops early.
+bool streamCurrentPage(const std::filesystem::path& pages_root,
+                       std::string_view project, std::string_view path,
+                       std::uintmax_t cap,
+                       const std::function<bool(const PageFileMeta&)>& begin,
+                       const std::function<bool(std::string_view)>& chunk);
+
 // The traversal-safe half of readCurrentPage, taking the site directory
 // directly instead of a <pages_root>/<project>/current lookup: an already
 // percent-decoded request path, resolved the identical way (empty or a
@@ -65,6 +90,12 @@ std::optional<PageFile> readCurrentPage(const std::filesystem::path& pages_root,
 // preview server, so a reader sees identical behaviour serving from a
 // published Pages site or from a plain build directory.
 std::optional<PageFile> readSiteFile(const std::filesystem::path& site, std::string_view path, std::size_t cap);
+std::optional<PageFileMeta> inspectSiteFile(const std::filesystem::path& site, std::string_view path,
+                                            std::uintmax_t cap, std::string_view version_tag = {});
+bool streamSiteFile(const std::filesystem::path& site, std::string_view path, std::uintmax_t cap,
+                    std::string_view version_tag,
+                    const std::function<bool(const PageFileMeta&)>& begin,
+                    const std::function<bool(std::string_view)>& chunk);
 
 // Percent-decodes an HTTP request target's path (the caller has already
 // split off any query string or fragment): %XX escapes only, rejecting a

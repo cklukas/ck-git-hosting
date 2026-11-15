@@ -15,6 +15,29 @@ bool safeComponent(std::string_view component) {
   return true;
 }
 
+std::optional<std::vector<std::string>> splitSiteComponents(std::string_view path) {
+  std::vector<std::string> components;
+  std::size_t start = 0;
+  while (start <= path.size()) {
+    const std::size_t slash = path.find('/', start);
+    const std::string_view part =
+        path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+    if (!part.empty()) {
+      if (!safeComponent(part)) return std::nullopt;
+      components.emplace_back(part);
+    }
+    if (slash == std::string_view::npos) break;
+    start = slash + 1;
+  }
+  if (components.empty() || (!path.empty() && path.back() == '/')) components.emplace_back("index.html");
+  return components;
+}
+
+std::string makeSiteEtag(std::string_view version_tag, std::uintmax_t size) {
+  if (version_tag.empty()) return {};
+  return "\"" + std::string(version_tag) + "-" + std::to_string(size) + "\"";
+}
+
 }
 std::string pagesContentType(std::string_view name) {
   const auto dot = name.rfind('.');
@@ -40,26 +63,48 @@ std::string pagesContentType(std::string_view name) {
 }
 
 std::optional<PageFile> readSiteFile(const fs::path& site, std::string_view path, std::size_t cap) {
-  // Split the request path into components; an empty path or a trailing slash
-  // resolves to index.html.
-  std::vector<std::string> components;
-  std::size_t start = 0;
-  while (start <= path.size()) {
-    const std::size_t slash = path.find('/', start);
-    const std::string_view part =
-        path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
-    if (!part.empty()) {
-      if (!safeComponent(part)) return std::nullopt;
-      components.emplace_back(part);
-    }
-    if (slash == std::string_view::npos) break;
-    start = slash + 1;
-  }
-  if (components.empty() || (!path.empty() && path.back() == '/')) components.emplace_back("index.html");
+  const auto components = splitSiteComponents(path);
+  if (!components.has_value()) return std::nullopt;
 
-  const auto file = platform::readTreeFile(site, components, cap, true, false);
+  const auto file = platform::readTreeFile(site, *components, cap, true, false);
   if (file.status != platform::TreeFileStatus::Ok) return std::nullopt;
-  return PageFile{file.content, pagesContentType(components.back())};
+  return PageFile{file.content, pagesContentType(components->back())};
+}
+
+std::optional<PageFileMeta> inspectSiteFile(const fs::path& site, std::string_view path,
+                                            std::uintmax_t cap, std::string_view version_tag) {
+  const auto components = splitSiteComponents(path);
+  if (!components.has_value()) return std::nullopt;
+
+  const auto file = platform::readTreeFile(site, *components, cap, false, false);
+  if (file.status != platform::TreeFileStatus::Ok) return std::nullopt;
+  return PageFileMeta{file.size, pagesContentType(components->back()), makeSiteEtag(version_tag, file.size)};
+}
+
+bool streamSiteFile(const fs::path& site, std::string_view path, std::uintmax_t cap,
+                    std::string_view version_tag,
+                    const std::function<bool(const PageFileMeta&)>& begin,
+                    const std::function<bool(std::string_view)>& chunk) {
+  const auto components = splitSiteComponents(path);
+  if (!components.has_value()) return false;
+  const std::string content_type = pagesContentType(components->back());
+  struct AbortStream {};
+  bool started = false;
+  try {
+    platform::TreeFileSink sink;
+    sink.begin = [&](std::uintmax_t size) {
+      started = true;
+      const PageFileMeta meta{size, content_type, makeSiteEtag(version_tag, size)};
+      if (begin && !begin(meta)) throw AbortStream{};
+    };
+    sink.chunk = [&](std::string_view bytes) {
+      if (chunk && !chunk(bytes)) throw AbortStream{};
+    };
+    const auto file = platform::streamTreeFile(site, *components, cap, false, sink);
+    return file.status == platform::TreeFileStatus::Ok;
+  } catch (const AbortStream&) {
+    return started;
+  }
 }
 
 namespace {

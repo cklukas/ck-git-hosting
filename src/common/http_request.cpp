@@ -128,6 +128,7 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
   std::string origin;
   std::string last_event_id;
   std::string host;
+  std::string if_none_match;
   std::size_t header_count = 0;
   for (std::size_t position = request_line_end + 2; position < request.size() - 2;) {
     const std::size_t line_end = request.find("\r\n", position);
@@ -170,13 +171,15 @@ std::optional<HttpRequest> parseReadOnlyHttpRequest(std::string_view request) {
       origin = std::string(value);
     } else if (equalsIgnoreCase(name, "last-event-id")) {
       last_event_id = std::string(value);
+    } else if (equalsIgnoreCase(name, "if-none-match")) {
+      if_none_match = std::string(value);
     }
     position = line_end + 2;
   }
   if (!host_seen) {
     return std::nullopt;
   }
-  return HttpRequest{*method, std::string(target), origin, last_event_id, host};
+  return HttpRequest{*method, std::string(target), origin, last_event_id, host, if_none_match};
 }
 
 }  // namespace ckgit

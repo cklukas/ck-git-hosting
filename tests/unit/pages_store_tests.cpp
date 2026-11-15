@@ -66,6 +66,26 @@ void testPublishAndServe() {
           "a traversal path is rejected");
   require(!ckgit::readCurrentPage(fixture.pages_root, "absent", "", 1u << 20).has_value(),
           "an unknown project yields nothing");
+
+  const auto meta = ckgit::inspectCurrentPage(fixture.pages_root, "demo", "", 1u << 20);
+  require(meta.has_value() && meta->size == 13 && meta->content_type == "text/html; charset=utf-8" &&
+              meta->etag == "\"00000000000000000001-aaaaaaaa-13\"",
+          "inspectCurrentPage returns size, content type, and immutable version ETag without reading bytes");
+  std::string streamed_content;
+  ckgit::PageFileMeta streamed_meta;
+  const bool streamed = ckgit::streamCurrentPage(
+      fixture.pages_root, "demo", "assets/app.css", 1u << 20,
+      [&](const ckgit::PageFileMeta& opened) {
+        streamed_meta = opened;
+        return true;
+      },
+      [&](std::string_view chunk) {
+        streamed_content.append(chunk);
+        return true;
+      });
+  require(streamed && streamed_meta.size == 15 && streamed_meta.etag == "\"00000000000000000001-aaaaaaaa-15\"" &&
+              streamed_content == "body{color:red}",
+          "streamCurrentPage delivers validated metadata and exact file bytes");
 }
 
 void testRepublishAndPrune() {

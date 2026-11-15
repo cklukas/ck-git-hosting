@@ -249,9 +249,9 @@ DashboardResponse renderDashboard(const Route& route, const ProjectSummary& proj
         formatUtcTimestamp(c.epoch) + "</dd><dt>Parents</dt><dd>";
     if (c.parents.empty()) body += "Root commit";
     for (const auto& parent : c.parents) body += link(sourceUrl(project.name, "commit", parent), parent.substr(0, 8)) + " ";
-    body += "</dd></dl><pre>" + escapePre(c.message) + "</pre><h2>Changed files</h2>" + renderChangedFiles(repo.diff(id, true)) + "<h2>Diff</h2>";
+    body += "</dd></dl><pre>" + escapePre(c.message) + "</pre><h2>Changed files</h2>" + renderChangedFiles(repo.diff(c, true)) + "<h2>Diff</h2>";
     if (c.parents.size() > 1) body += "<p class=\"muted\">Changes compared with the first parent.</p>";
-    body += renderDiff(repo.diff(id, false));
+    body += renderDiff(repo.diff(c, false));
   } else if (route.kind == RouteKind::kCalendar) {
     const ActivityData activity = id == project.head_id && !project.indexing && project.index_error.empty()
         ? ActivityData{project.activity, project.history_truncated} : repo.activity(id);

@@ -146,6 +146,26 @@ std::optional<PageFile> readCurrentPage(const fs::path& pages_root, std::string_
   return readSiteFile(base / "versions" / *version, path, cap);
 }
 
+std::optional<PageFileMeta> inspectCurrentPage(const fs::path& pages_root, std::string_view project,
+                                               std::string_view path, std::uintmax_t cap) {
+  if (!isValidProjectName(project)) return std::nullopt;
+  const fs::path base = pages_root / std::string(project);
+  const std::optional<std::string> version = readCurrent(base);
+  if (!version.has_value()) return std::nullopt;
+  return inspectSiteFile(base / "versions" / *version, path, cap, *version);
+}
+
+bool streamCurrentPage(const fs::path& pages_root, std::string_view project,
+                       std::string_view path, std::uintmax_t cap,
+                       const std::function<bool(const PageFileMeta&)>& begin,
+                       const std::function<bool(std::string_view)>& chunk) {
+  if (!isValidProjectName(project)) return false;
+  const fs::path base = pages_root / std::string(project);
+  const std::optional<std::string> version = readCurrent(base);
+  if (!version.has_value()) return false;
+  return streamSiteFile(base / "versions" / *version, path, cap, *version, begin, chunk);
+}
+
 void removeProjectPages(const fs::path& pages_root, std::string_view project) {
   if (!isValidProjectName(project)) fail("invalid project name for pages removal");
   std::error_code error;

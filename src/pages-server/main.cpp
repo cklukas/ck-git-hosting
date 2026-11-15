@@ -10,18 +10,25 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <exception>
+#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 
 #include "ckgit/cli_help.hpp"
 #include "ckgit/http_request.hpp"
@@ -77,15 +84,23 @@ bool writeAll(int fd, std::string_view data) {
   return true;
 }
 
+std::string responseHeaders(int status, std::string_view reason, std::string_view content_type,
+                            std::uintmax_t content_length, std::string_view etag = {},
+                            std::string_view cache_control = "no-cache") {
+  std::string headers = "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason) + "\r\n";
+  if (!content_type.empty()) headers += "Content-Type: " + std::string(content_type) + "\r\n";
+  headers += "Content-Length: " + std::to_string(content_length) + "\r\n";
+  if (!etag.empty()) headers += "ETag: " + std::string(etag) + "\r\n";
+  headers += "X-Content-Type-Options: nosniff"
+             "\r\nReferrer-Policy: no-referrer"
+             "\r\nCache-Control: " + std::string(cache_control) +
+             "\r\nConnection: close\r\n\r\n";
+  return headers;
+}
+
 void sendResponse(int fd, int status, std::string_view reason, std::string_view content_type,
                   std::string_view body, bool head_only) {
-  std::string headers = "HTTP/1.1 " + std::to_string(status) + " " + std::string(reason) +
-                        "\r\nContent-Type: " + std::string(content_type) +
-                        "\r\nContent-Length: " + std::to_string(body.size()) +
-                        "\r\nX-Content-Type-Options: nosniff"
-                        "\r\nReferrer-Policy: no-referrer"
-                        "\r\nCache-Control: no-cache"
-                        "\r\nConnection: close\r\n\r\n";
+  const std::string headers = responseHeaders(status, reason, content_type, body.size());
   if (!writeAll(fd, headers)) return;
   if (!head_only) writeAll(fd, body);
 }
@@ -127,13 +142,36 @@ void handle(int fd, const std::filesystem::path& pages_root) {
     sendError(fd, 404, "Not Found", head_only);
     return;
   }
-  const std::optional<ckgit::PageFile> page =
-      ckgit::readCurrentPage(pages_root, project, path, kMaximumServedBytes);
-  if (!page.has_value()) {
+  const std::string_view cache_control =
+      path.find("assets/diagram-") != std::string_view::npos ? "public, max-age=31536000, immutable" : "no-cache";
+  const std::optional<ckgit::PageFileMeta> meta =
+      ckgit::inspectCurrentPage(pages_root, project, path, kMaximumServedBytes);
+  if (!meta.has_value()) {
     sendError(fd, 404, "Not Found", head_only);
     return;
   }
-  sendResponse(fd, 200, "OK", page->content_type, page->content, head_only);
+  if (!meta->etag.empty() && request->if_none_match == meta->etag) {
+    const std::string not_modified = "HTTP/1.1 304 Not Modified\r\nETag: " + meta->etag +
+                                     "\r\nX-Content-Type-Options: nosniff"
+                                     "\r\nReferrer-Policy: no-referrer"
+                                     "\r\nCache-Control: " + std::string(cache_control) +
+                                     "\r\nConnection: close\r\n\r\n";
+    writeAll(fd, not_modified);
+    return;
+  }
+  if (head_only) {
+    writeAll(fd, responseHeaders(200, "OK", meta->content_type, meta->size, meta->etag, cache_control));
+    return;
+  }
+  const bool streamed = ckgit::streamCurrentPage(
+      pages_root, project, path, kMaximumServedBytes,
+      [&](const ckgit::PageFileMeta& opened) {
+        return writeAll(fd, responseHeaders(200, "OK", opened.content_type, opened.size, opened.etag, cache_control));
+      },
+      [&](std::string_view chunk) { return writeAll(fd, chunk); });
+  if (!streamed) {
+    sendError(fd, 404, "Not Found", false);
+  }
 }
 
 // WP4/D3: whether this server is configured to serve Pages at all. Shared by
@@ -205,21 +243,63 @@ int serve(const std::filesystem::path& config_path) {
     bound_port = ntohs(bound.sin_port);
   }
   std::cout << "ck-pagesd: pages ready on " << bound_port << "\n" << std::flush;
+  constexpr std::size_t kPagesWorkerCount = 8;
+  constexpr std::size_t kMaximumQueuedClients = 32;
+  std::deque<int> queue;
+  std::mutex mutex;
+  std::condition_variable ready;
+  bool stopping = false;
+  std::vector<std::thread> workers;
+  workers.reserve(kPagesWorkerCount);
+  for (std::size_t i = 0; i < kPagesWorkerCount; ++i) {
+    workers.emplace_back([&] {
+      while (true) {
+        int client = -1;
+        {
+          std::unique_lock lock(mutex);
+          ready.wait(lock, [&] { return stopping || !queue.empty(); });
+          if (stopping && queue.empty()) return;
+          client = queue.front();
+          queue.pop_front();
+        }
+        try {
+          handle(client, pages_root);
+        } catch (const std::exception&) {
+        }
+        ::close(client);
+      }
+    });
+  }
   while (g_stop == 0) {
+    pollfd pending{listener, POLLIN, 0};
+    if (::poll(&pending, 1, 250) <= 0) continue;
     const int client = ::accept(listener, nullptr, nullptr);
     if (client < 0) {
       if (errno == EINTR) continue;
       break;
     }
+    ::fcntl(client, F_SETFD, FD_CLOEXEC);
     const timeval timeout{10, 0};
     ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    try {
-      handle(client, pages_root);
-    } catch (const std::exception&) {
+    {
+      std::lock_guard lock(mutex);
+      if (queue.size() >= kMaximumQueuedClients) {
+        ::close(client);
+        continue;
+      }
+      queue.push_back(client);
     }
-    ::close(client);
+    ready.notify_one();
   }
+  {
+    std::lock_guard lock(mutex);
+    stopping = true;
+    for (const int client : queue) ::close(client);
+    queue.clear();
+  }
+  ready.notify_all();
+  for (auto& worker : workers) worker.join();
   ::close(listener);
   return 0;
 }

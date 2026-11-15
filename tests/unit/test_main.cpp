@@ -274,9 +274,10 @@ void testHttpRequestParser() {
   const auto get = ckgit::parseReadOnlyHttpRequest("GET /project/alpha HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
   expect(get.has_value() && get->method == ckgit::HttpMethod::kGet && get->target == "/project/alpha",
          "canonical loopback GET request is accepted");
-  const auto head = ckgit::parseReadOnlyHttpRequest("HEAD / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\n\r\n");
-  expect(head.has_value() && head->method == ckgit::HttpMethod::kHead,
-         "bodyless HEAD request is accepted");
+  const auto head = ckgit::parseReadOnlyHttpRequest(
+      "HEAD / HTTP/1.1\r\nHost: example.test\r\nIf-None-Match: \"v1-42\"\r\nContent-Length: 0\r\n\r\n");
+  expect(head.has_value() && head->method == ckgit::HttpMethod::kHead && head->if_none_match == "\"v1-42\"",
+         "bodyless HEAD request is accepted and If-None-Match is captured");
   const auto post = ckgit::parseReadOnlyHttpRequest(
       "POST /project/demo/ci/00000000000000000001-abcdabcd/cancel HTTP/1.1\r\nHost: 127.0.0.1\r\n"
       "Origin: http://127.0.0.1:8420\r\nContent-Length: 0\r\n\r\n");

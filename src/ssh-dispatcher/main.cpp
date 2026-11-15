@@ -83,6 +83,18 @@ void requireExistingRepository(const std::filesystem::path& repository) {
   }
 }
 
+// Git's protocol negotiation, when sshd passes it through (AcceptEnv).
+void appendGitProtocol(std::vector<std::string>& environment_values) {
+  if (const char* protocol = std::getenv("GIT_PROTOCOL")) {
+    const std::string_view value(protocol);
+    if (value.size() < 64 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '=' || c == ':';
+        })) {
+      environment_values.push_back("GIT_PROTOCOL=" + std::string(value));
+    }
+  }
+}
+
 [[noreturn]] void execGitService(const ckgit::SshCommand& command,
                                  const std::filesystem::path& repository,
                                  std::string_view client_id,
@@ -105,6 +117,7 @@ void requireExistingRepository(const std::filesystem::path& repository) {
   if (state_root.has_value()) {
     environment_values.push_back("CKGIT_STATE_ROOT=" + state_root->string());
   }
+  appendGitProtocol(environment_values);
   std::vector<char*> environment;
   environment.reserve(environment_values.size() + 1);
   for (auto& value : environment_values) {
@@ -140,15 +153,7 @@ int dispatchRunner(const Options& options, const char* original) {
   if (const char* temporary_root = std::getenv("TMPDIR")) {
     environment_values.push_back("TMPDIR=" + std::string(temporary_root));
   }
-  // Git's protocol negotiation, when sshd passes it through (AcceptEnv).
-  if (const char* protocol = std::getenv("GIT_PROTOCOL")) {
-    const std::string_view value(protocol);
-    if (value.size() < 64 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
-          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '=' || c == ':';
-        })) {
-      environment_values.push_back("GIT_PROTOCOL=" + std::string(value));
-    }
-  }
+  appendGitProtocol(environment_values);
   std::vector<char*> argv_raw;
   for (auto& argument : arguments) argv_raw.push_back(argument.data());
   argv_raw.push_back(nullptr);

@@ -25,6 +25,9 @@ struct HttpRequest {
   // The Host header value (host[:port]), or empty. The dashboard derives the
   // published Pages site's link from it, swapping in the Pages port.
   std::string host;
+  // The If-None-Match header value, or empty. Used by ck-pagesd to answer
+  // conditional GET/HEAD requests with 304 Not Modified.
+  std::string if_none_match;
 };
 
 // Parses the complete header block for the deliberately small, one-request

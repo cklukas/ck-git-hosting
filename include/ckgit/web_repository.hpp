@@ -60,6 +60,7 @@ class WebRepository {
   ActivityData activity(const std::string& id) const;
   CommitPage day(const std::string& id, const std::string& date) const;
   std::string asOf(const std::string& id, const std::string& date) const;
+  ProcessResult diff(const WebCommit& commit, bool stat) const;
   ProcessResult diff(const std::string& id, bool stat) const;
  private:
   ProcessResult git(std::vector<std::string> arguments, std::size_t limit,
