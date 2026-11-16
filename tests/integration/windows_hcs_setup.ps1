@@ -5,6 +5,7 @@ param([Parameter(Mandatory=$true)][string]$ScriptsDir,
       [Parameter(Mandatory=$true)][string]$PackagingDir,
       [Parameter(Mandatory=$true)][string]$TestRoot)
 $ErrorActionPreference='Stop'
+if($PSHOME -and ($env:PSModulePath -split ';') -notcontains "$PSHOME\Modules"){$env:PSModulePath="$PSHOME\Modules;"+$env:PSModulePath}
 if(!(Test-Path -LiteralPath 'V:\' -PathType Container)){throw 'V: is required'}
 $ScriptsDir=(Resolve-Path -LiteralPath $ScriptsDir).Path
 if([IO.Path]::GetPathRoot($TestRoot) -ne 'V:\' -and $env:TMPDIR -and [IO.Path]::GetPathRoot($env:TMPDIR) -eq 'V:\'){$TestRoot=$env:TMPDIR}
