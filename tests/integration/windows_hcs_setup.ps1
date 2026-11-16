@@ -5,7 +5,19 @@ param([Parameter(Mandatory=$true)][string]$ScriptsDir,
       [Parameter(Mandatory=$true)][string]$PackagingDir,
       [Parameter(Mandatory=$true)][string]$TestRoot)
 $ErrorActionPreference='Stop'
-if($PSHOME -and ($env:PSModulePath -split ';') -notcontains "$PSHOME\Modules"){$env:PSModulePath="$PSHOME\Modules;"+$env:PSModulePath}
+if(!(Get-Command Get-FileHash -ErrorAction SilentlyContinue)){
+ function global:Get-FileHash {
+  param([Parameter(Position=0)][string]$Path,[string]$LiteralPath,[string]$Algorithm='SHA256')
+  $target=if($LiteralPath){$LiteralPath}else{$Path}
+  $full=(Resolve-Path -LiteralPath $target).Path
+  $sha=[Security.Cryptography.SHA256]::Create()
+  try{
+   $stream=[IO.File]::OpenRead($full)
+   try{$hash=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','')}finally{$stream.Dispose()}
+  }finally{$sha.Dispose()}
+  [PSCustomObject]@{Algorithm=$Algorithm;Hash=$hash;Path=$full}
+ }
+}
 if(!(Test-Path -LiteralPath 'V:\' -PathType Container)){throw 'V: is required'}
 $ScriptsDir=(Resolve-Path -LiteralPath $ScriptsDir).Path
 if([IO.Path]::GetPathRoot($TestRoot) -ne 'V:\' -and $env:TMPDIR -and [IO.Path]::GetPathRoot($env:TMPDIR) -eq 'V:\'){$TestRoot=$env:TMPDIR}
