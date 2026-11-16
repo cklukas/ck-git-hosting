@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased — 2026-11-16
+## 0.11.0 — 2026-11-16
 
 ### Windows HCS VM runner and isolation-checked claims
 
