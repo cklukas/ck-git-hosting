@@ -48,7 +48,8 @@ jobs:
               throw 'Could not mount V: workspace drive'
             }
           }
-          $scratch = 'V:\tmp\ckgit-windows'
+          New-Item -ItemType Directory -Force -Path 'V:\tmp\ckgit-windows' | Out-Null
+          $scratch = Join-Path $env:RUNNER_TEMP 'ckgit-windows'
           New-Item -ItemType Directory -Force -Path $scratch | Out-Null
           foreach ($key in @('TEMP','TMP','TMPDIR')) { "$key=$scratch" >> $env:GITHUB_ENV }
       - name: Build
@@ -69,6 +70,10 @@ jobs:
           cmake --build "$env:RUNNER_TEMP/build" --config Release --parallel 4
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Native process, file safety, diagrams and preview tests
+        env:
+          TEMP: 'V:\tmp\ckgit-windows'
+          TMP: 'V:\tmp\ckgit-windows'
+          TMPDIR: 'V:\tmp\ckgit-windows'
         run: |
           ctest --test-dir "$env:RUNNER_TEMP/build" -C Release --output-on-failure
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
