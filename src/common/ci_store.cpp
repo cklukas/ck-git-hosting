@@ -1693,7 +1693,7 @@ void reconcileWorkflowGroups(const std::filesystem::path& root, int ci, int spoo
       summary.finished_epoch_seconds = std::max(summary.finished_epoch_seconds, record->finished_epoch_seconds);
     }
     for (const auto& child : group.children) supersedeCiJobs(root, spool, working, child);
-    summary.status = done == group.children.size() ? terminal : (running || done ? CiRunStatus::Running : CiRunStatus::Pending);
+    summary.status = done == group.children.size() ? terminal : (running ? CiRunStatus::Running : CiRunStatus::Pending);
     if (ciRunStatusIsActive(summary.status)) summary.finished_epoch_seconds = 0;
     else if (!summary.finished_epoch_seconds) summary.finished_epoch_seconds = currentEpoch();
     summary.detail = std::to_string(done) + "/" + std::to_string(group.children.size()) + " jobs completed";

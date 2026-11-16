@@ -40,7 +40,7 @@ Raw HTML is escaped except for a short attribute-free allow-list (`<kbd>`,
 links retain the selected branch or tag. Directory links also work without a
 trailing slash. Images, including SVG, load through an immutable protected raw
 route. Source views have line numbers, highlighted line links, optional
-wrapping, and server-side syntax highlighting for C/C++, Python, shell, YAML,
+wrapping, a **Commit history** link for the selected revision, and server-side syntax highlighting for C/C++, Python, shell, YAML,
 and JSON (fenced code blocks in Markdown get the same), with no JavaScript. On narrow screens, file navigation is collapsed behind Show files,
 and project/commit rows rearrange for reading. Empty projects explain how to
 start; missing files retain the project, revision picker, and parent links.
@@ -58,7 +58,12 @@ Lane lines span each row and remain connected when commit text wraps.
 Older links retain the selected revision and preserve merged histories; locating
 a cursor scans a bounded traversal, so deep paging costs more than a single
 page of work. Commit pages include the message, parent links, file statistics,
-and a diff capped at 512 KiB. Calendar views show UTC commit activity, and day
+and a diff capped at 512 KiB with old and new line-number columns, per-file
+headers, server-side syntax highlighting, and a **Side-by-side diff** toggle
+that pairs removed and added lines across two columns on wide viewports without
+JavaScript. Immutable object-ID routes (`/raw/<oid>:…`, `/blob/<oid>:…`,
+`/source/<oid>:…`, and `/commit/<oid>`) emit strong `ETag` headers and answer
+matching `If-None-Match` requests with `304 Not Modified`. Calendar views show UTC commit activity, and day
 pages list up to 200 commits with a link to the tree at the end of that day.
 Activity and cursor traversal are bounded to 200000 commits. Limit notices
 identify abbreviated output; time and output failures return a bounded error.

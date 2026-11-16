@@ -8,7 +8,9 @@ image during `build`, `check`, and `serve`. Rendering is built into ckdocs;
 there is no browser script, network request, or external rendering tool.
 The HTML selects a light or dark SVG to match the reader's colour scheme.
 Repeated diagrams share their generated assets under `_ckdocs-mermaid/`,
-a reserved output directory. The site works offline and under URL prefixes.
+a reserved output directory. Each rendered diagram includes an expand button
+that opens it in a modal dialog with `−`, `100%`, and `+` zoom controls (plus
+Ctrl/Cmd-wheel zoom from 50% to 300%). The site works offline and under URL prefixes.
 
 Write a diagram like this:
 

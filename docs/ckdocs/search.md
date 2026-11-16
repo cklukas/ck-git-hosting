@@ -12,9 +12,11 @@ the header. Clicking it or pressing Cmd/Ctrl+K expands and focuses the input;
 Escape collapses it and returns focus to the button. Clicking outside also
 collapses it. Search is backed by a generated `search-index.json` (each page's title,
 URL, and one entry per top-level heading with a plain-text excerpt of that
-section, up to 200 bytes) and a small inline script — under 2 KiB, part of
+section, up to 200 bytes) and a small inline script — under 3 KiB, part of
 the site itself, never fetched from anywhere else — that fetches the index
-on first use, filters it client-side as you type, and lists matching
+on first use, filters it client-side by whitespace-separated query tokens as you
+type, highlights matched terms with `<mark>`, supports `ArrowDown`, `ArrowUp`,
+and `Enter` keyboard navigation, and lists matching
 sections linking straight to their heading. A page whose title,
 [description](front-matter.md#page-descriptions) or
 [tags](front-matter.md#tags) match is listed itself first, with its

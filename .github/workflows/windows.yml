@@ -35,8 +35,21 @@ jobs:
           }
       - name: Select temporary workspace
         run: |
-          $scratch = Join-Path $env:RUNNER_TEMP 'ckgit-windows'
-          New-Item -ItemType Directory -Path $scratch | Out-Null
+          if (!(Test-Path -LiteralPath 'V:\' -PathType Container)) {
+            $vhd = Join-Path $env:RUNNER_TEMP 'ckgit-v-drive.vhdx'
+            @"
+          create vdisk file="$vhd" maximum=24576 type=expandable
+          attach vdisk
+          create partition primary
+          format fs=ntfs label="CKGIT_V" quick
+          assign letter=V
+          "@ | diskpart
+            if ($LASTEXITCODE -or !(Test-Path -LiteralPath 'V:\' -PathType Container)) {
+              throw 'Could not mount V: workspace drive'
+            }
+          }
+          $scratch = 'V:\tmp\ckgit-windows'
+          New-Item -ItemType Directory -Force -Path $scratch | Out-Null
           foreach ($key in @('TEMP','TMP','TMPDIR')) { "$key=$scratch" >> $env:GITHUB_ENV }
       - name: Build
         env:

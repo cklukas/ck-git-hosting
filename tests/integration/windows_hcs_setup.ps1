@@ -7,6 +7,8 @@ param([Parameter(Mandatory=$true)][string]$ScriptsDir,
 $ErrorActionPreference='Stop'
 if(!(Test-Path -LiteralPath 'V:\' -PathType Container)){throw 'V: is required'}
 $ScriptsDir=(Resolve-Path -LiteralPath $ScriptsDir).Path
+if([IO.Path]::GetPathRoot($TestRoot) -ne 'V:\' -and $env:TMPDIR -and [IO.Path]::GetPathRoot($env:TMPDIR) -eq 'V:\'){$TestRoot=$env:TMPDIR}
+New-Item -ItemType Directory -Force -Path $TestRoot | Out-Null
 $TestRoot=(Resolve-Path -LiteralPath $TestRoot).Path
 if([IO.Path]::GetPathRoot($TestRoot) -ne 'V:\'){throw 'Select a V: test root'}
 $fixture=Join-Path $TestRoot ('hcs-setup-test-'+[guid]::NewGuid().ToString('N'))

@@ -74,10 +74,12 @@ separate command family: it never becomes an argument to Git.
 
 ## Receive-hook identity handoff
 
-The dispatcher starts the fixed `git-receive-pack` program with a restricted
+The dispatcher starts the fixed `git-upload-pack` or `git-receive-pack` program with a restricted
 environment: `PATH`, `LANG`, `CKGIT_CLIENT_ID`, `CKGIT_PROJECT_NAME`,
 `CKGIT_CONTROL_SOCKET`, and `CKGIT_REPOSITORY_ROOT`, plus `CKGIT_STATE_ROOT`
-when configured and `TMPDIR` when supplied by the launch environment.
+when configured, `TMPDIR` when supplied by the launch environment, and a
+validated `GIT_PROTOCOL` token list (such as `version=2`) when supplied by the
+SSH transport.
 Identity, project, repository/state roots, and socket
 values are derived from the forced command's fixed client ID, the accepted
 repository token, and daemon-owned command-line configuration; none is copied

@@ -61,7 +61,10 @@ the IP there). True per-project subdomains (`http://<project>.pages.<host>/`)
 need a LAN resolver with a wildcard entry, such as `dnsmasq`, and are a later
 option — the port form needs no DNS at all.
 
-`ck-pagesd` serves read-only static files only, resolves each path without
+`ck-pagesd` serves read-only static files across an 8-worker bounded thread
+pool with 64 KiB chunked streaming, zero-copy `HEAD` inspection, strong `ETag`
+and `If-None-Match` (`304 Not Modified`) revalidation, and immutable cache
+headers for content-hashed diagram SVGs. It resolves each path without
 following symlinks, and runs under a tight sandbox with no write access and no
 access to the control socket, the repositories, or the metadata store. Firewall
 `pages_http_port` to the intended subnet.

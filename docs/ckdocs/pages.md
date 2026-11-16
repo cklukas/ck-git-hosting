@@ -67,6 +67,7 @@ description: How ckdocs finds pages, names and orders them, and builds the tabs,
   from the generated site index, so nothing tracked ever silently
   disappears.
 - **Markdown versions.** By default, every HTML page also has a clean `.html.md` version. Use the **Markdown** footer link to read its unrendered text. The [llms publishing setting](search.md#llmstxt-and-markdown-versions) controls these versions and discovery links together.
+- **Outline and heading anchors.** On wide desktop viewports (`1180px` and wider), a page's "On this page" outline docks into a sticky third column beside the article and highlights the active section as you scroll; hovering a section heading reveals a `#` permalink anchor.
 - **The site index.** `site-index.html` lists every tab, page, and second-
   and third-level heading as plain nested lists, with each page's
   [`description`](front-matter.md#page-descriptions) as a short line under

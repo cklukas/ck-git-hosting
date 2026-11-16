@@ -39,7 +39,8 @@ README.
 
 The Files view has a navigable tree alongside the selected file. Markdown files
 render in place; source files can be opened with line numbers and syntax
-highlighting.
+highlighting, and commit pages show syntax-highlighted diffs with both unified
+and side-by-side views.
 
 ![File browser showing the Garden Notes README and repository tree](../images/web-files.png)
 

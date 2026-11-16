@@ -50,13 +50,14 @@ struct Sink : ckgit::CiResultSink {
 };
 }
 int main() {
-  const char* tmp = std::getenv("TMPDIR"); if (!tmp) return 1;
-  VmTestWinsock winsock;
-  if(fs::path(tmp).root_name()!=L"V:")throw std::runtime_error("Select private V: TMPDIR");
-  const fs::path root=ckgit::createTempDirectory(tmp,"windows-vm-relay-");
-  struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path, e); } } cleanup{root};
-  SOCKET pair[2]; if (vmTestSocketPair(pair) != 0) return 1;
+  SOCKET pair[2]{INVALID_SOCKET, INVALID_SOCKET};
   try {
+    const char* tmp = std::getenv("TMPDIR"); if (!tmp) throw std::runtime_error("Select private V: TMPDIR");
+    VmTestWinsock winsock;
+    if(fs::path(tmp).root_name()!=L"V:")throw std::runtime_error("Select private V: TMPDIR");
+    const fs::path root=ckgit::createTempDirectory(tmp,"windows-vm-relay-");
+    struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path, e); } } cleanup{root};
+    if (vmTestSocketPair(pair) != 0) return 1;
     ckgit::CiPreparedJob job;
     job.job.job_id = "00000000000000000001-abcdabcd";
     job.job.project_name = "project"; job.job.commit_id = std::string(40, 'a');
