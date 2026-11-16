@@ -1,5 +1,63 @@
 # Changes
 
+## Unreleased — 2026-11-16
+
+### Windows HCS VM runner and isolation-checked claims
+
+- Added the opt-in offline Hyper-V/HCS VM backend (`ci_windows_backend=hyperv-hcs`),
+  native Windows guest service (`ckgit-windows-vm-guest`), host preflight and
+  first-boot verification tool (`ckgit-windows-vm-host-check`), and two-phase
+  operator provisioning script (`scripts/setup-windows-hcs.ps1`), packaged in
+  the Windows runner installer's `hcs` directory.
+- Added reserved Windows isolation labels (`lpac` and `hyperv-hcs`) to the
+  runner claim protocol and enforced them on the server before issuing a lease,
+  so jobs requesting `runs_on: [windows, x64, lpac]` or
+  `runs_on: [windows, x64, hyperv-hcs]` only run on a runner configured with
+  that backend.
+- Deferred VM output uploads until after guest acknowledgement, restricted
+  per-VM disk ACLs to disposable job disks, and qualified HCS job cancellation,
+  timeout, and owner-death teardown.
+
+### Server, Pages, and transport performance and reliability
+
+- `ck-pagesd` now serves requests across an 8-worker bounded thread pool with
+  64 KiB chunked file streaming, zero-copy `HEAD` inspection, strong `ETag` and
+  `If-None-Match` (`304 Not Modified`) revalidation, and immutable cache
+  headers for content-hashed diagram SVGs.
+- `ck-git-hostingd` now streams CI artifact and release asset downloads directly
+  from disk, emits strong `ETag` headers with `If-None-Match` (`304 Not Modified`)
+  short-circuiting on immutable object-ID routes (`/raw/<oid>:…`,
+  `/blob/<oid>:…`, `/source/<oid>:…`, and `/commit/<oid>`), and reuses the
+  resolved commit metadata when rendering commit diffs.
+- `ck-git-shell` now forwards validated `GIT_PROTOCOL` values (such as
+  `version=2`) to standard SSH `git-upload-pack` and `git-receive-pack`
+  invocations in addition to remote runner gateways.
+- Fixed HTTP request parsing for canonical percent-encoded static site paths
+  (such as non-ASCII tag URLs) and socket chunk over-reads past `\r\n\r\n`,
+  ignored `SIGPIPE` in `ck-pagesd` and `ck-git-hostingd`, returned
+  `405 Method Not Allowed` for `POST` requests to `ck-pagesd` and
+  `ckdocs serve`, preserved concurrent `refreshMetadata()` updates across
+  `ProjectIndex::rebuild()`, and kept multi-job workflow parents in `Pending`
+  while waiting for queued child jobs.
+
+### ckdocs and web dashboard UX
+
+- `ckdocs` pages now use a 3-column layout on wide desktop viewports
+  (`1180px` and wider) that docks the "On this page" outline into a sticky
+  right column with active-section scrollspy, reveal `#` permalink anchors on
+  headings, include `−`, `100%`, and `+` (plus Ctrl/Cmd-wheel) zoom controls in
+  the expanded Mermaid diagram dialog, include the theme picker on portal
+  welcome pages, and render standalone `site.selector.links` beside the brand
+  on single-site builds.
+- `ckdocs` search now filters by whitespace-separated query tokens, highlights
+  matched terms with `<mark>`, and supports `ArrowDown`, `ArrowUp`, and `Enter`
+  keyboard navigation.
+- Dashboard commit diffs now include old and new line-number columns, per-file
+  headers, server-side syntax highlighting, and a zero-JavaScript
+  **Side-by-side diff** toggle on wide viewports; file previews include a
+  **Commit history** link and the dashboard tour screenshots have been
+  refreshed.
+
 ## 0.10.1 — 2026-11-02
 
 This patch release makes the accumulated CI and integration fixes portable
